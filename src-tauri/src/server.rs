@@ -465,8 +465,8 @@ fn dispatch(
                     PtyOut::Data(b) => {
                         json!({ "type": "event", "event": format!("pty:data:{id}"), "payload": crate::emitter::b64_payload(&b) })
                     }
-                    PtyOut::Close => {
-                        json!({ "type": "event", "event": format!("pty:close:{id}"), "payload": Value::Null })
+                    PtyOut::Close { exit_code, signal } => {
+                        json!({ "type": "event", "event": format!("pty:close:{id}"), "payload": crate::models::CloseInfo { exit_code, signal } })
                     }
                 };
                 let _ = tx.send(Message::Text(msg.to_string()));

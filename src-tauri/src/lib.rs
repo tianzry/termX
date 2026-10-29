@@ -210,6 +210,7 @@ pub fn run() {
             commands::session::ssh_passphrase_cancel,
             commands::session::ssh_host_key_respond,
             commands::session::ssh_host_key_cancel,
+            commands::session::ssh_exec,
             // session lifecycle
             commands::lifecycle::reconcile_sessions,
             // PTY (desktop only)
@@ -294,6 +295,7 @@ pub fn run() {
             commands::sftp::sftp_remove,
             commands::sftp::sftp_rename,
             commands::sftp::sftp_stat,
+            commands::sftp::sftp_chmod,
             // CLI install
             #[cfg(desktop)]
             commands::cli::cli_status,

@@ -837,6 +837,28 @@ mod tests {
         assert_eq!(err.code(), "ssh_connect_failed");
     }
 
+    /// `ssh_signal_name` 把 russh 的 `Sig` 还原成 close 事件要上报的短名。
+    /// `Sig::name()` 是私有方法，这里手写映射，本测试锁死每个变体的回显。
+    #[test]
+    fn ssh_signal_name_maps_to_short_names() {
+        assert_eq!(ssh_signal_name(&russh::Sig::ABRT), "ABRT");
+        assert_eq!(ssh_signal_name(&russh::Sig::ALRM), "ALRM");
+        assert_eq!(ssh_signal_name(&russh::Sig::FPE), "FPE");
+        assert_eq!(ssh_signal_name(&russh::Sig::HUP), "HUP");
+        assert_eq!(ssh_signal_name(&russh::Sig::ILL), "ILL");
+        assert_eq!(ssh_signal_name(&russh::Sig::INT), "INT");
+        assert_eq!(ssh_signal_name(&russh::Sig::KILL), "KILL");
+        assert_eq!(ssh_signal_name(&russh::Sig::PIPE), "PIPE");
+        assert_eq!(ssh_signal_name(&russh::Sig::QUIT), "QUIT");
+        assert_eq!(ssh_signal_name(&russh::Sig::SEGV), "SEGV");
+        assert_eq!(ssh_signal_name(&russh::Sig::TERM), "TERM");
+        assert_eq!(ssh_signal_name(&russh::Sig::USR1), "USR1");
+        assert_eq!(
+            ssh_signal_name(&russh::Sig::Custom("SIGFOO".into())),
+            "SIGFOO"
+        );
+    }
+
     /// 无 GUI 验证"SSH 连接"链路（russh connect → 私钥认证 → shell 写/读回显）。
     /// 依赖一个由外部脚本预先拉起的本地 sshd（环境变量注入地址 + 密钥）。
     /// 没有 sshd 时静默跳过，保证普通 `cargo test` 也能全绿。
@@ -1211,6 +1233,25 @@ enum Event {
     Cmd(Option<SessionCmd>),
 }
 
+/// russh 的 `Sig` 没有公开 `name()`，这里把信号枚举还原成短名（如 "TERM"），供 close 事件上报。
+fn ssh_signal_name(sig: &russh::Sig) -> String {
+    match sig {
+        russh::Sig::ABRT => "ABRT".into(),
+        russh::Sig::ALRM => "ALRM".into(),
+        russh::Sig::FPE => "FPE".into(),
+        russh::Sig::HUP => "HUP".into(),
+        russh::Sig::ILL => "ILL".into(),
+        russh::Sig::INT => "INT".into(),
+        russh::Sig::KILL => "KILL".into(),
+        russh::Sig::PIPE => "PIPE".into(),
+        russh::Sig::QUIT => "QUIT".into(),
+        russh::Sig::SEGV => "SEGV".into(),
+        russh::Sig::TERM => "TERM".into(),
+        russh::Sig::USR1 => "USR1".into(),
+        russh::Sig::Custom(s) => s.clone(),
+    }
+}
+
 async fn session_task(
     data_event: String,
     close_event: String,
@@ -1219,6 +1260,8 @@ async fn session_task(
     app: crate::emitter::Host,
     mut recorder: Option<Recorder>,
 ) {
+    let mut exit_code: Option<i32> = None;
+    let mut signal: Option<String> = None;
     loop {
         let event = tokio::select! {
             msg = channel.wait() => Event::Ssh(msg),
@@ -1238,7 +1281,16 @@ async fn session_task(
                 }
                 let _ = app.emit_bytes(&data_event, &data);
             }
-            Event::Ssh(Some(ChannelMsg::Eof | ChannelMsg::Close)) | Event::Ssh(None) => {
+            Event::Ssh(Some(ChannelMsg::ExitStatus { exit_status })) => {
+                exit_code = Some(exit_status as i32);
+            }
+            Event::Ssh(Some(ChannelMsg::ExitSignal { signal_name, .. })) => {
+                signal = Some(ssh_signal_name(&signal_name));
+            }
+            // Eof 只是远端半关闭输出，其后还会收到 ExitStatus / Close，
+            // 不能在此 break，否则会丢掉退出码。
+            Event::Ssh(Some(ChannelMsg::Eof)) => {}
+            Event::Ssh(Some(ChannelMsg::Close)) | Event::Ssh(None) => {
                 break;
             }
             Event::Cmd(Some(SessionCmd::Write(data))) => {
@@ -1257,5 +1309,8 @@ async fn session_task(
     if let Some(rec) = recorder {
         let _ = rec.finish();
     }
-    let _ = app.emit(&close_event, ());
+    let _ = app.emit(
+        &close_event,
+        crate::models::CloseInfo { exit_code, signal },
+    );
 }

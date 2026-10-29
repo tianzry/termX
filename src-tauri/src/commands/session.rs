@@ -2,7 +2,7 @@ use serde_json::json;
 use tauri::{AppHandle, State};
 
 use crate::error::{locked, AppError, AppResult};
-use crate::models::{Credential, Profile};
+use crate::models::{Credential, PluginExecResult, Profile};
 use crate::secret::cred_secret_key;
 use crate::ssh::client;
 use crate::state::{AppState, SessionKind, SessionOwner};
@@ -134,6 +134,25 @@ pub async fn ssh_resize(
     rows: u32,
 ) -> AppResult<()> {
     get_session(&state, &session_id)?.resize(cols, rows)
+}
+
+/// 在已建立的 SSH 会话上跑一次性远程命令（`client::exec_once`），返回
+/// stdout/stderr/exit_code。命令对即用即弃——不保留任何状态，插件轮询停止
+/// 时无需清理。`timeout_ms` 缺省 10s，clamp 到 [1s, 60s]。
+#[tauri::command]
+pub async fn ssh_exec(
+    state: State<'_, AppState>,
+    session_id: String,
+    command: String,
+    timeout_ms: Option<u64>,
+) -> AppResult<PluginExecResult> {
+    let session = get_session(&state, &session_id)?;
+    let ssh = session.ssh_handle().clone();
+    let timeout = std::time::Duration::from_millis(
+        timeout_ms.unwrap_or(10_000).clamp(1_000, 60_000),
+    );
+    client::run_blocking_ssh(move || async move { client::exec_once(&ssh, &command, timeout).await })
+        .await
 }
 
 /// `tab_id` 只为未预留 session id 的旧客户端保留；新客户端的 prompt waiter

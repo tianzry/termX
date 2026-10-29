@@ -599,6 +599,17 @@ pub async fn sftp_stat(
     h.stat(&path).await
 }
 
+#[tauri::command]
+pub async fn sftp_chmod(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+    mode: u32,
+) -> AppResult<()> {
+    let h = get_sftp(&state, &sftp_id)?;
+    h.chmod(&path, mode).await
+}
+
 /// 用户在传输页点"取消"调用：把 transfer_id 对应的 cancel flag 置 1，
 /// streaming 循环下一次 chunk 检查时退出。
 #[tauri::command]

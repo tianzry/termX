@@ -29,8 +29,11 @@ pub fn pty_spawn(
         pty::PtyOut::Data(b) => {
             let _ = app.emit(&format!("pty:data:{id}"), b64_payload(&b));
         }
-        pty::PtyOut::Close => {
-            let _ = app.emit(&format!("pty:close:{id}"), ());
+        pty::PtyOut::Close { exit_code, signal } => {
+            let _ = app.emit(
+                &format!("pty:close:{id}"),
+                crate::models::CloseInfo { exit_code, signal },
+            );
         }
     });
     let (id, handle) = pty::spawn(session_id, cols, rows, sink, shell)?;
@@ -127,8 +130,11 @@ pub fn pty_spawn_connector(
         pty::PtyOut::Data(b) => {
             let _ = app.emit(&format!("pty:data:{id}"), b64_payload(&b));
         }
-        pty::PtyOut::Close => {
-            let _ = app.emit(&format!("pty:close:{id}"), ());
+        pty::PtyOut::Close { exit_code, signal } => {
+            let _ = app.emit(
+                &format!("pty:close:{id}"),
+                crate::models::CloseInfo { exit_code, signal },
+            );
         }
     });
     let (id, handle) = pty::spawn_command(

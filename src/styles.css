@@ -31,7 +31,8 @@ body {
 }
 
 .toolbar button,
-.ssh-form button {
+.ssh-form button,
+.sftp-panel button {
   background: #21262d;
   color: #e6edf3;
   border: 1px solid #30363d;
@@ -41,14 +42,21 @@ body {
 }
 
 .toolbar button:hover:not(:disabled),
-.ssh-form button:hover:not(:disabled) {
+.ssh-form button:hover:not(:disabled),
+.sftp-panel button:hover:not(:disabled) {
   background: #30363d;
 }
 
 .toolbar button:disabled,
-.ssh-form button:disabled {
+.ssh-form button:disabled,
+.sftp-panel button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.toolbar button.active {
+  border-color: #58a6ff;
+  color: #58a6ff;
 }
 
 .status {
@@ -63,9 +71,11 @@ body {
 .ssh-form {
   display: flex;
   gap: 12px;
+  align-items: flex-end;
   padding: 10px 12px;
   background: #161b22;
   border-bottom: 1px solid #30363d;
+  flex-wrap: wrap;
 }
 
 .ssh-form label {
@@ -76,7 +86,10 @@ body {
   color: #8b949e;
 }
 
-.ssh-form input {
+.ssh-form input,
+.ssh-form select,
+.sftp-panel input,
+.sftp-panel select {
   background: #0d1117;
   color: #e6edf3;
   border: 1px solid #30363d;
@@ -84,8 +97,22 @@ body {
   padding: 5px 8px;
 }
 
+.ssh-form .hint {
+  font-size: 12px;
+  color: #8b949e;
+  padding-bottom: 8px;
+  align-self: flex-end;
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .terminal-wrap {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   padding: 8px;
 }
@@ -97,4 +124,201 @@ body {
 
 .terminal .xterm {
   height: 100%;
+}
+
+/* ── SFTP 面板 ─────────────────────────────────────────── */
+
+.sftp-panel {
+  width: 340px;
+  min-width: 340px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #30363d;
+  background: #161b22;
+  overflow: hidden;
+}
+
+.sftp-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.sftp-row {
+  display: flex;
+  gap: 8px;
+}
+
+.sftp-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sftp-rule {
+  font-size: 12px;
+  color: #8b949e;
+  border-top: 1px solid #30363d;
+  padding-top: 8px;
+}
+
+.sftp-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.sftp-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid #30363d;
+  flex-wrap: wrap;
+}
+
+.sftp-toolbar .sftp-path {
+  flex: 1;
+  min-width: 120px;
+}
+
+.sftp-stat {
+  padding: 8px;
+  font-size: 12px;
+  color: #8b949e;
+  border-bottom: 1px solid #30363d;
+}
+
+.sftp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.sftp-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #21262d;
+  font-size: 13px;
+}
+
+.sftp-list li .sftp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.sftp-list li.is-dir .sftp-name {
+  color: #58a6ff;
+}
+
+.sftp-list li .sftp-meta {
+  color: #8b949e;
+  font-size: 12px;
+}
+
+.sftp-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sftp-actions button {
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.sftp-rename {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+
+.sftp-rename input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sftp-error {
+  padding: 8px;
+  font-size: 12px;
+  color: #f85149;
+  border-top: 1px solid #30363d;
+  word-break: break-all;
+}
+
+/* ── 交互 prompt 弹窗 ───────────────────────────────────── */
+
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.modal {
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.modal label input {
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.prompt-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.prompt-instructions {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  color: #c9d1d9;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 8px;
 }

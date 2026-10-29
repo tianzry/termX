@@ -442,6 +442,28 @@ impl SftpHandle {
         })
     }
 
+    /// 修改远端文件权限位（chmod）。只设 `permissions`，其余字段全 `None`：
+    /// russh-sftp 的 `FileAttributes::default()` 会填 size/uid/gid/times，
+    /// 直接 setstat 会把这些元数据一并覆盖、破坏文件。这里手动构造最小 attrs。
+    pub async fn chmod(&self, path: &str, mode: u32) -> AppResult<()> {
+        let attrs = russh_sftp::protocol::FileAttributes {
+            size: None,
+            uid: None,
+            user: None,
+            gid: None,
+            group: None,
+            permissions: Some(mode),
+            atime: None,
+            mtime: None,
+        };
+        self.sftp.set_metadata(path, attrs).await.map_err(|e| {
+            AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "chmod", "err": e.to_string() }),
+            )
+        })
+    }
+
     /// Stream-download a remote file to a local path with a hard size cap.
     /// 优先用 metadata.size 早期 bail；metadata.size=None 或服务器撒谎时，
     /// 流式 cap 也会在超限的瞬间中止下载。

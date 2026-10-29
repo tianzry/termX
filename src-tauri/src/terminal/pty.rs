@@ -12,27 +12,38 @@ use crate::error::{locked, AppError, AppResult};
 /// pushes them to its socket. `spawn` itself stays transport-agnostic.
 pub enum PtyOut {
     Data(Vec<u8>),
-    Close,
+    Close {
+        exit_code: Option<i32>,
+        /// portable-pty 0.8 不对外暴露 signal 字段，恒为 None（见 CloseInfo 注释）。
+        signal: Option<String>,
+    },
 }
 
 /// Sink the reader thread invokes for each chunk. The `&str` is the session
 /// id, so one sink can serve any number of PTY sessions.
 pub type PtySink = Arc<dyn Fn(&str, PtyOut) + Send + Sync>;
 
-/// 子进程持有者：保证 PtyHandle 最后一份 clone 被 drop 时（tab 关闭 / session 结束），
-/// 显式 kill + wait 子 shell。否则 Box<dyn Child> 在 spawn() 返回后立刻 drop，
-/// 子进程退出后无人 reap，留 zombie 占 PID。
+/// 子进程的共享持有者：reader 线程与 reaper 各持一份 `Arc<Mutex<...>>`，
+/// 谁先 `take()` 谁 reap，后到的拿到 `None` 即空操作，保证只 wait 一次。
 /// `Box<dyn Child + Send>` 不带 `Sync`：portable_pty 的 Child 实现普遍只是
-/// Send。`Mutex<T>` 自身在 `T: Send` 时即是 Sync，无需 inner 也 Sync——
-/// 加多余的 Sync bound 在某些平台上会编不过。
+/// Send。`Mutex<Option<T>>` 在 `T: Send` 时即 Send+Sync，可直接跨线程共享。
 struct ChildReaper {
-    child: Mutex<Option<Box<dyn Child + Send>>>,
+    shared: Arc<Mutex<Option<Box<dyn Child + Send>>>>,
+}
+
+/// reader 线程读到 PTY EOF 后调用：取走子进程并 wait，返回退出码。
+fn reap_exit_code(shared: &Arc<Mutex<Option<Box<dyn Child + Send>>>>) -> Option<i32> {
+    let mut guard = shared.lock().ok()?;
+    let mut child = guard.take()?;
+    child.wait().ok().map(|s| s.exit_code() as i32)
 }
 
 impl Drop for ChildReaper {
     fn drop(&mut self) {
-        // Drop 在 Arc 计数归零时跑一次。kill + wait 通常 < 100ms（SIGKILL → 内核 reap）。
-        if let Ok(mut g) = self.child.lock() {
+        // 最后一个 PtyHandle clone 被 drop 时（tab 关闭 / session 结束）跑到：
+        // 若子进程还活着（reader 还没 EOF），强杀并 reap，避免僵尸占 PID。
+        // 正常退出路径下 reader 已 take+wait，这里拿到 None 即空操作。
+        if let Ok(mut g) = self.shared.lock() {
             if let Some(mut c) = g.take() {
                 let _ = c.kill();
                 let _ = c.wait();
@@ -401,17 +412,19 @@ fn spawn_builder(
         .take_writer()
         .map_err(|e| AppError::pty("pty_op_failed", serde_json::json!({ "err": e.to_string() })))?;
 
+    let shared: Arc<Mutex<Option<Box<dyn Child + Send>>>> = Arc::new(Mutex::new(Some(child)));
     let handle = PtyHandle {
         writer: Arc::new(Mutex::new(writer)),
         master: Arc::new(Mutex::new(pair.master)),
         shell_path: Arc::from(shell_path.as_str()),
         _reaper: Arc::new(ChildReaper {
-            child: Mutex::new(Some(child)),
+            shared: shared.clone(),
         }),
     };
 
-    // 读取线程：PTY stdout → Tauri 事件
+    // 读取线程：PTY stdout → Tauri 事件；EOF 后 reap 一次拿到退出码。
     let pty_id = session_id.clone();
+    let reader_shared = shared.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         let mut reader = reader;
@@ -421,7 +434,14 @@ fn spawn_builder(
                 Ok(n) => sink(&pty_id, PtyOut::Data(buf[..n].to_vec())),
             }
         }
-        sink(&pty_id, PtyOut::Close);
+        let exit_code = reap_exit_code(&reader_shared);
+        sink(
+            &pty_id,
+            PtyOut::Close {
+                exit_code,
+                signal: None,
+            },
+        );
     });
 
     Ok((session_id, handle))
@@ -442,7 +462,7 @@ mod tests {
             PtyOut::Data(b) => {
                 let _ = tx.send(b);
             }
-            PtyOut::Close => {}
+            PtyOut::Close { .. } => {}
         });
 
         let (id, handle) = spawn_command(
@@ -484,5 +504,41 @@ mod tests {
             ok || text.contains("__PTY_OK__"),
             "未收到 PTY 回显，实际输出: {text}"
         );
+    }
+
+    /// 冒烟：子进程退出码经 `pty:close` 上报。`/bin/sh -c "exit 7"` 是纯本地、
+    /// 不依赖 display / sshd 的最小退出码链路验证。
+    #[test]
+    fn local_pty_exit_code_reported() {
+        let (tx, rx) = mpsc::channel::<PtyOut>();
+        let sink: PtySink = Arc::new(move |_id, out| {
+            let _ = tx.send(out);
+        });
+
+        let (_id, _handle) = spawn_command(
+            "exit7".into(),
+            80,
+            24,
+            sink,
+            PathBuf::from("/bin/sh"),
+            std::ffi::OsString::new(),
+            vec!["-c".into(), "exit 7".into()],
+        )
+        .expect("spawn /bin/sh 应成功");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut exit_code = None;
+        while Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(PtyOut::Close { exit_code: code, .. }) => {
+                    exit_code = code;
+                    break;
+                }
+                Ok(PtyOut::Data(_)) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        assert_eq!(exit_code, Some(7), "期望退出码 7，实际: {exit_code:?}");
     }
 }

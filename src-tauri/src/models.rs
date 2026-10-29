@@ -552,6 +552,17 @@ pub struct PluginExecResult {
     pub exit_code: Option<i32>,
 }
 
+/// SSH / 本地终端会话结束时经 `ssh:close:<id>` / `pty:close:<id>` 上报的退出信息。
+/// `exit_code` 为进程退出码；`signal` 为被信号终止时的信号名（SSH 远端可给，
+/// 本地 PTY 的 portable-pty 0.8 不暴露 signal 字段，恒为 None）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloseInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+}
+
 // --- Session Recording ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
