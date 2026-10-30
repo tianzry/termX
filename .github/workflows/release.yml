@@ -1,0 +1,98 @@
+name: Release
+
+# 触发方式：
+#   1) 推送 v* 标签（如 v0.1.0）→ 自动三平台编译并创建草稿 Release
+#   2) 手动触发（workflow_dispatch）→ 只构建并上传产物；填 tag 则创建 Release
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布标签（如 v0.1.0）。留空则只构建、不创建 Release'
+        required: false
+        default: ''
+
+# tauri-action 创建 Release 需要写权限
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            platform: ubuntu-22.04
+            target: ''
+            args: '--bundles deb,appimage'
+          - label: Windows x64
+            platform: windows-latest
+            target: ''
+            args: ''
+          - label: macOS ARM64
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Linux 系统依赖
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+            libudev-dev
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS 追加 arm64 目标；其余平台用 runner 默认 host 目标
+          targets: ${{ matrix.target }}
+
+      - name: Rust 构建缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      # tauri-action 会执行 beforeBuildCommand（npm run build）再执行 tauri build，
+      # 并在 tagName 非空时自动创建 Release 并上传各平台安装包。
+      - name: 构建并发布
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          releaseName: 'termX ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}'
+          releaseBody: '自动构建产物：Windows（msi/nsis）、Linux（deb/appimage）、macOS ARM64（dmg/app）。'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # 未打 tag / 手动且未填 tag 时，仅把产物作为 workflow artifact 留存
+      - name: 上传构建产物
+        if: ${{ github.ref_type != 'tag' && inputs.tag == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: termX-${{ matrix.label }}
+          path: |
+            src-tauri/target/release/bundle/**
+            src-tauri/target/*/release/bundle/**
+          if-no-files-found: warn
