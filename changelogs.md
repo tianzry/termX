@@ -340,3 +340,38 @@
     直接喂 `TERMX_SSH_TEST_KNOWN_HOSTS` 即可被接受（无需手动剥端口）。
 38. **cargo 镜像 403 时换源即可，别跟网络死磕**：aliyun sparse 对本沙箱 IP 返回 `403 / denied by IP ACL = blacklist`，
     切 `rsproxy.cn/index/`（sparse）后 `cargo test` 顺利拉依赖；`~/.cargo/config.toml` 里的 `replace-with` 一处即可。
+
+---
+
+## 2026-10-30 — 三平台自动编译发布（GitHub Actions）
+
+目标：让 GitHub 托管 runner 自动产出 Windows / Linux / macOS ARM64 安装包，tag 或手动触发发布。
+
+### 改动点
+
+1. **`.github/workflows/release.yml`**（新增）：矩阵三平台（`ubuntu-22.04` / `windows-latest` / `macos-latest`+`aarch64-apple-darwin`），
+   `dtolnay/rust-toolchain` + `Swatinem/rust-cache` + `npm ci` + `tauri-apps/tauri-action@v0`。
+   - 触发：push `v*` tag（自动建草稿 Release）或 `workflow_dispatch`（可选填 tag；留空只构建，产物走 upload-artifact）。
+   - Linux 显式 `--bundles deb,appimage`；macOS `--target aarch64-apple-darwin`（仅 ARM64）。
+   - `permissions: contents: write`（tauri-action 建 Release 必需）。
+2. **`package.json` / `package-lock.json`**：`@tauri-apps/api` 钉 2.11.1、`@tauri-apps/cli` 钉 2.11.3，
+   与 Rust `tauri` 2.11.3 同 minor，修复 `tauri build` 的版本一致性硬报错。
+
+### 验证（本沙箱）
+
+- `npm run build` ✅；`cargo build` ✅（436MB debug）。
+- 交叉 `cargo check --target x86_64-pc-windows-gnu` ✅（装 mingw-w64）。
+- 交叉 `cargo check --target aarch64-apple-darwin` ❌：卡在 `objc2-exception-helper` 编 `try_catch.m`，Linux 无 Apple SDK。
+- Linux 全量打包 `tauri build --bundles deb` ✅：产出 `termX_0.0.1_amd64.deb`（14MB），`bin/*` 资源 glob 未报错。
+
+### 踩坑
+
+39. **Tauri 版本一致性检查是硬错误，不是警告**：Rust `tauri` 2.11.3 与 npm `@tauri-apps/api` 2.12.4 次版本不一致时，
+    `tauri build` 直接 `Error ... version mismatched` 退出（连编译都不开始）。必须把 npm `@tauri-apps/api`/`@tauri-apps/cli`
+    与 crate 对齐到同一 minor。注意 api 的 2.11 线只有 `2.11.0/2.11.1`（无 2.11.3），按 minor 匹配用 2.11.1 即可通过。
+40. **`bundle.resources` 的 `bin/*` 只匹配到 `.gitkeep`**：glob `*` 默认不匹配点开头文件，`src-tauri/bin/` 里只有 `.gitkeep`，
+    但 Tauri 2 打包并未因此报错（缺资源不致命）。若后续真要塞外部二进制，记得把真实文件放进 `src-tauri/bin/`。
+41. **release 构建很慢**：本机 `tauri build --bundles deb` 全量 release 编译约 11.5 分钟（debug 只要 1.5 分钟量级）。
+    CI 靠 `Swatinem/rust-cache` 缓存 `src-tauri` target 才不至于每次全编。
+42. **Ubuntu runner 缺 `libudev-dev` 会让 serialport 编译失败**：Linux 依赖清单必须含 `libudev-dev`；
+    Tauri v2 还需 `libwebkit2gtk-4.1-dev`（不是 4.0）。
