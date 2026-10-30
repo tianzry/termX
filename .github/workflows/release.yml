@@ -52,6 +52,61 @@ jobs:
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
             libudev-dev
 
+      # 仅 Windows：未配置 secrets 时跳过，产物为未签名；配置后自动注入签名参数
+      - name: 配置 Windows 代码签名（SSL.com eSigner CKA）
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          INSTALL_DIR: ${{ github.workspace }}\eSignerCKA
+          ESIGNER_MODE: ${{ secrets.ESIGNER_MODE }}
+          ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+          ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+          ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+        run: |
+          if (-not $env:ESIGNER_USERNAME) {
+            Write-Host "未配置 eSigner secrets，跳过签名（产物将未签名）"
+            exit 0
+          }
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:ESIGNER_MODE) { $env:ESIGNER_MODE = 'production' }
+
+          # 1) 下载并静默安装 eSigner CKA（虚拟 USB token）
+          $zip = Join-Path $env:RUNNER_TEMP 'cka.zip'
+          Invoke-WebRequest -OutFile $zip 'https://github.com/SSLcom/eSignerCKA/releases/download/v1.0.6/SSL.COM-eSigner-CKA_1.0.6.zip'
+          Expand-Archive -Force $zip $env:RUNNER_TEMP
+          $installer = Get-ChildItem $env:RUNNER_TEMP -Recurse -Filter '*Installer*.exe' | Select-Object -First 1
+          Start-Process $installer.FullName -Wait -ArgumentList '/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES',"/DIR=$env:INSTALL_DIR"
+
+          # 2) 用 eSigner 凭据配置并加载证书到当前用户证书库
+          & "$env:INSTALL_DIR\eSignerCKATool.exe" config -mode $env:ESIGNER_MODE -user $env:ESIGNER_USERNAME -pass $env:ESIGNER_PASSWORD -totp $env:ESIGNER_TOTP_SECRET -key "$env:INSTALL_DIR\master.key" -r
+          & "$env:INSTALL_DIR\eSignerCKATool.exe" unload
+          & "$env:INSTALL_DIR\eSignerCKATool.exe" load
+
+          # 3) 探测证书指纹
+          $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -like '*SSL.com*' } | Select-Object -First 1
+          if (-not $cert) { throw 'eSigner CKA 加载后未在证书库找到代码签名证书' }
+          Write-Host "检测到证书指纹: $($cert.Thumbprint)"
+
+          # 4) 注入签名参数到 tauri.conf.json（仅当前 CI 工作区，不提交）
+          $confPath = Join-Path $PWD 'src-tauri/tauri.conf.json'
+          $conf = Get-Content $confPath -Raw | ConvertFrom-Json
+          if (-not $conf.bundle.windows) {
+            $conf.bundle | Add-Member -NotePropertyName windows -NotePropertyValue ([pscustomobject]@{})
+          }
+          $conf.bundle.windows | Add-Member -Force -NotePropertyName certificateThumbprint -NotePropertyValue $cert.Thumbprint
+          $conf.bundle.windows | Add-Member -Force -NotePropertyName digestAlgorithm -NotePropertyValue 'sha256'
+          $conf.bundle.windows | Add-Member -Force -NotePropertyName timestampUrl -NotePropertyValue 'http://ts.ssl.com'
+          $conf.bundle.windows | Add-Member -Force -NotePropertyName tsp -NotePropertyValue $true
+          $conf | ConvertTo-Json -Depth 100 | Set-Content $confPath -Encoding utf8
+
+          # 5) 把 signtool 所在目录加入 PATH，Tauri 打包时会自动调用它
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter 'signtool.exe' |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if ($signtool) { $signtool.Directory.FullName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8 }
+
+          "SIGNED=1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "已注入签名配置，构建将自动使用 signtool 签名"
+
       - name: 安装 Node
         uses: actions/setup-node@v4
         with:
@@ -80,11 +135,27 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          releaseName: 'termX ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}'
+          releaseName: "termX ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
           releaseBody: '自动构建产物：Windows（msi/nsis）、Linux（deb/appimage）、macOS ARM64（dmg/app）。'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # 若已签名，校验产物签名有效性（未配置 secrets 时跳过）
+      - name: 校验 Windows 签名
+        if: matrix.platform == 'windows-latest' && env.SIGNED == '1'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem 'src-tauri/target/release/bundle' -Recurse -File -Include *.exe,*.msi
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter 'signtool.exe' |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (-not $files) { throw '未找到可校验的安装包' }
+          foreach ($f in $files) {
+            Write-Host "校验: $($f.FullName)"
+            & $signtool.FullName verify /pa /v $f.FullName
+            if ($LASTEXITCODE -ne 0) { throw "签名校验失败: $($f.FullName)" }
+          }
 
       # 未打 tag / 手动且未填 tag 时，仅把产物作为 workflow artifact 留存
       - name: 上传构建产物

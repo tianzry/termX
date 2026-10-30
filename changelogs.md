@@ -375,3 +375,32 @@
     CI 靠 `Swatinem/rust-cache` 缓存 `src-tauri` target 才不至于每次全编。
 42. **Ubuntu runner 缺 `libudev-dev` 会让 serialport 编译失败**：Linux 依赖清单必须含 `libudev-dev`；
     Tauri v2 还需 `libwebkit2gtk-4.1-dev`（不是 4.0）。
+
+---
+
+## 2026-10-30 — Windows 代码签名（SSL.com eSigner CKA）
+
+目标：给 Windows 产物接上 Authenticode 签名，且完全跑在 CI 里、不依赖物理 USB token。
+
+### 改动点
+
+1. **`.github/workflows/release.yml`** 新增两个 Windows-only 步骤：
+   - 「配置 Windows 代码签名（SSL.com eSigner CKA）」：下载并静默安装 CKA → `eSignerCKATool config -mode -user -pass -totp -key` →
+     `unload`/`load` → 探测证书指纹 → 注入 `tauri.conf.json`（`certificateThumbprint`/`digestAlgorithm=sha256`/
+     `timestampUrl=http://ts.ssl.com`/`tsp=true`，仅 CI 工作区，不提交）→ 把 signtool 目录写进 `GITHUB_PATH` → 写 `SIGNED=1`。
+   - 「校验 Windows 签名」：对 `target/release/bundle` 下 `.exe/.msi` 跑 `signtool verify /pa /v`（仅 `SIGNED=1` 时）。
+2. **未配置 secrets 时自动跳过**：`ESIGNER_USERNAME` 为空即 `exit 0`，Windows 产物保持未签名，流程不红。
+3. **需要的 Secrets**：`ESIGNER_MODE`(production/test)、`ESIGNER_USERNAME`、`ESIGNER_PASSWORD`、`ESIGNER_TOTP_SECRET`。
+   前置：证书须已在 SSL.com 后台 **eSigner 登记**且 `signing credential enabled`。
+
+### 踩坑
+
+43. **YAML 单引号里嵌单引号会截断**：`releaseName: '... 'tag' ...'` 直接把字符串提前闭合，整份 workflow 解析失败
+    （上一版就已埋雷，只是没跑过 YAML 校验）。含 `${{ }}` 且分支里有 `'tag'` 时，外层必须改双引号。
+44. **Tauri 不会从环境变量读证书指纹**：只能用 `bundle.windows.certificateThumbprint`（静态字段）。CI 里用 PowerShell
+    把「探测到的指纹」写回 `tauri.conf.json` 即可，本地无签名照常构建（无该字段就不签）。
+45. **SSL.com 的 `ts.ssl.com` 是 RFC3161 时间戳**：Tauri 必须设 `tsp: true` 才会用 `/tr`（否则 `/t` 与服务器不匹配）。
+46. **CKA 是「虚拟 USB token」**：它靠 CNG KSP 把证书装进 `CurrentUser\My`，必须 `config → unload → load` 走完一轮，
+    `signtool /sha1 <指纹>` 才找得到证书；漏 `load` 会报找不到证书。
+47. **windows runner 默认 PATH 未必含 signtool**：Tauri 打包时调 `signtool.exe` 会找不到，需把
+    `C:\Program Files (x86)\Windows Kits\10\bin\<ver>\x64` 显式追加进 `GITHUB_PATH`。
