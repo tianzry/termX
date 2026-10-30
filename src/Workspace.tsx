@@ -42,11 +42,20 @@ export interface WorkspaceHandle {
   newTab: (connector: Connector) => void;
   /** 工作区为空时兜底建一个本地终端（侧栏面板需要窗格承载）。 */
   ensureTab: () => void;
+  activateTab: (tabId: string) => void;
+  closeTab: (tabId: string) => void;
+  renameTab: (tabId: string, title: string) => void;
+  split: (dir: SplitDir) => void;
+  closePane: () => void;
+  acceptRestore: () => void;
+  skipRestore: () => void;
 }
 
 interface Props {
   onActivePane: (handle: PaneHandle | null) => void;
   onStatus: (text: string) => void;
+  /** 向上发布标签快照，供顶部 TopTabs 渲染（标签状态仍由本组件持有）。 */
+  onSnapshot?: (tabs: Tab[], activeTabId: string | null, restorePending: boolean) => void;
 }
 
 function resolveActivePane(
@@ -143,7 +152,7 @@ function LayoutView({
 }
 
 export const Workspace = forwardRef<WorkspaceHandle, Props>(
-  function Workspace({ onActivePane, onStatus }, ref) {
+  function Workspace({ onActivePane, onStatus, onSnapshot }, ref) {
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
     const [activePaneByTab, setActivePaneByTab] = useState<
@@ -158,9 +167,6 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
     // 无旧记录时可直接落盘；有旧记录则等用户点「恢复 / 忽略」后再写，
     // 否则首帧的空工作区会把旧布局覆盖掉。
     const [hydrated, setHydrated] = useState(false);
-
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const [editingText, setEditingText] = useState("");
 
     const tabsRef = useRef<Tab[]>([]);
     tabsRef.current = tabs;
@@ -190,8 +196,6 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
     const ensureTab = useCallback(() => {
       if (tabsRef.current.length === 0) newTab({ kind: "pty" });
     }, [newTab]);
-
-    useImperativeHandle(ref, () => ({ newTab, ensureTab }), [newTab, ensureTab]);
 
     const registerPane = useCallback(
       (paneId: string, handle: PaneHandle | null) => {
@@ -304,10 +308,34 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       setHydrated(true);
     }
 
+    useImperativeHandle(
+      ref,
+      () => ({
+        newTab,
+        ensureTab,
+        activateTab: (tabId: string) => setActiveTabId(tabId),
+        closeTab,
+        renameTab: (tabId: string, title: string) =>
+          setTabs((cur) =>
+            cur.map((t) => (t.id === tabId ? { ...t, title } : t)),
+          ),
+        split: splitActive,
+        closePane: closeActivePane,
+        acceptRestore,
+        skipRestore,
+      }),
+      [newTab, ensureTab, closeTab, splitActive, closeActivePane],
+    );
+
     // 启动时没有旧记录 → 立即进入可落盘状态
     useEffect(() => {
       if (!restore) setHydrated(true);
     }, [restore]);
+
+    // 标签快照向上同步给 TopTabs
+    useEffect(() => {
+      onSnapshot?.(tabs, activeTabId, restore !== null);
+    }, [tabs, activeTabId, restore, onSnapshot]);
 
     // 持久化：用户完成恢复决策后才开始覆盖旧记录
     useEffect(() => {
@@ -334,99 +362,8 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       onActivePane(activePaneId ? handles[activePaneId] ?? null : null);
     }, [activePaneId, handles, onActivePane]);
 
-    function beginRename(tab: Tab) {
-      setEditingId(tab.id);
-      setEditingText(tab.title);
-    }
-
-    function commitRename() {
-      const id = editingId;
-      const text = editingText.trim();
-      setEditingId(null);
-      if (!id || !text) return;
-      setTabs((cur) =>
-        cur.map((t) => (t.id === id ? { ...t, title: text } : t)),
-      );
-    }
-
     return (
       <div className="ws">
-        {restore && (
-          <div className="restore-banner">
-            <span>
-              发现上次会话：{restore.tabs.length} 个标签
-            </span>
-            <button onClick={acceptRestore}>恢复</button>
-            <button onClick={skipRestore}>忽略并清空</button>
-          </div>
-        )}
-
-        <div className="tab-bar">
-          <div className="tab-list">
-            {tabs.map((tab) => (
-              <div
-                key={tab.id}
-                className={`tab${tab.id === activeTabId ? " active" : ""}`}
-                onMouseDown={() => setActiveTabId(tab.id)}
-              >
-                {editingId === tab.id ? (
-                  <input
-                    className="tab-title-input"
-                    autoFocus
-                    value={editingText}
-                    onChange={(e) => setEditingText(e.target.value)}
-                    onBlur={commitRename}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitRename();
-                      if (e.key === "Escape") setEditingId(null);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span
-                    className="tab-title"
-                    title={tab.title}
-                    onDoubleClick={() => beginRename(tab)}
-                  >
-                    {tab.title}
-                  </span>
-                )}
-                <button
-                  className="tab-close"
-                  title="关闭标签"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => closeTab(tab.id)}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <button className="tab-new" title="新建本地终端" onClick={() => newTab({ kind: "pty" })}>
-              +
-            </button>
-          </div>
-          <div className="tab-actions">
-            <button
-              disabled={!activeTab}
-              onClick={() => splitActive("horizontal")}
-            >
-              左右分屏
-            </button>
-            <button
-              disabled={!activeTab}
-              onClick={() => splitActive("vertical")}
-            >
-              上下分屏
-            </button>
-            <button
-              disabled={!activeTab || collectLeaves(activeTab.layout).length <= 1}
-              onClick={closeActivePane}
-            >
-              关闭窗格
-            </button>
-          </div>
-        </div>
-
         <div className="tab-view-holder">
           {tabs.map((tab) => (
             <div
@@ -444,14 +381,6 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
               />
             </div>
           ))}
-          {!activeTab && (
-            <div className="ws-empty">
-              <div>还没有打开的终端</div>
-              <div className="hint">
-                点上方「+」开本地终端，或用工具栏「连接管理」连 SSH。
-              </div>
-            </div>
-          )}
         </div>
       </div>
     );

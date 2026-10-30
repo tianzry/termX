@@ -34,6 +34,7 @@
 | 多标签页 | ✅ | `src/Workspace.tsx`、`src/TerminalPane.tsx` |
 | 分屏（水平 / 垂直 + 拖拽） | ✅ | `src/workspaceModel.ts`、`src/Workspace.tsx` |
 | 会话恢复（localStorage + 恢复横幅） | ✅ | `src/backend/workspaceStore.ts` |
+| 界面结构对齐 netcatty（TopTabs / 主机树 / Vault 起始页 / AsidePanel） | ✅ | `src/TopTabs.tsx`、`src/HostSidebar.tsx`、`src/VaultHome.tsx`、`src/AsidePanel.tsx` |
 | 三平台 CI 构建 + Windows 代码签名 | ✅ | `.github/workflows/release.yml` |
 
 ---

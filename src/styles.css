@@ -1033,3 +1033,1011 @@ body {
   background: #30363d;
   border-color: #58a6ff;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   netcatty 界面结构：主题变量 / TopTabs / HostSidebar / Vault / Aside
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  color-scheme: dark;
+  --nc-bg: 220 28% 7%;
+  --nc-bg-elev: 220 24% 10%;
+  --nc-panel: 220 24% 9%;
+  --nc-hover: 220 20% 15%;
+  --nc-border: 220 20% 18%;
+  --nc-fg: 210 40% 95%;
+  --nc-muted: 220 12% 62%;
+  --nc-faint: 220 10% 42%;
+  --nc-primary: 200 100% 61%;
+  --nc-radius: 8px;
+  --nc-sidebar-w: 264px;
+}
+
+body {
+  background: hsl(var(--nc-bg));
+  color: hsl(var(--nc-fg));
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ── 外壳 ─────────────────────────────────────────────── */
+
+.nc-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(
+    180deg,
+    hsl(var(--nc-bg)) 0%,
+    hsl(var(--nc-bg)) 65%,
+    hsl(var(--nc-bg) / 0.92) 100%
+  );
+  overflow: hidden;
+}
+
+.nc-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.nc-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: hsl(var(--nc-bg));
+}
+
+.nc-workspace {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+
+.nc-workspace.hidden {
+  display: none;
+}
+
+/* ── 顶部标签栏 ───────────────────────────────────────── */
+
+.nc-topbar {
+  flex-shrink: 0;
+  height: 42px;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.75);
+  background: hsl(var(--nc-bg-elev) / 0.72);
+  backdrop-filter: blur(10px);
+  user-select: none;
+}
+
+.nc-brand {
+  width: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid hsl(var(--nc-border) / 0.5);
+}
+
+.nc-brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--nc-bg));
+  background: linear-gradient(
+    135deg,
+    hsl(var(--nc-primary)),
+    hsl(190 100% 52%)
+  );
+  box-shadow: 0 0 12px hsl(var(--nc-primary) / 0.35);
+}
+
+.nc-topbar-btn {
+  align-self: center;
+  margin: 0 6px;
+}
+
+.nc-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.nc-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.nc-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 210px;
+  min-width: 0;
+  padding: 0 8px 0 12px;
+  border-right: 1px solid hsl(var(--nc-border) / 0.45);
+  color: hsl(var(--nc-muted));
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.nc-tab:hover {
+  background: hsl(var(--nc-hover) / 0.55);
+  color: hsl(var(--nc-fg));
+}
+
+.nc-tab.active {
+  background: hsl(var(--nc-bg));
+  color: hsl(var(--nc-fg));
+}
+
+.nc-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: hsl(var(--nc-primary));
+}
+
+.nc-tab-icon {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.nc-tab-title {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nc-tab-input {
+  width: 120px;
+  height: 22px;
+  padding: 0 5px;
+  font: inherit;
+  font-size: 12px;
+  color: hsl(var(--nc-fg));
+  background: hsl(var(--nc-bg));
+  border: 1px solid hsl(var(--nc-primary) / 0.7);
+  border-radius: 4px;
+  outline: none;
+}
+
+.nc-tab-close {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--nc-faint));
+  cursor: pointer;
+  opacity: 0;
+}
+
+.nc-tab:hover .nc-tab-close,
+.nc-tab.active .nc-tab-close {
+  opacity: 1;
+}
+
+.nc-tab-close:hover {
+  background: hsl(0 70% 52% / 0.16);
+  color: hsl(0 80% 70%);
+}
+
+.nc-tab-new {
+  align-self: center;
+  margin: 0 6px;
+}
+
+.nc-icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--nc-muted));
+  cursor: pointer;
+}
+
+.nc-icon-btn:hover:not(:disabled) {
+  background: hsl(var(--nc-hover));
+  color: hsl(var(--nc-fg));
+}
+
+.nc-icon-btn.active {
+  background: hsl(var(--nc-primary) / 0.14);
+  color: hsl(var(--nc-primary));
+}
+
+.nc-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.nc-chrome {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  flex-shrink: 0;
+  border-left: 1px solid hsl(var(--nc-border) / 0.5);
+}
+
+.nc-chrome-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: hsl(var(--nc-border) / 0.7);
+}
+
+.nc-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+  margin-left: 10px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  color: hsl(var(--nc-muted));
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.nc-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nc-status-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: hsl(145 70% 50%);
+  box-shadow: 0 0 6px hsl(145 70% 50% / 0.7);
+}
+
+/* ── 会话恢复提示 ─────────────────────────────────────── */
+
+.nc-restore {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 12px;
+  color: hsl(40 80% 72%);
+  background: hsl(40 60% 10% / 0.9);
+  border-bottom: 1px solid hsl(40 70% 30% / 0.6);
+}
+
+.nc-restore-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(40 90% 60%);
+}
+
+.nc-restore button {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--nc-border));
+  background: hsl(var(--nc-hover));
+  color: hsl(var(--nc-fg));
+  cursor: pointer;
+}
+
+.nc-restore button:first-of-type {
+  margin-left: auto;
+  border-color: hsl(var(--nc-primary) / 0.55);
+  color: hsl(var(--nc-primary));
+}
+
+.nc-restore button:hover {
+  background: hsl(var(--nc-border));
+}
+
+/* ── 左侧主机树 ───────────────────────────────────────── */
+
+.nc-sidebar {
+  width: var(--nc-sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid hsl(var(--nc-border) / 0.7);
+  background: hsl(var(--nc-panel) / 0.65);
+  min-height: 0;
+}
+
+.nc-sidebar-head {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.4);
+}
+
+.nc-sidebar-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.nc-count {
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  font-size: 10.5px;
+  color: hsl(var(--nc-muted));
+  background: hsl(var(--nc-border) / 0.55);
+}
+
+.nc-sidebar-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.nc-sidebar-search {
+  flex-shrink: 0;
+  margin: 9px 10px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid hsl(var(--nc-border) / 0.7);
+  border-radius: var(--nc-radius);
+  background: hsl(var(--nc-bg) / 0.7);
+}
+
+.nc-sidebar-search:focus-within,
+.nc-search:focus-within {
+  border-color: hsl(var(--nc-primary) / 0.6);
+  box-shadow: 0 0 0 2px hsl(var(--nc-primary) / 0.08);
+}
+
+.nc-sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: hsl(var(--nc-fg));
+  font: inherit;
+  font-size: 12px;
+}
+
+.nc-sidebar-search input::placeholder,
+.nc-search input::placeholder {
+  color: hsl(var(--nc-faint));
+}
+
+.nc-search-icon {
+  color: hsl(var(--nc-faint));
+  flex-shrink: 0;
+}
+
+.nc-sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+  scrollbar-width: thin;
+}
+
+.nc-sidebar-scroll::-webkit-scrollbar,
+.nc-vault-scroll::-webkit-scrollbar,
+.nc-aside-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.nc-sidebar-scroll::-webkit-scrollbar-thumb,
+.nc-vault-scroll::-webkit-scrollbar-thumb,
+.nc-aside-body::-webkit-scrollbar-thumb {
+  background: hsl(var(--nc-border));
+  border-radius: 4px;
+}
+
+.nc-host-group {
+  margin-top: 6px;
+}
+
+.nc-group-head {
+  width: 100%;
+  height: 27px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--nc-faint));
+  cursor: pointer;
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.nc-group-head:hover {
+  color: hsl(var(--nc-muted));
+  background: hsl(var(--nc-hover) / 0.5);
+}
+
+.nc-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-host-row {
+  width: 100%;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--nc-radius);
+  background: transparent;
+  color: hsl(var(--nc-fg));
+  cursor: pointer;
+  text-align: left;
+}
+
+.nc-host-row:hover {
+  background: hsl(var(--nc-hover) / 0.75);
+}
+
+.nc-local-row {
+  margin-top: 2px;
+}
+
+.nc-avatar {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--nc-fg));
+  background: linear-gradient(
+    135deg,
+    hsl(var(--nc-avatar-hue, 210) 62% 34%),
+    hsl(calc(var(--nc-avatar-hue, 210) + 28) 62% 24%)
+  );
+  border: 1px solid hsl(var(--nc-border) / 0.6);
+}
+
+.nc-avatar.lg {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+
+.nc-avatar-local {
+  color: hsl(var(--nc-primary));
+  background: hsl(var(--nc-primary) / 0.1);
+  border-color: hsl(var(--nc-primary) / 0.25);
+}
+
+.nc-host-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nc-host-name {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nc-host-sub {
+  font-size: 11px;
+  color: hsl(var(--nc-faint));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nc-sidebar-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 26px;
+  font-size: 12px;
+  color: hsl(var(--nc-faint));
+}
+
+.nc-sidebar-empty button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--nc-border));
+  background: hsl(var(--nc-hover));
+  color: hsl(var(--nc-fg));
+  cursor: pointer;
+}
+
+/* ── 空闲态 Vault 起始页 ───────────────────────────────── */
+
+.nc-vault {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 28px 0;
+}
+
+.nc-vault-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.nc-vault-head h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.nc-vault-head p {
+  margin: 0;
+  font-size: 12px;
+  color: hsl(var(--nc-faint));
+}
+
+.nc-vault-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nc-seg {
+  display: flex;
+  padding: 2px;
+  border: 1px solid hsl(var(--nc-border) / 0.7);
+  border-radius: 7px;
+  background: hsl(var(--nc-bg-elev) / 0.6);
+}
+
+.nc-seg button {
+  width: 26px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--nc-faint));
+  cursor: pointer;
+}
+
+.nc-seg button.active {
+  background: hsl(var(--nc-hover));
+  color: hsl(var(--nc-fg));
+}
+
+.nc-btn {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 13px;
+  border-radius: 7px;
+  border: 1px solid hsl(var(--nc-border));
+  background: hsl(var(--nc-hover));
+  color: hsl(var(--nc-fg));
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.nc-btn:hover {
+  background: hsl(var(--nc-border));
+}
+
+.nc-btn.primary {
+  border-color: transparent;
+  background: hsl(var(--nc-primary));
+  color: hsl(var(--nc-bg));
+  font-weight: 500;
+}
+
+.nc-btn.primary:hover {
+  background: hsl(var(--nc-primary) / 0.88);
+}
+
+.nc-vault-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 14px;
+}
+
+.nc-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid hsl(var(--nc-border) / 0.7);
+  border-radius: var(--nc-radius);
+  background: hsl(var(--nc-bg-elev) / 0.55);
+}
+
+.nc-search-wide {
+  width: 300px;
+  max-width: 42%;
+}
+
+.nc-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: hsl(var(--nc-fg));
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.nc-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nc-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.nc-chip {
+  height: 27px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 14px;
+  border: 1px solid hsl(var(--nc-border) / 0.65);
+  background: transparent;
+  color: hsl(var(--nc-muted));
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nc-chip:hover {
+  background: hsl(var(--nc-hover) / 0.7);
+}
+
+.nc-chip.active {
+  color: hsl(var(--nc-fg));
+  border-color: hsl(var(--nc-primary) / 0.55);
+  background: hsl(var(--nc-primary) / 0.1);
+}
+
+.nc-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.nc-vault-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+
+.nc-vault-local {
+  width: 100%;
+  max-width: 420px;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 14px;
+  margin-bottom: 16px;
+  border: 1px solid hsl(var(--nc-border) / 0.7);
+  border-radius: 10px;
+  background: hsl(var(--nc-bg-elev) / 0.45);
+  color: hsl(var(--nc-fg));
+  cursor: pointer;
+  text-align: left;
+}
+
+.nc-vault-local:hover {
+  border-color: hsl(var(--nc-primary) / 0.45);
+  background: hsl(var(--nc-bg-elev) / 0.8);
+}
+
+.nc-vault-local-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.nc-vault-local-text strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nc-vault-local-text span {
+  font-size: 11.5px;
+  color: hsl(var(--nc-faint));
+}
+
+.nc-vault-local-go {
+  font-size: 11.5px;
+  color: hsl(var(--nc-primary));
+}
+
+.nc-host-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
+  gap: 12px;
+}
+
+.nc-host-card {
+  height: 74px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 14px;
+  border: 1px solid hsl(var(--nc-border) / 0.7);
+  border-radius: 10px;
+  background: hsl(var(--nc-bg-elev) / 0.45);
+  color: hsl(var(--nc-fg));
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.nc-host-card:hover {
+  border-color: hsl(var(--nc-primary) / 0.45);
+  background: hsl(var(--nc-bg-elev) / 0.9);
+}
+
+.nc-host-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nc-host-card-main strong {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-host-card-sub {
+  font-size: 11.5px;
+  color: hsl(var(--nc-faint));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-host-card-connect,
+.nc-host-row-go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--nc-faint));
+  opacity: 0;
+}
+
+.nc-host-card:hover .nc-host-card-connect,
+.nc-host-row:hover .nc-host-row-go {
+  opacity: 1;
+  color: hsl(var(--nc-primary));
+}
+
+.nc-host-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 640px;
+}
+
+.nc-host-list .nc-host-row {
+  height: 52px;
+}
+
+.nc-vault-empty {
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 30px;
+  border: 1px dashed hsl(var(--nc-border) / 0.7);
+  border-radius: 12px;
+  color: hsl(var(--nc-faint));
+  text-align: center;
+}
+
+.nc-vault-empty-icon {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: hsl(var(--nc-hover));
+  color: hsl(var(--nc-muted));
+}
+
+.nc-vault-empty h2 {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: hsl(var(--nc-fg));
+}
+
+.nc-vault-empty p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.nc-vault-empty .nc-btn {
+  margin-top: 6px;
+}
+
+/* ── 右侧 AsidePanel ──────────────────────────────────── */
+
+.nc-aside {
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid hsl(var(--nc-border) / 0.7);
+  background: hsl(var(--nc-panel) / 0.85);
+  animation: nc-aside-in 200ms cubic-bezier(0.24, 0.84, 0.32, 1) both;
+}
+
+@keyframes nc-aside-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.nc-aside-header {
+  height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.55);
+}
+
+.nc-aside-heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.nc-aside-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nc-aside-subtitle {
+  font-size: 10.5px;
+  color: hsl(var(--nc-faint));
+}
+
+.nc-aside-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 侧栏内的旧面板：去掉自己的宽度 / 边框 / 背景，完全交给 AsidePanel */
+.nc-aside .sftp-panel {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  border-left: none;
+  background: transparent;
+}
+
+/* ── 工作区适配 ───────────────────────────────────────── */
+
+.nc-main .ws {
+  flex: 1;
+  min-height: 0;
+}
+
+.nc-main .tab-view-holder {
+  background: hsl(var(--nc-bg));
+}
+
+.nc-main .pane-overlay {
+  background: hsl(var(--nc-bg) / 0.86);
+}
+
+@media (max-width: 1100px) {
+  .nc-status-text,
+  .nc-chrome-divider:first-of-type {
+    display: none;
+  }
+
+  .nc-sidebar {
+    width: 232px;
+  }
+
+  .nc-aside {
+    width: 330px !important;
+  }
+}

@@ -1,14 +1,25 @@
 /**
- * 应用外壳：工具栏（新建终端 / 连接管理 / 侧栏开关）+ 工作区。
+ * 应用外壳（按 netcatty 的界面结构组织）：
  *
- * 会话本身全部下沉到 `Workspace` 的终端窗格；这里只维护：
- * - 已保存的连接档案（快捷入口 / 连接管理弹窗）；
- * - 侧栏面板（SFTP / 串口 / Telnet / 端口转发）与「当前活动窗格」的桥接。
+ * ```
+ * ┌ TopTabs：品牌 / 标签 / chrome 工具 ─────────────────────────┐
+ * ├ HostSidebar ├ 主区：VaultHome（空闲）或 Workspace（会话）┤ AsidePanel ┤
+ * └──────────────────────────────────────────────────────────────┘
+ * ```
+ *
+ * 会话与标签状态仍由 `Workspace` 持有；本文件只做外壳编排：
+ * 主机与分组数据、侧栏开关、当前工具面板、以及「活动窗格」到
+ * 串口 / Telnet / SFTP 的桥接。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Workspace, type WorkspaceHandle } from "./Workspace";
 import type { PaneHandle } from "./TerminalPane";
+import type { Tab } from "./workspaceModel";
+import { TopTabs } from "./TopTabs";
+import { HostSidebar } from "./HostSidebar";
+import { VaultHome } from "./VaultHome";
+import { AsidePanel } from "./AsidePanel";
 import { SftpPanel } from "./SftpPanel";
 import { SerialPanel } from "./SerialPanel";
 import { TelnetPanel } from "./TelnetPanel";
@@ -16,10 +27,22 @@ import { ForwardPanel } from "./ForwardPanel";
 import { ConnectionManager } from "./ConnectionManager";
 import * as api from "./backend/client";
 import type {
+  Group,
   Profile,
   TermBridge,
   TerminalTransport,
 } from "./backend/client";
+
+type Tool = "sftp" | "serial" | "telnet" | "forward" | null;
+
+const TOOL_TITLE: Record<Exclude<Tool, null>, string> = {
+  sftp: "文件传输",
+  serial: "串口",
+  telnet: "Telnet",
+  forward: "端口转发",
+};
+
+const SIDEBAR_KEY = "termx.sidebar.v1";
 
 export default function App() {
   const workspaceRef = useRef<WorkspaceHandle>(null);
@@ -30,28 +53,59 @@ export default function App() {
     transport: TerminalTransport | null;
   }>({ pane: null, transport: null });
 
-  const [status, setStatus] = useState("待命：新建终端或从连接管理连 SSH");
+  const [status, setStatus] = useState("就绪");
   const [activeSshSid, setActiveSshSid] = useState<string | null>(null);
-  const [showSftp, setShowSftp] = useState(false);
-  const [showSerial, setShowSerial] = useState(false);
-  const [showTelnet, setShowTelnet] = useState(false);
-  const [showForward, setShowForward] = useState(false);
+  const [tool, setTool] = useState<Tool>(null);
   const [showManager, setShowManager] = useState(false);
-
-  // 已保存的连接档案（由连接管理器维护，工具栏下方据此快速开新标签）
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-
-  const loadProfiles = useCallback(async () => {
+  const [sideOpen, setSideOpen] = useState<boolean>(() => {
     try {
-      setProfiles(await api.listProfiles());
+      return localStorage.getItem(SIDEBAR_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+
+  // 标签快照由 Workspace 发布
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [restorePending, setRestorePending] = useState(false);
+  const onSnapshot = useCallback(
+    (next: Tab[], active: string | null, pending: boolean) => {
+      setTabs(next);
+      setActiveTabId(active);
+      setRestorePending(pending);
+    },
+    [],
+  );
+
+  // 主机 / 分组数据
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [nextProfiles, nextGroups] = await Promise.all([
+        api.listProfiles(),
+        api.listGroups(),
+      ]);
+      setProfiles(nextProfiles);
+      setGroups(nextGroups);
     } catch {
       /* 首次启动或 DB 为空时忽略 */
     }
   }, []);
 
   useEffect(() => {
-    void loadProfiles();
-  }, [loadProfiles]);
+    void loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, sideOpen ? "1" : "0");
+    } catch {
+      /* 忽略持久化失败 */
+    }
+  }, [sideOpen]);
 
   // 活动窗格变化：记录句柄，并跟随其 SSH 会话（SFTP 面板依赖）
   const [activeHandle, setActiveHandle] = useState<PaneHandle | null>(null);
@@ -69,8 +123,7 @@ export default function App() {
     return activeHandle.subscribeSession(setActiveSshSid);
   }, [activeHandle]);
 
-  // 串口 / Telnet 侧栏面板通过该桥把会话绑定到窗格：
-  // 面板持 session，窗格负责渲染输出、上行按键、resize。
+  // 串口 / Telnet 侧栏面板通过该桥把会话绑定到窗格
   const bridge: TermBridge = {
     receive: (bytes) => bridgeTargetRef.current.pane?.write(bytes),
     attach: (t) => {
@@ -86,89 +139,101 @@ export default function App() {
       (bridgeTargetRef.current.pane ?? activePaneRef.current)?.size() ?? null,
   };
 
-  function toggleSerial() {
-    setShowSerial((v) => {
-      if (!v) workspaceRef.current?.ensureTab();
-      return !v;
+  function openLocal() {
+    workspaceRef.current?.newTab({ kind: "pty" });
+  }
+
+  function connect(profile: Profile) {
+    workspaceRef.current?.newTab({
+      kind: "ssh",
+      profileId: profile.id,
+      name: profile.name,
     });
   }
 
-  function toggleTelnet() {
-    setShowTelnet((v) => {
-      if (!v) workspaceRef.current?.ensureTab();
-      return !v;
-    });
+  function toggleTool(next: Exclude<Tool, null>) {
+    if (tool === next) {
+      setTool(null);
+      return;
+    }
+    if (next === "serial" || next === "telnet") {
+      workspaceRef.current?.ensureTab();
+    }
+    setTool(next);
   }
 
   return (
-    <div className="app">
-      <header className="toolbar">
-        <button onClick={() => workspaceRef.current?.newTab({ kind: "pty" })}>
-          新建终端
-        </button>
-        <button onClick={() => setShowManager(true)}>连接管理</button>
-        <button
-          onClick={toggleSerial}
-          className={showSerial ? "active" : ""}
-        >
-          串口
-        </button>
-        <button
-          onClick={toggleTelnet}
-          className={showTelnet ? "active" : ""}
-        >
-          Telnet
-        </button>
-        <button
-          onClick={() => setShowForward((v) => !v)}
-          className={showForward ? "active" : ""}
-        >
-          端口转发
-        </button>
-        <button
-          onClick={() => setShowSftp((v) => !v)}
-          className={showSftp ? "active" : ""}
-        >
-          文件传输 (SFTP)
-        </button>
-        <span className="status">{status}</span>
-      </header>
+    <div className="nc-shell">
+      <TopTabs
+        tabs={tabs}
+        activeTabId={activeTabId}
+        status={status}
+        sideOpen={sideOpen}
+        tool={tool}
+        onActivate={(id) => workspaceRef.current?.activateTab(id)}
+        onClose={(id) => workspaceRef.current?.closeTab(id)}
+        onRename={(id, title) => workspaceRef.current?.renameTab(id, title)}
+        onNewTab={openLocal}
+        onToggleSidebar={() => setSideOpen((v) => !v)}
+        onOpenManager={() => setShowManager(true)}
+        onToggleTool={toggleTool}
+        onSplit={(dir) => workspaceRef.current?.split(dir)}
+        onClosePane={() => workspaceRef.current?.closePane()}
+        onRefresh={() => void loadData()}
+      />
 
-      <div className="profiles-bar">
-        {profiles.length === 0 ? (
-          <span className="hint">还没有连接，点「连接管理」新建。</span>
-        ) : (
-          profiles.map((p) => (
-            <button
-              key={p.id}
-              className="profile-chip"
-              onClick={() =>
-                workspaceRef.current?.newTab({
-                  kind: "ssh",
-                  profileId: p.id,
-                  name: p.name,
-                })
-              }
-            >
-              <span>{p.name}</span>
-              <span className="profile-chip-sub">
-                {p.host}:{p.port}
-              </span>
-            </button>
-          ))
+      {restorePending && (
+        <div className="nc-restore">
+          <span className="nc-restore-dot" />
+          <span>发现上次会话记录，是否恢复标签与分屏布局？</span>
+          <button onClick={() => workspaceRef.current?.acceptRestore()}>恢复</button>
+          <button onClick={() => workspaceRef.current?.skipRestore()}>忽略并清空</button>
+        </div>
+      )}
+
+      <div className="nc-body">
+        {sideOpen && (
+          <HostSidebar
+            profiles={profiles}
+            groups={groups}
+            onConnect={connect}
+            onLocal={openLocal}
+            onOpenManager={() => setShowManager(true)}
+          />
         )}
-      </div>
 
-      <div className="main">
-        <Workspace
-          ref={workspaceRef}
-          onActivePane={onActivePane}
-          onStatus={setStatus}
-        />
-        {showSftp && <SftpPanel sshSessionId={activeSshSid} />}
-        {showSerial && <SerialPanel bridge={bridge} />}
-        {showTelnet && <TelnetPanel bridge={bridge} />}
-        {showForward && <ForwardPanel />}
+        <div className="nc-main">
+          <div className={`nc-workspace${tabs.length === 0 ? " hidden" : ""}`}>
+            <Workspace
+              ref={workspaceRef}
+              onActivePane={onActivePane}
+              onStatus={setStatus}
+              onSnapshot={onSnapshot}
+            />
+          </div>
+          {tabs.length === 0 && (
+            <VaultHome
+              profiles={profiles}
+              groups={groups}
+              onConnect={connect}
+              onLocal={openLocal}
+              onOpenManager={() => setShowManager(true)}
+            />
+          )}
+        </div>
+
+        {tool && (
+          <AsidePanel
+            title={TOOL_TITLE[tool]}
+            subtitle="工具面板"
+            onClose={() => setTool(null)}
+          >
+            {tool === "sftp" && <SftpPanel sshSessionId={activeSshSid} />}
+            {tool === "serial" && <SerialPanel bridge={bridge} />}
+            {tool === "telnet" && <TelnetPanel bridge={bridge} />}
+            {tool === "forward" && <ForwardPanel />}
+          </AsidePanel>
+        )}
       </div>
 
       {showManager && (
@@ -177,13 +242,9 @@ export default function App() {
           onClose={() => setShowManager(false)}
           onConnect={(p) => {
             setShowManager(false);
-            workspaceRef.current?.newTab({
-              kind: "ssh",
-              profileId: p.id,
-              name: p.name,
-            });
+            connect(p);
           }}
-          onChanged={loadProfiles}
+          onChanged={() => void loadData()}
         />
       )}
     </div>

@@ -471,3 +471,39 @@
     但 v5 的 `action.yml` 里写的是 `node20`。换成 `@v7`（`runs.using: node24`）即可消除；
     v7 的 `name` / `path` / `if-no-files-found` / `retention-days` 入参与本项目用法完全兼容。
     排查方法：`git ls-remote --tags <repo>` 找最新 tag，再读 `raw.githubusercontent.com/<repo>/<tag>/action.yml` 的 `runs.using`。
+
+## 2026-10-30 — 界面结构对齐 netcatty
+
+目标：把「工具栏 + 终端 + 右侧面板」的单区外壳，改成 netcatty 的四层结构：
+顶部 TopTabs、左侧主机树、空闲态 Vault 起始页、右侧统一 AsidePanel。
+
+### 改动点
+
+1. **`src/ui/icons.tsx`（新增）**：内联 SVG 线性图标（lucide 路径，ISC），不引入新依赖。
+2. **`src/TopTabs.tsx`（新增）**：品牌标识 + 会话标签（激活下划线 / 关闭 / 双击重命名）+
+   右侧 chrome（侧栏开关、左右 / 上下分屏、关闭窗格、SFTP / 串口 / Telnet / 转发、刷新、连接管理、状态点）。
+3. **`src/HostSidebar.tsx`（新增）**：搜索 + 「本地终端」+ 按分组折叠的主机列表，点击即开新标签。
+4. **`src/VaultHome.tsx`（新增）**：空闲态主机页——标题 / 搜索 / 分组 chips / 网格与列表切换 /
+   主机卡片 / 空状态 CTA，对照 netcatty `VaultView`。
+5. **`src/AsidePanel.tsx`（新增）**：统一右侧面板（标题 + 关闭 + 独立滚动），SFTP / 串口 / Telnet / 转发全部套用。
+6. **`src/Workspace.tsx`（重构）**：移除内置标签栏与恢复横幅；标签状态仍归它持有，
+   通过 `onSnapshot(tabs, activeTabId, restorePending)` 单向发布给 TopTabs；
+   `forwardRef` 扩展为 activate / close / rename / split / closePane / acceptRestore / skipRestore。
+7. **`src/App.tsx`（重写）**：按 `TopTabs → (HostSidebar + 主区 + AsidePanel)` 编排；
+   空闲时主区渲染 VaultHome，有标签时渲染 Workspace；恢复横幅提升到外壳层。
+8. **`src/styles.css`**：新增 netcatty 配色变量（HSL 220 系深色 + 200 系主色）与全部新组件样式；
+   侧栏内旧面板去掉自带宽度 / 边框 / 背景，交给 AsidePanel 统一。
+
+### 踩坑
+
+62. **标签状态只能单向流动**：Workspace 持有真状态、TopTabs 只展示。若把 TopTabs 的渲染结果
+    再写回 Workspace，会与「关闭后自动选中相邻标签」互相覆盖，出现回环。
+    快照回调只用于展示，操作一律走 imperative 方法。
+63. **`useImperativeHandle` 不能提前引用后面才声明的 `const`**：`closeTab` / `splitActive` /
+    `closeActivePane` 都是后置的 `useCallback` 常量，句柄注册必须移到它们之后，
+    否则渲染期访问处于 TDZ，直接 `ReferenceError`（不是类型错误，构建期发现不了）。
+64. **React 19 下不要依赖全局 `JSX.Element`**：图标表写成 `Record<IconName, ReactElement>`
+    （从 `react` 显式导入类型），否则在严格 tsconfig 里命名空间可能不存在。
+65. **沙箱里 Vite dev 会因 inotify 上限失败**：`npm run dev` 报 `ENOSPC: System limit for number
+    of file watchers reached`；改用 `npm run build` + `npm run preview` 做界面验证。
+    浏览器里没有 Tauri runtime，`invoke` 必然失败，终端显示重连遮罩属预期，不代表 UI 有问题。
