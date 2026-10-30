@@ -1,8 +1,10 @@
 name: Release
 
 # 触发方式：
-#   1) 推送 v* 标签（如 v0.1.0）→ 自动三平台编译并创建草稿 Release
-#   2) 手动触发（workflow_dispatch）→ 只构建并上传产物；填 tag 则创建 Release
+#   1) 推送 v* 标签（如 v0.1.0）→ 发布版：三平台（Windows/Linux/macOS）全量编译并创建草稿 Release
+#   2) 手动触发（workflow_dispatch）：
+#      - 填 tag → 视为发布版，三平台全量编译 + 创建 Release
+#      - 留空 → 仅 Windows x64 编译，产物作为 workflow artifact 留存（日常快速验证用）
 on:
   push:
     tags:
@@ -19,29 +21,36 @@ permissions:
   contents: write
 
 jobs:
+  # 先判定本次是「发布版」还是「日常验证」，再据此生成编译矩阵：
+  #   发布版 → 三平台；非发布版 → 仅 Windows x64（省时省钱）
+  plan:
+    name: 判定构建范围
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      is_release: ${{ steps.m.outputs.is_release }}
+    steps:
+      - id: m
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ] || [ -n "${{ inputs.tag }}" ]; then
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+            echo 'matrix={"include":[{"label":"Linux x64","platform":"ubuntu-22.04","target":"","args":"--bundles deb,appimage"},{"label":"Windows x64","platform":"windows-latest","target":"","args":""},{"label":"macOS ARM64","platform":"macos-latest","target":"aarch64-apple-darwin","args":"--target aarch64-apple-darwin"}]}' >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo 'matrix={"include":[{"label":"Windows x64","platform":"windows-latest","target":"","args":""}]}' >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: ${{ matrix.label }}
+    needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - label: Linux x64
-            platform: ubuntu-22.04
-            target: ''
-            args: '--bundles deb,appimage'
-          - label: Windows x64
-            platform: windows-latest
-            target: ''
-            args: ''
-          - label: macOS ARM64
-            platform: macos-latest
-            target: aarch64-apple-darwin
-            args: '--target aarch64-apple-darwin'
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.platform }}
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 Linux 系统依赖
         if: startsWith(matrix.platform, 'ubuntu')
@@ -108,7 +117,7 @@ jobs:
           Write-Host "已注入签名配置，构建将自动使用 signtool 签名"
 
       - name: 安装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -157,10 +166,10 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "签名校验失败: $($f.FullName)" }
           }
 
-      # 未打 tag / 手动且未填 tag 时，仅把产物作为 workflow artifact 留存
+      # 非发布版（未打 tag / 手动且未填 tag）时，仅把产物作为 workflow artifact 留存
       - name: 上传构建产物
-        if: ${{ github.ref_type != 'tag' && inputs.tag == '' }}
-        uses: actions/upload-artifact@v4
+        if: needs.plan.outputs.is_release == 'false'
+        uses: actions/upload-artifact@v5
         with:
           name: termX-${{ matrix.label }}
           path: |

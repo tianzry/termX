@@ -404,3 +404,10 @@
     `signtool /sha1 <指纹>` 才找得到证书；漏 `load` 会报找不到证书。
 47. **windows runner 默认 PATH 未必含 signtool**：Tauri 打包时调 `signtool.exe` 会找不到，需把
     `C:\Program Files (x86)\Windows Kits\10\bin\<ver>\x64` 显式追加进 `GITHUB_PATH`。
+48. **GitHub Actions 2025-09 起弃用 Node 20 运行时**：`actions/checkout@v4`、`actions/setup-node@v4`、
+    `actions/upload-artifact@v4` 会被强制在 Node 24 上跑并告警。升级到 `@v5`（v5 即 Node 24 运行时）即可消除。
+    注意 `dtolnay/rust-toolchain`（composite）与 `Swatinem/rust-cache@v2`、`tauri-apps/tauri-action@v0` 不在告警名单。
+49. **无法用 `jobs.<id>.if` 过滤矩阵条目**：job 级 `if` 的可用上下文不含 `matrix`，所以「默认只编 Windows、
+    发布才编全平台」不能靠给每个 matrix 条目加 `if`。改用 `plan` job 输出 JSON，`build` 侧
+    `matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}` 动态展开；矩阵 JSON 必须是**单行**
+    （`GITHUB_OUTPUT` 的 `key=value` 不能跨行，多行要用 heredoc 分隔符）。
