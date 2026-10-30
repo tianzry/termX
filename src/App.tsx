@@ -1,9 +1,18 @@
 import { useRef, useState } from "react";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { SftpPanel } from "./SftpPanel";
+import { SerialPanel } from "./SerialPanel";
+import { TelnetPanel } from "./TelnetPanel";
+import { ForwardPanel } from "./ForwardPanel";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import * as api from "./backend/client";
-import type { AuthPrompt, CredentialType, TerminalDomain } from "./backend/client";
+import type {
+  AuthPrompt,
+  CredentialType,
+  TermBridge,
+  TerminalDomain,
+  TerminalTransport,
+} from "./backend/client";
 
 type Mode = "idle" | "pty" | "ssh";
 type AuthType = "password" | "key" | "interactive";
@@ -13,16 +22,9 @@ type Prompt =
   | { kind: "passphrase"; sessionId: string; payload: { prompt: string } }
   | { kind: "hostkey"; sessionId: string; payload: { banner: string } };
 
-interface Transport {
-  domain: TerminalDomain;
-  write: (text: string) => void;
-  resize: (cols: number, rows: number) => void;
-  close: () => void;
-}
-
 export default function App() {
   const controllerRef = useRef<TerminalController | null>(null);
-  const transportRef = useRef<Transport | null>(null);
+  const transportRef = useRef<TerminalTransport | null>(null);
   const unsubRef = useRef<UnlistenFn[]>([]);
   const promptUnsubRef = useRef<UnlistenFn[]>([]);
 
@@ -31,6 +33,9 @@ export default function App() {
   const [status, setStatus] = useState("待命：点击「本地终端」或配置 SSH 后连接");
   const [sshSessionId, setSshSessionId] = useState<string | null>(null);
   const [showSftp, setShowSftp] = useState(false);
+  const [showSerial, setShowSerial] = useState(false);
+  const [showTelnet, setShowTelnet] = useState(false);
+  const [showForward, setShowForward] = useState(false);
 
   // SSH 表单（三种认证）
   const [host, setHost] = useState("127.0.0.1");
@@ -55,9 +60,28 @@ export default function App() {
     promptUnsubRef.current = [];
   }
 
+  // 串口 / Telnet 侧栏面板通过该桥把会话绑定到主终端：
+  // 面板持 session，主终端负责渲染输出、上行按键、resize。
+  const bridge: TermBridge = {
+    receive: (bytes) => controllerRef.current?.term.write(bytes),
+    attach: (t) => {
+      transportRef.current = t;
+    },
+    detach: () => {
+      transportRef.current = null;
+    },
+    size: () =>
+      controllerRef.current
+        ? {
+            cols: controllerRef.current.term.cols,
+            rows: controllerRef.current.term.rows,
+          }
+        : null,
+  };
+
   async function wired(domain: TerminalDomain, sid: string): Promise<void> {
     transportRef.current = {
-      domain,
+      kind: domain,
       write: (text) =>
         domain === "pty" ? api.ptyWrite(sid, text) : api.sshWrite(sid, text),
       resize: (cols, rows) =>
@@ -71,7 +95,7 @@ export default function App() {
         controllerRef.current?.term.write(bytes),
       ),
       await api.onTerminalClose(domain, sid, (info) => {
-        if (transportRef.current?.domain !== domain) return;
+        if (transportRef.current?.kind !== domain) return;
         cleanup();
         setMode("idle");
         setSshSessionId(null);
@@ -239,6 +263,27 @@ export default function App() {
           </button>
         )}
         <button
+          onClick={() => setShowSerial((v) => !v)}
+          disabled={busy}
+          className={showSerial ? "active" : ""}
+        >
+          串口
+        </button>
+        <button
+          onClick={() => setShowTelnet((v) => !v)}
+          disabled={busy}
+          className={showTelnet ? "active" : ""}
+        >
+          Telnet
+        </button>
+        <button
+          onClick={() => setShowForward((v) => !v)}
+          disabled={busy}
+          className={showForward ? "active" : ""}
+        >
+          端口转发
+        </button>
+        <button
           onClick={() => setShowSftp((v) => !v)}
           disabled={busy}
           className={showSftp ? "active" : ""}
@@ -318,6 +363,9 @@ export default function App() {
           />
         </div>
         {showSftp && <SftpPanel sshSessionId={sshSessionId} />}
+        {showSerial && <SerialPanel bridge={bridge} />}
+        {showTelnet && <TelnetPanel bridge={bridge} />}
+        {showForward && <ForwardPanel />}
       </div>
 
       {/* 交互 prompt 弹窗 */}

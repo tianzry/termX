@@ -322,3 +322,129 @@ body {
   border-radius: 6px;
   padding: 8px;
 }
+
+/* ── 串口 / Telnet / 端口转发 面板 ─────────────────────── */
+
+.sftp-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: #8b949e;
+  flex: 1;
+  min-width: 0;
+}
+
+.sftp-panel label select {
+  width: 100%;
+}
+
+/* 转发创建表单与规则编辑器 */
+.fwd-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid #30363d;
+}
+
+.fwd-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fwd-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 8px;
+  background: #0d1117;
+}
+
+.fwd-rule-row {
+  display: flex;
+  gap: 6px;
+}
+
+.fwd-rule-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.fwd-rule-row .fwd-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.sftp-list li.fwd-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.fwd-name {
+  font-weight: 600;
+}
+
+.fwd-actions,
+.fwd-rule-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.fwd-actions button,
+.fwd-rule-actions button {
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.fwd-stats {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.fwd-rule-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid #21262d;
+  padding-top: 6px;
+  margin-top: 6px;
+}
+
+.fwd-tag {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid #30363d;
+}
+
+.fwd-tag[data-status="active"] {
+  color: #3fb950;
+  border-color: #238636;
+}
+
+.fwd-tag[data-status="stopped"] {
+  color: #8b949e;
+}
+
+.fwd-tag[data-status="error"],
+.fwd-tag[data-status="stopping_error"] {
+  color: #f85149;
+  border-color: #da3633;
+}
+
+.fwd-tag[data-status="starting"] {
+  color: #d29922;
+  border-color: #9e6a03;
+}

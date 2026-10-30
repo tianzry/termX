@@ -243,3 +243,55 @@
       `-o PasswordAuthentication=yes -o KbdInteractiveAuthentication=yes`，known_hosts 直接把 2222 的
       host-key 条目改端口 `sed 's/]:2222/]:2223/'` 复用同套 host key）。
     - 所有 smoke 测试无 env 时 `eprintln!("skip: ...")` + `return`，保证无 sshd 的 CI 环境全绿。
+
+---
+
+## 2026-10-30 — 阶段 2：串口 / Telnet / 端口转发（前端接线）
+
+目标：在已就绪的 rssh Rust 后端之上，把「串口 / Telnet / 端口转发」三类连接接入前端。
+**本轮免改 Rust**：后端 `serial.rs / telnet.rs / forward.rs`（含 dynamic SOCKS5）全部就绪，
+只做 `client.ts` 桥接补全 + 三个新面板 + App 接线 + 样式。
+
+### 修改点
+
+1. **`src/backend/client.ts`**（追加阶段 2 桥接，与 ssh/pty 同款约定）：
+   - 类型：`ConnKind`、`TerminalTransport`、`TermBridge`；`SerialConfig`；`ForwardType/ForwardRule/Forward/ForwardRuleStatus/ForwardRuleStats/ForwardStats`。
+   - 串口：`serialListPorts/serialOpen/serialWrite/serialSetDtr/serialSetRts/serialSendBreak/serialClose` +
+     事件 `onSerialData/onSerialClose`（`serial:data:{id}` base64、`serial:close:{id}` 载荷为 `()`)。
+   - Telnet：`telnetOpen/telnetWrite/telnetWriteLine/telnetResize/telnetClose` +
+     事件 `onTelnetData/onTelnetEcho/onTelnetClose`（`telnet:data:{id}`、`telnet:echo:{id}` bool、`telnet:close:{id}`）。
+   - 端口转发：`listProfiles`（复用 `list_profiles`）、`listForwards/getForward/createForward/updateForward/deleteForward` +
+     `forwardStart/forwardStop/forwardStats/forwardRuleStart/forwardRuleStop`（无事件）。
+2. **新建 `src/SerialPanel.tsx`**：端口下拉（`serial_list_ports`）+ 波特率/数据位/校验/停止位/流控表单；
+   连接后 DTR/RTS/BREAK 控制 + 发送数据（`\n`/`\r` 转义）。
+3. **新建 `src/TelnetPanel.tsx`**：host/port/换行风格 + 连接 + 发送一行（`telnet_write_line`）+ 本地回显状态。
+4. **新建 `src/ForwardPanel.tsx`**：转发条目 CRUD + 规则增删（local/remote/dynamic 三类型）+ 启动/停止/统计 + 单规则启停。
+5. **`src/App.tsx`**：工具栏新增「串口 / Telnet / 端口转发」三个侧栏切换入口；
+   把本地 `Transport` 抽象上收为 `TerminalTransport`，新增 `bridge`（`receive/attach/detach/size`）供串口/Telnet 面板把会话绑到主终端。
+6. **`src/styles.css`**：侧栏面板 `label`/select + 转发编辑器与状态标签样式（复用 `.sftp-panel` 布局）。
+
+### 验证
+
+- `npm run build`（`tsc --noEmit` + `vite build`）**通过**（41 模块，无 type error）。
+- 后端本轮无 Rust 改动，`cargo check`/`cargo test` 未重跑。
+- 未做运行时冒烟：串口无硬件（只能验证 `serial_list_ports` 空列表边界）；telnet/forward 可后续用本地服务+端口转发端到端打通。
+
+### 踩坑经验（务必记住）
+
+26. **串口/Telnet 的 `close` 事件载荷是 `()`，不是 `CloseInfo`**：`serial:close:{id}` / `telnet:close:{id}` 里
+    `app.emit(..., ())`，serde 把 unit 序列化成 `null`，所以监听要写成 `listen<null>` 且回调无参。
+    千万别复用 pty/ssh 的 `onTerminalClose(domain, sid, cb(info))`——那边才带 `exit_code/signal`。
+27. **串口/Telnet 打开前先注册监听再 `open`**：和 SSH 的 prompt 一个道理。`serial_open`/`telnet_open`
+    是同步/异步就绪后立即可能发数据（telnet 握手期间就 emit echo），若先 `await open` 拿 sid 再 `listen` 会丢首包。
+    做法：`api.newSessionId()` 生成 UUID → 先用该 id 注册 data/close/echo 监听 → 再 `serialOpen(port, config, sid)`。
+    （`resolve_session_id` 校验传入必须是规范 UUID 字符串，`crypto.randomUUID()` 恰好合规。）
+28. **串口没有 resize**：`serial_open` 收的 `SerialConfig` 只含线路参数（baud/data/parity/stop/flow），
+    无 cols/rows。所以 `TerminalTransport.resize` 对 serial 直接给空实现（`() => {}`），否则主终端 fit 时调用会崩。
+    但 **telnet 有 NAWS resize**（`telnet_resize`），两者 transport 的 `resize` 实现不同，别一刀切。
+29. **`ForwardRule.forward_type` 序列化成 `type`；`ForwardType` 枚举 lowercase**：JS 侧 `ForwardRule` 用 `type: "local"|"remote"|"dynamic"` 键、
+    小写值；`Forward` 其余字段（`profile_id/group_id/rules`）snake_case。和前 1 条一样，嵌套 struct 字段走 serde 原样，不 camelCase。
+30. **TS `noUnusedLocals` 下，`info.stats` 的属性窄化不跨闭包**：`info?.stats && (...)` 里 `info` 是 `const`，但 `info.stats`
+    是可变属性，在 `.map(r => ...)` 的箭头函数内 TS 会退回 `ForwardStats | null`，报 TS18047。
+    解法：map 前 `const fstats = info?.stats ?? null;` 用局部只读变量持有，之后全用 `fstats`。
+31. **多个面板共用 `.sftp-panel` 样式类**：串口/Telnet/转发面板都放 `<div className="sftp-panel">`，
+    继承现有的 button/input/select/row/toolbar 样式，只在转发面板补 `.fwd-*` 专属样式，少写重复 CSS。

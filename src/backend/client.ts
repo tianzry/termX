@@ -365,3 +365,267 @@ export function sftpChmod(
 ): Promise<void> {
   return invoke("sftp_chmod", { sftpId, path, mode });
 }
+
+// ── 阶段 2：串口 / Telnet / 端口转发 ────────────────────────
+
+/** 连接类型全集（比 TerminalDomain 多了 serial / telnet，无域名事件）。 */
+export type ConnKind = "pty" | "ssh" | "serial" | "telnet";
+
+/** 终端面板与主终端的传输绑定：按键上行 / resize / close 三句柄。 */
+export interface TerminalTransport {
+  kind: ConnKind;
+  write: (text: string) => void;
+  resize: (cols: number, rows: number) => void;
+  close: () => void;
+}
+
+/**
+ * 主终端 ↔ 侧栏面板（串口 / Telnet）的桥：面板持会话，主终端负责渲染与按键。
+ * - receive：会话下行字节写入主终端；
+ * - attach / detach：把主终端的按键与 resize 路由到该会话，或解除路由；
+ * - size：读主终端当前尺寸（telnet_open 需要 cols/rows 作为 NAWS 初值）。
+ */
+export interface TermBridge {
+  receive: (bytes: Uint8Array) => void;
+  attach: (transport: TerminalTransport) => void;
+  detach: () => void;
+  size: () => { cols: number; rows: number } | null;
+}
+
+// ── 串口 ──────────────────────────────────────────────────
+
+export interface SerialConfig {
+  baud_rate: number;
+  data_bits?: number; // 默认 8
+  parity?: string; // none | odd | even
+  stop_bits?: number; // 1 | 2
+  flow_control?: string; // none | software | hardware
+  xany?: boolean;
+}
+
+export function serialListPorts(): Promise<string[]> {
+  return invoke<string[]>("serial_list_ports");
+}
+
+/**
+ * 打开串口。`sessionId` 可注入：调用方在 await 之前用同一个 id 注册
+ * data/close 监听，避免 open 返回后首个数据包与监听注册之间的竞态丢包。
+ * `config` 是嵌套 struct，其内部字段走 serde 原样 snake_case，不转换。
+ */
+export function serialOpen(
+  port: string,
+  config: SerialConfig,
+  sessionId?: string,
+): Promise<string> {
+  return invoke<string>("serial_open", { port, config, sessionId });
+}
+
+/** 串口写入：终端按键文本 → UTF-8 字节。 */
+export function serialWrite(sessionId: string, text: string): Promise<void> {
+  return invoke("serial_write", { sessionId, data: toBytes(text) });
+}
+
+export function serialSetDtr(
+  sessionId: string,
+  level: boolean,
+): Promise<void> {
+  return invoke("serial_set_dtr", { sessionId, level });
+}
+
+export function serialSetRts(
+  sessionId: string,
+  level: boolean,
+): Promise<void> {
+  return invoke("serial_set_rts", { sessionId, level });
+}
+
+export function serialSendBreak(sessionId: string): Promise<void> {
+  return invoke("serial_send_break", { sessionId });
+}
+
+export function serialClose(sessionId: string): Promise<void> {
+  return invoke("serial_close", { sessionId });
+}
+
+export function onSerialData(
+  sessionId: string,
+  cb: (bytes: Uint8Array) => void,
+): Promise<UnlistenFn> {
+  return listen<string>(`serial:data:${sessionId}`, (ev) =>
+    cb(decodeBase64(ev.payload)),
+  );
+}
+
+/** 串口关闭事件载荷为 unit（序列化为 null），故回调无参。 */
+export function onSerialClose(
+  sessionId: string,
+  cb: () => void,
+): Promise<UnlistenFn> {
+  return listen<null>(`serial:close:${sessionId}`, () => cb());
+}
+
+// ── Telnet ────────────────────────────────────────────────
+
+export function telnetOpen(
+  host: string,
+  port: number,
+  cols: number,
+  rows: number,
+  inputNewline: string | null,
+  sessionId?: string,
+): Promise<string> {
+  return invoke<string>("telnet_open", {
+    host,
+    port,
+    cols,
+    rows,
+    inputNewline,
+    sessionId,
+  });
+}
+
+/** 终端按键文本 → UTF-8 字节（Telnet NVT 原始字节流）。 */
+export function telnetWrite(sessionId: string, text: string): Promise<void> {
+  return invoke("telnet_write", { sessionId, data: toBytes(text) });
+}
+
+/** 发送一行并附换行（换行风格由 open 时的 inputNewline 决定）。 */
+export function telnetWriteLine(
+  sessionId: string,
+  text: string,
+): Promise<void> {
+  return invoke("telnet_write_line", { sessionId, text });
+}
+
+export function telnetResize(
+  sessionId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return invoke("telnet_resize", { sessionId, cols, rows });
+}
+
+export function telnetClose(sessionId: string): Promise<void> {
+  return invoke("telnet_close", { sessionId });
+}
+
+export function onTelnetData(
+  sessionId: string,
+  cb: (bytes: Uint8Array) => void,
+): Promise<UnlistenFn> {
+  return listen<string>(`telnet:data:${sessionId}`, (ev) =>
+    cb(decodeBase64(ev.payload)),
+  );
+}
+
+/** RFC 854 ECHO 协商结果：服务端是否要求本地回显。 */
+export function onTelnetEcho(
+  sessionId: string,
+  cb: (enabled: boolean) => void,
+): Promise<UnlistenFn> {
+  return listen<boolean>(`telnet:echo:${sessionId}`, (ev) => cb(ev.payload));
+}
+
+export function onTelnetClose(
+  sessionId: string,
+  cb: () => void,
+): Promise<UnlistenFn> {
+  return listen<null>(`telnet:close:${sessionId}`, () => cb());
+}
+
+// ── 端口转发 ─────────────────────────────────────────────
+
+export type ForwardType = "local" | "remote" | "dynamic";
+
+export interface ForwardRule {
+  /** serde 别名：Rust `ForwardRule.forward_type` 序列化为 `type`。 */
+  type: ForwardType;
+  local_port: number;
+  remote_host: string;
+  remote_port: number;
+}
+
+export interface Forward {
+  id: string;
+  name: string;
+  profile_id: string;
+  group_id: string | null;
+  rules: ForwardRule[];
+}
+
+export type ForwardRuleStatus =
+  | "starting"
+  | "active"
+  | "stopped"
+  | "error"
+  | "stopping_error";
+
+export interface ForwardRuleStats {
+  index: number;
+  rule: ForwardRule;
+  status: ForwardRuleStatus;
+  bytes_tx: number;
+  bytes_rx: number;
+  connections: number;
+  effective_port: number | null;
+  error: string | null;
+}
+
+export interface ForwardStats {
+  bytes_tx: number;
+  bytes_rx: number;
+  connections: number;
+  connected: boolean;
+  rules: ForwardRuleStats[];
+}
+
+export function listProfiles(): Promise<Profile[]> {
+  return invoke<Profile[]>("list_profiles");
+}
+
+export function listForwards(): Promise<Forward[]> {
+  return invoke<Forward[]>("list_forwards");
+}
+
+export function getForward(id: string): Promise<Forward> {
+  return invoke<Forward>("get_forward", { id });
+}
+
+export function createForward(forward: Forward): Promise<void> {
+  return invoke("create_forward", { forward });
+}
+
+export function updateForward(forward: Forward): Promise<void> {
+  return invoke("update_forward", { forward });
+}
+
+export function deleteForward(id: string): Promise<void> {
+  return invoke("delete_forward", { id });
+}
+
+/** 启动一个转发条目，返回分配到的活跃会话 active_id。 */
+export function forwardStart(forwardId: string): Promise<string> {
+  return invoke<string>("forward_start", { forwardId });
+}
+
+export function forwardStop(activeId: string): Promise<void> {
+  return invoke("forward_stop", { activeId });
+}
+
+export function forwardStats(activeId: string): Promise<ForwardStats> {
+  return invoke<ForwardStats>("forward_stats", { activeId });
+}
+
+export function forwardRuleStart(
+  activeId: string,
+  ruleIndex: number,
+): Promise<void> {
+  return invoke("forward_rule_start", { activeId, ruleIndex });
+}
+
+export function forwardRuleStop(
+  activeId: string,
+  ruleIndex: number,
+): Promise<void> {
+  return invoke("forward_rule_stop", { activeId, ruleIndex });
+}
