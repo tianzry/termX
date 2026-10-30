@@ -169,7 +169,7 @@ jobs:
       # 非发布版（未打 tag / 手动且未填 tag）时，仅把产物作为 workflow artifact 留存
       - name: 上传构建产物
         if: needs.plan.outputs.is_release == 'false'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: termX-${{ matrix.label }}
           path: |

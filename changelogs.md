@@ -467,3 +467,7 @@
     （`File name ... differs from ... only in casing`），`beforeBuildCommand` 直接失败。
     规避：同目录下任何两个文件名不能只差大小写。本项目把模型文件改名为 `workspaceModel.ts`。
     **本地 Linux 构建通过 ≠ Windows 构建通过**，跨平台项目起名要一开始就避开。
+61. **`upload-artifact@v5` 自身仍跑 Node 20**：2026 年 GitHub 已强制 Node 20 action 在 Node 24 上运行并告警，
+    但 v5 的 `action.yml` 里写的是 `node20`。换成 `@v7`（`runs.using: node24`）即可消除；
+    v7 的 `name` / `path` / `if-no-files-found` / `retention-days` 入参与本项目用法完全兼容。
+    排查方法：`git ls-remote --tags <repo>` 找最新 tag，再读 `raw.githubusercontent.com/<repo>/<tag>/action.yml` 的 `runs.using`。
