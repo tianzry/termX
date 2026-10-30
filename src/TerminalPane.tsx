@@ -17,7 +17,7 @@ import type {
   TerminalDomain,
   TerminalTransport,
 } from "./backend/client";
-import type { Tab } from "./workspace";
+import type { Tab } from "./workspaceModel";
 
 type PaneStatus = "connecting" | "connected" | "closed" | "error";
 

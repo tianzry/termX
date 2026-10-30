@@ -6,7 +6,7 @@
  * 避免无感自动重连远端主机。
  */
 
-import type { Connector, PaneNode } from "../workspace";
+import type { Connector, PaneNode } from "../workspaceModel";
 
 const KEY = "termx.workspace.v1";
 const VERSION = 1;

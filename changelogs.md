@@ -435,7 +435,7 @@
 
 ### 改动点
 
-1. **`src/workspace.ts`（新增）**：工作区模型与纯函数。
+1. **`src/workspaceModel.ts`（新增）**：工作区模型与纯函数。
    `Connector`（pty / ssh）、`PaneNode`=`leaf | split(dir, ratio, a, b)`、`Tab`；
    `splitLeaf` / `removeLeaf`（单边为空自动提升另一边）/ `updateRatio` / `collectLeaves`。
 2. **`src/TerminalPane.tsx`（新增）**：每格独立 xterm + 独立 sessionId + 独立事件订阅。
@@ -462,3 +462,8 @@
 59. **TS 的窄化不会穿透到嵌套函数**：`LayoutView` 里 `if (node.type === "leaf") return`
     之后直接写 `node.dir` 在 `startDrag` 闭包里报 `Property 'dir' does not exist on type 'PaneNode'`。
     先把 `const dir = node.dir` 抓出来再进闭包。
+60. **文件名大小写冲突会在 Windows CI 才炸**：`src/workspace.ts` 与 `src/Workspace.tsx` 在 Linux 上互不干扰，
+    但 Windows 文件系统不分大小写，git checkout 后两个模块被解析成同一个文件，tsc 报 TS1261/TS1149
+    （`File name ... differs from ... only in casing`），`beforeBuildCommand` 直接失败。
+    规避：同目录下任何两个文件名不能只差大小写。本项目把模型文件改名为 `workspaceModel.ts`。
+    **本地 Linux 构建通过 ≠ Windows 构建通过**，跨平台项目起名要一开始就避开。

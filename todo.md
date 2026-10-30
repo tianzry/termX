@@ -32,7 +32,7 @@
 | 端口转发（local / remote / dynamic + 规则与统计） | ✅ | `src/ForwardPanel.tsx`、`commands/forward.rs` |
 | 连接 / 凭据 / 分组管理 | ✅ | `src/ConnectionManager.tsx` |
 | 多标签页 | ✅ | `src/Workspace.tsx`、`src/TerminalPane.tsx` |
-| 分屏（水平 / 垂直 + 拖拽） | ✅ | `src/workspace.ts`、`src/Workspace.tsx` |
+| 分屏（水平 / 垂直 + 拖拽） | ✅ | `src/workspaceModel.ts`、`src/Workspace.tsx` |
 | 会话恢复（localStorage + 恢复横幅） | ✅ | `src/backend/workspaceStore.ts` |
 | 三平台 CI 构建 + Windows 代码签名 | ✅ | `.github/workflows/release.yml` |
 
@@ -46,7 +46,7 @@
   - 参考：`components/top-tabs/`、`application/state/activeTabStore.ts`。
 - [x] ✅ **2. 分屏（水平 / 垂直）**
   - 同一标签内可分割窗格，每格一个终端；支持拖拽调整尺寸。
-  - 实现：`src/workspace.ts`（split/prune/ratio 纯函数）、`src/Workspace.tsx`（嵌套渲染 + 分隔条）。
+  - 实现：`src/workspaceModel.ts`（split/prune/ratio 纯函数）、`src/Workspace.tsx`（嵌套渲染 + 分隔条）。
   - 参考：`components/workspace/`、`domain/workspace.ts`（split/insert/prune/sizing）。
 - [x] ✅ **3. 会话恢复**
   - 重启后恢复上次的工作区、标签与分屏布局。

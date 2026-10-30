@@ -29,7 +29,7 @@ import {
   type PaneNode,
   type SplitDir,
   type Tab,
-} from "./workspace";
+} from "./workspaceModel";
 import {
   loadWorkspace,
   saveWorkspace,
