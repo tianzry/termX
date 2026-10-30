@@ -411,3 +411,9 @@
     发布才编全平台」不能靠给每个 matrix 条目加 `if`。改用 `plan` job 输出 JSON，`build` 侧
     `matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}` 动态展开；矩阵 JSON 必须是**单行**
     （`GITHUB_OUTPUT` 的 `key=value` 不能跨行，多行要用 heredoc 分隔符）。
+50. **`update_profile` 必须回传 `algorithms`**：Profile 的 `algorithms` 字段带 `default`，前端若省略，
+    serde 会回落到默认算法集，等于把归档里的自定义算法静默清空。编辑草稿要原样带上原值。
+51. **`list_credentials` 不返回 secret**：列表只给元数据（避免每次无谓查 keychain）。编辑时必须先调
+    `get_credential` 取全量再提交，否则「secret 为空」会被后端当成「删除密钥」，把已有密码/私钥清掉。
+52. **POC 临时建档的副作用**：每次连接都 `createCredential + createProfile` 会在 DB 里堆积重复记录
+    （`id` 每次随机），且凭据名重复。改为「连接管理器建档 → 按 `profile_id` 连接」后消除。

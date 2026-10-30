@@ -629,3 +629,63 @@ export function forwardRuleStop(
 ): Promise<void> {
   return invoke("forward_rule_stop", { activeId, ruleIndex });
 }
+
+// ── 连接管理器：档案 / 凭据 / 分组 CRUD ────────────────────
+
+export interface Group {
+  id: string;
+  name: string;
+  color: string;
+  sort_order: number;
+  terminal_waves_enabled?: boolean;
+}
+
+export function listGroups(): Promise<Group[]> {
+  return invoke<Group[]>("list_groups");
+}
+
+export function createGroup(group: Group): Promise<void> {
+  return invoke("create_group", { group });
+}
+
+export function updateGroup(group: Group): Promise<void> {
+  return invoke("update_group", { group });
+}
+
+export function deleteGroup(id: string): Promise<void> {
+  return invoke("delete_group", { id });
+}
+
+export function getProfile(id: string): Promise<Profile> {
+  return invoke<Profile>("get_profile", { id });
+}
+
+export function updateProfile(profile: Profile): Promise<void> {
+  return invoke("update_profile", { profile });
+}
+
+export function deleteProfile(id: string): Promise<void> {
+  return invoke("delete_profile", { id });
+}
+
+/** 列表不返回 secret（避免无谓 keychain 查询）；编辑时用 getCredential 取全量。 */
+export function listCredentials(): Promise<Credential[]> {
+  return invoke<Credential[]>("list_credentials");
+}
+
+export function getCredential(id: string): Promise<Credential> {
+  return invoke<Credential>("get_credential", { id });
+}
+
+export function updateCredential(credential: Credential): Promise<void> {
+  return invoke("update_credential", { credential });
+}
+
+export function deleteCredential(id: string): Promise<void> {
+  return invoke("delete_credential", { id });
+}
+
+/** 读 `~/.ssh/<name>` 原文（后端白名单，仅 id_rsa / id_ed25519）。 */
+export function readDefaultKeyFile(name: "id_rsa" | "id_ed25519"): Promise<string> {
+  return invoke<string>("read_default_key_file", { name });
+}

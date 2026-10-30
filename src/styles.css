@@ -448,3 +448,213 @@ body {
   color: #d29922;
   border-color: #9e6a03;
 }
+
+/* ── 空闲页：已保存连接快捷入口 ─────────────────────────── */
+
+.profiles-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 10px 12px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+
+.profiles-bar .hint {
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.profile-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: #21262d;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.profile-chip:hover:not(:disabled) {
+  border-color: #58a6ff;
+}
+
+.profile-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.profile-chip-sub {
+  font-size: 11px;
+  color: #8b949e;
+}
+
+/* ── 连接管理器 ─────────────────────────────────────────── */
+
+.cm-modal {
+  width: 760px;
+  max-width: calc(100vw - 40px);
+  max-height: 86vh;
+  gap: 8px;
+}
+
+.cm-modal button {
+  background: #21262d;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.cm-modal button:hover:not(:disabled) {
+  background: #30363d;
+}
+
+.cm-modal button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cm-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cm-head h3 {
+  flex: 1;
+}
+
+.cm-tabs {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #30363d;
+}
+
+.cm-tabs button.active {
+  border-color: #58a6ff;
+  color: #58a6ff;
+}
+
+.cm-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.cm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.cm-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cm-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: #e6edf3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-sub {
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.cm-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.cm-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cm-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+}
+
+.cm-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: #8b949e;
+}
+
+.cm-form input,
+.cm-form select,
+.cm-form textarea {
+  background: #0d1117;
+  color: #e6edf3;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.cm-form .cm-wide {
+  grid-column: 1 / -1;
+}
+
+.cm-actions-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.cm-new {
+  align-self: flex-start;
+}
+
+.cm-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 13px;
+  color: #8b949e;
+}
+
+.cm-err {
+  font-size: 12px;
+  color: #f85149;
+}

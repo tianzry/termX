@@ -1,21 +1,21 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { SftpPanel } from "./SftpPanel";
 import { SerialPanel } from "./SerialPanel";
 import { TelnetPanel } from "./TelnetPanel";
 import { ForwardPanel } from "./ForwardPanel";
+import { ConnectionManager } from "./ConnectionManager";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import * as api from "./backend/client";
 import type {
   AuthPrompt,
-  CredentialType,
+  Profile,
   TermBridge,
   TerminalDomain,
   TerminalTransport,
 } from "./backend/client";
 
 type Mode = "idle" | "pty" | "ssh";
-type AuthType = "password" | "key" | "interactive";
 
 type Prompt =
   | { kind: "auth"; sessionId: string; payload: AuthPrompt }
@@ -36,14 +36,22 @@ export default function App() {
   const [showSerial, setShowSerial] = useState(false);
   const [showTelnet, setShowTelnet] = useState(false);
   const [showForward, setShowForward] = useState(false);
+  const [showManager, setShowManager] = useState(false);
 
-  // SSH 表单（三种认证）
-  const [host, setHost] = useState("127.0.0.1");
-  const [port, setPort] = useState("22");
-  const [user, setUser] = useState("");
-  const [authType, setAuthType] = useState<AuthType>("password");
-  const [password, setPassword] = useState("");
-  const [privateKey, setPrivateKey] = useState("");
+  // 已保存的连接档案（由连接管理器维护，空闲页据此快速连接）
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+
+  async function loadProfiles() {
+    try {
+      setProfiles(await api.listProfiles());
+    } catch {
+      /* 首次启动或 DB 为空时忽略 */
+    }
+  }
+
+  useEffect(() => {
+    loadProfiles();
+  }, []);
 
   // 交互 prompt 弹窗
   const [prompt, setPrompt] = useState<Prompt | null>(null);
@@ -131,19 +139,13 @@ export default function App() {
     }
   }
 
-  async function openSsh() {
+  async function openSsh(profile: Profile) {
     const c = controllerRef.current;
     if (!c) return;
-    if (!host.trim() || !user.trim()) {
-      setStatus("请填写 host 和用户名");
-      return;
-    }
-    if (authType === "key" && !privateKey.trim()) {
-      setStatus("请粘贴私钥内容");
-      return;
-    }
     setBusy(true);
-    setStatus("连接 SSH…");
+    setStatus(`连接 ${profile.name}…`);
+    // 切换连接前先关掉上一个会话，避免多会话叠加
+    transportRef.current?.close();
     cleanup();
     cleanupPrompts();
     setPrompt(null);
@@ -164,32 +166,8 @@ export default function App() {
         ),
       ];
 
-      // POC 最小流程：临时新建 credential + profile，再走 ssh_connect。
-      const credId = crypto.randomUUID();
-      const profileId = crypto.randomUUID();
-      const credType: CredentialType = authType;
-      const secret =
-        authType === "password" ? password : authType === "key" ? privateKey : null;
-      await api.createCredential({
-        id: credId,
-        name: `${user}@${host}`,
-        username: user,
-        type: credType,
-        secret,
-        save_to_remote: false,
-      });
-      await api.createProfile({
-        id: profileId,
-        name: `${user}@${host}`,
-        host,
-        port: Number(port) || 22,
-        credential_id: credId,
-        bastion_profile_id: null,
-        init_command: null,
-        group_id: null,
-      });
-
-      const actualSid = await api.sshConnect(profileId, c.term.cols, c.term.rows, sid);
+      // 直接用已保存的档案连接（凭据由管理器维护，不再临时建档）。
+      const actualSid = await api.sshConnect(profile.id, c.term.cols, c.term.rows, sid);
       cleanupPrompts();
       setPrompt(null);
       await wired("ssh", actualSid);
@@ -254,8 +232,8 @@ export default function App() {
         <button onClick={openPty} disabled={busy || mode === "pty"}>
           本地终端 (PTY)
         </button>
-        <button onClick={openSsh} disabled={busy}>
-          SSH 连接
+        <button onClick={() => setShowManager(true)} disabled={busy}>
+          连接管理
         </button>
         {(mode === "pty" || mode === "ssh") && (
           <button onClick={closeCurrent} disabled={busy}>
@@ -294,62 +272,25 @@ export default function App() {
       </header>
 
       {mode === "idle" && (
-        <form
-          className="ssh-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            openSsh();
-          }}
-        >
-          <label>
-            host
-            <input value={host} onChange={(e) => setHost(e.target.value)} />
-          </label>
-          <label>
-            port
-            <input value={port} onChange={(e) => setPort(e.target.value)} />
-          </label>
-          <label>
-            用户名
-            <input value={user} onChange={(e) => setUser(e.target.value)} />
-          </label>
-          <label>
-            认证方式
-            <select
-              value={authType}
-              onChange={(e) => setAuthType(e.target.value as AuthType)}
-            >
-              <option value="password">密码</option>
-              <option value="key">私钥</option>
-              <option value="interactive">键盘交互</option>
-            </select>
-          </label>
-          {authType === "password" && (
-            <label>
-              密码
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
+        <div className="profiles-bar">
+          {profiles.length === 0 ? (
+            <span className="hint">还没有连接，点「连接管理」新建。</span>
+          ) : (
+            profiles.map((p) => (
+              <button
+                key={p.id}
+                className="profile-chip"
+                onClick={() => openSsh(p)}
+                disabled={busy}
+              >
+                <span>{p.name}</span>
+                <span className="profile-chip-sub">
+                  {p.host}:{p.port}
+                </span>
+              </button>
+            ))
           )}
-          {authType === "key" && (
-            <label>
-              私钥（粘贴 PEM 内容）
-              <input
-                value={privateKey}
-                onChange={(e) => setPrivateKey(e.target.value)}
-              />
-            </label>
-          )}
-          {authType === "interactive" && (
-            <span className="hint">连接后按服务端提示回答（keyboard-interactive）</span>
-          )}
-          <button type="submit" disabled={busy}>
-            连接
-          </button>
-        </form>
+        </div>
       )}
 
       <div className="main">
@@ -367,6 +308,18 @@ export default function App() {
         {showTelnet && <TelnetPanel bridge={bridge} />}
         {showForward && <ForwardPanel />}
       </div>
+
+      {showManager && (
+        <ConnectionManager
+          profiles={profiles}
+          onClose={() => setShowManager(false)}
+          onConnect={(p) => {
+            setShowManager(false);
+            openSsh(p);
+          }}
+          onChanged={loadProfiles}
+        />
+      )}
 
       {/* 交互 prompt 弹窗 */}
       {prompt && (
