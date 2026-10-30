@@ -199,3 +199,47 @@
     reader 线程只持有 `Arc<Mutex<Option<Box<dyn Child + Send>>>>` 的一份 clone，用 `take()` 保证只 reap 一次、不重复 kill。
 22. **`Box<dyn Child + Send + Sync>`（`spawn_command` 返回）可自动 coerce 到 `Box<dyn Child + Send>`**：
     给 `shared` 显式标注类型 `Arc<Mutex<Option<Box<dyn Child + Send>>>>`，`Some(child)` 在赋值处完成 auto-trait 放松的 unsize coercion，无需手写 cast。
+
+---
+
+## 2026-10-29 — 阶段 1 收尾：真实 sshd 端到端冒烟
+
+目标：把 M1（阶段 1）的「三种认证 + exec + SFTP」从"只有单元测试"补到"真连本地 sshd 跑通"，
+补上运行时证据。上轮末尾「未做」的端到端验证，这轮落地。
+
+### 修改点
+
+1. **`ssh/client.rs`（test 模块）**：新增 `smoke_pubkey()` / `smoke_password()` 两个 env 读取辅助，
+   及 `smoke_connect()`（headless host + reserve + `connect`，返回 `ConnectResult`）。
+2. 新增 4 个 env-gated `#[tokio::test]`（无 env 静默跳过，普通 `cargo test` 仍全绿）：
+   - `ssh_password_connect_roundtrip`：`CredentialType::Password` 直连成功。
+   - `ssh_keyboard_interactive_connect_roundtrip`：`CredentialType::Interactive`，循环监听
+     `ssh:auth_prompt:{sid}` → 从 `state.auth_waiters` 取 waiter → 回填 password，直到 connect 完成（支持多轮 InfoRequest）。
+   - `ssh_exec_once_roundtrip`：pubkey 连接后 `exec_once("printf '__EXEC_OK__:%s' "$(id -u)"")`，断言 stdout 含标记 + `exit_code == Some(0)`。
+   - `sftp_upload_download_chmod_roundtrip`：pubkey 连接 → `SftpHandle::from_handle` →
+     `upload_streaming` 传 4KB 全字节 → `chmod 0640` → `stat` 断言 `permissions & 0o7777 == 0640` →
+     `download` 字节一致 → `remove_file` 清理。
+
+### 验证
+
+- 本地拉起两个 sshd：pubkey（`:2222`，已有）与 password+kbd-interactive（`:2223`，本轮回填密码 `root/termx_test_pw`）。
+- `cargo test --lib`（注入 `TERMX_SSH_TEST_*=2222` / `TERMX_SSH_TEST_PASSWORD_PORT=2223` 等 env）→
+  **767 passed; 0 failed**（含本地 PTY 退出码、ssh 信号映射、四种连接 + exec + SFTP）。
+- 上轮 `cargo check --tests` 已过；本轮仅新增测试代码，无生产路径改动，`npm run build` 不必重跑。
+
+### 踩坑经验（务必记住）
+
+23. **russh-sftp `SftpSession::write` 只 `open_with_flags(WRITE)`，不带 CREATE**：对不存在的文件直接报
+    `No such file`。上传必须用 `create` 或生产路径 `upload_streaming`（先 create `.part` 再 rename）。
+    不要在测试里裸调 `sftp.write` 当"上传"用。
+24. **Ubuntu sshd 的 PAM keyboard-interactive 第一轮 InfoRequest 可能是 0 个 prompt**（纯 text info 前置轮）；
+    client 回填 replies 的条数必须严格等于 `prompts.len()`：0 个就回 `vec![]`，1 个才回 `vec![pw]`。
+    不能 `.max(1)`，否则 sshd 记 `input_userauth_info_response: wrong number of replies [preauth]` 并断线
+    （表现为 russh `ssh_kbi_response_failed: Unable to receive more messages from the channel`）。
+    因此 keyboard-interactive 测试要写成「循环：收 event → 按 prompts.len() 回填 → 直到 connect 完成」。
+25. **端到端 sshd 冒烟要用两个实例分端口 + 分 env**：
+    - pubkey：`TERMX_SSH_TEST_PORT` / `_KEY` / `_KNOWN_HOSTS`（`:2222`，复用阶段 0 的 fixture）。
+    - password+kbd：`TERMX_SSH_TEST_PASSWORD_PORT` / `_PASSWORD` / `_KNOWN_HOSTS_PW`（`:2223`，
+      `-o PasswordAuthentication=yes -o KbdInteractiveAuthentication=yes`，known_hosts 直接把 2222 的
+      host-key 条目改端口 `sed 's/]:2222/]:2223/'` 复用同套 host key）。
+    - 所有 smoke 测试无 env 时 `eprintln!("skip: ...")` + `return`，保证无 sshd 的 CI 环境全绿。

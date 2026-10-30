@@ -962,6 +962,296 @@ mod tests {
             "未收到 SSH 回显，实际输出: {text}"
         );
     }
+
+    // ── 端到端冒烟辅助（env 注入，无 sshd 时跳过） ──────────────
+
+    /// pubkey sshd 的入参（TERMX_SSH_TEST_*）。缺任一环境变量返回 None。
+    fn smoke_pubkey() -> Option<(u16, String, String, String)> {
+        let port: u16 = std::env::var("TERMX_SSH_TEST_PORT").ok()?.parse().ok()?;
+        let user = std::env::var("TERMX_SSH_TEST_USER").unwrap_or_else(|_| "root".into());
+        let key_path = std::env::var("TERMX_SSH_TEST_KEY").ok()?;
+        let known_hosts = std::env::var("TERMX_SSH_TEST_KNOWN_HOSTS").ok()?;
+        let private_key = std::fs::read_to_string(&key_path).ok()?;
+        Some((port, user, private_key, known_hosts))
+    }
+
+    /// password + keyboard-interactive sshd 的入参。缺任一环境变量返回 None。
+    fn smoke_password() -> Option<(u16, String, String, String)> {
+        let port: u16 = std::env::var("TERMX_SSH_TEST_PASSWORD_PORT")
+            .ok()?
+            .parse()
+            .ok()?;
+        let user = std::env::var("TERMX_SSH_TEST_USER").unwrap_or_else(|_| "root".into());
+        let password = std::env::var("TERMX_SSH_TEST_PASSWORD").ok()?;
+        let known_hosts = std::env::var("TERMX_SSH_TEST_KNOWN_HOSTS_PW").ok()?;
+        Some((port, user, password, known_hosts))
+    }
+
+    /// 用 headless host 走完整 `connect`（含 reserve + 认证 + shell），返回会话柄。
+    async fn smoke_connect(
+        port: u16,
+        credential: Credential,
+        known_hosts_path: PathBuf,
+    ) -> AppResult<ConnectResult> {
+        let (app, _events) = crate::ssh::test_support::headless_host();
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let owner = crate::state::SessionOwner::Headless(uuid::Uuid::new_v4());
+        let state = app.state();
+        let _reservation = crate::commands::lifecycle::reserve_resource(
+            &state,
+            &session_id,
+            crate::state::SessionKind::Ssh,
+            owner.clone(),
+        )
+        .unwrap();
+        connect(ConnectParams {
+            session_id: session_id.clone(),
+            profile: Profile {
+                id: "smoke-profile".into(),
+                name: "smoke".into(),
+                host: "127.0.0.1".into(),
+                port,
+                credential_id: "smoke-credential".into(),
+                bastion_profile_id: None,
+                init_command: None,
+                group_id: None,
+                algorithms: Default::default(),
+            },
+            credential,
+            bastion_chain: Vec::new(),
+            cols: 80,
+            rows: 24,
+            app: app.clone(),
+            owner,
+            recording_path: None,
+            log_session_id: None,
+            prompt_session_id: Some(session_id),
+            known_hosts_path,
+            timeout_secs: 10,
+        })
+        .await
+    }
+
+    // ── 三种认证 + exec + SFTP 端到端冒烟 ───────────────────────
+
+    #[tokio::test]
+    async fn ssh_password_connect_roundtrip() {
+        let Some((port, user, password, known_hosts)) = smoke_password() else {
+            eprintln!("skip: TERMX_SSH_TEST_PASSWORD_PORT 未设置");
+            return;
+        };
+        let credential = Credential {
+            id: "smoke-pw".into(),
+            name: "smoke-pw".into(),
+            username: user,
+            credential_type: crate::models::CredentialType::Password,
+            secret: Some(password),
+            save_to_remote: false,
+        };
+        let result = timeout(
+            Duration::from_secs(15),
+            smoke_connect(port, credential, PathBuf::from(known_hosts)),
+        )
+        .await
+        .expect("密码认证连接超时")
+        .expect("密码认证应成功");
+        assert_eq!(result.handle.profile_id(), "smoke-profile");
+    }
+
+    #[tokio::test]
+    async fn ssh_keyboard_interactive_connect_roundtrip() {
+        let Some((port, user, password, known_hosts)) = smoke_password() else {
+            eprintln!("skip: TERMX_SSH_TEST_PASSWORD_PORT 未设置");
+            return;
+        };
+        let (app, mut events) = crate::ssh::test_support::headless_host();
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let owner = crate::state::SessionOwner::Headless(uuid::Uuid::new_v4());
+        let state = app.state();
+        let _reservation = crate::commands::lifecycle::reserve_resource(
+            &state,
+            &session_id,
+            crate::state::SessionKind::Ssh,
+            owner.clone(),
+        )
+        .unwrap();
+
+        let credential = Credential {
+            id: "smoke-kbi".into(),
+            name: "smoke-kbi".into(),
+            username: user,
+            credential_type: crate::models::CredentialType::Interactive,
+            secret: None,
+            save_to_remote: false,
+        };
+        let mut connect_task = tokio::spawn(connect(ConnectParams {
+            session_id: session_id.clone(),
+            profile: Profile {
+                id: "smoke-kbi-profile".into(),
+                name: "smoke-kbi".into(),
+                host: "127.0.0.1".into(),
+                port,
+                credential_id: "smoke-kbi-credential".into(),
+                bastion_profile_id: None,
+                init_command: None,
+                group_id: None,
+                algorithms: Default::default(),
+            },
+            credential,
+            bastion_chain: Vec::new(),
+            cols: 80,
+            rows: 24,
+            app: app.clone(),
+            owner,
+            recording_path: None,
+            log_session_id: None,
+            prompt_session_id: Some(session_id.clone()),
+            known_hosts_path: PathBuf::from(known_hosts),
+            timeout_secs: 10,
+        }));
+
+        // 循环回填 password，直到 connect 结束（PAM 可能多轮 InfoRequest）。
+        let auth_event = format!("ssh:auth_prompt:{session_id}");
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            async {
+                loop {
+                    tokio::select! {
+                        res = &mut connect_task => return res,
+                        ev = events.recv() => {
+                            match ev {
+                                Some((event, payload)) if event == auth_event => {
+                                    let n = payload
+                                        .get("prompts")
+                                        .and_then(|p| p.as_array())
+                                        .map(|a| a.len())
+                                        .unwrap_or(1);
+                                    let waiter = locked(&state.auth_waiters)
+                                        .expect("auth_waiters 锁应可用")
+                                        .remove(&session_id)
+                                        .expect("auth waiter 应已注册");
+                                    let _ = waiter.sender.send(vec![password.clone(); n]);
+                                }
+                                Some(_) => {}
+                                None => panic!("事件通道已关闭，connect 未完成"),
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        .await
+        .expect("keyboard-interactive 连接超时")
+        .expect("join connect task 失败")
+        .expect("keyboard-interactive 认证应成功");
+    }
+
+    #[tokio::test]
+    async fn ssh_exec_once_roundtrip() {
+        let Some((port, user, key, known_hosts)) = smoke_pubkey() else {
+            eprintln!("skip: TERMX_SSH_TEST_PORT 未设置");
+            return;
+        };
+        let credential = Credential {
+            id: "smoke-key".into(),
+            name: "smoke-key".into(),
+            username: user,
+            credential_type: crate::models::CredentialType::Key,
+            secret: Some(key),
+            save_to_remote: false,
+        };
+        let result = timeout(
+            Duration::from_secs(15),
+            smoke_connect(port, credential, PathBuf::from(known_hosts)),
+        )
+        .await
+        .expect("exec 连接超时")
+        .expect("exec 连接应成功");
+
+        let ssh = result.handle.ssh_handle().clone();
+        let out = run_blocking_ssh(move || async move {
+            exec_once(
+                &ssh,
+                "printf '__EXEC_OK__:%s' \"$(id -u)\"",
+                Duration::from_secs(10),
+            )
+            .await
+        })
+        .await
+        .expect("exec_once 应成功");
+
+        assert!(
+            out.stdout.contains("__EXEC_OK__"),
+            "exec stdout 应含标记，实际: {}",
+            out.stdout
+        );
+        assert_eq!(out.exit_code, Some(0), "exec 退出码应为 0");
+    }
+
+    #[tokio::test]
+    async fn sftp_upload_download_chmod_roundtrip() {
+        let Some((port, user, key, known_hosts)) = smoke_pubkey() else {
+            eprintln!("skip: TERMX_SSH_TEST_PORT 未设置");
+            return;
+        };
+        let credential = Credential {
+            id: "smoke-key".into(),
+            name: "smoke-key".into(),
+            username: user,
+            credential_type: crate::models::CredentialType::Key,
+            secret: Some(key),
+            save_to_remote: false,
+        };
+        let result = timeout(
+            Duration::from_secs(15),
+            smoke_connect(port, credential, PathBuf::from(known_hosts)),
+        )
+        .await
+        .expect("SFTP 连接超时")
+        .expect("SFTP 连接应成功");
+
+        let ssh = result.handle.ssh_handle().clone();
+        let sftp = crate::ssh::sftp::SftpHandle::from_handle(&ssh, "smoke-sftp".into())
+            .await
+            .expect("打开 SFTP 子系统应成功");
+
+        let remote = format!("/tmp/termx_sftp_smoke_{}.bin", std::process::id());
+        // 确定性 4KB，覆盖全部 256 个字节值，验证不带换行转换、不丢数据。
+        let payload: Vec<u8> = (0u8..=255).cycle().take(4096).collect();
+
+        // 走生产的 `upload_streaming`（先 create `.part` 再 rename），
+        // 顺便覆盖进度事件链路。headless host 仅用于接收进度 emit。
+        let (host, _rx) = crate::ssh::test_support::headless_host();
+        let mut reader = &payload[..];
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let written = sftp
+            .upload_streaming(
+                &mut reader,
+                payload.len() as u64,
+                &remote,
+                &host,
+                "smoke-xfer",
+                cancel,
+            )
+            .await
+            .expect("SFTP 上传应成功");
+        assert_eq!(written, payload.len() as u64);
+
+        sftp.chmod(&remote, 0o640).await.expect("SFTP chmod 应成功");
+
+        let stat = sftp.stat(&remote).await.expect("SFTP stat 应成功");
+        let perms = stat.permissions.expect("stat 应返回权限位");
+        assert_eq!(
+            perms & 0o7777,
+            0o640,
+            "chmod 0640 后权限位应为 0640，实际 {perms:#o}"
+        );
+
+        let downloaded = sftp.download(&remote).await.expect("SFTP 下载应成功");
+        assert_eq!(downloaded, payload, "下载字节应与上传一致");
+
+        sftp.remove_file(&remote).await.expect("清理远端临时文件");
+    }
 }
 
 // ---------------------------------------------------------------------------
