@@ -417,3 +417,15 @@
     `get_credential` 取全量再提交，否则「secret 为空」会被后端当成「删除密钥」，把已有密码/私钥清掉。
 52. **POC 临时建档的副作用**：每次连接都 `createCredential + createProfile` 会在 DB 里堆积重复记录
     （`id` 每次随机），且凭据名重复。改为「连接管理器建档 → 按 `profile_id` 连接」后消除。
+53. **进度事件按传输实例分频道**：后端发的是 `sftp:progress:{transfer_id}`，一个 transfer_id 一条监听。
+    批量传输必须自己造 id、逐文件 `listen`/`unlisten`，不能只监听一个全局频道。
+    另外 `sftp_save_file` / `sftp_pick_and_upload` 是「对话框 + 传输」一体化、transfer_id 由后端内部生成，
+    前端拿不到 → 要进度就只能走两步式（`pick_save_path`/`pick_open_files` + `download_to`/`upload_from`）。
+54. **递归传输不需要额外建目录命令**：`download_streaming` 会自动 `create_dir_all` 本地父目录，
+    `upload_streaming` 会自动 `mkdir_p` 远端父目录。后端也确实没有本地 mkdir 命令，
+    所以下载目录的正确做法是「`walk_remote_dir` 列出文件 → 拼本地路径 → 逐文件 `download_to`」。
+55. **批量进度不能用文件个数当总量**：进度事件给的是字节数（`{transferred,total}`），把「第几个文件」当 total
+    会让百分比完全错乱。要以字节累加，并且每个子文件结束后把它的 total 计入下一轮的基准值。
+56. **`rel_path` 统一用 '/'，本地拼接要 trim 尾部反斜杠**：Windows 原生目录选择器返回 `C:\dir\`，
+    直接拼 `rel_path` 会出现 `\\` 双分隔符。拼之前先 `replace(/[\\/]+$/,"")`。
+

@@ -7,9 +7,35 @@ interface Props {
   sshSessionId: string | null;
 }
 
+type Direction = "up" | "down";
+type TransferStatus = "running" | "done" | "error" | "canceled";
+
+interface TransferRow {
+  id: string;
+  label: string;
+  direction: Direction;
+  transferred: number;
+  total: number;
+  status: TransferStatus;
+  error?: string;
+  /** 当前子任务的 transfer_id（批量传输时用于取消）。 */
+  current?: string;
+}
+
 function joinPath(dir: string, name: string): string {
   if (dir === "/") return `/${name}`;
   return `${dir.replace(/\/+$/, "")}/${name}`;
+}
+
+/** 去掉末尾的 '/' 或 '\'（原生目录选择器在 Windows 上返回反斜杠）。 */
+function trimSep(p: string): string {
+  return p.replace(/[\\/]+$/, "");
+}
+
+/** 取本地路径的最后一段（兼容 Windows 反斜杠）。 */
+function basename(p: string): string {
+  const parts = p.split(/[\\/]/);
+  return parts[parts.length - 1] || p;
 }
 
 function formatSize(bytes: number): string {
@@ -19,7 +45,10 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-/** SFTP 文件浏览面板：独立连接 / 复用 SSH 会话，list/下载/上传/目录/重命名/删除/stat。 */
+/**
+ * SFTP 文件浏览面板：独立连接 / 复用 SSH 会话。
+ * 支持 list/下载/上传/目录/重命名/删除/stat，以及流式传输 + 递归目录 + 原生选择框 + 进度条。
+ */
 export function SftpPanel({ sshSessionId }: Props) {
   const [sftpId, setSftpId] = useState<string | null>(null);
   const [cwd, setCwd] = useState("/");
@@ -41,7 +70,9 @@ export function SftpPanel({ sshSessionId }: Props) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // 传输队列与取消标记
+  const [transfers, setTransfers] = useState<TransferRow[]>([]);
+  const canceled = useRef<Set<string>>(new Set());
 
   async function refresh(path?: string) {
     if (!sftpId) return;
@@ -133,39 +164,233 @@ export function SftpPanel({ sshSessionId }: Props) {
     await refresh(pathInput);
   }
 
-  async function download(e: RemoteEntry) {
+  // ── 传输队列辅助 ────────────────────────────────────────
+
+  function addRow(row: TransferRow) {
+    // 只保留最近 8 条，避免长列表撑爆面板
+    setTransfers((cur) => [row, ...cur].slice(0, 8));
+  }
+
+  function patchRow(id: string, patch: Partial<TransferRow>) {
+    setTransfers((cur) =>
+      cur.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    );
+  }
+
+  function cancelRow(id: string) {
+    canceled.current.add(id);
+    const row = transfers.find((t) => t.id === id);
+    if (row?.current) {
+      api.sftpCancelTransfer(row.current).catch(() => {
+        /* 取消失败不阻塞 UI */
+      });
+    }
+    patchRow(id, { status: "canceled" });
+  }
+
+  function isCanceled(id: string): boolean {
+    return canceled.current.has(id);
+  }
+
+  // ── 下载：单文件（原生另存为 + 进度） ────────────────────
+
+  async function downloadFile(remotePath: string, name: string) {
     if (!sftpId) return;
-    setBusy(true);
+    const localPath = await api.sftpPickSavePath(name);
+    if (!localPath) return;
     setErr("");
+    const rowId = crypto.randomUUID();
+    const tid = crypto.randomUUID();
+    addRow({
+      id: rowId,
+      label: name,
+      direction: "down",
+      transferred: 0,
+      total: 0,
+      status: "running",
+      current: tid,
+    });
+    const un = await api.onSftpProgress(tid, (p) =>
+      patchRow(rowId, { transferred: p.transferred, total: p.total }),
+    );
     try {
-      const data = await api.sftpDownload(sftpId, joinPath(cwd, e.name));
-      const blob = new Blob([Uint8Array.from(data)]);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = e.name;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (ex) {
-      setErr(String(ex));
+      await api.sftpDownloadTo(sftpId, remotePath, localPath, tid);
+      patchRow(rowId, { status: "done", current: undefined });
+    } catch (e) {
+      if (isCanceled(rowId)) {
+        patchRow(rowId, { status: "canceled", current: undefined });
+      } else {
+        patchRow(rowId, { status: "error", error: String(e), current: undefined });
+      }
     } finally {
-      setBusy(false);
+      un();
+      canceled.current.delete(rowId);
     }
   }
 
-  async function onFilePicked(files: FileList | null) {
-    const file = files?.[0];
-    if (!file || !sftpId) return;
-    setBusy(true);
+  // ── 下载：整个目录（递归 walk + 逐文件流式） ──────────────
+
+  async function downloadDirectory(remoteRoot: string, name: string) {
+    if (!sftpId) return;
+    const destRoot = await api.sftpPickFolder();
+    if (!destRoot) return;
     setErr("");
+    const rowId = crypto.randomUUID();
+    addRow({
+      id: rowId,
+      label: `${name}/`,
+      direction: "down",
+      transferred: 0,
+      total: 0,
+      status: "running",
+    });
     try {
-      const buf = new Uint8Array(await file.arrayBuffer());
-      await api.sftpUpload(sftpId, joinPath(cwd, file.name), buf);
+      const files = await api.sftpWalkRemote(sftpId, remoteRoot);
+      const total = files.reduce((s, f) => s + f.size, 0);
+      patchRow(rowId, { total });
+      let done = 0;
+      for (const f of files) {
+        if (isCanceled(rowId)) {
+          patchRow(rowId, { status: "canceled", current: undefined });
+          return;
+        }
+        const rp = `${trimSep(remoteRoot)}/${f.rel_path}`;
+        const lp = `${trimSep(destRoot)}/${f.rel_path}`;
+        const tid = crypto.randomUUID();
+        patchRow(rowId, { current: tid });
+        const un = await api.onSftpProgress(tid, (p) =>
+          patchRow(rowId, { transferred: done + p.transferred }),
+        );
+        try {
+          await api.sftpDownloadTo(sftpId, rp, lp, tid);
+        } finally {
+          un();
+        }
+        done += f.size;
+        patchRow(rowId, { transferred: done });
+      }
+      patchRow(rowId, { status: "done", current: undefined });
+    } catch (e) {
+      if (isCanceled(rowId)) {
+        patchRow(rowId, { status: "canceled", current: undefined });
+      } else {
+        patchRow(rowId, { status: "error", error: String(e), current: undefined });
+      }
+    } finally {
+      canceled.current.delete(rowId);
+    }
+  }
+
+  // ── 上传：多选文件（原生选择框 + 进度） ──────────────────
+
+  async function uploadFiles() {
+    if (!sftpId) return;
+    const picked = await api.sftpPickOpenFiles();
+    if (!picked || picked.length === 0) return;
+    setErr("");
+    const rowId = crypto.randomUUID();
+    addRow({
+      id: rowId,
+      label: picked.length === 1 ? basename(picked[0]) : `${picked.length} 个文件`,
+      direction: "up",
+      transferred: 0,
+      total: 0,
+      status: "running",
+    });
+    try {
+      let doneBytes = 0;
+      let knownTotal = 0;
+      for (const lp of picked) {
+        if (isCanceled(rowId)) {
+          patchRow(rowId, { status: "canceled", current: undefined });
+          return;
+        }
+        const tid = crypto.randomUUID();
+        patchRow(rowId, { current: tid });
+        let fileTotal = 0;
+        const un = await api.onSftpProgress(tid, (p) => {
+          fileTotal = p.total;
+          patchRow(rowId, {
+            transferred: doneBytes + p.transferred,
+            total: knownTotal + p.total,
+          });
+        });
+        try {
+          await api.sftpUploadFrom(sftpId, lp, joinPath(cwd, basename(lp)), tid);
+        } finally {
+          un();
+        }
+        doneBytes += fileTotal;
+        knownTotal += fileTotal;
+        patchRow(rowId, { transferred: doneBytes, total: knownTotal });
+      }
+      patchRow(rowId, { status: "done", current: undefined });
       await refresh();
     } catch (e) {
-      setErr(String(e));
+      if (isCanceled(rowId)) {
+        patchRow(rowId, { status: "canceled", current: undefined });
+      } else {
+        patchRow(rowId, { status: "error", error: String(e), current: undefined });
+      }
+      await refresh();
     } finally {
-      setBusy(false);
+      canceled.current.delete(rowId);
+    }
+  }
+
+  // ── 上传：整个本地目录（递归 walk + 逐文件流式） ──────────
+
+  async function uploadDirectory() {
+    if (!sftpId) return;
+    const localRoot = await api.sftpPickFolder();
+    if (!localRoot) return;
+    setErr("");
+    const rowId = crypto.randomUUID();
+    addRow({
+      id: rowId,
+      label: `${basename(localRoot)}/`,
+      direction: "up",
+      transferred: 0,
+      total: 0,
+      status: "running",
+    });
+    try {
+      const files = await api.walkLocalDir(localRoot);
+      const total = files.reduce((s, f) => s + f.size, 0);
+      patchRow(rowId, { total });
+      let done = 0;
+      for (const f of files) {
+        if (isCanceled(rowId)) {
+          patchRow(rowId, { status: "canceled", current: undefined });
+          return;
+        }
+        const lp = `${trimSep(localRoot)}/${f.rel_path}`;
+        const rp = joinPath(cwd, f.rel_path);
+        const tid = crypto.randomUUID();
+        patchRow(rowId, { current: tid });
+        const un = await api.onSftpProgress(tid, (p) =>
+          patchRow(rowId, { transferred: done + p.transferred }),
+        );
+        try {
+          // 远端父目录由后端 upload_streaming 自动 mkdir -p
+          await api.sftpUploadFrom(sftpId, lp, rp, tid);
+        } finally {
+          un();
+        }
+        done += f.size;
+        patchRow(rowId, { transferred: done });
+      }
+      patchRow(rowId, { status: "done", current: undefined });
+      await refresh();
+    } catch (e) {
+      if (isCanceled(rowId)) {
+        patchRow(rowId, { status: "canceled", current: undefined });
+      } else {
+        patchRow(rowId, { status: "error", error: String(e), current: undefined });
+      }
+      await refresh();
+    } finally {
+      canceled.current.delete(rowId);
     }
   }
 
@@ -231,6 +456,11 @@ export function SftpPanel({ sshSessionId }: Props) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function percentOf(t: TransferRow): number {
+    if (t.total <= 0) return 0;
+    return Math.min(100, Math.round((t.transferred / t.total) * 100));
   }
 
   return (
@@ -307,19 +537,15 @@ export function SftpPanel({ sshSessionId }: Props) {
             <button onClick={() => refresh()} disabled={busy}>
               刷新
             </button>
-            <button onClick={() => fileInputRef.current?.click()} disabled={busy}>
-              上传
+            <button onClick={uploadFiles} disabled={busy} title="原生文件选择框（可多选）">
+              上传文件
+            </button>
+            <button onClick={uploadDirectory} disabled={busy} title="原生目录选择框（递归）">
+              上传目录
             </button>
             <button onClick={disconnect} disabled={busy}>
               断开
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="sftp-file"
-              onChange={(e) => onFilePicked(e.target.files)}
-              style={{ display: "none" }}
-            />
           </div>
 
           <div className="sftp-toolbar">
@@ -332,6 +558,38 @@ export function SftpPanel({ sshSessionId }: Props) {
               新建目录
             </button>
           </div>
+
+          {transfers.length > 0 && (
+            <div className="xfer-list">
+              {transfers.map((t) => (
+                <div key={t.id} className="xfer-row" data-status={t.status}>
+                  <span className="xfer-name" title={t.error ?? t.label}>
+                    {t.direction === "up" ? "↑" : "↓"} {t.label}
+                  </span>
+                  <div className="xfer-bar" data-indeterminate={t.total <= 0}>
+                    <div
+                      className="xfer-fill"
+                      style={{ width: `${percentOf(t)}%` }}
+                    />
+                  </div>
+                  <span className="xfer-pct">
+                    {t.total > 0 ? `${percentOf(t)}%` : t.status === "running" ? "…" : ""}
+                  </span>
+                  {t.status === "running" ? (
+                    <button onClick={() => cancelRow(t.id)}>取消</button>
+                  ) : (
+                    <span className="xfer-state" data-status={t.status}>
+                      {t.status === "done"
+                        ? "完成"
+                        : t.status === "canceled"
+                          ? "已取消"
+                          : "失败"}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {stat && (
             <div className="sftp-stat">
@@ -374,11 +632,17 @@ export function SftpPanel({ sshSessionId }: Props) {
                       {e.is_dir ? "" : formatSize(e.size)}
                     </span>
                     <span className="sftp-actions">
-                      {!e.is_dir && (
-                        <button onClick={() => download(e)} disabled={busy}>
-                          下载
-                        </button>
-                      )}
+                      <button
+                        onClick={() =>
+                          e.is_dir
+                            ? downloadDirectory(joinPath(cwd, e.name), e.name)
+                            : downloadFile(joinPath(cwd, e.name), e.name)
+                        }
+                        disabled={busy}
+                        title={e.is_dir ? "选择目标目录后递归下载" : "原生另存为"}
+                      >
+                        {e.is_dir ? "下载目录" : "下载"}
+                      </button>
                       <button
                         onClick={() => {
                           setRenaming(e.name);

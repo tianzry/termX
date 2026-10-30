@@ -115,9 +115,15 @@ export function createProfile(profile: Profile): Promise<void> {
 
 // ── SSH 会话 ──────────────────────────────────────────────
 
-/** 生成一个 sessionId，供前端在 `sshConnect` 之前注册 prompt 监听。 */
+/**
+ * 生成一个 sessionId，供前端在 `sshConnect` 之前注册 prompt 监听。
+ * `crypto.randomUUID()` 只在安全上下文可用，浏览器 HTTP 调试时回退。
+ */
 export function newSessionId(): string {
-  return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /**
@@ -628,6 +634,97 @@ export function forwardRuleStop(
   ruleIndex: number,
 ): Promise<void> {
   return invoke("forward_rule_stop", { activeId, ruleIndex });
+}
+
+/** 递归遍历结果：`rel_path` 统一用 '/'，`size` 为字节数。 */
+export interface WalkEntry {
+  rel_path: string;
+  size: number;
+}
+
+export interface TransferProgress {
+  transferred: number;
+  total: number;
+}
+
+// ── SFTP 增强：流式传输 / 递归 / 原生选择框 ────────────────
+
+/** 递归列出远端目录下的全部文件（符号链接到目录会被跳过以防环）。 */
+export function sftpWalkRemote(
+  sftpId: string,
+  remoteRoot: string,
+): Promise<WalkEntry[]> {
+  return invoke<WalkEntry[]>("sftp_walk_remote_dir", { sftpId, remoteRoot });
+}
+
+/** 递归列出本地目录下的全部文件（`rel_path` 用 '/'）。 */
+export function walkLocalDir(localRoot: string): Promise<WalkEntry[]> {
+  return invoke<WalkEntry[]>("walk_local_dir", { localRoot });
+}
+
+/**
+ * 流式下载到指定本地路径。`transferId` 同时是进度事件
+ * `sftp:progress:{transferId}` 的 key；父目录不存在会自动创建。
+ */
+export function sftpDownloadTo(
+  sftpId: string,
+  remotePath: string,
+  localPath: string,
+  transferId: string,
+): Promise<void> {
+  return invoke("sftp_download_to", {
+    sftpId,
+    remotePath,
+    localPath,
+    transferId,
+  });
+}
+
+/** 流式上传指定本地文件（远端父目录会自动 mkdir -p）。 */
+export function sftpUploadFrom(
+  sftpId: string,
+  localPath: string,
+  remotePath: string,
+  transferId: string,
+): Promise<void> {
+  return invoke("sftp_upload_from", {
+    sftpId,
+    localPath,
+    remotePath,
+    transferId,
+  });
+}
+
+/** 取消某个传输：后端把 cancel flag 置位，循环在下一 chunk 退出。 */
+export function sftpCancelTransfer(transferId: string): Promise<void> {
+  return invoke("sftp_cancel_transfer", { transferId });
+}
+
+export function sftpPickSavePath(defaultName: string): Promise<string | null> {
+  return invoke<string | null>("sftp_pick_save_path", { defaultName });
+}
+
+export function sftpPickOpenPath(): Promise<string | null> {
+  return invoke<string | null>("sftp_pick_open_path");
+}
+
+/** 选目录（既作多选下载的目标根，也作递归上传的源根）。 */
+export function sftpPickFolder(): Promise<string | null> {
+  return invoke<string | null>("sftp_pick_folder");
+}
+
+/** 多选文件（上传）。 */
+export function sftpPickOpenFiles(): Promise<string[] | null> {
+  return invoke<string[] | null>("sftp_pick_open_files");
+}
+
+export function onSftpProgress(
+  transferId: string,
+  cb: (p: TransferProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<TransferProgress>(`sftp:progress:${transferId}`, (ev) =>
+    cb(ev.payload),
+  );
 }
 
 // ── 连接管理器：档案 / 凭据 / 分组 CRUD ────────────────────
