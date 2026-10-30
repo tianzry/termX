@@ -350,4 +350,133 @@ mod tests {
         assert!(got.contains(&"/dev/tty.orphan".to_string()));
         assert!(got.contains(&"/dev/cu.standalone".to_string()));
     }
+
+    /// 用 socat 起一对虚拟 null-modem（`pty,raw,link=`），返回子进程与两端路径。
+    /// socat 不可用或超时未就绪时返回 None（测试据此跳过，不抛错）。
+    ///
+    /// 说明：`serialport::available_ports()` 走 `/sys/class/tty` 枚举，不会列出
+    /// `/dev/pts/*` 虚拟串口，所以本测试直接按路径 `open`，绕开 UI 的下拉枚举，
+    /// 只验证「打开→双向字节流」这条核心链路。
+    #[cfg(unix)]
+    fn spawn_virtual_serial_pair() -> Option<(std::process::Child, String, String)> {
+        let has_socat = std::process::Command::new("socat")
+            .arg("-V")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !has_socat {
+            return None;
+        }
+        let suffix = std::process::id();
+        let path_a = format!("/tmp/termx_ser_a_{suffix}");
+        let path_b = format!("/tmp/termx_ser_b_{suffix}");
+        let _ = std::fs::remove_file(&path_a);
+        let _ = std::fs::remove_file(&path_b);
+        let mut child = std::process::Command::new("socat")
+            .args([
+                "-d",
+                "-d",
+                &format!("pty,raw,echo=0,link={path_a}"),
+                &format!("pty,raw,echo=0,link={path_b}"),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        for _ in 0..100 {
+            if std::path::Path::new(&path_a).exists() && std::path::Path::new(&path_b).exists() {
+                return Some((child, path_a, path_b));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = child.kill();
+        None
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn serial_pty_roundtrip() {
+        let Some((mut child, path_a, path_b)) = spawn_virtual_serial_pair() else {
+            eprintln!("skip: socat 不可用，无法创建虚拟串口对");
+            return;
+        };
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let (tx, rx) = std::sync::mpsc::channel::<SerialOut>();
+        let sink: SerialSink = Arc::new(move |_sid, out| {
+            let _ = tx.send(out);
+        });
+
+        let cfg = SerialConfig {
+            baud_rate: 115200,
+            data_bits: 8,
+            parity: "none".into(),
+            stop_bits: 1,
+            flow_control: "none".into(),
+            xany: false,
+        };
+        let (id, handle) = open("ser-test".into(), &path_a, cfg, sink)
+            .expect("打开虚拟串口 slave 应成功");
+        assert_eq!(id, "ser-test");
+
+        // 对端（另一个 pty slave）以非阻塞方式打开，方便轮询读。
+        let mut peer = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path_b)
+            .expect("打开对端 pty 应成功");
+
+        // 方向 1：对端写入 → backend reader 读到并推给 sink。
+        peer.write_all(b"\x01ping\x02").unwrap();
+        let mut got = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(SerialOut::Data(d)) => {
+                    got.extend_from_slice(&d);
+                    if got.windows(4).any(|w| w == b"ping") {
+                        break;
+                    }
+                }
+                Ok(SerialOut::Close) => break,
+                Err(_) => continue,
+            }
+        }
+        assert!(
+            got.windows(4).any(|w| w == b"ping"),
+            "backend 未读到对端写入的数据: {got:?}"
+        );
+
+        // 方向 2：backend 写入 → 对端读到相同字节。
+        handle.write(b"\x03world\x04").unwrap();
+        let mut buf = [0u8; 64];
+        let mut n = 0;
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            match peer.read(&mut buf) {
+                Ok(k) => {
+                    n = k;
+                    break;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+        assert_eq!(&buf[..n], b"\x03world\x04", "对端读到的字节与写入不一致");
+
+        // 控制线在 pty 上可能不被底层支持，只验证不 panic / 不崩。
+        let _ = handle.set_dtr(true);
+        let _ = handle.set_rts(true);
+        let _ = handle.set_dtr(false);
+        let _ = handle.set_rts(false);
+
+        drop(handle);
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_file(&path_a);
+        let _ = std::fs::remove_file(&path_b);
+    }
 }

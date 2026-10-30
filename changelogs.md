@@ -295,3 +295,48 @@
     解法：map 前 `const fstats = info?.stats ?? null;` 用局部只读变量持有，之后全用 `fstats`。
 31. **多个面板共用 `.sftp-panel` 样式类**：串口/Telnet/转发面板都放 `<div className="sftp-panel">`，
     继承现有的 button/input/select/row/toolbar 样式，只在转发面板补 `.fwd-*` 专属样式，少写重复 CSS。
+
+---
+
+## 2026-10-30 — 阶段 2 端到端冒烟：串口 + 端口转发（测试 + 沙箱环境）
+
+目标：没有物理串口硬件的前提下，用软件手段打通「本地串口」和「端口转发」两条链路的端到端冒烟，
+把它落进 `cargo test`（无环境时自动 skip，有环境时真实跑）。
+
+### 改动点
+
+1. **`src-tauri/src/terminal/serial.rs`**（测试模块）：新增 `spawn_virtual_serial_pair()`（用 socat 起一对
+   `pty,raw,echo=0,link=` 虚拟 null-modem）+ `serial_pty_roundtrip`：按路径 `open` 一端、对端写入→backend sink 收到、
+   backend 写入→对端读到相同字节、控制线 set_dtr/set_rts 不崩。
+2. **`src-tauri/src/ssh/forward.rs`**（测试模块）：新增 `smoke_forward_env()`（复用 `TERMX_SSH_TEST_*`）+ `forward_local_roundtrip`：
+   sshed + 本机 echo server，经本地转发收发字节、校验 stats 计流量与连接数、`stop()` 收尾。
+3. **沙箱环境（非仓库改动）**：
+   - `~/.cargo/config.toml`：镜像从 aliyun（403 IP 黑名单）切到 `rsproxy.cn`（sparse）。
+   - apt 安装 Tauri Linux 系统依赖（glib/gtk/webkit2gtk/libudev 等）+ `openssh-server`。
+   - sshd 以 `/tmp/termx_sshd_config` 起在 `127.0.0.1:2222`（root 公钥登录 + AllowTcpForwarding + Subsystem sftp），
+     客户端密钥 `/tmp/termx_client_key`，known_hosts `/tmp/termx_known_hosts`。
+
+### 验证
+
+- `cargo test --lib`（带 `TERMX_SSH_TEST_*`）：**769 passed, 0 failed**（767 原 + 串口 1 + 转发 1）。
+
+### 踩坑经验（务必记住）
+
+32. **`serialport::available_ports()` 走 `/sys/class/tty`，不枚举 `/dev/pts/*`**：socat 建的虚拟串口不会被
+    `serial_list_ports` 列出来，但 `serialport::new(path, baud).open_native()` 能直接打开 pty slave。
+    所以串口冒烟要**按路径 `open`**，别走 UI 的下拉枚举（那只验证「打开→双向字节流」核心链路）。
+33. **socat 建 pty 对用 `link=` 才能拿到确定路径**：`socat -d -d pty,raw,echo=0,link=/tmp/a pty,raw,echo=0,link=/tmp/b`
+    会建两个指向 `/dev/pts/N` 的符号链接；否则只能解析 stderr 里的单调日志，脆。`raw` 关掉行规程，bytes 才原样透传
+    （测试数据避开 0x0A/0x0D，防止任何 ICRNL/OPOST 干扰）。
+34. **`child.kill()` 需要 `mut child`**：`std::process::Child::kill(&mut self)`；spawn 后变量要声明 `mut`，
+    否则 E0596。这类低级编译错误在「测试里起子进程」时最容易漏。
+35. **sshd 精简配置必须显式加 SFTP 子系统**：`Subsystem sftp /usr/lib/openssh/sftp-server`。漏了它，
+    `sftp_init` 会 `Timeout`（不是「认证失败」之类明确报错），表现为 `sftp_upload_download_chmod_roundtrip` 偶发超时。
+    和代码无关，纯环境配置坑。
+36. **`pkill -f 'sshd -f ...'` 会把自己也杀掉**：`-f` 匹配整个命令行，当前交互 shell 的包装命令里同样含该串，
+    导致「重启 sshd」的这条命令连同自身 shell 一起被 kill、新 sshd 也没起来。正确做法：`pgrep -xa sshd` 找 pid 精确 kill，
+    或直接重起（端口空闲就不会冲突）。
+37. **russh known_hosts 认 `[127.0.0.1]:2222` 这种带端口格式**：`ssh-keyscan -p N host` 产出带括号端口的形式，
+    直接喂 `TERMX_SSH_TEST_KNOWN_HOSTS` 即可被接受（无需手动剥端口）。
+38. **cargo 镜像 403 时换源即可，别跟网络死磕**：aliyun sparse 对本沙箱 IP 返回 `403 / denied by IP ACL = blacklist`，
+    切 `rsproxy.cn/index/`（sparse）后 `cargo test` 顺利拉依赖；`~/.cargo/config.toml` 里的 `replace-with` 一处即可。

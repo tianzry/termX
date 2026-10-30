@@ -955,7 +955,7 @@ pub async fn start(forward: Forward, target: ConnTarget) -> AppResult<ForwardHan
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
 
     struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
@@ -1261,5 +1261,129 @@ mod tests {
         let mut b = b_write;
         counted_copy(&mut a, &mut b, &counter).await.unwrap();
         assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    // ── 本地端口转发端到端冒烟（env 注入，无 sshd 时跳过） ─────
+
+    /// 转发冒烟的 sshd 入参，复用 client.rs 冒烟同一套 `TERMX_SSH_TEST_*`。
+    fn smoke_forward_env() -> Option<(u16, String, String, String)> {
+        let port: u16 = std::env::var("TERMX_SSH_TEST_PORT").ok()?.parse().ok()?;
+        let user = std::env::var("TERMX_SSH_TEST_USER").unwrap_or_else(|_| "root".into());
+        let private_key = std::fs::read_to_string(std::env::var("TERMX_SSH_TEST_KEY").ok()? ).ok()?;
+        let known_hosts = std::env::var("TERMX_SSH_TEST_KNOWN_HOSTS").ok()?;
+        Some((port, user, private_key, known_hosts))
+    }
+
+    /// 本地转发（local）端到端：sshd + 本机 echo server，经 SSH 隧道收发字节。
+    /// 覆盖 `start()` → 规则 Enter Active → 数据透传 → stats 计流量 → stop()。
+    #[tokio::test]
+    async fn forward_local_roundtrip() {
+        let Some((ssh_port, user, private_key, known_hosts)) = smoke_forward_env() else {
+            eprintln!("skip: TERMX_SSH_TEST_* 未设置（无 sshd）");
+            return;
+        };
+
+        // 1. 转发目标：本机 TCP echo server。
+        let echo = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_port = echo.local_addr().unwrap().port();
+        let echo_task = tokio::spawn(async move {
+            loop {
+                let (mut sock, _) = match echo.accept().await {
+                    Ok(x) => x,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    let (mut r, mut w) = sock.split();
+                    let _ = tokio::io::copy(&mut r, &mut w).await;
+                });
+            }
+        });
+
+        // 2. 挑一个空闲本地端口作为转发入口（bind 后立刻 drop，dot TOCTOU 可接受）。
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let local_port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let forward = Forward {
+            id: "fwd-local".into(),
+            name: "fwd-local".into(),
+            profile_id: "smoke-profile".into(),
+            group_id: None,
+            rules: vec![ForwardRule {
+                forward_type: ForwardType::Local,
+                local_port,
+                remote_host: "127.0.0.1".into(),
+                remote_port: echo_port,
+            }],
+        };
+        let target = ConnTarget {
+            profile: crate::models::Profile {
+                id: "smoke-profile".into(),
+                name: "smoke".into(),
+                host: "127.0.0.1".into(),
+                port: ssh_port,
+                credential_id: "smoke-credential".into(),
+                bastion_profile_id: None,
+                init_command: None,
+                group_id: None,
+                algorithms: Default::default(),
+            },
+            credential: crate::models::Credential {
+                id: "smoke-credential".into(),
+                name: "smoke".into(),
+                username: user,
+                credential_type: crate::models::CredentialType::Key,
+                secret: Some(private_key),
+                save_to_remote: false,
+            },
+            bastion_chain: vec![],
+            known_hosts_path: std::path::PathBuf::from(known_hosts),
+            timeout_secs: 10,
+        };
+
+        let handle = tokio::time::timeout(std::time::Duration::from_secs(15), start(forward, target))
+            .await
+            .expect("转发启动超时")
+            .expect("转发启动应成功");
+
+        // 3. 轮询到规则 Active 并拿到生效端口。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        let mut active_port: Option<u16> = None;
+        while std::time::Instant::now() < deadline {
+            let s = handle.stats();
+            if let Some(r) = s.rules.first() {
+                if r.status == ForwardRuleStatus::Active {
+                    active_port = r.effective_port.map(|p| p as u16);
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(active_port.is_some(), "转发规则未进入 Active 状态");
+
+        // 4. 经转发入口连 echo server，发字节并收回声。
+        let mut stream = TcpStream::connect(("127.0.0.1", local_port))
+            .await
+            .expect("连接转发本地端口失败");
+        stream.write_all(b"__FWD_OK__").await.unwrap();
+        let mut buf = [0u8; 64];
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read(&mut buf),
+        )
+        .await
+        .expect("读回显超时")
+        .expect("读回显失败");
+        assert_eq!(&buf[..n], b"__FWD_OK__", "转发透传字节不一致");
+
+        // 5. stats 应计到双向流量与连接。
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let s = handle.stats();
+        assert!(s.connected, "转发应处于连接状态");
+        assert!(s.bytes_rx > 0 && s.bytes_tx > 0, "转发应收发流量");
+        assert!(s.connections >= 1, "转发应至少记到 1 条连接");
+
+        handle.stop();
+        echo_task.abort();
     }
 }
