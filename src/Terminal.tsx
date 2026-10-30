@@ -36,9 +36,17 @@ export function TerminalView({ onReady, onData, onResize }: Props) {
     disposables.push(term.onData((s) => onData?.(s)));
     disposables.push(term.onResize(({ cols, rows }) => onResize?.(cols, rows)));
 
+    // 分屏 / 切换标签会改变容器尺寸（隐藏标签的尺寸为 0），
+    // 靠 ResizeObserver 重新 fit，避免行列停留在旧值。
+    const ro = new ResizeObserver(() => {
+      if (containerRef.current) fit.fit();
+    });
+    ro.observe(containerRef.current!);
+
     onReady({ term, fit });
 
     return () => {
+      ro.disconnect();
       disposables.forEach((d) => d.dispose());
       term.dispose();
     };

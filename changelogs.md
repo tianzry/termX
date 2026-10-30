@@ -429,3 +429,36 @@
 56. **`rel_path` 统一用 '/'，本地拼接要 trim 尾部反斜杠**：Windows 原生目录选择器返回 `C:\dir\`，
     直接拼 `rel_path` 会出现 `\\` 双分隔符。拼之前先 `replace(/[\\/]+$/,"")`。
 
+## 2026-10-30 — P0 #1~#3：多标签 + 分屏 + 会话恢复
+
+目标：把单会话外壳改造成 netcatty 式工作区——多标签、标签内嵌套分屏、重启后可恢复布局。
+
+### 改动点
+
+1. **`src/workspace.ts`（新增）**：工作区模型与纯函数。
+   `Connector`（pty / ssh）、`PaneNode`=`leaf | split(dir, ratio, a, b)`、`Tab`；
+   `splitLeaf` / `removeLeaf`（单边为空自动提升另一边）/ `updateRatio` / `collectLeaves`。
+2. **`src/TerminalPane.tsx`（新增）**：每格独立 xterm + 独立 sessionId + 独立事件订阅。
+   认证 prompt 弹窗下沉到窗格；断线保留缓冲并叠「重连」遮罩；对外暴露 `PaneHandle`
+   （write / size / attachTransport / sshSessionId / subscribeSession）。
+3. **`src/Workspace.tsx`（新增）**：标签栏（新建 / 关闭 / 双击重命名）、按分屏树递归渲染、
+   分隔条拖拽改 ratio、「左右 / 上下分屏」「关闭窗格」。非活动标签只 `display:none`，不卸载会话。
+   通过 `forwardRef` 暴露 `newTab(connector)` / `ensureTab()`。
+4. **`src/backend/workspaceStore.ts`（新增）**：`termx.workspace.v1` 落盘标签 + 分屏树 + 连接器；
+   启动先显示「发现上次会话（N 个标签）」横幅，用户点「恢复」才重建并连接，避免无感自动重连。
+5. **`src/App.tsx`（重构）**：删除单会话 / prompt 逻辑，只保留工具栏、档案快捷入口、
+   连接管理器与侧栏面板。侧栏桥（SFTP 取活动窗格 SSH 会话；串口 / Telnet 绑定打开时活动窗格）。
+6. **`src/Terminal.tsx`**：xterm 容器加 `ResizeObserver`，分屏与标签切换后自动 `fit()`。
+7. **`src/styles.css`**：标签栏、分隔条、窗格遮罩、恢复横幅样式。
+
+### 踩坑
+
+57. **`crypto.randomUUID()` 只在安全上下文可用**：Tauri WebView 满足，但浏览器直开 `http://localhost:1420`
+    调试时是 `undefined`，点「新建终端」直接 `TypeError`。`newId` / `newSessionId` 必须
+    检测 `typeof crypto.randomUUID === "function"`，否则回退「时间戳 + 随机数」。
+58. **切换标签不能卸载窗格**：卸载会销毁 xterm 与事件监听，等于切一次就重连。
+    非活动标签用 CSS 隐藏；隐藏期间容器尺寸为 0，`FitAddon` 不会自动修正，
+    必须靠 `ResizeObserver` 在重新显示时触发 `fit()`。
+59. **TS 的窄化不会穿透到嵌套函数**：`LayoutView` 里 `if (node.type === "leaf") return`
+    之后直接写 `node.dir` 在 `startDrag` 闭包里报 `Property 'dir' does not exist on type 'PaneNode'`。
+    先把 `const dir = node.dir` 抓出来再进闭包。
