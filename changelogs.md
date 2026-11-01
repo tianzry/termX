@@ -577,3 +577,45 @@
     放在 App 顶层浮层会与分屏语义冲突；`.pane` 必须改 `flex-direction: column` 才能容纳这条 30px 工具条。
 75. **最近连接没有后端时间戳**：Profile 表无 `last_connected_at`，只能用前端 localStorage 记录顺序，
     清缓存即丢失；后续若加字段应迁到 DB。
+
+---
+
+## 2026-11-01 · 终端工具栏图标纠正 + 右键菜单承接分屏
+
+### 改动点
+
+1. **`src/TerminalPane.tsx` 工具栏左侧**：改为 标题 → 时钟（行时间戳，置灰）→
+   系统监控（仅远端 SSH，置灰）→ **断开当前会话**（`unplug`，connected/connecting 可用）→
+   **重新连接**（`refresh`，非 connecting 可用）。本地 / 串口 / Telnet 不出现系统监控
+   （对齐 netcatty `isSystemSidebarEligible`）。
+2. **`⋮ 更多` 菜单**：只保留 netcatty 的 collapsed 项「终端外观」「开始录制」（均置灰），
+   移除原先自造的分屏 / 串口 / Telnet / 端口转发项；工具栏尾部关闭 X 一并移除。
+3. **新增终端右键菜单**（对齐 netcatty `TerminalContextMenu`）：
+   复制 / 粘贴 / 全选 / 浏览器（置灰）/ 重新连接 / 水平分屏 / 垂直分屏 / 清空缓冲区 / 关闭终端，
+   分隔线布局与 netcatty 顺序一致；连断线遮罩区域也响应右键。
+4. **`src/ui/icons.tsx`**：新增 `unplug` / `copy` / `clipboard-paste` / `trash` / `circle` 图标。
+
+### 踩坑
+
+76. **分屏入口归属搞错了**：netcatty 的分屏在 `TerminalContextMenu`（右键菜单），
+    `TerminalToolbar` 只负责高频图标与 collapsed 项；把分屏塞进 `⋮` 与源码不符。
+77. **断开 / 重连的可用条件不同源**：断开仅 `connected` / `connecting` 可用，
+    重连只排除 `connecting`；系统监控要按「非 local / serial / telnet 的 SSH」判定，
+    否则每个窗格都会多出一个图标。
+78. **断线遮罩会吞掉右键事件**：`pane-overlay` 是 `inset: 0` 的覆盖层，
+    断线状态下右键无法穿透；遮罩本身必须绑定 `onContextMenu` 才能照常弹出菜单。
+
+### 追加（SSH 会话的 ⋮ 菜单）
+
+79. **⋮ 菜单项随会话协议变化**：netcatty `availableIds` 的规则是
+    `history` 仅在远端 SSH（非 local/serial/telnet/plugin）、`configureOsc7` 仅在 SSH 且非串口、
+    `encoding` 仅在 SSH（local/mosh/et/plugin 不支持切换编码）。
+    因此 SSH 会话菜单为 命令历史 / 配置目录追踪 / 终端设置 / 开始录制 / 终端编码（带子菜单箭头），
+    本地终端仅 终端设置 / 开始录制。按截图顺序与文案（终端设置，而非「终端外观」）补齐。
+    新增 `history` / `folder-sync` 图标与 `.term-menu-caret` 右对齐箭头。
+
+### 追加（关闭入口调整）
+
+80. 应产品要求：工具栏尾部恢复 X 关闭按钮（`term-tool-close`），右键菜单去掉「关闭终端」，
+    末项改为「清空缓冲区」。netcatty 的 `TerminalToolbar` 其实支持可选 `showClose`，
+    原判断（工作区不显示）按截图口径修正。

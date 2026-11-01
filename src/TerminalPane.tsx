@@ -7,7 +7,7 @@
  * - 支持被串口 / Telnet 侧栏面板临时「接管」按键路由（外部传输优先）。
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { Icon } from "./ui/icons";
@@ -75,7 +75,14 @@ export function TerminalPane({
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /** 右键菜单（位置相对窗格左上角）。 */
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    selection: string;
+  } | null>(null);
 
+  const paneRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<TerminalController | null>(null);
   const transportRef = useRef<TerminalTransport | null>(null);
   const externalRef = useRef<TerminalTransport | null>(null);
@@ -304,13 +311,54 @@ export function TerminalPane({
     setPromptBoth(null);
   }
 
+  /** 断开当前会话：只拆掉传输与监听，保留标签页与窗格。 */
+  function disconnect() {
+    teardown();
+    notifySession(null);
+    setPromptBoth(null);
+    setStatus("closed");
+    setDetail("会话已断开");
+    onStatus(`${tab.title} 已断开`);
+  }
+
+  const canDisconnect = status === "connected" || status === "connecting";
+  const canReconnect =
+    status === "connected" || status === "closed" || status === "error";
+  // 系统监控只出现在远端 SSH 会话（netcatty isSystemSidebarEligible 排除本地 / 串口 / Telnet）
+  const systemEligible = tab.connector.kind === "ssh";
+
+  /** 终端右键菜单（对照 netcatty TerminalContextMenu；坐标相对窗格左上角）。 */
+  function openContextMenu(e: ReactMouseEvent<HTMLDivElement>) {
+    if ((e.target as HTMLElement).closest(".term-toolbar")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const box = paneRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const menuWidth = 200;
+    const menuHeight = 340;
+    setMenu({
+      x: Math.max(4, Math.min(e.clientX - box.left, box.width - menuWidth - 4)),
+      y: Math.max(
+        4,
+        Math.min(e.clientY - box.top, Math.max(4, box.height - menuHeight)),
+      ),
+      selection: controllerRef.current?.term.getSelection() ?? "",
+    });
+  }
+
+  function closeMenu() {
+    setMenu(null);
+  }
+
   return (
     <div
+      ref={paneRef}
       className={`pane${active ? " active" : ""}`}
       onMouseDown={() => {
         onActivate();
         controllerRef.current?.term.focus();
       }}
+      onContextMenu={openContextMenu}
     >
       {/* 终端顶部工具栏（对照 netcatty TerminalToolbar / TerminalView 状态栏） */}
       <div className="term-toolbar" data-section="terminal-toolbar">
@@ -325,16 +373,27 @@ export function TerminalPane({
           >
             <Icon name="clock" size={12} />
           </button>
+          {systemEligible && (
+            <button
+              className="term-tool-btn"
+              disabled
+              title="系统监控（尚未实现）"
+            >
+              <Icon name="activity" size={12} />
+            </button>
+          )}
           <button
             className="term-tool-btn"
-            disabled
-            title="系统监控（尚未实现）"
+            title="断开当前会话，但保留标签页"
+            disabled={!canDisconnect}
+            onClick={() => disconnect()}
           >
-            <Icon name="activity" size={12} />
+            <Icon name="unplug" size={12} />
           </button>
           <button
             className="term-tool-btn"
-            title={status === "connected" ? "重新连接" : "重连"}
+            title="重新连接当前会话"
+            disabled={!canReconnect}
             onClick={() => {
               void connect();
             }}
@@ -405,70 +464,37 @@ export function TerminalPane({
             </button>
             {moreOpen && (
               <div className="term-tool-menu">
-                <button
-                  title="左右分屏"
-                  onClick={() => {
-                    setMoreOpen(false);
-                    onSplit?.("horizontal");
-                  }}
-                >
-                  <Icon name="columns" size={12} />
-                  左右分屏
+                {systemEligible && (
+                  <>
+                    <button disabled title="命令历史（尚未实现）">
+                      <Icon name="history" size={12} />
+                      命令历史
+                    </button>
+                    <button disabled title="配置目录追踪（尚未实现）">
+                      <Icon name="folder-sync" size={12} />
+                      配置目录追踪
+                    </button>
+                  </>
+                )}
+                <button disabled title="终端设置（尚未实现）">
+                  <Icon name="palette" size={12} />
+                  终端设置
                 </button>
-                <button
-                  title="上下分屏"
-                  onClick={() => {
-                    setMoreOpen(false);
-                    onSplit?.("vertical");
-                  }}
-                >
-                  <Icon name="rows" size={12} />
-                  上下分屏
+                <button disabled title="开始录制（尚未实现）">
+                  <Icon name="circle" size={12} className="term-record-dot" />
+                  开始录制
                 </button>
-                <button
-                  title="串口面板"
-                  disabled={!onOpenTool}
-                  onClick={() => {
-                    setMoreOpen(false);
-                    onOpenTool?.("serial");
-                  }}
-                >
-                  <Icon name="radio" size={12} />
-                  串口
-                </button>
-                <button
-                  title="Telnet 面板"
-                  disabled={!onOpenTool}
-                  onClick={() => {
-                    setMoreOpen(false);
-                    onOpenTool?.("telnet");
-                  }}
-                >
-                  <Icon name="network" size={12} />
-                  Telnet
-                </button>
-                <button
-                  title="端口转发表格"
-                  disabled={!onOpenTool}
-                  onClick={() => {
-                    setMoreOpen(false);
-                    onOpenTool?.("forward");
-                  }}
-                >
-                  <Icon name="server" size={12} />
-                  端口转发
-                </button>
-                {[
-                  { icon: "clock" as const, label: "命令历史" },
-                  { icon: "folder" as const, label: "OSC7 目录同步" },
-                  { icon: "palette" as const, label: "终端外观" },
-                  { icon: "languages" as const, label: "编码" },
-                ].map((item) => (
-                  <button key={item.label} disabled title={`${item.label}（尚未实现）`}>
-                    <Icon name={item.icon} size={12} />
-                    {item.label}
+                {systemEligible && (
+                  <button disabled title="终端编码（尚未实现）">
+                    <Icon name="languages" size={12} />
+                    终端编码
+                    <Icon
+                      name="chevron-right"
+                      size={12}
+                      className="term-menu-caret"
+                    />
                   </button>
-                ))}
+                )}
               </div>
             )}
           </div>
@@ -504,7 +530,7 @@ export function TerminalPane({
       )}
 
       {(status === "closed" || status === "error") && (
-        <div className="pane-overlay">
+        <div className="pane-overlay" onContextMenu={openContextMenu}>
           <div className="pane-overlay-title">
             {status === "error" ? "连接失败" : "会话已结束"}
           </div>
@@ -513,6 +539,104 @@ export function TerminalPane({
             重连
           </button>
         </div>
+      )}
+
+      {/* 右键菜单（对照 netcatty TerminalContextMenu） */}
+      {menu && (
+        <>
+          <div
+            className="term-menu-mask"
+            onMouseDown={closeMenu}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              closeMenu();
+            }}
+          />
+          <div
+            className="term-context-menu"
+            style={{ left: menu.x, top: menu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              disabled={!menu.selection}
+              onClick={() => {
+                void navigator.clipboard.writeText(menu.selection);
+                closeMenu();
+              }}
+            >
+              <Icon name="copy" size={14} />
+              复制
+            </button>
+            <button
+              onClick={() => {
+                void navigator.clipboard
+                  .readText()
+                  .then((text) => controllerRef.current?.term.paste(text))
+                  .catch(() => {});
+                closeMenu();
+              }}
+            >
+              <Icon name="clipboard-paste" size={14} />
+              粘贴
+            </button>
+            <button
+              onClick={() => {
+                controllerRef.current?.term.selectAll();
+                closeMenu();
+              }}
+            >
+              <Icon name="terminal" size={14} />
+              全选
+            </button>
+            <div className="term-menu-sep" />
+            <button disabled title="主机浏览器（尚未实现）">
+              <Icon name="globe" size={14} />
+              浏览器
+            </button>
+            <div className="term-menu-sep" />
+            <button
+              disabled={!canReconnect}
+              onClick={() => {
+                closeMenu();
+                void connect();
+              }}
+            >
+              <Icon name="refresh" size={14} />
+              重新连接
+            </button>
+            <div className="term-menu-sep" />
+            <button
+              disabled={!onSplit}
+              onClick={() => {
+                closeMenu();
+                onSplit?.("horizontal");
+              }}
+            >
+              <Icon name="columns" size={14} />
+              水平分屏
+            </button>
+            <button
+              disabled={!onSplit}
+              onClick={() => {
+                closeMenu();
+                onSplit?.("vertical");
+              }}
+            >
+              <Icon name="rows" size={14} />
+              垂直分屏
+            </button>
+            <div className="term-menu-sep" />
+            <button
+              onClick={() => {
+                controllerRef.current?.term.clear();
+                closeMenu();
+              }}
+            >
+              <Icon name="trash" size={14} />
+              清空缓冲区
+            </button>
+          </div>
+        </>
       )}
 
       {prompt && (

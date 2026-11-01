@@ -3283,7 +3283,7 @@ button:disabled {
   top: calc(100% + 4px);
   right: 0;
   z-index: 30;
-  width: 168px;
+  width: 192px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -3294,6 +3294,10 @@ button:disabled {
   box-shadow:
     0 8px 24px hsl(220 40% 20% / 0.12),
     0 1px 2px hsl(220 40% 20% / 0.08);
+}
+
+.term-menu-caret {
+  margin-left: auto;
 }
 
 .term-tool-menu button {
@@ -3314,6 +3318,67 @@ button:disabled {
 
 .term-tool-menu button:hover:not(:disabled) {
   background: hsl(var(--secondary));
+}
+
+.term-record-dot {
+  color: hsl(var(--destructive));
+}
+
+/* 终端右键菜单（对照 netcatty TerminalContextMenu） */
+.term-menu-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+
+.term-context-menu {
+  position: absolute;
+  z-index: 41;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  box-shadow:
+    0 8px 24px hsl(220 40% 20% / 0.12),
+    0 1px 2px hsl(220 40% 20% / 0.08);
+}
+
+.term-context-menu button {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.term-context-menu button:hover:not(:disabled) {
+  background: hsl(var(--secondary));
+}
+
+.term-context-menu button.danger {
+  color: hsl(var(--destructive));
+}
+
+.term-context-menu button.danger:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.12);
+}
+
+.term-menu-sep {
+  height: 1px;
+  margin: 3px 0;
+  background: hsl(var(--border) / 0.7);
 }
 
 /* ═══════════════════════════════════════════════════════════
