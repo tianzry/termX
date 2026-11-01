@@ -1,8 +1,9 @@
 /**
- * 左侧主机树（对照 netcatty `AppHostTreeLayer` / host tree sidebar）。
+ * 终端态左侧主机树（对照 netcatty `TerminalHostTreeSidebar`）。
  *
- * 结构：搜索框 + 「本地终端」入口 + 按分组折叠的主机列表。
- * 点击主机开新标签连接；分组标题可折叠；无分组主机归入「未分组」。
+ * 结构：36px 工具条（新建 / 搜索 / 标签 / 本地终端 / 更多 / 收起）+
+ * 可展开搜索行 + 28px 紧凑树行（分组可折叠）。默认宽度 220px，
+ * 与 netcatty `TERMINAL_HOST_TREE_DEFAULT_WIDTH` 一致。
  */
 
 import { useState, type CSSProperties } from "react";
@@ -15,6 +16,7 @@ interface Props {
   onConnect: (profile: Profile) => void;
   onLocal: () => void;
   onOpenManager: () => void;
+  onClose?: () => void;
 }
 
 function avatarText(profile: Profile): string {
@@ -27,8 +29,16 @@ function avatarHue(profile: Profile): number {
   return n;
 }
 
-export function HostSidebar({ profiles, groups, onConnect, onLocal, onOpenManager }: Props) {
+export function HostSidebar({
+  profiles,
+  groups,
+  onConnect,
+  onLocal,
+  onOpenManager,
+  onClose,
+}: Props) {
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const keyword = query.trim().toLowerCase();
@@ -56,48 +66,68 @@ export function HostSidebar({ profiles, groups, onConnect, onLocal, onOpenManage
   }
 
   return (
-    <aside className="nc-sidebar">
-      <div className="nc-sidebar-head">
-        <span className="nc-sidebar-title">主机</span>
-        <span className="nc-count">{profiles.length}</span>
-        <div className="nc-sidebar-actions">
-          <button className="nc-icon-btn" title="新建连接" onClick={onOpenManager}>
-            <Icon name="plus" size={15} />
-          </button>
-        </div>
-      </div>
-
-      <div className="nc-sidebar-search">
-        <Icon name="search" size={14} className="nc-search-icon" />
-        <input
-          value={query}
-          placeholder="搜索主机"
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        {query && (
-          <button className="nc-icon-btn" title="清空" onClick={() => setQuery("")}>
-            <Icon name="x" size={12} />
+    <aside className="nc-sidebar" data-section="terminal-host-tree">
+      <div className="nc-sidebar-toolbar" data-section="terminal-host-tree-toolbar">
+        <button className="nc-tree-tool" title="新建主机" onClick={onOpenManager}>
+          <Icon name="plus" size={14} />
+        </button>
+        <button
+          className={`nc-tree-tool${searchOpen || query ? " active" : ""}`}
+          title="搜索主机"
+          onClick={() => setSearchOpen((v) => !v)}
+        >
+          <Icon name="search" size={14} />
+        </button>
+        <button className="nc-tree-tool" title="标签筛选（尚未实现）" disabled>
+          <Icon name="tag" size={14} />
+        </button>
+        <button className="nc-tree-tool" title="本地终端" onClick={onLocal}>
+          <Icon name="terminal" size={14} />
+        </button>
+        <button className="nc-tree-tool" title="更多（尚未实现）" disabled>
+          <Icon name="chevron-down" size={14} />
+        </button>
+        <span className="nc-tree-tool-spacer" />
+        {onClose && (
+          <button className="nc-tree-tool" title="收起主机侧栏" onClick={onClose}>
+            <Icon name="x" size={15} />
           </button>
         )}
       </div>
 
+      {searchOpen && (
+        <div className="nc-sidebar-search-panel">
+          <div className="nc-sidebar-search">
+            <Icon name="search" size={12} className="nc-search-icon" />
+            <input
+              autoFocus
+              value={query}
+              placeholder="搜索主机"
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {query && (
+              <button className="nc-tree-tool" title="清空" onClick={() => setQuery("")}>
+                <Icon name="x" size={12} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="nc-sidebar-scroll">
-        <button className="nc-host-row nc-local-row" onClick={onLocal}>
-          <span className="nc-avatar nc-avatar-local">
-            <Icon name="monitor" size={14} />
+        <button className="nc-tree-row" onClick={onLocal}>
+          <span className="nc-tree-avatar local">
+            <Icon name="terminal" size={11} />
           </span>
-          <span className="nc-host-main">
-            <span className="nc-host-name">本地终端</span>
-            <span className="nc-host-sub">PTY · 当前系统</span>
-          </span>
+          <span className="nc-tree-label">本地终端</span>
         </button>
 
         {sections.map((section) => {
           const isCollapsed = collapsed[section.id] ?? false;
           return (
-            <div className="nc-host-group" key={section.id}>
+            <div className="nc-tree-group" key={section.id}>
               <button
-                className="nc-group-head"
+                className="nc-tree-row nc-tree-group-head"
                 onClick={() =>
                   setCollapsed((m) => ({ ...m, [section.id]: !isCollapsed }))
                 }
@@ -106,30 +136,25 @@ export function HostSidebar({ profiles, groups, onConnect, onLocal, onOpenManage
                   name={isCollapsed ? "chevron-right" : "chevron-down"}
                   size={12}
                 />
-                <Icon name="folder" size={13} />
-                <span className="nc-group-name">{section.name}</span>
-                <span className="nc-count">{section.hosts.length}</span>
+                <Icon name="folder" size={12} />
+                <span className="nc-tree-label">{section.name}</span>
+                <span className="nc-tree-count">{section.hosts.length}</span>
               </button>
               {!isCollapsed &&
                 section.hosts.map((p) => (
                   <button
-                    className="nc-host-row"
+                    className="nc-tree-row nc-tree-host"
                     key={p.id}
                     title={`${p.name} · ${p.host}:${p.port}`}
                     onClick={() => onConnect(p)}
                   >
                     <span
-                      className="nc-avatar"
+                      className="nc-tree-avatar"
                       style={{ "--nc-avatar-hue": avatarHue(p) } as CSSProperties}
                     >
                       {avatarText(p)}
                     </span>
-                    <span className="nc-host-main">
-                      <span className="nc-host-name">{p.name}</span>
-                      <span className="nc-host-sub">
-                        {p.host}:{p.port}
-                      </span>
-                    </span>
+                    <span className="nc-tree-label">{p.name}</span>
                   </button>
                 ))}
             </div>
@@ -139,7 +164,7 @@ export function HostSidebar({ profiles, groups, onConnect, onLocal, onOpenManage
         {profiles.length === 0 && (
           <div className="nc-sidebar-empty">
             <span>还没有主机</span>
-            <button onClick={onOpenManager}>新建连接</button>
+            <button onClick={onOpenManager}>新建主机</button>
           </div>
         )}
         {profiles.length > 0 && filtered.length === 0 && (

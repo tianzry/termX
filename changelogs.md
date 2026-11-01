@@ -507,3 +507,34 @@
 65. **沙箱里 Vite dev 会因 inotify 上限失败**：`npm run dev` 报 `ENOSPC: System limit for number
     of file watchers reached`；改用 `npm run build` + `npm run preview` 做界面验证。
     浏览器里没有 Tauri runtime，`invoke` 必然失败，终端显示重连遮罩属预期，不代表 UI 有问题。
+## 2026-11-01 — 界面 1:1 复刻 netcatty（未实现入口禁用）
+
+目标：按 netcatty 的真实结构重做界面，尺寸/配色取源码精确值；尚未实现的后端能力保留入口但禁用。
+
+### 改动点
+
+1. **`src/TopTabs.tsx`（重写）**：固定根标签 Vaults / SFTP + 主机树开关 + 会话标签 + 新建 + 右侧窗口工具
+   （AI / 同步 / 锁屏 / 外观 / 设置，全部禁用）。Vaults 激活态保持平铺不填充（netcatty `suppressActiveBg`）。
+2. **`src/VaultView.tsx`（新建，取代 `VaultHome.tsx`）**：208px 可折叠导航（56px 折叠态）+ 56px 页头
+   （搜索 / 连接 / 视图 / 标签 / 排序 / 多选 / 新建主机）+ 圆角内容面板；主机网格 / 列表 / 分组树。
+   未实现的导航与页头按钮禁用。
+3. **`src/HostSidebar.tsx`（重写）**：220px 主机树 + 36px 图标工具条（新建 / 搜索 / 标签 / 本地终端 / 更多 / 收起）
+   + 28px 紧凑树行；搜索改为工具条内展开。
+4. **`src/App.tsx`（重写）**：`surface`（vault / sftp / 终端）三态编排；终端浮层工具条移到右上角；
+   Vault / SFTP 独立页；删掉 `VaultHome.tsx` 死文件。
+5. **`src/styles.css`**：追加 netcatty 精确 token（dark：`220 28% 8%` / `220 16% 16%` / `220 22% 18%` / `200 100% 61%`）
+   与全部新结构样式；主机树 220px、侧面板 36px 工具条、主机卡 68px / 头像 44px、网格 gap 12px 且最多 4 列。
+6. **`src/ui/icons.tsx`**：补齐 menu / sparkles / cloud / lock / gear / key / activity / file-code / shield /
+   check-square / sort / tag。
+
+### 踩坑
+
+66. **netcatty 是 GPL-3.0，termX 无 LICENSE**：只照结构与视觉规格「重写」，不复制其组件源码，避免许可证传染。
+67. **JSX 重写后残留孤立 token 会直接编译失败**：`App.tsx` 端口转发按钮前多了 ` Faso`，
+    `npm run build` 立即报错。大段 JSX 改完必须立刻跑 `tsc --noEmit`。
+68. **网格「最多 4 列」不用 JS 测量**：`grid-template-columns: repeat(auto-fill, minmax(max(220px, calc((100% - 36px) / 4)), 1fr))`
+    即可在宽屏封顶 4 列、窄屏回落到 220px，行为与 netcatty `vaultHostGridLayout.ts` 一致。
+69. **追加 CSS 覆盖旧规则要看特异性**：`.nc-hosttree-toggle.active` 打不过旧的 `.nc-icon-btn.active`（都是 0,2,0，后者更靠前却仍生效需同级后置），
+    改用 `.nc-icon-btn.nc-hosttree-toggle.active`。主机树开关在 netcatty 里没有蓝色填充。
+70. **尺寸基准要以源码常量为准**：netcatty 主机树默认宽度是 **220px**（`TERMINAL_HOST_TREE_DEFAULT_WIDTH`，min 176 / max 360），
+    不是 w-72（288px）；树行 28px、侧面板工具条 36px、Vault 卡片 68px、`DistroAvatar lg` 44px。

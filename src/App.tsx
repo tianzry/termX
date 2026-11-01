@@ -2,29 +2,30 @@
  * 应用外壳（按 netcatty 的界面结构组织）：
  *
  * ```
- * ┌ TopTabs：品牌 / 标签 / chrome 工具 ─────────────────────────┐
- * ├ HostSidebar ├ 主区：VaultHome（空闲）或 Workspace（会话）┤ AsidePanel ┤
- * └──────────────────────────────────────────────────────────────┘
+ * ┌ TopTabs：Vaults / SFTP / 会话标签 / 右侧工具 ───────────────┐
+ * ├ 终端态：HostSidebar（288px）+ Workspace + 右侧工具面板 ─────┤
+ * └ Vault 态：VaultView（208px 导航 + 圆角内容面板）────────────┘
  * ```
  *
- * 会话与标签状态仍由 `Workspace` 持有；本文件只做外壳编排：
- * 主机与分组数据、侧栏开关、当前工具面板、以及「活动窗格」到
- * 串口 / Telnet / SFTP 的桥接。
+ * 会话标签状态仍由 `Workspace` 持有；本文件负责根标签（Vaults / SFTP /
+ * 终端）切换、主机与分组数据、工具面板，以及活动窗格到串口 / Telnet /
+ * SFTP 的桥接。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Workspace, type WorkspaceHandle } from "./Workspace";
 import type { PaneHandle } from "./TerminalPane";
 import type { Tab } from "./workspaceModel";
-import { TopTabs } from "./TopTabs";
+import { TopTabs, type RootSurface } from "./TopTabs";
 import { HostSidebar } from "./HostSidebar";
-import { VaultHome } from "./VaultHome";
+import { VaultView } from "./VaultView";
 import { AsidePanel } from "./AsidePanel";
 import { SftpPanel } from "./SftpPanel";
 import { SerialPanel } from "./SerialPanel";
 import { TelnetPanel } from "./TelnetPanel";
 import { ForwardPanel } from "./ForwardPanel";
 import { ConnectionManager } from "./ConnectionManager";
+import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import type {
   Group,
@@ -47,13 +48,13 @@ const SIDEBAR_KEY = "termx.sidebar.v1";
 export default function App() {
   const workspaceRef = useRef<WorkspaceHandle>(null);
   const activePaneRef = useRef<PaneHandle | null>(null);
-  /** 串口 / Telnet 面板绑定到「打开面板时处于活动状态的窗格」。 */
   const bridgeTargetRef = useRef<{
     pane: PaneHandle | null;
     transport: TerminalTransport | null;
   }>({ pane: null, transport: null });
 
   const [status, setStatus] = useState("就绪");
+  const [surface, setSurface] = useState<RootSurface>("vault");
   const [activeSshSid, setActiveSshSid] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>(null);
   const [showManager, setShowManager] = useState(false);
@@ -65,7 +66,6 @@ export default function App() {
     }
   });
 
-  // 标签快照由 Workspace 发布
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [restorePending, setRestorePending] = useState(false);
@@ -78,7 +78,6 @@ export default function App() {
     [],
   );
 
-  // 主机 / 分组数据
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
 
@@ -107,7 +106,14 @@ export default function App() {
     }
   }, [sideOpen]);
 
-  // 活动窗格变化：记录句柄，并跟随其 SSH 会话（SFTP 面板依赖）
+  // 标签从「有」变「无」时回到 Vault；新建标签的瞬间 tabs 仍为空，不能误判
+  const priorTabCount = useRef(0);
+  useEffect(() => {
+    const prior = priorTabCount.current;
+    priorTabCount.current = tabs.length;
+    if (prior > 0 && tabs.length === 0 && surface === null) setSurface("vault");
+  }, [tabs.length, surface]);
+
   const [activeHandle, setActiveHandle] = useState<PaneHandle | null>(null);
   const onActivePane = useCallback((handle: PaneHandle | null) => {
     activePaneRef.current = handle;
@@ -123,7 +129,6 @@ export default function App() {
     return activeHandle.subscribeSession(setActiveSshSid);
   }, [activeHandle]);
 
-  // 串口 / Telnet 侧栏面板通过该桥把会话绑定到窗格
   const bridge: TermBridge = {
     receive: (bytes) => bridgeTargetRef.current.pane?.write(bytes),
     attach: (t) => {
@@ -140,10 +145,12 @@ export default function App() {
   };
 
   function openLocal() {
+    setSurface(null);
     workspaceRef.current?.newTab({ kind: "pty" });
   }
 
   function connect(profile: Profile) {
+    setSurface(null);
     workspaceRef.current?.newTab({
       kind: "ssh",
       profileId: profile.id,
@@ -162,24 +169,27 @@ export default function App() {
     setTool(next);
   }
 
+  const terminalActive = surface === null;
+  const hasActive = tabs.some((t) => t.id === activeTabId);
+
   return (
     <div className="nc-shell">
       <TopTabs
         tabs={tabs}
         activeTabId={activeTabId}
+        surface={surface}
+        hostTreeOpen={sideOpen}
         status={status}
-        sideOpen={sideOpen}
-        tool={tool}
-        onActivate={(id) => workspaceRef.current?.activateTab(id)}
+        onActivate={(id) => {
+          setSurface(null);
+          workspaceRef.current?.activateTab(id);
+        }}
         onClose={(id) => workspaceRef.current?.closeTab(id)}
         onRename={(id, title) => workspaceRef.current?.renameTab(id, title)}
         onNewTab={openLocal}
-        onToggleSidebar={() => setSideOpen((v) => !v)}
-        onOpenManager={() => setShowManager(true)}
-        onToggleTool={toggleTool}
-        onSplit={(dir) => workspaceRef.current?.split(dir)}
-        onClosePane={() => workspaceRef.current?.closePane()}
-        onRefresh={() => void loadData()}
+        onOpenVault={() => setSurface("vault")}
+        onOpenSftp={() => setSurface("sftp")}
+        onToggleHostTree={() => setSideOpen((v) => !v)}
       />
 
       {restorePending && (
@@ -192,18 +202,43 @@ export default function App() {
       )}
 
       <div className="nc-body">
-        {sideOpen && (
+        {terminalActive && sideOpen && (
           <HostSidebar
             profiles={profiles}
             groups={groups}
             onConnect={connect}
             onLocal={openLocal}
             onOpenManager={() => setShowManager(true)}
+            onClose={() => setSideOpen(false)}
           />
         )}
 
         <div className="nc-main">
-          <div className={`nc-workspace${tabs.length === 0 ? " hidden" : ""}`}>
+          {surface === "vault" && (
+            <VaultView
+              profiles={profiles}
+              groups={groups}
+              onConnect={connect}
+              onLocal={openLocal}
+              onOpenManager={() => setShowManager(true)}
+            />
+          )}
+
+          {surface === "sftp" && (
+            <section className="nc-sftp-page">
+              <header className="nc-sftp-page-header">
+                <div>
+                  <h1>SFTP</h1>
+                  <p>独立连接或复用当前 SSH 会话传输文件</p>
+                </div>
+              </header>
+              <div className="nc-sftp-page-body">
+                <SftpPanel sshSessionId={activeSshSid} />
+              </div>
+            </section>
+          )}
+
+          <div className={`nc-workspace${terminalActive ? "" : " hidden"}`}>
             <Workspace
               ref={workspaceRef}
               onActivePane={onActivePane}
@@ -211,14 +246,64 @@ export default function App() {
               onSnapshot={onSnapshot}
             />
           </div>
-          {tabs.length === 0 && (
-            <VaultHome
-              profiles={profiles}
-              groups={groups}
-              onConnect={connect}
-              onLocal={openLocal}
-              onOpenManager={() => setShowManager(true)}
-            />
+
+          {/* netcatty 的终端工具条浮在终端右上角 */}
+          {terminalActive && (
+            <div className="nc-term-tools">
+              <button
+                className="nc-icon-btn"
+                title="左右分屏"
+                disabled={!hasActive}
+                onClick={() => workspaceRef.current?.split("horizontal")}
+              >
+                <Icon name="columns" size={15} />
+              </button>
+              <button
+                className="nc-icon-btn"
+                title="上下分屏"
+                disabled={!hasActive}
+                onClick={() => workspaceRef.current?.split("vertical")}
+              >
+                <Icon name="rows" size={15} />
+              </button>
+              <button
+                className="nc-icon-btn"
+                title="关闭当前窗格"
+                disabled={!hasActive}
+                onClick={() => workspaceRef.current?.closePane()}
+              >
+                <Icon name="x" size={15} />
+              </button>
+              <span className="nc-chrome-divider" />
+              <button
+                className={`nc-icon-btn${tool === "sftp" ? " active" : ""}`}
+                title="文件传输 (SFTP)"
+                onClick={() => toggleTool("sftp")}
+              >
+                <Icon name="transfer" size={15} />
+              </button>
+              <button
+                className={`nc-icon-btn${tool === "serial" ? " active" : ""}`}
+                title="串口"
+                onClick={() => toggleTool("serial")}
+              >
+                <Icon name="radio" size={15} />
+              </button>
+              <button
+                className={`nc-icon-btn${tool === "telnet" ? " active" : ""}`}
+                title="Telnet"
+                onClick={() => toggleTool("telnet")}
+              >
+                <Icon name="network" size={15} />
+              </button>
+              <button
+                className={`nc-icon-btn${tool === "forward" ? " active" : ""}`}
+                title="端口转发"
+                onClick={() => toggleTool("forward")}
+              >
+                <Icon name="server" size={15} />
+              </button>
+            </div>
           )}
         </div>
 

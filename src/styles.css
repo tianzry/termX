@@ -2041,3 +2041,1185 @@ button {
     width: 330px !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   1:1 对齐 netcatty —— 精确主题 token 与布局尺寸
+   参考：netcatty/index.html（主题变量）、components/TopTabs.tsx、
+   vault/VaultViewLayout.tsx、VaultPageHeader.tsx、VaultHostListSection.tsx、
+   terminalLayer/TerminalHostTreeSidebar.tsx、terminalLayerSidePanelWidth.ts
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  color-scheme: dark;
+  /* netcatty dark 主题（index.html .dark） */
+  --background: 220 28% 8%;
+  --foreground: 210 40% 95%;
+  --card: 220 22% 12%;
+  --card-foreground: 210 40% 95%;
+  --popover: 220 22% 12%;
+  --popover-foreground: 210 40% 95%;
+  --primary: 200 100% 61%;
+  --primary-foreground: 220 40% 96%;
+  --secondary: 220 16% 16%;
+  --secondary-foreground: 210 40% 90%;
+  --muted: 220 16% 16%;
+  --muted-foreground: 220 10% 70%;
+  --accent: 200 100% 61%;
+  --border: 220 22% 18%;
+  --input: 220 22% 18%;
+  --ring: 200 100% 61%;
+  --radius: 0.65rem;
+
+  /* 兼容既有组件使用的 --nc-* 别名 */
+  --nc-bg: var(--background);
+  --nc-bg-elev: var(--secondary);
+  --nc-panel: var(--background);
+  --nc-hover: var(--secondary);
+  --nc-border: var(--border);
+  --nc-fg: var(--foreground);
+  --nc-muted: var(--muted-foreground);
+  --nc-faint: 220 10% 52%;
+  --nc-primary: var(--primary);
+  --nc-radius: 8px;
+  --nc-sidebar-w: 220px;
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "Mona Sans", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 13px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.nc-shell {
+  background: hsl(var(--background));
+}
+
+/* ── 顶部标签栏：h-9（36px），根标签 / 会话标签 28px ─────────── */
+
+.nc-topbar {
+  height: 36px;
+  flex-shrink: 0;
+  display: block;
+  padding: 0;
+  border-bottom: none;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  backdrop-filter: none;
+  user-select: none;
+}
+
+.nc-topbar-row {
+  height: 36px;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  padding: 0 12px;
+}
+
+.nc-root-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+.nc-root-tab {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.nc-root-tab:hover {
+  background: hsl(var(--background) / 0.4);
+  color: hsl(var(--foreground));
+}
+
+.nc-root-tab.active {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+/* Vaults 是常驻首页，选中态保持平铺，不填充背景 */
+.nc-root-tab.active.flat {
+  background: transparent;
+}
+
+.nc-icon-btn.nc-hosttree-toggle {
+  align-self: flex-end;
+  border-radius: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-icon-btn.nc-hosttree-toggle:hover {
+  background: transparent;
+}
+
+.nc-icon-btn.nc-hosttree-toggle.active {
+  background: transparent;
+  color: hsl(var(--foreground));
+}
+
+.nc-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.nc-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.nc-session-tab {
+  position: relative;
+  height: 28px;
+  min-width: 150px;
+  max-width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.nc-session-tab:hover {
+  background: hsl(var(--background) / 0.4);
+  color: hsl(var(--foreground));
+}
+
+.nc-session-tab.active {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.nc-session-tab-icon {
+  flex-shrink: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-session-tab.active .nc-session-tab-icon {
+  color: hsl(var(--primary));
+}
+
+.nc-session-tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: 1.25rem;
+}
+
+.nc-tab-input {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 12px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--primary) / 0.7);
+  border-radius: 4px;
+  outline: none;
+}
+
+.nc-tab-close {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  opacity: 0;
+}
+
+.nc-session-tab:hover .nc-tab-close,
+.nc-session-tab.active .nc-tab-close {
+  opacity: 1;
+}
+
+.nc-tab-close:hover {
+  background: hsl(var(--foreground) / 0.1);
+  color: hsl(var(--foreground));
+}
+
+.nc-tab-new {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-tab-new:hover {
+  background: hsl(var(--background) / 0.4);
+  color: hsl(var(--foreground));
+}
+
+/* 右侧窗口工具：28×28，悬停 foreground/10 */
+.nc-chrome {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  margin-left: 4px;
+  flex-shrink: 0;
+  border-left: none;
+}
+
+.nc-icon-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-icon-btn:hover:not(:disabled) {
+  background: hsl(var(--foreground) / 0.1);
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-icon-btn.active {
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+}
+
+.nc-chrome-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: hsl(var(--border) / 0.7);
+}
+
+/* ── Vault：绝对铺满 + 208px 导航 + 圆角内容面板 ───────────── */
+
+.vault-shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  background: hsl(var(--secondary));
+}
+
+.vault-sidebar {
+  width: 208px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: hsl(var(--secondary));
+  transition: width 200ms ease;
+  min-height: 0;
+}
+
+.vault-sidebar.collapsed {
+  width: 56px;
+}
+
+.vault-sidebar-brand {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 16px 24px;
+}
+
+.vault-sidebar.collapsed .vault-sidebar-brand {
+  padding: 20px 8px 24px;
+  justify-content: center;
+}
+
+.vault-logo {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid hsl(var(--primary) / 0.35);
+  border-radius: 8px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  transition: opacity 150ms ease;
+}
+
+.vault-logo:hover {
+  opacity: 0.85;
+}
+
+.vault-wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: hsl(var(--foreground));
+}
+
+.vault-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+
+.vault-nav-item {
+  width: 100%;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.vault-nav-item:hover:not(:disabled) {
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground));
+}
+
+.vault-nav-item.active {
+  background: hsl(var(--foreground) / 0.1);
+  border-color: hsl(var(--border) / 0.4);
+  color: hsl(var(--foreground));
+}
+
+.vault-nav-item.collapsed {
+  justify-content: center;
+  padding: 0;
+}
+
+.vault-sidebar-foot {
+  margin-top: auto;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px 16px;
+}
+
+.vault-version {
+  padding-left: 12px;
+  font-size: 10.5px;
+  color: hsl(var(--nc-faint));
+}
+
+.vault-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  padding: 0 8px 8px 0;
+}
+
+.vault-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 12px;
+  background: hsl(var(--background));
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.25);
+}
+
+/* 页头：h-14（56px），px-16 py-8 gap-12 */
+.vault-header {
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+  background: hsl(var(--background) / 0.95);
+}
+
+.vault-search {
+  position: relative;
+  flex: 1;
+  min-width: 100px;
+  display: flex;
+  align-items: center;
+}
+
+.vault-search .nc-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: hsl(var(--muted-foreground));
+}
+
+.vault-search input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px 0 36px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 6px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.vault-search input::placeholder {
+  color: hsl(var(--muted-foreground) / 0.8);
+}
+
+.vault-search input:focus {
+  border-color: hsl(var(--primary) / 0.5);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}
+
+.vault-connect-btn {
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid hsl(var(--border) / 0.4);
+  border-radius: 6px;
+  background: hsl(var(--foreground) / 0.05);
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.vault-connect-btn:hover:not(:disabled) {
+  background: hsl(var(--foreground) / 0.1);
+}
+
+.vault-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vault-view-wrap {
+  position: relative;
+}
+
+.vault-icon-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.vault-icon-btn:hover:not(:disabled) {
+  background: hsl(var(--foreground) / 0.1);
+  color: hsl(var(--foreground));
+}
+
+.vault-view-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  width: 128px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  box-shadow: 0 10px 30px hsl(0 0% 0% / 0.35);
+}
+
+.vault-view-menu button {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.vault-view-menu button:hover {
+  background: hsl(var(--secondary));
+}
+
+.vault-view-menu button.active {
+  background: hsl(var(--secondary));
+}
+
+.vault-new-btn {
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.vault-new-btn:hover {
+  background: hsl(var(--primary) / 0.9);
+}
+
+/* 内容区 */
+.vault-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.25) transparent;
+}
+
+/* 网格：min 220px、gap 12px、最多 4 列（vaultHostGridLayout.ts） */
+.vault-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(max(220px, calc((100% - 36px) / 4)), 1fr)
+  );
+  gap: 12px;
+  align-content: start;
+}
+
+.vault-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 主机卡：68px / rounded-xl / soft-card + elevate */
+.vault-host-card {
+  height: 68px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 12px;
+  background: hsl(var(--card));
+  box-shadow: 0 4px 12px hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground));
+  font: inherit;
+  text-align: left;
+  transition: transform 140ms ease, border-color 140ms ease;
+}
+
+.vault-host-card:hover {
+  transform: translateY(-2px);
+  border-color: hsl(var(--border));
+}
+
+.vault-host-card.list {
+  height: 56px;
+  gap: 12px;
+  padding: 8px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.vault-host-card.list:hover {
+  transform: none;
+  background: hsl(var(--secondary) / 0.6);
+  border-color: transparent;
+}
+
+.vault-host-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.vault-host-card-main strong {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-host-card-sub {
+  font-size: 11px;
+  line-height: 1rem;
+  font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", monospace;
+  color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-host-card-go {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground));
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.vault-host-card:hover .vault-host-card-go {
+  opacity: 1;
+  color: hsl(var(--primary));
+}
+
+/* 主机头像：netcatty DistroAvatar lg = 44px / rounded-xl */
+.nc-avatar {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  background: linear-gradient(
+    135deg,
+    hsl(var(--nc-avatar-hue, 210) 62% 34%),
+    hsl(calc(var(--nc-avatar-hue, 210) + 28) 62% 24%)
+  );
+}
+
+.nc-avatar.lg {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 16px;
+}
+
+.nc-avatar.local {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.12);
+  border: 1px solid hsl(var(--primary) / 0.25);
+}
+
+/* 分组树视图 */
+.vault-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vault-tree-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vault-tree-head {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+.vault-tree-head > span:not(.nc-count) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-tree-group .vault-host-card.list {
+  margin-left: 20px;
+}
+
+/* 空状态 */
+.vault-empty {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  border: 1px dashed hsl(var(--border) / 0.7);
+  border-radius: 12px;
+  text-align: center;
+  color: hsl(var(--muted-foreground));
+}
+
+.vault-empty-icon {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--muted-foreground));
+}
+
+.vault-empty h2 {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.vault-empty p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.vault-empty .vault-new-btn {
+  margin-top: 6px;
+}
+
+/* ── 终端态左侧主机树：220px，36px 工具条，28px 行 ────────── */
+
+.nc-sidebar {
+  width: var(--nc-sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--background));
+}
+
+.nc-sidebar-toolbar {
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+}
+
+.nc-tree-tool {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-tree-tool:hover:not(:disabled) {
+  background: hsl(var(--foreground) / 0.1);
+  color: hsl(var(--foreground));
+}
+
+.nc-tree-tool.active {
+  color: hsl(var(--foreground));
+}
+
+.nc-tree-tool-spacer {
+  flex: 1;
+}
+
+.nc-sidebar-search-panel {
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+}
+
+.nc-sidebar-search {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.nc-sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+}
+
+.nc-sidebar-search input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+  scrollbar-width: thin;
+}
+
+.nc-sidebar-scroll::-webkit-scrollbar,
+.vault-content::-webkit-scrollbar,
+.nc-aside-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.nc-sidebar-scroll::-webkit-scrollbar-thumb,
+.vault-content::-webkit-scrollbar-thumb,
+.nc-aside-body::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.2);
+  border-radius: 4px;
+}
+
+.nc-tree-row {
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.nc-tree-row:hover {
+  background: hsl(var(--foreground) / 0.06);
+}
+
+.nc-tree-group-head {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.nc-tree-host {
+  padding-left: 20px;
+}
+
+.nc-tree-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nc-tree-count {
+  font-size: 10.5px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-tree-avatar {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  background: linear-gradient(
+    135deg,
+    hsl(var(--nc-avatar-hue, 210) 62% 34%),
+    hsl(calc(var(--nc-avatar-hue, 210) + 28) 62% 24%)
+  );
+}
+
+.nc-tree-avatar.local {
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.12);
+}
+
+.nc-count {
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  font-size: 10.5px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--border) / 0.55);
+}
+
+.nc-sidebar-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 26px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sidebar-empty button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+}
+
+/* ── SFTP 独立页 ─────────────────────────────────────────── */
+
+.nc-sftp-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: hsl(var(--background));
+}
+
+.nc-sftp-page-header {
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+}
+
+.nc-sftp-page-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.nc-sftp-page-header p {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-page-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.nc-sftp-page .sftp-panel {
+  width: 100%;
+  min-width: 0;
+  border-left: none;
+  background: transparent;
+}
+
+/* ── 终端右上角浮动工具条 ─────────────────────────────────── */
+
+.nc-term-tools {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 5px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-top: none;
+  border-right: none;
+  border-bottom-left-radius: 8px;
+  background: hsl(var(--background) / 0.82);
+  backdrop-filter: blur(10px);
+}
+
+.nc-term-tools .nc-icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+
+/* ── 终端右侧工具面板：36px 工具条 ───────────────────────── */
+
+.nc-aside {
+  width: 380px;
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--background));
+}
+
+.nc-aside-header {
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+}
+
+.nc-aside-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nc-aside-subtitle {
+  font-size: 10.5px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-aside-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ── 工作区 / 终端配色对齐 ───────────────────────────────── */
+
+.nc-main {
+  background: hsl(var(--background));
+}
+
+.nc-workspace {
+  background: hsl(var(--background));
+}
+
+.nc-main .tab-view-holder {
+  background: hsl(var(--background));
+}
+
+.splitter {
+  flex: 0 0 2px;
+  background: hsl(var(--border) / 0.7);
+}
+
+.splitter:hover {
+  background: hsl(var(--primary));
+}
+
+.pane {
+  padding: 0;
+  background: hsl(var(--background));
+}
+
+.pane.active {
+  box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.7);
+}
+
+.pane-overlay {
+  background: hsl(var(--background) / 0.9);
+  color: hsl(var(--muted-foreground));
+}
+
+.ws-empty {
+  color: hsl(var(--muted-foreground));
+}
+
+.ws-empty .hint {
+  color: hsl(var(--nc-faint));
+}
+
+.nc-restore {
+  background: hsl(40 60% 10% / 0.9);
+  border-bottom: 1px solid hsl(40 70% 30% / 0.6);
+}
+
