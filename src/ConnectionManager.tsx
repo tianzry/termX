@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as api from "./backend/client";
 import type {
   Credential,
@@ -12,6 +12,10 @@ type Tab = "profiles" | "creds" | "groups";
 interface Props {
   /** 当前档案列表（由 App 持有，便于空闲页快速连接）。 */
   profiles: Profile[];
+  /** 打开时直接进入某个档案的编辑表单。 */
+  editProfileId?: string | null;
+  /** 快速连接预填：只预填 name / host / port，凭据仍需选择。 */
+  prefill?: { name: string; host: string; port: number } | null;
   onClose: () => void;
   onConnect: (p: Profile) => void;
   /** 档案 / 凭据 / 分组任一变更后触发，让 App 重新拉列表。 */
@@ -57,7 +61,11 @@ const CRED_LABEL: Record<CredentialType, string> = {
 };
 
 function newId(): string {
-  return crypto.randomUUID();
+  // 与 workspaceModel.newId 一致：非安全上下文（http 调试）没有 randomUUID。
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function emptyProfile(): ProfDraft {
@@ -95,7 +103,14 @@ function emptyGroup(): GroupDraft {
 }
 
 /** 连接管理器：档案 / 凭据 / 分组三合一面板，替代原来的「每次连接临时建档」。 */
-export function ConnectionManager({ profiles, onClose, onConnect, onChanged }: Props) {
+export function ConnectionManager({
+  profiles,
+  editProfileId,
+  prefill,
+  onClose,
+  onConnect,
+  onChanged,
+}: Props) {
   const [tab, setTab] = useState<Tab>("profiles");
   const [creds, setCreds] = useState<Credential[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -121,6 +136,35 @@ export function ConnectionManager({ profiles, onClose, onConnect, onChanged }: P
     // 仅在挂载时拉一次；后续由各写操作显式 reload。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 外部入口：编辑指定档案 / 快速连接预填（只应用一次，避免后续 props 更新覆盖草稿）。
+  const opened = useRef(false);
+  useEffect(() => {
+    if (opened.current) return;
+    if (editProfileId) {
+      const target = profiles.find((p) => p.id === editProfileId);
+      if (!target) return;
+      editProfile(target);
+      opened.current = true;
+      return;
+    }
+    if (prefill) {
+      setTab("profiles");
+      setProfDraft({
+        id: newId(),
+        name: prefill.name,
+        host: prefill.host,
+        port: String(prefill.port),
+        credential_id: creds[0]?.id ?? "",
+        group_id: "",
+        init_command: "",
+        bastion_profile_id: "",
+      });
+      opened.current = true;
+    }
+    // editProfile 只在挂载阶段调用一次，不加入依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editProfileId, prefill, profiles, creds]);
 
   function groupName(id: string | null | undefined): string {
     if (!id) return "未分组";

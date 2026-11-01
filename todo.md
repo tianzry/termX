@@ -36,6 +36,7 @@
 | 会话恢复（localStorage + 恢复横幅） | ✅ | `src/backend/workspaceStore.ts` |
 | 界面结构对齐 netcatty（TopTabs / 主机树 / Vault / AsidePanel） | ✅ | `src/TopTabs.tsx`、`src/HostSidebar.tsx`、`src/VaultView.tsx`、`src/AsidePanel.tsx` |
 | 界面 1:1 复刻 netcatty（精确尺寸 / 配色 / 禁用未实现入口） | ✅ | `src/styles.css`、`src/TopTabs.tsx`、`src/VaultView.tsx` |
+| Vault 首页两批差异（分组层级 / 置顶 / 多选 / 右键菜单 / 快速连接预填 / 右侧新建面板） | ✅ | `src/VaultView.tsx`、`src/ConnectionManager.tsx`、`src/App.tsx` |
 | 三平台 CI 构建 + Windows 代码签名 | ✅ | `.github/workflows/release.yml` |
 
 ---
@@ -54,8 +55,9 @@
   - 重启后恢复上次的工作区、标签与分屏布局。
   - 实现：`src/backend/workspaceStore.ts`（`termx.workspace.v1`）+ 启动恢复横幅（用户确认后才重连）。
   - 参考：`components/workspace/`、`infrastructure/persistence/localStorageAdapter.ts`。
-- [ ] ⬜ **4. Vault 三视图 + 快速搜索 + 拖拽**
-  - 网格 / 列表 / 树三种视图，关键字搜索主机与分组，拖拽归组。
+- [ ] 🚧 **4. Vault 三视图 + 快速搜索 + 拖拽**
+  - 已实现：网格 / 列表 / 树、关键字搜索、分组层级与面包屑、快速连接、置顶、多选批量、右键菜单。
+  - 未实现：拖拽归组、分组右键管理。
   - 参考：`components/host-browser/`、`domain/hostBrowser.ts`。
 - [ ] ⬜ **5. Keychain 管理**
   - 密钥对生成、ssh-agent 检测、默认密钥（`~/.ssh`）列出与选用。
@@ -166,3 +168,4 @@
 | 2026-10-30 | 完成 P0 #1~#3：多标签、分屏、会话恢复（3 / 31）。 |
 | 2026-11-01 | 浅色 snow 默认主题；首页页头「终端 / 串口」入口；全部主机 + 最近连接分区；终端窗格顶部工具栏（31 项清单外，属 UI 复刻补全）。 |
 | 2026-11-01 | 终端工具栏左侧改为 时钟 / 系统监控(仅 SSH) / 断开 / 重连；⋮ 只留 终端外观、开始录制；分屏移入终端右键菜单（复制/粘贴/全选/浏览器/重连/分屏/清屏/关闭）。 |
+| 2026-11-02 | Vault 首页两批差异补齐：导航补已知主机/日志、侧栏拖宽、分组层级与面包屑、置顶、真实在线数、视图/排序持久化、快速连接预填、右键菜单、多选批量删除、右侧新建主机面板；P0 #4 剩拖拽归组。 |

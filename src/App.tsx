@@ -27,11 +27,13 @@ import { ForwardPanel } from "./ForwardPanel";
 import { ConnectionManager } from "./ConnectionManager";
 import * as api from "./backend/client";
 import type {
+  Credential,
   Group,
   Profile,
   TermBridge,
   TerminalTransport,
 } from "./backend/client";
+import type { HostPrefill } from "./VaultView";
 
 type Tool = "sftp" | "serial" | "telnet" | "forward" | null;
 
@@ -112,20 +114,31 @@ export default function App() {
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [credentials, setCredentials] = useState<Credential[]>([]);
   const [recentIds, setRecentIds] = useState<string[]>(loadRecent);
+  const [managerEditId, setManagerEditId] = useState<string | null>(null);
+  const [managerPrefill, setManagerPrefill] = useState<HostPrefill | null>(null);
 
   const loadData = useCallback(async () => {
     try {
-      const [nextProfiles, nextGroups] = await Promise.all([
+      const [nextProfiles, nextGroups, nextCredentials] = await Promise.all([
         api.listProfiles(),
         api.listGroups(),
+        api.listCredentials(),
       ]);
       setProfiles(nextProfiles);
       setGroups(nextGroups);
+      setCredentials(nextCredentials);
     } catch {
       /* 首次启动或 DB 为空时忽略 */
     }
   }, []);
+
+  function openManager() {
+    setManagerEditId(null);
+    setManagerPrefill(null);
+    setShowManager(true);
+  }
 
   useEffect(() => {
     void loadData();
@@ -248,7 +261,7 @@ export default function App() {
             groups={groups}
             onConnect={connect}
             onLocal={openLocal}
-            onOpenManager={() => setShowManager(true)}
+            onOpenManager={openManager}
             onClose={() => setSideOpen(false)}
           />
         )}
@@ -258,11 +271,24 @@ export default function App() {
             <VaultView
               profiles={profiles}
               groups={groups}
+              credentials={credentials}
               recentIds={recentIds}
+              activeSessionCount={tabs.length}
               onConnect={connect}
               onLocal={openLocal}
               onSerial={openSerial}
-              onOpenManager={() => setShowManager(true)}
+              onOpenManager={openManager}
+              onEditProfile={(p) => {
+                setManagerEditId(p.id);
+                setManagerPrefill(null);
+                setShowManager(true);
+              }}
+              onQuickConnect={(prefill) => {
+                setManagerEditId(null);
+                setManagerPrefill(prefill);
+                setShowManager(true);
+              }}
+              onDataChanged={() => void loadData()}
             />
           )}
 
@@ -308,9 +334,17 @@ export default function App() {
       {showManager && (
         <ConnectionManager
           profiles={profiles}
-          onClose={() => setShowManager(false)}
+          editProfileId={managerEditId}
+          prefill={managerPrefill}
+          onClose={() => {
+            setShowManager(false);
+            setManagerEditId(null);
+            setManagerPrefill(null);
+          }}
           onConnect={(p) => {
             setShowManager(false);
+            setManagerEditId(null);
+            setManagerPrefill(null);
             connect(p);
           }}
           onChanged={() => void loadData()}

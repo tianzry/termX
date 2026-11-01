@@ -619,3 +619,49 @@
 80. 应产品要求：工具栏尾部恢复 X 关闭按钮（`term-tool-close`），右键菜单去掉「关闭终端」，
     末项改为「清空缓冲区」。netcatty 的 `TerminalToolbar` 其实支持可选 `showClose`，
     原判断（工作区不显示）按截图口径修正。
+
+---
+
+## 2026-11-02 · Vault 首页两批差异补齐（对照 netcatty）
+
+### 改动点
+
+1. **`src/VaultView.tsx`**
+   - 侧栏补「已知主机」「日志」入口（置灰）；导航右缘新增 8px 拖拽条，宽度 208~320 持久化到
+     `termx.vault.sidebar.v1`。
+   - 面包屑只在非树视图显示；新增分组层级 `全部主机 › 分组名`，分组卡可点击进入。
+   - 网格 / 列表补「分组（共 N 个）」分区；根层级补「已置顶」（`termx.pinned.v1`）与最近连接。
+   - 搜索支持快速连接 `user@host` / `ssh user@host` / `ssh -p 2222 user@host`：识别后主色描边 +
+     闪电标记，「连接」按钮转主色；此时关键字不参与过滤，列表保持完整，内容区顶部显示虚线
+     建议行「直接连接 user@host:port」，点击或回车打开连接管理器并预填 name / host / port。
+   - 视图 / 排序持久化（`termx.vault.view.v1` / `termx.vault.sort.v1`），排序支持名称、主机升降序。
+   - 主机卡右键菜单：连接 / 双栏 SFTP(灰) / 主机浏览器(灰) / 编辑 / 复制主机名 / 复制账密(灰) /
+     置顶切换 / 删除；卡片 hover 出现编辑按钮，副标题改为 `user@host:port`。
+   - 多选模式：卡片勾选框 + 操作条（已选 N 台主机 / 全选 / 取消 / 批量删除），批量与单条删除
+     都走 `api.deleteProfile` 后刷新列表。
+   - 「新建主机」改为右侧 aside 面板（名称 / 主机 / 端口 / 凭据 / 分组 + 保存 / 保存并连接），
+     面板打开时页头的 新建主机 / 终端 / 串口 三块折叠隐藏。
+   - 「N 个在线」改为 App 传入的真实标签会话数。
+2. **`src/App.tsx`**：加载凭据列表；新增连接管理器的 `editProfileId` / `prefill` 入口状态。
+3. **`src/ConnectionManager.tsx`**：支持外部编辑指定档案、快速连接预填（只应用一次，避免覆盖草稿）。
+4. **`src/ui/icons.tsx`**：新增 `pin` / `pencil` / `square`。
+5. **`src/styles.css`**：补拖拽条、快速连接态、多选条、置顶星标 / hover 编辑、分组卡、右键菜单、
+   右侧新建面板样式。
+
+### 踩坑
+
+81. **右键菜单不能用 mousedown 直接关闭**：mousedown 即卸载菜单会导致后续 click 事件丢失，
+    菜单项永远点不中；改为 mousedown 时判断 `target.closest(".vault-popmenu")`，只关外部点击。
+82. **后端 Profile 没有 pinned 字段**：置顶只能存 `termx.pinned.v1`；删除主机时要把 id 同步移出，
+    否则会留下指向已删除档案的悬空 id。
+83. **侧栏宽度过渡会拖慢拖拽**：`.vault-sidebar` 有 `transition: width 200ms`，拖拽时必须加
+    `.resizing` 关掉过渡，且用 window 级 pointermove / pointerup 才能跟手。
+84. **快速连接不能只看 `@`**：普通搜索词可能含 `@`，必须限定 `ssh` 前缀或 `user@host` 形态；
+    `ssh -p` 的正则要吃掉尾部空白，否则端口号会被当成主机名。
+85. **新建面板必须绝对定位在 `.vault-stage` 内**：放进滚动内容区会随内容滚走；
+    父级补 `position: relative`，面板 `right: 0; top: 0; bottom: 0`。
+86. **快速连接语法不能参与搜索过滤**：`ssh -p 2222 user@hostname` 整体当关键字会过滤出 0 条，
+    看起来像列表坏了。改为识别到快速连接时跳过过滤，并在内容区顶部显示一条虚线建议行
+    「直接连接 user@host:port」（点击或 Enter 打开预填的连接管理器）。
+87. **`crypto.randomUUID` 只在安全上下文可用**：浏览器 HTTP 调试下 `ConnectionManager.newId()`
+    直接调用会抛错导致白屏；补时间戳 + 随机串回退（与 `workspaceModel.ts` 保持一致）。

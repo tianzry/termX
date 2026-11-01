@@ -58,7 +58,10 @@ export type IconName =
   | "trash"
   | "circle"
   | "history"
-  | "folder-sync";
+  | "folder-sync"
+  | "pin"
+  | "pencil"
+  | "square";
 
 const paths: Record<IconName, ReactElement> = {
   terminal: (
@@ -395,6 +398,19 @@ const paths: Record<IconName, ReactElement> = {
       <path d="m22 18-1.535 1.605a5 5 0 0 1-8-1.5" />
     </>
   ),
+  pin: (
+    <>
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </>
+  ),
+  pencil: (
+    <>
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="m15 5 4 4" />
+    </>
+  ),
+  square: <rect width="18" height="18" x="3" y="3" rx="2" />,
 };
 
 interface Props extends SVGProps<SVGSVGElement> {
