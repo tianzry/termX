@@ -11,8 +11,8 @@ body,
 
 body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: #0d1117;
-  color: #e6edf3;
+  background: #ffffff;
+  color: #16202b;
 }
 
 .app {
@@ -26,16 +26,16 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: #ffffff;
+  border-bottom: 1px solid #d6dce4;
 }
 
 .toolbar button,
 .ssh-form button,
 .sftp-panel button {
-  background: #21262d;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #eef1f5;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 6px 12px;
   cursor: pointer;
@@ -44,7 +44,7 @@ body {
 .toolbar button:hover:not(:disabled),
 .ssh-form button:hover:not(:disabled),
 .sftp-panel button:hover:not(:disabled) {
-  background: #30363d;
+  background: #d6dce4;
 }
 
 .toolbar button:disabled,
@@ -55,14 +55,14 @@ body {
 }
 
 .toolbar button.active {
-  border-color: #58a6ff;
-  color: #58a6ff;
+  border-color: #0a84ff;
+  color: #0a84ff;
 }
 
 .status {
   margin-left: auto;
   font-size: 13px;
-  color: #8b949e;
+  color: #5a6470;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -73,8 +73,8 @@ body {
   gap: 12px;
   align-items: flex-end;
   padding: 10px 12px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: #ffffff;
+  border-bottom: 1px solid #d6dce4;
   flex-wrap: wrap;
 }
 
@@ -83,23 +83,23 @@ body {
   flex-direction: column;
   gap: 2px;
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .ssh-form input,
 .ssh-form select,
 .sftp-panel input,
 .sftp-panel select {
-  background: #0d1117;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 5px 8px;
 }
 
 .ssh-form .hint {
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
   padding-bottom: 8px;
   align-self: flex-end;
 }
@@ -133,8 +133,8 @@ body {
   min-width: 340px;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid #30363d;
-  background: #161b22;
+  border-left: 1px solid #d6dce4;
+  background: #ffffff;
   overflow: hidden;
 }
 
@@ -157,8 +157,8 @@ body {
 
 .sftp-rule {
   font-size: 12px;
-  color: #8b949e;
-  border-top: 1px solid #30363d;
+  color: #5a6470;
+  border-top: 1px solid #d6dce4;
   padding-top: 8px;
 }
 
@@ -173,7 +173,7 @@ body {
   display: flex;
   gap: 6px;
   padding: 8px;
-  border-bottom: 1px solid #30363d;
+  border-bottom: 1px solid #d6dce4;
   flex-wrap: wrap;
 }
 
@@ -185,8 +185,8 @@ body {
 .sftp-stat {
   padding: 8px;
   font-size: 12px;
-  color: #8b949e;
-  border-bottom: 1px solid #30363d;
+  color: #5a6470;
+  border-bottom: 1px solid #d6dce4;
 }
 
 .sftp-list {
@@ -202,7 +202,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid #21262d;
+  border-bottom: 1px solid #eef1f5;
   font-size: 13px;
 }
 
@@ -216,11 +216,11 @@ body {
 }
 
 .sftp-list li.is-dir .sftp-name {
-  color: #58a6ff;
+  color: #0a84ff;
 }
 
 .sftp-list li .sftp-meta {
-  color: #8b949e;
+  color: #5a6470;
   font-size: 12px;
 }
 
@@ -248,8 +248,8 @@ body {
 .sftp-error {
   padding: 8px;
   font-size: 12px;
-  color: #f85149;
-  border-top: 1px solid #30363d;
+  color: #d93025;
+  border-top: 1px solid #d6dce4;
   word-break: break-all;
 }
 
@@ -258,7 +258,7 @@ body {
 .modal-mask {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(15, 23, 42, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -268,8 +268,8 @@ body {
 .modal {
   width: 420px;
   max-width: calc(100vw - 40px);
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  border: 1px solid #d6dce4;
   border-radius: 10px;
   padding: 16px;
   display: flex;
@@ -287,13 +287,13 @@ body {
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .modal label input {
-  background: #0d1117;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 6px 8px;
 }
@@ -316,9 +316,9 @@ body {
   white-space: pre-wrap;
   word-break: break-all;
   font-size: 12px;
-  color: #c9d1d9;
-  background: #0d1117;
-  border: 1px solid #30363d;
+  color: #16202b;
+  background: #ffffff;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 8px;
 }
@@ -330,7 +330,7 @@ body {
   flex-direction: column;
   gap: 2px;
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
   flex: 1;
   min-width: 0;
 }
@@ -345,7 +345,7 @@ body {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  border-bottom: 1px solid #30363d;
+  border-bottom: 1px solid #d6dce4;
 }
 
 .fwd-rules {
@@ -358,10 +358,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border: 1px solid #30363d;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 8px;
-  background: #0d1117;
+  background: #ffffff;
 }
 
 .fwd-rule-row {
@@ -404,19 +404,19 @@ body {
 }
 
 .fwd-stats {
-  background: #0d1117;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 8px;
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .fwd-rule-stat {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border-top: 1px solid #21262d;
+  border-top: 1px solid #eef1f5;
   padding-top: 6px;
   margin-top: 6px;
 }
@@ -426,27 +426,27 @@ body {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 999px;
-  border: 1px solid #30363d;
+  border: 1px solid #d6dce4;
 }
 
 .fwd-tag[data-status="active"] {
-  color: #3fb950;
-  border-color: #238636;
+  color: #1a7f37;
+  border-color: #1a7f37;
 }
 
 .fwd-tag[data-status="stopped"] {
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .fwd-tag[data-status="error"],
 .fwd-tag[data-status="stopping_error"] {
-  color: #f85149;
-  border-color: #da3633;
+  color: #d93025;
+  border-color: #d93025;
 }
 
 .fwd-tag[data-status="starting"] {
-  color: #d29922;
-  border-color: #9e6a03;
+  color: #9a6700;
+  border-color: #9a6700;
 }
 
 /* ── 空闲页：已保存连接快捷入口 ─────────────────────────── */
@@ -457,13 +457,13 @@ body {
   flex-wrap: wrap;
   align-items: center;
   padding: 10px 12px;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: #ffffff;
+  border-bottom: 1px solid #d6dce4;
 }
 
 .profiles-bar .hint {
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .profile-chip {
@@ -471,16 +471,16 @@ body {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  background: #21262d;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #eef1f5;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 8px;
   padding: 6px 12px;
   cursor: pointer;
 }
 
 .profile-chip:hover:not(:disabled) {
-  border-color: #58a6ff;
+  border-color: #0a84ff;
 }
 
 .profile-chip:disabled {
@@ -490,7 +490,7 @@ body {
 
 .profile-chip-sub {
   font-size: 11px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 /* ── 连接管理器 ─────────────────────────────────────────── */
@@ -503,9 +503,9 @@ body {
 }
 
 .cm-modal button {
-  background: #21262d;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #eef1f5;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 5px 10px;
   cursor: pointer;
@@ -514,7 +514,7 @@ body {
 }
 
 .cm-modal button:hover:not(:disabled) {
-  background: #30363d;
+  background: #d6dce4;
 }
 
 .cm-modal button:disabled {
@@ -536,12 +536,12 @@ body {
   display: flex;
   gap: 6px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #30363d;
+  border-bottom: 1px solid #d6dce4;
 }
 
 .cm-tabs button.active {
-  border-color: #58a6ff;
-  color: #58a6ff;
+  border-color: #0a84ff;
+  color: #0a84ff;
 }
 
 .cm-body {
@@ -559,8 +559,8 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: #0d1117;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  border: 1px solid #d6dce4;
   border-radius: 8px;
 }
 
@@ -577,7 +577,7 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 14px;
-  color: #e6edf3;
+  color: #16202b;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -585,7 +585,7 @@ body {
 
 .cm-sub {
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .cm-actions {
@@ -606,8 +606,8 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   padding: 10px;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  border: 1px solid #d6dce4;
   border-radius: 8px;
 }
 
@@ -616,15 +616,15 @@ body {
   flex-direction: column;
   gap: 3px;
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .cm-form input,
 .cm-form select,
 .cm-form textarea {
-  background: #0d1117;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 5px 8px;
   font: inherit;
@@ -651,12 +651,12 @@ body {
   padding: 14px;
   text-align: center;
   font-size: 13px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .cm-err {
   font-size: 12px;
-  color: #f85149;
+  color: #d93025;
 }
 
 /* ── SFTP 传输队列 ───────────────────────────────────────── */
@@ -666,7 +666,7 @@ body {
   flex-direction: column;
   gap: 5px;
   padding: 6px 0;
-  border-bottom: 1px solid #30363d;
+  border-bottom: 1px solid #d6dce4;
 }
 
 .xfer-row {
@@ -674,7 +674,7 @@ body {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .xfer-name {
@@ -682,13 +682,13 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #e6edf3;
+  color: #16202b;
 }
 
 .xfer-bar {
   flex: 1;
   height: 6px;
-  background: #21262d;
+  background: #eef1f5;
   border-radius: 3px;
   overflow: hidden;
 }
@@ -700,7 +700,7 @@ body {
 
 .xfer-fill {
   height: 100%;
-  background: #58a6ff;
+  background: #0a84ff;
   transition: width 0.15s linear;
 }
 
@@ -724,15 +724,15 @@ body {
 }
 
 .xfer-state[data-status="done"] {
-  color: #3fb950;
+  color: #1a7f37;
 }
 
 .xfer-state[data-status="error"] {
-  color: #f85149;
+  color: #d93025;
 }
 
 .xfer-state[data-status="canceled"] {
-  color: #d29922;
+  color: #9a6700;
 }
 
 /* ── 工作区：标签栏 / 分屏 / 会话恢复 ───────────────────── */
@@ -751,15 +751,15 @@ body {
   gap: 10px;
   padding: 8px 12px;
   font-size: 13px;
-  color: #d29922;
-  background: #1c1710;
-  border-bottom: 1px solid #9e6a03;
+  color: #9a6700;
+  background: #fff7e0;
+  border-bottom: 1px solid #9a6700;
 }
 
 .restore-banner button {
-  background: #21262d;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #eef1f5;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
@@ -767,7 +767,7 @@ body {
 }
 
 .restore-banner button:hover {
-  background: #30363d;
+  background: #d6dce4;
 }
 
 .tab-bar {
@@ -775,8 +775,8 @@ body {
   align-items: center;
   gap: 8px;
   padding: 4px 8px 0;
-  background: #161b22;
-  border-bottom: 1px solid #30363d;
+  background: #ffffff;
+  border-bottom: 1px solid #d6dce4;
   flex-shrink: 0;
 }
 
@@ -796,8 +796,8 @@ body {
   gap: 6px;
   max-width: 220px;
   padding: 5px 8px;
-  background: #0d1117;
-  border: 1px solid #30363d;
+  background: #ffffff;
+  border: 1px solid #d6dce4;
   border-radius: 6px 6px 0 0;
   cursor: pointer;
   user-select: none;
@@ -805,9 +805,9 @@ body {
 }
 
 .tab.active {
-  background: #161b22;
-  border-color: #58a6ff;
-  color: #58a6ff;
+  background: #ffffff;
+  border-color: #0a84ff;
+  color: #0a84ff;
 }
 
 .tab-title {
@@ -819,9 +819,9 @@ body {
 
 .tab-title-input {
   width: 120px;
-  background: #0d1117;
-  color: #e6edf3;
-  border: 1px solid #58a6ff;
+  background: #ffffff;
+  color: #16202b;
+  border: 1px solid #0a84ff;
   border-radius: 4px;
   padding: 1px 4px;
   font: inherit;
@@ -831,7 +831,7 @@ body {
 .tab-close {
   background: transparent;
   border: none;
-  color: #8b949e;
+  color: #5a6470;
   font-size: 14px;
   line-height: 1;
   padding: 0 2px;
@@ -839,14 +839,14 @@ body {
 }
 
 .tab-close:hover {
-  color: #f85149;
+  color: #d93025;
 }
 
 .tab-new {
   background: transparent;
-  border: 1px dashed #30363d;
+  border: 1px dashed #d6dce4;
   border-radius: 6px;
-  color: #8b949e;
+  color: #5a6470;
   width: 26px;
   height: 26px;
   cursor: pointer;
@@ -855,8 +855,8 @@ body {
 }
 
 .tab-new:hover {
-  color: #58a6ff;
-  border-color: #58a6ff;
+  color: #0a84ff;
+  border-color: #0a84ff;
 }
 
 .tab-actions {
@@ -867,9 +867,9 @@ body {
 }
 
 .tab-actions button {
-  background: #21262d;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #eef1f5;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 12px;
@@ -877,7 +877,7 @@ body {
 }
 
 .tab-actions button:hover:not(:disabled) {
-  background: #30363d;
+  background: #d6dce4;
 }
 
 .tab-actions button:disabled {
@@ -891,7 +891,7 @@ body {
   min-width: 0;
   display: flex;
   position: relative;
-  background: #0d1117;
+  background: #ffffff;
 }
 
 .tab-view {
@@ -913,12 +913,12 @@ body {
   justify-content: center;
   gap: 8px;
   font-size: 14px;
-  color: #8b949e;
+  color: #5a6470;
 }
 
 .ws-empty .hint {
   font-size: 12px;
-  color: #6e7681;
+  color: #6f7782;
 }
 
 .split {
@@ -945,7 +945,7 @@ body {
 
 .splitter {
   flex: 0 0 5px;
-  background: #21262d;
+  background: #eef1f5;
   transition: background 0.1s;
 }
 
@@ -958,7 +958,7 @@ body {
 }
 
 .splitter:hover {
-  background: #58a6ff;
+  background: #0a84ff;
 }
 
 .pane {
@@ -971,7 +971,7 @@ body {
 }
 
 .pane.active {
-  box-shadow: inset 0 0 0 1px #58a6ff;
+  box-shadow: inset 0 0 0 1px #0a84ff;
 }
 
 .pane .terminal {
@@ -985,9 +985,9 @@ body {
   top: 6px;
   right: 10px;
   font-size: 11px;
-  color: #d29922;
-  background: rgba(13, 17, 23, 0.85);
-  border: 1px solid #9e6a03;
+  color: #9a6700;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #9a6700;
   border-radius: 999px;
   padding: 1px 8px;
   pointer-events: none;
@@ -1001,14 +1001,14 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: rgba(13, 17, 23, 0.86);
-  color: #8b949e;
+  background: rgba(255, 255, 255, 0.92);
+  color: #5a6470;
   font-size: 13px;
   z-index: 2;
 }
 
 .pane-overlay-title {
-  color: #e6edf3;
+  color: #16202b;
   font-size: 14px;
 }
 
@@ -1016,22 +1016,22 @@ body {
   max-width: 80%;
   text-align: center;
   word-break: break-all;
-  color: #8b949e;
+  color: #5a6470;
   font-size: 12px;
 }
 
 .pane-reconnect {
-  background: #21262d;
-  color: #e6edf3;
-  border: 1px solid #30363d;
+  background: #eef1f5;
+  color: #16202b;
+  border: 1px solid #d6dce4;
   border-radius: 6px;
   padding: 5px 14px;
   cursor: pointer;
 }
 
 .pane-reconnect:hover {
-  background: #30363d;
-  border-color: #58a6ff;
+  background: #d6dce4;
+  border-color: #0a84ff;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2050,24 +2050,27 @@ button {
    ═══════════════════════════════════════════════════════════ */
 
 :root {
-  color-scheme: dark;
-  /* netcatty dark 主题（index.html .dark） */
-  --background: 220 28% 8%;
-  --foreground: 210 40% 95%;
-  --card: 220 22% 12%;
-  --card-foreground: 210 40% 95%;
-  --popover: 220 22% 12%;
-  --popover-foreground: 210 40% 95%;
-  --primary: 200 100% 61%;
-  --primary-foreground: 220 40% 96%;
-  --secondary: 220 16% 16%;
-  --secondary-foreground: 210 40% 90%;
-  --muted: 220 16% 16%;
-  --muted-foreground: 220 10% 70%;
-  --accent: 200 100% 61%;
-  --border: 220 22% 18%;
-  --input: 220 22% 18%;
-  --ring: 200 100% 61%;
+  color-scheme: light;
+  /* 默认浅色 snow 主题（netcatty index.html :root / uiThemes CORE_LIGHT_UI_THEMES） */
+  --background: 216 33% 96%;
+  --foreground: 222 47% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 12%;
+  --primary: 208 100% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 16% 90%;
+  --secondary-foreground: 222 47% 12%;
+  --muted: 220 16% 90%;
+  --muted-foreground: 220 10% 45%;
+  --accent: 208 100% 50%;
+  --accent-foreground: 222 47% 12%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 16% 82%;
+  --input: 220 16% 82%;
+  --ring: 208 100% 50%;
   --radius: 0.65rem;
 
   /* 兼容既有组件使用的 --nc-* 别名 */
@@ -2478,7 +2481,7 @@ button:disabled {
   border: 1px solid hsl(var(--border) / 0.6);
   border-radius: 12px;
   background: hsl(var(--background));
-  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.25);
+  box-shadow: 0 1px 2px hsl(220 40% 20% / 0.06);
 }
 
 /* 页头：h-14（56px），px-16 py-8 gap-12 */
@@ -2589,7 +2592,9 @@ button:disabled {
   border: 1px solid hsl(var(--border) / 0.8);
   border-radius: 8px;
   background: hsl(var(--popover));
-  box-shadow: 0 10px 30px hsl(0 0% 0% / 0.35);
+  box-shadow:
+    0 8px 24px hsl(220 40% 20% / 0.12),
+    0 1px 2px hsl(220 40% 20% / 0.08);
 }
 
 .vault-view-menu button {
@@ -3110,31 +3115,6 @@ button:disabled {
   background: transparent;
 }
 
-/* ── 终端右上角浮动工具条 ─────────────────────────────────── */
-
-.nc-term-tools {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px 5px;
-  border: 1px solid hsl(var(--border) / 0.6);
-  border-top: none;
-  border-right: none;
-  border-bottom-left-radius: 8px;
-  background: hsl(var(--background) / 0.82);
-  backdrop-filter: blur(10px);
-}
-
-.nc-term-tools .nc-icon-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-}
-
 /* ── 终端右侧工具面板：36px 工具条 ───────────────────────── */
 
 .nc-aside {
@@ -3219,7 +3199,280 @@ button:disabled {
 }
 
 .nc-restore {
-  background: hsl(40 60% 10% / 0.9);
-  border-bottom: 1px solid hsl(40 70% 30% / 0.6);
+  background: hsl(42 90% 94% / 0.9);
+  border-bottom: 1px solid hsl(38 80% 70% / 0.6);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   终端窗格顶部工具栏（对照 netcatty TerminalToolbar 与
+   TerminalView 顶部操作区）
+   ═══════════════════════════════════════════════════════════ */
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.term-toolbar {
+  flex-shrink: 0;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 0 10px;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  user-select: none;
+}
+
+.term-toolbar-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.term-toolbar-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.term-toolbar-title {
+  max-width: 16rem;
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--foreground) / 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.term-tool-btn {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-tool-btn:hover:not(:disabled) {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+
+.term-tool-more {
+  position: relative;
+  display: inline-flex;
+}
+
+.term-tool-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid hsl(var(--border) / 0.8);
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  box-shadow:
+    0 8px 24px hsl(220 40% 20% / 0.12),
+    0 1px 2px hsl(220 40% 20% / 0.08);
+}
+
+.term-tool-menu button {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.term-tool-menu button:hover:not(:disabled) {
+  background: hsl(var(--secondary));
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Vault 首页 —— 全部主机面包屑 / 最近连接分区 / 页头次级按钮
+   ═══════════════════════════════════════════════════════════ */
+
+/* 面包屑：pt-2 + text-sm font-semibold（VaultHostListSection 506） */
+.vault-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vault-all-hosts {
+  padding: 0 4px;
+  margin: 0 -4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--primary));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vault-all-hosts:hover {
+  text-decoration: underline;
+}
+
+/* 分区：title text-sm font-semibold text-muted-foreground + space-y-2 */
+.vault-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vault-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vault-section-title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+}
+
+.vault-section-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 在线数胶囊：bg-secondary/80 + border-border/70 + rounded-md */
+.vault-live-pill {
+  padding: 2px 8px;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 6px;
+  background: hsl(var(--secondary) / 0.8);
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* 新建主机分体按钮：整体圆角，右段带分隔线 */
+.vault-new-split {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.vault-new-split .vault-new-btn {
+  flex-shrink: 0;
+  border-radius: 6px 0 0 6px;
+  background: transparent;
+}
+
+.vault-new-split .vault-new-btn:hover {
+  background: hsl(0 0% 100% / 0.12);
+}
+
+.vault-new-btn-caret {
+  width: 32px;
+  height: 40px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-left: 1px solid hsl(var(--primary-foreground) / 0.2);
+  border-radius: 0 6px 6px 0;
+  background: transparent;
+  color: inherit;
+}
+
+.vault-new-btn-caret:hover {
+  background: hsl(0 0% 100% / 0.12);
+}
+
+/* 下拉挂载在分体按钮外层，右对齐 */
+.vault-new-menu {
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+  width: max-content;
+  min-width: 11rem;
+}
+
+/* 页头次级按钮：h-10 px-3 gap-2 bg-foreground/5 */
+.vault-secondary-btn {
+  height: 40px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid hsl(var(--border) / 0.4);
+  border-radius: 6px;
+  background: hsl(var(--foreground) / 0.05);
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.vault-secondary-btn:hover {
+  background: hsl(var(--foreground) / 0.1);
+}
+
+/* 页头控件不参与收缩，空间不足时由搜索框让步 */
+.vault-connect-btn,
+.vault-view-wrap,
+.vault-icon-btn,
+.vault-new-split,
+.vault-secondary-btn {
+  flex-shrink: 0;
+}
+
+/* 窄窗口下收起低优先级页头控件，保证「终端 / 串口」始终可见 */
+@media (max-width: 960px) {
+  .vault-connect-btn,
+  .vault-header-tools > :not(.vault-view-wrap) {
+    display: none;
+  }
 }
 

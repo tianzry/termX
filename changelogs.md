@@ -538,3 +538,42 @@
     改用 `.nc-icon-btn.nc-hosttree-toggle.active`。主机树开关在 netcatty 里没有蓝色填充。
 70. **尺寸基准要以源码常量为准**：netcatty 主机树默认宽度是 **220px**（`TERMINAL_HOST_TREE_DEFAULT_WIDTH`，min 176 / max 360），
     不是 w-72（288px）；树行 28px、侧面板工具条 36px、Vault 卡片 68px、`DistroAvatar lg` 44px。
+
+---
+
+## 2026-11-01 · 浅色 snow 主题 + 首页三入口 + 终端窗格工具栏
+
+目标：默认界面切换为 netcatty 的浅色 snow 主题；首页页头补齐「终端 / 串口」；
+终端顶部工具栏按 netcatty `TerminalToolbar` / `TerminalView` 复刻。
+
+### 改动点
+
+1. **`src/styles.css`（主题）**：`:root` 由 netcatty `.dark` 改为 snow 浅色 token
+   （`216 33% 96%` / `208 100% 50%` / `220 16% 82%`，`color-scheme: light`），
+   并把旧 GitHub-dark 硬编码色批量映射为浅色等价值；阴影改淡
+   （`.vault-surface`、`.vault-view-menu`、`.nc-restore`）。
+2. **`src/Terminal.tsx`**：xterm 主题改浅色（白底 / 深色字 / 蓝色光标）。
+3. **`src/VaultView.tsx`（重写）**：页头顺序改为 搜索 → 连接 → 视图/标签/排序/多选 →
+   新建主机分体按钮 → **终端** → **串口**；内容区改为「全部主机」面包屑 → 最近连接 → 主机分区
+   （条数 + 在线数胶囊）；空状态改为截图样式。
+4. **`src/App.tsx`**：新增 `termx.recent.v1`（localStorage `{id,ts}[]`，上限 8 条）记录最近连接，
+   提供 `recentIds` 给首页；新增 `openSerial()`；删除右上角浮动 `nc-term-tools`。
+5. **`src/TerminalPane.tsx`**：新增每窗格 30px 顶部工具栏（左：标题 / 时钟 / 活动 / 重连；
+   右：高亮 / SFTP / 浏览器 / 输入框 / 搜索 / 日志 / 脚本 / ⋮ / 关闭），`⋮` 收纳分屏与串口 / Telnet / 转发。
+6. **`src/Workspace.tsx` / `src/ui/icons.tsx`**：透传 `onOpenTool` / `onClosePane` / `onSplit`；
+   补齐 clock / highlighter / folder-input / globe / text-cursor / file-text / zap / more-vertical 等图标。
+
+### 踩坑
+
+71. **`styles.css` 里有两套主题变量**：前面 1041 行还留着 `:root { color-scheme: dark; --nc-* }`，
+    只改后面 2052 行的 `:root` 不够——后者靠「同特异性、后出现」才覆盖前者。改主题务必确认
+    最终生效的 `:root`，且 `--nc-*` 要用别名指向新 token，否则侧栏 / 顶栏仍是深色。
+72. **`.tsx` 里的颜色不受 CSS 批量替换影响**：xterm `theme` 是 JS 字面量，深浅色要单独改，
+    否则出现「外壳浅色、终端黑底」的割裂效果。
+73. **页头按钮会被 flex 压缩**：`.vault-search { flex: 1 }` 与按钮默认 `flex-shrink: 1` 一起作用，
+    窄窗口时按钮被压扁甚至挤出可视区（「终端 / 串口」看不见）。给页头按钮统一加
+    `flex-shrink: 0`，让搜索框让步，并加 `@media (max-width: 960px)` 收起低优先级图标。
+74. **终端工具栏归属是「每窗格」而非全局**：netcatty 的 `TerminalToolbar` 挂在每个 `TerminalView` 内，
+    放在 App 顶层浮层会与分屏语义冲突；`.pane` 必须改 `flex-direction: column` 才能容纳这条 30px 工具条。
+75. **最近连接没有后端时间戳**：Profile 表无 `last_connected_at`，只能用前端 localStorage 记录顺序，
+    清缓存即丢失；后续若加字段应迁到 DB。

@@ -24,7 +24,13 @@ export function TerminalView({ onReady, onData, onResize }: Props) {
       cursorBlink: true,
       fontSize: 14,
       fontFamily: "Menlo, Monaco, 'Courier New', monospace",
-      theme: { background: "#0d1117", foreground: "#e6edf3" },
+      theme: {
+        background: "#ffffff",
+        foreground: "#16202b",
+        cursor: "#0a84ff",
+        cursorAccent: "#ffffff",
+        selectionBackground: "rgba(10, 132, 255, 0.22)",
+      },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);

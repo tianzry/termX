@@ -39,7 +39,19 @@ export type IconName =
   | "check-square"
   | "sort"
   | "tag"
-  | "dot";
+  | "dot"
+  | "terminal-square"
+  | "usb"
+  | "highlighter"
+  | "folder-input"
+  | "globe"
+  | "text-cursor"
+  | "file-text"
+  | "zap"
+  | "clock"
+  | "palette"
+  | "languages"
+  | "more-vertical";
 
 const paths: Record<IconName, ReactElement> = {
   terminal: (
@@ -238,6 +250,96 @@ const paths: Record<IconName, ReactElement> = {
     </>
   ),
   dot: <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />,
+  "terminal-square": (
+    <>
+      <path d="m7 11 2-2-2-2" />
+      <path d="M11 13h4" />
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+    </>
+  ),
+  usb: (
+    <>
+      <circle cx="10" cy="7" r="1" />
+      <circle cx="4" cy="20" r="1" />
+      <path d="M4.7 19.3 19 5" />
+      <path d="m21 3-3 1 2 2Z" />
+      <path d="M9.26 7.68 5 12l2 5" />
+      <path d="m10 14 5 2 3.5-4" />
+    </>
+  ),
+  highlighter: (
+    <>
+      <path d="m9 11-6 6v3h9l3-3" />
+      <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+    </>
+  ),
+  "folder-input": (
+    <>
+      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+      <path d="M2 13h10" />
+      <path d="m9 16 3-3-3-3" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M2 12h20" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+    </>
+  ),
+  "text-cursor": (
+    <>
+      <path d="M5 4h1a3 3 0 0 1 3 3 3 3 0 0 1 3-3h1" />
+      <path d="M13 20h-1a3 3 0 0 1-3-3 3 3 0 0 1-3 3H5" />
+      <path d="M5 16H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h1" />
+      <path d="M13 8h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-7" />
+      <path d="M9 7v10" />
+    </>
+  ),
+  "file-text": (
+    <>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v6h6" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+      <path d="M10 9H8" />
+    </>
+  ),
+  zap: (
+    <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </>
+  ),
+  palette: (
+    <>
+      <path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z" />
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+    </>
+  ),
+  languages: (
+    <>
+      <path d="m5 8 6 6" />
+      <path d="m4 14 6-6 2-3" />
+      <path d="M2 5h12" />
+      <path d="M7 2h1" />
+      <path d="m22 22-5-10-5 10" />
+      <path d="M14 18h6" />
+    </>
+  ),
+  "more-vertical": (
+    <>
+      <circle cx="12" cy="5" r="1" fill="currentColor" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" />
+      <circle cx="12" cy="19" r="1" fill="currentColor" />
+    </>
+  ),
 };
 
 interface Props extends SVGProps<SVGSVGElement> {

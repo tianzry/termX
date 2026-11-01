@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
+import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import type {
   AuthPrompt,
@@ -49,6 +50,12 @@ interface Props {
   onActivate: () => void;
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
   onStatus: (text: string) => void;
+  /** 打开右侧工具面板（SFTP / 串口 / Telnet / 端口转发）。 */
+  onOpenTool?: (tool: "sftp" | "serial" | "telnet" | "forward") => void;
+  /** 关闭当前窗格。 */
+  onClosePane?: () => void;
+  /** 分屏（在当前标签内）。 */
+  onSplit?: (dir: "horizontal" | "vertical") => void;
 }
 
 export function TerminalPane({
@@ -58,12 +65,16 @@ export function TerminalPane({
   onActivate,
   onRegister,
   onStatus,
+  onOpenTool,
+  onClosePane,
+  onSplit,
 }: Props) {
   const [status, setStatus] = useState<PaneStatus>("connecting");
   const [detail, setDetail] = useState("");
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const controllerRef = useRef<TerminalController | null>(null);
   const transportRef = useRef<TerminalTransport | null>(null);
@@ -301,6 +312,177 @@ export function TerminalPane({
         controllerRef.current?.term.focus();
       }}
     >
+      {/* 终端顶部工具栏（对照 netcatty TerminalToolbar / TerminalView 状态栏） */}
+      <div className="term-toolbar" data-section="terminal-toolbar">
+        <div className="term-toolbar-left">
+          <span className="term-toolbar-title" title={tab.title}>
+            {tab.title}
+          </span>
+          <button
+            className="term-tool-btn"
+            disabled
+            title="行时间戳（尚未实现）"
+          >
+            <Icon name="clock" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            disabled
+            title="系统监控（尚未实现）"
+          >
+            <Icon name="activity" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            title={status === "connected" ? "重新连接" : "重连"}
+            onClick={() => {
+              void connect();
+            }}
+          >
+            <Icon name="refresh" size={12} />
+          </button>
+        </div>
+        <div className="term-toolbar-right">
+          <button
+            className="term-tool-btn"
+            disabled
+            title="主机关键词高亮（尚未实现）"
+          >
+            <Icon name="highlighter" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            title={
+              onOpenTool ? "打开 SFTP" : "SFTP 面板不可用"
+            }
+            disabled={!onOpenTool}
+            onClick={() => onOpenTool?.("sftp")}
+          >
+            <Icon name="folder-input" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            disabled
+            title="主机浏览器（尚未实现）"
+          >
+            <Icon name="globe" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            disabled
+            title="输入框（尚未实现）"
+          >
+            <Icon name="text-cursor" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            disabled
+            title="终端搜索（尚未实现）"
+          >
+            <Icon name="search" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            disabled
+            title="会话日志（尚未实现）"
+          >
+            <Icon name="file-text" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            disabled
+            title="脚本（尚未实现）"
+          >
+            <Icon name="zap" size={12} />
+          </button>
+          <div className="term-tool-more">
+            <button
+              className="term-tool-btn"
+              title="更多"
+              onClick={() => setMoreOpen((v) => !v)}
+            >
+              <Icon name="more-vertical" size={12} />
+            </button>
+            {moreOpen && (
+              <div className="term-tool-menu">
+                <button
+                  title="左右分屏"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    onSplit?.("horizontal");
+                  }}
+                >
+                  <Icon name="columns" size={12} />
+                  左右分屏
+                </button>
+                <button
+                  title="上下分屏"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    onSplit?.("vertical");
+                  }}
+                >
+                  <Icon name="rows" size={12} />
+                  上下分屏
+                </button>
+                <button
+                  title="串口面板"
+                  disabled={!onOpenTool}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    onOpenTool?.("serial");
+                  }}
+                >
+                  <Icon name="radio" size={12} />
+                  串口
+                </button>
+                <button
+                  title="Telnet 面板"
+                  disabled={!onOpenTool}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    onOpenTool?.("telnet");
+                  }}
+                >
+                  <Icon name="network" size={12} />
+                  Telnet
+                </button>
+                <button
+                  title="端口转发表格"
+                  disabled={!onOpenTool}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    onOpenTool?.("forward");
+                  }}
+                >
+                  <Icon name="server" size={12} />
+                  端口转发
+                </button>
+                {[
+                  { icon: "clock" as const, label: "命令历史" },
+                  { icon: "folder" as const, label: "OSC7 目录同步" },
+                  { icon: "palette" as const, label: "终端外观" },
+                  { icon: "languages" as const, label: "编码" },
+                ].map((item) => (
+                  <button key={item.label} disabled title={`${item.label}（尚未实现）`}>
+                    <Icon name={item.icon} size={12} />
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            className="term-tool-btn term-tool-close"
+            title="关闭当前窗格"
+            disabled={!onClosePane}
+            onClick={() => onClosePane?.()}
+          >
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+      </div>
+
       <TerminalView
         onReady={(c) => {
           controllerRef.current = c;

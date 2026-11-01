@@ -25,7 +25,6 @@ import { SerialPanel } from "./SerialPanel";
 import { TelnetPanel } from "./TelnetPanel";
 import { ForwardPanel } from "./ForwardPanel";
 import { ConnectionManager } from "./ConnectionManager";
-import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import type {
   Group,
@@ -44,6 +43,39 @@ const TOOL_TITLE: Record<Exclude<Tool, null>, string> = {
 };
 
 const SIDEBAR_KEY = "termx.sidebar.v1";
+/** 最近连接记录（v1: { id, ts }[]），仅前端保存。 */
+const RECENT_KEY = "termx.recent.v1";
+const RECENT_LIMIT = 8;
+
+function loadRecent(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((x): x is { id: string; ts: number } =>
+        Boolean(x) && typeof (x as { id?: unknown }).id === "string",
+      )
+      .map((x) => x.id);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecent(id: string, prev: string[]): string[] {
+  const next = [id, ...prev.filter((x) => x !== id)].slice(0, RECENT_LIMIT);
+  try {
+    const now = Date.now();
+    localStorage.setItem(
+      RECENT_KEY,
+      JSON.stringify(next.map((x, i) => ({ id: x, ts: now - i }))),
+    );
+  } catch {
+    /* 忽略持久化失败 */
+  }
+  return next;
+}
 
 export default function App() {
   const workspaceRef = useRef<WorkspaceHandle>(null);
@@ -80,6 +112,7 @@ export default function App() {
 
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [recentIds, setRecentIds] = useState<string[]>(loadRecent);
 
   const loadData = useCallback(async () => {
     try {
@@ -146,16 +179,24 @@ export default function App() {
 
   function openLocal() {
     setSurface(null);
+    setRecentIds((prev) => saveRecent("__local", prev));
     workspaceRef.current?.newTab({ kind: "pty" });
   }
 
   function connect(profile: Profile) {
     setSurface(null);
+    setRecentIds((prev) => saveRecent(profile.id, prev));
     workspaceRef.current?.newTab({
       kind: "ssh",
       profileId: profile.id,
       name: profile.name,
     });
+  }
+
+  function openSerial() {
+    setSurface(null);
+    workspaceRef.current?.ensureTab();
+    setTool("serial");
   }
 
   function toggleTool(next: Exclude<Tool, null>) {
@@ -170,7 +211,6 @@ export default function App() {
   }
 
   const terminalActive = surface === null;
-  const hasActive = tabs.some((t) => t.id === activeTabId);
 
   return (
     <div className="nc-shell">
@@ -218,8 +258,10 @@ export default function App() {
             <VaultView
               profiles={profiles}
               groups={groups}
+              recentIds={recentIds}
               onConnect={connect}
               onLocal={openLocal}
+              onSerial={openSerial}
               onOpenManager={() => setShowManager(true)}
             />
           )}
@@ -244,67 +286,9 @@ export default function App() {
               onActivePane={onActivePane}
               onStatus={setStatus}
               onSnapshot={onSnapshot}
+              onOpenTool={toggleTool}
             />
           </div>
-
-          {/* netcatty 的终端工具条浮在终端右上角 */}
-          {terminalActive && (
-            <div className="nc-term-tools">
-              <button
-                className="nc-icon-btn"
-                title="左右分屏"
-                disabled={!hasActive}
-                onClick={() => workspaceRef.current?.split("horizontal")}
-              >
-                <Icon name="columns" size={15} />
-              </button>
-              <button
-                className="nc-icon-btn"
-                title="上下分屏"
-                disabled={!hasActive}
-                onClick={() => workspaceRef.current?.split("vertical")}
-              >
-                <Icon name="rows" size={15} />
-              </button>
-              <button
-                className="nc-icon-btn"
-                title="关闭当前窗格"
-                disabled={!hasActive}
-                onClick={() => workspaceRef.current?.closePane()}
-              >
-                <Icon name="x" size={15} />
-              </button>
-              <span className="nc-chrome-divider" />
-              <button
-                className={`nc-icon-btn${tool === "sftp" ? " active" : ""}`}
-                title="文件传输 (SFTP)"
-                onClick={() => toggleTool("sftp")}
-              >
-                <Icon name="transfer" size={15} />
-              </button>
-              <button
-                className={`nc-icon-btn${tool === "serial" ? " active" : ""}`}
-                title="串口"
-                onClick={() => toggleTool("serial")}
-              >
-                <Icon name="radio" size={15} />
-              </button>
-              <button
-                className={`nc-icon-btn${tool === "telnet" ? " active" : ""}`}
-                title="Telnet"
-                onClick={() => toggleTool("telnet")}
-              >
-                <Icon name="network" size={15} />
-              </button>
-              <button
-                className={`nc-icon-btn${tool === "forward" ? " active" : ""}`}
-                title="端口转发"
-                onClick={() => toggleTool("forward")}
-              >
-                <Icon name="server" size={15} />
-              </button>
-            </div>
-          )}
         </div>
 
         {tool && (

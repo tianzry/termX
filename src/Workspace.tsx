@@ -56,6 +56,8 @@ interface Props {
   onStatus: (text: string) => void;
   /** 向上发布标签快照，供顶部 TopTabs 渲染（标签状态仍由本组件持有）。 */
   onSnapshot?: (tabs: Tab[], activeTabId: string | null, restorePending: boolean) => void;
+  /** 终端工具栏里打开右侧工具面板。 */
+  onOpenTool?: (tool: "sftp" | "serial" | "telnet" | "forward") => void;
 }
 
 function resolveActivePane(
@@ -75,6 +77,9 @@ interface LayoutProps {
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
   onStatus: (text: string) => void;
   onRatio: (splitId: string, ratio: number) => void;
+  onOpenTool?: (tool: "sftp" | "serial" | "telnet" | "forward") => void;
+  onClosePane: (paneId: string) => void;
+  onSplit: (dir: SplitDir) => void;
 }
 
 /** 递归渲染分屏树；split 节点带一条可拖拽分隔条。 */
@@ -86,6 +91,9 @@ function LayoutView({
   onRegister,
   onStatus,
   onRatio,
+  onOpenTool,
+  onClosePane,
+  onSplit,
 }: LayoutProps) {
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -98,6 +106,9 @@ function LayoutView({
         onActivate={() => onActivate(node.id)}
         onRegister={onRegister}
         onStatus={onStatus}
+        onOpenTool={onOpenTool}
+        onClosePane={() => onClosePane(node.id)}
+        onSplit={onSplit}
       />
     );
   }
@@ -133,6 +144,9 @@ function LayoutView({
     onRegister,
     onStatus,
     onRatio,
+    onOpenTool,
+    onClosePane,
+    onSplit,
   };
 
   return (
@@ -152,7 +166,7 @@ function LayoutView({
 }
 
 export const Workspace = forwardRef<WorkspaceHandle, Props>(
-  function Workspace({ onActivePane, onStatus, onSnapshot }, ref) {
+  function Workspace({ onActivePane, onStatus, onSnapshot, onOpenTool }, ref) {
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
     const [activePaneByTab, setActivePaneByTab] = useState<
@@ -378,6 +392,9 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
                 onRegister={registerPane}
                 onStatus={onStatus}
                 onRatio={(splitId, ratio) => setRatio(tab.id, splitId, ratio)}
+                onOpenTool={onOpenTool}
+                onClosePane={(paneId) => closePane(tab.id, paneId)}
+                onSplit={splitActive}
               />
             </div>
           ))}
