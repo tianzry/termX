@@ -246,6 +246,15 @@ mod auto_launch_impl {
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+    /// headless 服务进程（rssh-server.exe）不允许登记开机自启，
+    /// 否则 Run 键会指向无界面的服务端二进制。
+    pub fn is_headless() -> bool {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
+            .is_some_and(|n| n.contains("-server"))
+    }
+
     fn reg(args: &[&str]) -> Option<(bool, String)> {
         let out = Command::new("reg.exe")
             .args(args)
@@ -271,6 +280,9 @@ mod auto_launch_impl {
     }
 
     pub fn set(enabled: bool) -> bool {
+        if is_headless() {
+            return false;
+        }
         if enabled {
             let exe = match std::env::current_exe() {
                 Ok(p) => format!("\"{}\"", p.display()),
@@ -316,23 +328,30 @@ pub fn get_auto_launch() -> AutoLaunchStatus {
     }
 }
 
+/// 写注册表失败返回 Err（前端据此回读真实状态），不再与"平台不支持"混为
+/// supported=false；错误串是机器文案，不直接展示给用户（R5）。
 #[tauri::command]
-pub fn set_auto_launch(enabled: bool) -> AutoLaunchStatus {
+pub fn set_auto_launch(enabled: bool) -> Result<AutoLaunchStatus, String> {
     #[cfg(windows)]
     {
-        let ok = auto_launch_impl::set(enabled);
-        AutoLaunchStatus {
-            supported: ok,
-            enabled: ok && auto_launch_impl::enabled(),
+        if auto_launch_impl::is_headless() {
+            return Err("auto_launch_unavailable_in_headless".into());
         }
+        if !auto_launch_impl::set(enabled) {
+            return Err("auto_launch_registry_write_failed".into());
+        }
+        Ok(AutoLaunchStatus {
+            supported: true,
+            enabled: auto_launch_impl::enabled(),
+        })
     }
     #[cfg(not(windows))]
     {
         let _ = enabled;
-        AutoLaunchStatus {
+        Ok(AutoLaunchStatus {
             supported: false,
             enabled: false,
-        }
+        })
     }
 }
 

@@ -30,7 +30,9 @@ function resolveFontFamily(s: AppSettings): string {
 
 /** 由设置中心（终端 tab）构建 xterm 选项；导出供单测。 */
 export function buildXtermOptions(s: AppSettings): ITerminalOptions {
-  const dark = resolvedThemeMode(s) === "dark";
+  // 终端主题：跟随应用主题；关闭 followAppTheme 时终端固定深色配色
+  // （终端主题预设库未移植，对照 Netcatty settings.terminal.theme.followApp）。
+  const dark = !s.terminal.followAppTheme || resolvedThemeMode(s) === "dark";
   const t = s.terminal;
   return {
     convertEol: false,

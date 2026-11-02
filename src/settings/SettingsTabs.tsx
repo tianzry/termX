@@ -281,6 +281,17 @@ export function AppearanceTab() {
               onChange={(e) => updateSettings({ windowOpacity: Number(e.target.value) / 100 })}
             />
             <span className="nc-set-value">{Math.round(s.windowOpacity * 100)}%</span>
+            {/* 快捷预设（对照 Netcatty 透明度行 100% / 85% / 70% 按钮） */}
+            {[100, 85, 70].map((p) => (
+              <button
+                key={p}
+                type="button"
+                className="nc-set-btn"
+                onClick={() => updateSettings({ windowOpacity: p / 100 })}
+              >
+                {p}%
+              </button>
+            ))}
           </div>
         </Row>
         <Row
@@ -297,7 +308,7 @@ export function AppearanceTab() {
       <Section title={t("settings.appearance.section.theme")}>
         <Row title={t("settings.appearance.theme.mode")}>
           <div className="nc-set-theme-cards" role="radiogroup">
-            {(["light", "dark", "system"] as const).map((m) => (
+            {(["light", "system", "dark"] as const).map((m) => (
               <button
                 key={m}
                 role="radio"
@@ -433,11 +444,22 @@ export function TerminalTab() {
   ];
   const weightOptions = FONT_WEIGHTS.map((w) => ({
     value: String(w.value),
-    label: `${w.value} · ${t(`settings.terminal.font.weight.${w.key}`)}`,
+    label: `${w.value} - ${t(`settings.terminal.font.weight.${w.key}`)}`,
   }));
 
   return (
     <div>
+      {/* 终端主题（对照 Netcatty settings.terminal.theme.followApp） */}
+      <Section title={t("settings.terminal.section.theme")}>
+        <Row
+          title={t("settings.terminal.theme.followApp")}
+          desc={t("settings.terminal.theme.followApp.desc")}
+        >
+          <Toggle checked={term.followAppTheme} onChange={(v) => patch({ followAppTheme: v })} />
+        </Row>
+        {!term.followAppTheme && <Row title={t("settings.terminal.theme.fixedDarkHint")} />}
+      </Section>
+
       <Section title={t("settings.terminal.section.font")}>
         <Row title={t("settings.terminal.font.family")} desc={t("settings.terminal.font.family.desc")}>
           <Select
@@ -455,6 +477,7 @@ export function TerminalTab() {
             onChange={(v) => updateSettings({ terminalFontSize: v })}
             min={8}
             max={32}
+            suffix="px"
           />
         </Row>
         <Row title={t("settings.terminal.font.weight")} desc={t("settings.terminal.font.weight.desc")}>
@@ -699,8 +722,11 @@ export function ShortcutsTab() {
 
   return (
     <div>
-      <Section title={t("settings.tab.shortcuts")}>
-        <Row title={t("settings.shortcuts.scheme")}>
+      <Section title={t("settings.shortcuts.section.scheme")}>
+        <Row
+          title={t("settings.shortcuts.scheme.label")}
+          desc={t("settings.shortcuts.scheme.desc")}
+        >
           <div className="nc-set-theme-cards" role="radiogroup">
             {(["mac", "pc"] as const).map((m) => (
               <button
@@ -715,60 +741,84 @@ export function ShortcutsTab() {
             ))}
           </div>
         </Row>
-        <Row title={t("settings.shortcuts.disableTerminalFontZoom")}>
+        <Row
+          title={t("settings.shortcuts.disableTerminalFontZoom")}
+          desc={t("settings.shortcuts.disableTerminalFontZoom.desc")}
+        >
           <Toggle
             checked={s.disableTerminalFontZoom}
             onChange={(v) => updateSettings({ disableTerminalFontZoom: v })}
           />
         </Row>
-        <Row title={t("settings.shortcuts.shellOnlyTabNumberShortcuts")}>
+        <Row
+          title={t("settings.shortcuts.shellOnlyTabNumberShortcuts")}
+          desc={t("settings.shortcuts.shellOnlyTabNumberShortcuts.desc")}
+        >
           <Toggle
             checked={s.shellOnlyTabNumberShortcuts}
             onChange={(v) => updateSettings({ shellOnlyTabNumberShortcuts: v })}
           />
         </Row>
-        <Row title={t("settings.shortcuts.showTabNumberBadges")}>
+        <Row
+          title={t("settings.shortcuts.showTabNumberBadges")}
+          desc={t("settings.shortcuts.showTabNumberBadges.desc")}
+        >
           <Toggle
             checked={s.showTabNumberBadges}
             onChange={(v) => updateSettings({ showTabNumberBadges: v })}
           />
         </Row>
+      </Section>
+
+      <Section title={t("settings.shortcuts.section.custom")}>
         <Row title={t("settings.shortcuts.resetAll")}>
           <button className="nc-set-btn" onClick={resetAll}>
             {t("settings.shortcuts.resetAll")}
           </button>
         </Row>
+        {BINDING_CATEGORY_ORDER.map((cat) => {
+          const rows = DEFAULT_KEY_BINDINGS.filter((b) => b.category === cat);
+          if (rows.length === 0) return null;
+          return (
+            <div key={cat}>
+              <div className="nc-set-group-title">{t(`settings.shortcuts.category.${cat}`)}</div>
+              {rows.map((b) => {
+                const isDisabled = disabledSet.has(b.id);
+                const binding = effectiveBinding(b, s, s.hotkeyScheme);
+                // 绑定标签优先用 i18n（Netcatty zh-CN 为中文），缺键回落英文原标签。
+                const i18nKey = `settings.shortcuts.binding.${b.id}`;
+                const localized = t(i18nKey);
+                const label = localized === i18nKey ? b.label : localized;
+                return (
+                  <Row key={b.id} title={label}>
+                    <div className="nc-set-inline">
+                      <button
+                        className={"nc-set-keycap" + (recording === b.id ? " is-recording" : "")}
+                        disabled={isDisabled}
+                        onClick={() => setRecording(recording === b.id ? null : b.id)}
+                      >
+                        {recording === b.id
+                          ? t("settings.shortcuts.captureHint")
+                          : isDisabled
+                            ? t("settings.shortcuts.disabled")
+                            : binding}
+                      </button>
+                      <button className="nc-set-btn" onClick={() => toggleDisabled(b.id)}>
+                        {isDisabled
+                          ? t("settings.shortcuts.setEnabled")
+                          : t("settings.shortcuts.setDisabled")}
+                      </button>
+                      <button className="nc-set-btn" onClick={() => resetOne(b)}>
+                        {t("settings.shortcuts.resetToDefault")}
+                      </button>
+                    </div>
+                  </Row>
+                );
+              })}
+            </div>
+          );
+        })}
       </Section>
-
-      {BINDING_CATEGORY_ORDER.map((cat) => {
-        const rows = DEFAULT_KEY_BINDINGS.filter((b) => b.category === cat);
-        if (rows.length === 0) return null;
-        return (
-          <Section key={cat} title={t(`settings.shortcuts.category.${cat}`)}>
-            {rows.map((b) => {
-              const isDisabled = disabledSet.has(b.id);
-              const binding = effectiveBinding(b, s, s.hotkeyScheme);
-              return (
-                <Row key={b.id} title={b.label}>
-                  <div className="nc-set-inline">
-                    <button
-                      className={"nc-set-keycap" + (recording === b.id ? " is-recording" : "")}
-                      disabled={isDisabled}
-                      onClick={() => setRecording(recording === b.id ? null : b.id)}
-                    >
-                      {recording === b.id ? t("settings.shortcuts.captureHint") : isDisabled ? t("settings.shortcuts.disabled") : binding}
-                    </button>
-                    <Toggle checked={!isDisabled} onChange={() => toggleDisabled(b.id)} />
-                    <button className="nc-set-btn" onClick={() => resetOne(b)} title={t("settings.shortcuts.resetToDefault")}>
-                      ↺
-                    </button>
-                  </div>
-                </Row>
-              );
-            })}
-          </Section>
-        );
-      })}
     </div>
   );
 }
@@ -780,6 +830,7 @@ export function SystemTab() {
   const t = useT();
   const [autoLaunch, setAutoLaunchState] = useState<{ supported: boolean; enabled: boolean } | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
+  const [version, setVersion] = useState("—");
 
   const refreshSecret = () => {
     secretBackend()
@@ -792,6 +843,9 @@ export function SystemTab() {
       .then(setAutoLaunchState)
       .catch(() => setAutoLaunchState({ supported: false, enabled: false }));
     refreshSecret();
+    appVersion()
+      .then(setVersion)
+      .catch(() => setVersion("—"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -804,6 +858,22 @@ export function SystemTab() {
 
   return (
     <div>
+      {/* 软件更新（对照 Netcatty 系统 tab 首节；更新器未移植） */}
+      <Section title={t("settings.update.title")}>
+        <Row title={t("settings.update.currentVersion")}>
+          <div className="nc-set-inline">
+            <span className="nc-set-value">{version}</span>
+            <button className="nc-set-btn" disabled title={t("settings.update.notPorted")}>
+              {t("settings.application.checkUpdates")}
+            </button>
+          </div>
+        </Row>
+        <Row title={t("settings.update.autoUpdate")} desc={t("settings.update.autoUpdate.desc")}>
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
+        <Row title={t("settings.update.source")} />
+      </Section>
+
       <Section title={t("settings.autoLaunch.title")}>
         <Row
           title={t("settings.autoLaunch.enabled")}
@@ -815,14 +885,18 @@ export function SystemTab() {
             onChange={(v) => {
               setAutoLaunch(v)
                 .then(setAutoLaunchState)
-                .catch(() => {});
+                // 后端拒绝（注册表写失败 / headless）时回读真实状态，避免开关停错位置。
+                .catch(() => getAutoLaunch().then(setAutoLaunchState).catch(() => {}));
             }}
           />
         </Row>
       </Section>
 
       <Section title={t("settings.system.networkProxy.title")}>
-        <Row title={t("settings.system.networkProxy.description")}>
+        <Row
+          title={t("settings.system.networkProxy.mode")}
+          desc={t("settings.system.networkProxy.description")}
+        >
           <Select
             value={s.networkProxy.mode}
             onChange={(v) =>
@@ -933,7 +1007,7 @@ export function PlaceholderTab({ tab }: { tab: "file-associations" | "ai" | "syn
   const t = useT();
   return (
     <div className="nc-set-placeholder">
-      <p>{t(`settings.placeholder.${tab === "file-associations" ? "fileAssociations" : tab}`)}</p>
+      <p>{t(`settings.placeholder.${tab}`)}</p>
     </div>
   );
 }

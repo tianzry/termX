@@ -42,6 +42,8 @@ export interface TerminalSettings {
   disconnectPrompt: boolean;
   shiftEnterNewlineEnabled: boolean;
   shiftEnterNewlineText: string;
+  /** 终端主题跟随应用主题；关闭后终端固定深色（Netcatty settings.terminal.theme.followApp）。 */
+  followAppTheme: boolean;
 }
 
 export interface NetworkProxySettings {
@@ -124,6 +126,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   disconnectPrompt: true,
   shiftEnterNewlineEnabled: false,
   shiftEnterNewlineText: "\\x1b\\r",
+  followAppTheme: true,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -213,6 +216,7 @@ function normalizeTerminal(raw: unknown): TerminalSettings {
     disconnectPrompt: pickBool(r.disconnectPrompt, d.disconnectPrompt),
     shiftEnterNewlineEnabled: pickBool(r.shiftEnterNewlineEnabled, d.shiftEnterNewlineEnabled),
     shiftEnterNewlineText: pickStr(r.shiftEnterNewlineText, d.shiftEnterNewlineText),
+    followAppTheme: pickBool(r.followAppTheme, d.followAppTheme),
   };
 }
 

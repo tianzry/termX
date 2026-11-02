@@ -13,10 +13,10 @@
 
 | 分组 | 完成 / 总数 | 说明 |
 |---|---|---|
-| P0 日常可用性 | 6 / 14 | 不补齐难以日常使用 |
+| P0 日常可用性 | 7 / 14 | 不补齐难以日常使用 |
 | P1 差异化能力 | 0 / 19 | 拉开与普通 SSH 客户端差距（含 1 项 ⏸ 不移植；#39 为范围修正新增） |
 | P2 大工程 | 0 / 6 | 需单独立项（含 4 项 ⏸ 暂缓移植，见 plan.md） |
-| **合计** | **6 / 39** | 2026-11-02：第二轮 1:1 对齐块 D/E 完成，P0 #32 测试连接完成；SSH agent 转发纳入移植（#39） |
+| **合计** | **7 / 39** | 2026-11-03：设置中心（#12）完成——实机比对差异清零 + review 问题修复；本地 commit 未 push（按指令等 SSH 推送） |
 
 ---
 
@@ -41,10 +41,11 @@
 | 三平台 CI 构建 + Windows 代码签名 | ✅ | `.github/workflows/release.yml` |
 | Known Hosts 管理页（列表 / 搜索 / 删除 / 转主机档案） | ✅ | `src/VaultView.tsx`、`src-tauri/src/ssh/known_hosts.rs` |
 | 本地终端（shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel + local 头像体系） | ✅ | `src/LocalShellPanel.tsx`、`src/domain/localShellHost.ts`、`src-tauri/src/terminal/shell_discovery.rs` |
+| 设置中心（5 tab 1:1 + 3 占位 + 自启动命令 + 实机比对 + review 修复） | ✅ | `src/settings/`（model/store/i18n/keyBindings/Dialog/Tabs）、`src-tauri/src/commands/settings.rs` |
 
 ---
 
-## P0 · 日常可用性（6 / 14）
+## P0 · 日常可用性（7 / 14）
 
 - [x] ✅ **1. 多标签页**
   - 终端区支持多个标签、每个标签独立会话与状态，切换不重建。
@@ -90,8 +91,10 @@
 - [ ] ⬜ **11. 终端搜索 / URL 识别 / 滚动缓冲**
   - 搜索高亮与跳转、Ctrl+点击打开链接、缓冲区上限可配。
   - 依赖：`@xterm/addon-search`、`@xterm/addon-web-links`。
-- [ ] 🟨 **12. 设置中心**（2026-11-03：实现 + 门禁完成，待实机比对与 review）
+- [x] ✅ **12. 设置中心**（2026-11-03 完成：实现 + 实机比对差异清零 + review 修复，门禁全绿）
   - 主题（浅/深/跟随系统 + 终端主题）、字体与字号、快捷键、语言（i18n）、窗口透明度。
+  - 实现：`src/settings/`（settingsModel/keyBindings/i18n/settingsStore/SettingsDialog/SettingsTabs）+ 自启动命令（Windows 注册表，双注册）。
+  - 已知残留（见 changelogs 2026-11-03 实机比对节）：en 字典仅 14 键、主题预设库仅内置、透明度 CSS 近似、更新器/崩溃日志等未移植。
   - 参考：`components/settings/`、`application/state/fontStore.ts`、`customThemeStore.ts`。
 - [x] ✅ **32. 主机「测试连接」**
   - 已实现：composer 头部「测试连接」(zap) → 先落库 → `ssh_connect`，监听
@@ -248,3 +251,4 @@
 | 2026-11-02 | 十功能计划①本地终端完成：shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel 1:1（对照运行中 Netcatty）；实机比对差异清零（下拉选中态 / local 实底蓝白头像含卡·树·切换器 / local 标签 chip）；子 agent review 两必须修复项（CM 过滤 local、切换器头像）已修；门禁 97/97 + cargo 全绿。 |
 | 2026-11-03 | 按用户指令顺序调整：下一功能=设置中心（#12 标 🟨），SFTP 延后（研究已落盘 Temp）；设置中心研究完成（Netcatty 源码地图+termX 现状+CU 顶栏/SFTP 取证），实现开工。 |
 | 2026-11-03 | 设置中心实现 + 门禁完成：5 tab（应用/外观/终端/快捷键/系统）1:1 + 3 占位（文件关联/AI/同步），全屏 overlay 承载（Netcatty 独立窗口形态差异记录在案）；新增 get_auto_launch/set_auto_launch（Windows 注册表，lib.rs + server.rs 双注册），复用 list_fonts/secret_backend；新增前端单测 12 例；门禁全绿（109/109 + build ✓ + cargo check ×2 + cargo test --lib 789✓）；实机比对与子 agent review 留下一轮。 |
+| 2026-11-03 | 设置中心实机比对 + review 收尾，P0 #12 完成（7 / 39）：CU 对照运行中 Netcatty 逐 tab 比对，差异当场修并复检一致（SFTP 标签/外观/终端主题/快捷键文案与中文绑定标签/系统软件更新节/侧栏残留按钮）；实时生效与 SSH 129 连接验证通过（钥匙串凭据，密码不落盘）；子 agent review（高=无）中危 4 项已修（--termx-accent 只写不读→映射 --primary/--accent、set_auto_launch 失败语义改 Result、headless 守卫、server.rs spawn_blocking），低危记录待后续；门禁 112/112 + build ✓ + cargo check ✓ + cargo test --lib 789✓；按指令本地 commit 未 push（另一会话清理历史中，后续改 SSH 推送）。 |

@@ -89,6 +89,37 @@ export function resolvedThemeMode(s: AppSettings): "light" | "dark" {
   return resolvedTheme(s);
 }
 
+/** hex (#rrggbb) → HSL 分量三元组（"h s% l%"，供 hsl(var(--primary)) 消费）。 */
+export function hexToHslTriplet(hex: string): string | null {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255;
+  const g = ((n >> 8) & 255) / 255;
+  const b = (n & 255) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0;
+  let sat = 0;
+  if (max !== min) {
+    const d = max - min;
+    sat = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+  }
+  const rd = (x: number) => Math.round(x * 10) / 10;
+  return `${rd(h)} ${rd(sat * 100)}% ${rd(l * 100)}%`;
+}
+
+/** 自定义强调色（hex 或 Netcatty 风格 HSL 三元组）→ 统一三元组；非法返回 null。 */
+export function accentToHslTriplet(v: string): string | null {
+  const t = v.trim();
+  if (t.startsWith("#")) return hexToHslTriplet(t);
+  return /^\d+(\.\d+)?(\s+\d+(\.\d+)?%){2}$/.test(t) ? t : null;
+}
+
 function uiFontCss(id: string): string {
   if (!id || id === "system") {
     return "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif";
@@ -119,12 +150,16 @@ export function applySideEffects(s: AppSettings): void {
   // UI 字体
   root.style.setProperty("--termx-ui-font", uiFontCss(s.uiFontFamilyId));
 
-  // 强调色（自定义支持 hex 或 Netcatty 风格 HSL 分量）
-  if (s.accentMode === "custom" && s.customAccent) {
-    const accent = s.customAccent.startsWith("#") ? s.customAccent : `hsl(${s.customAccent})`;
-    root.style.setProperty("--termx-accent", accent);
+  // 强调色：覆写 --primary/--accent（HSL 三元组，全站 hsl(var(--primary)) 消费）；
+  // 移除内联覆写即回落到主题自带值。
+  const accentTriplet =
+    s.accentMode === "custom" && s.customAccent ? accentToHslTriplet(s.customAccent) : null;
+  if (accentTriplet) {
+    root.style.setProperty("--primary", accentTriplet);
+    root.style.setProperty("--accent", accentTriplet);
   } else {
-    root.style.removeProperty("--termx-accent");
+    root.style.removeProperty("--primary");
+    root.style.removeProperty("--accent");
   }
 
   // 自定义 CSS

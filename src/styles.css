@@ -6873,6 +6873,14 @@ body {
   cursor: not-allowed;
 }
 
+/* 快捷键分类组标题（自定义快捷键 section 内，对照 Netcatty 分类小标题） */
+.nc-set-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  margin: 14px 0 6px;
+}
+
 .nc-set-select,
 .nc-set-input {
   border: 1px solid hsl(var(--border));

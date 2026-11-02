@@ -3094,14 +3094,7 @@ export function VaultView({
         </nav>
 
         <div className="vault-sidebar-foot">
-          <button
-            className={`vault-nav-item${collapsed ? " collapsed" : ""}`}
-            title="设置中心（尚未实现）"
-            disabled
-          >
-            <Icon name="gear" size={16} />
-            {!collapsed && <span>设置</span>}
-          </button>
+          {/* 设置入口统一在顶栏齿轮（对齐 Netcatty：NC 侧栏底部无设置项）。 */}
           {!collapsed && <span className="vault-version">termX 0.0.1</span>}
         </div>
       </aside>

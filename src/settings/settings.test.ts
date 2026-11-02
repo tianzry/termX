@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { settingsT } from "./i18n";
+import { accentToHslTriplet, hexToHslTriplet } from "./settingsStore";
 import {
   DEFAULT_KEY_BINDINGS,
   captureBinding,
@@ -37,6 +38,11 @@ describe("normalizeSettings", () => {
     expect(s.terminal.scrollback).toBe(500);
     expect(s.terminal.cursorShape).toBe("block");
     expect(s.terminal.disconnectPrompt).toBe(true);
+  });
+
+  it("terminal.followAppTheme 默认 true 且可被输入覆盖", () => {
+    expect(normalizeSettings(null).terminal.followAppTheme).toBe(true);
+    expect(normalizeSettings({ terminal: { followAppTheme: false } }).terminal.followAppTheme).toBe(false);
   });
 
   it("终端字号 clamp 到 [8, 32]", () => {
@@ -97,6 +103,24 @@ describe("keyBindings", () => {
     expect(captureBinding(new KeyboardEvent("keydown", { key: "Shift" }), "pc")).toBeNull();
     const ev = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, shiftKey: true });
     expect(captureBinding(ev, "pc")).toBe("Ctrl + Shift + k");
+  });
+});
+
+describe("accentToHslTriplet", () => {
+  it("hex 转 HSL 三元组（供 hsl(var(--primary)) 消费）", () => {
+    expect(hexToHslTriplet("#ff0000")).toBe("0 100% 50%");
+    expect(hexToHslTriplet("#000000")).toBe("0 0% 0%");
+    expect(hexToHslTriplet("#ffffff")).toBe("0 0% 100%");
+    expect(hexToHslTriplet("#3b82f6")).toBe("217.2 91.2% 59.8%");
+    expect(hexToHslTriplet("nope")).toBeNull();
+    expect(hexToHslTriplet("#12345")).toBeNull();
+  });
+
+  it("Netcatty 风格三元组原样通过，非法值拒绝", () => {
+    expect(accentToHslTriplet("221.2 83.2% 53.3%")).toBe("221.2 83.2% 53.3%");
+    expect(accentToHslTriplet(" #3b82f6 ")).toBe("217.2 91.2% 59.8%");
+    expect(accentToHslTriplet("red")).toBeNull();
+    expect(accentToHslTriplet("221.2 83.2 53.3")).toBeNull();
   });
 });
 

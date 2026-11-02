@@ -1396,16 +1396,27 @@ async fn dispatch_async(
         )),
 
         // ---- auto launch (settings center · system tab) ----
-        "get_auto_launch" => Ok(serde_json::to_value(
-            crate::commands::settings::get_auto_launch(),
-        )
-        .unwrap_or_default()),
+        // 实现内部同步跑 reg.exe，放阻塞线程，别卡 async runtime。
+        "get_auto_launch" => {
+            let status = tokio::task::spawn_blocking(crate::commands::settings::get_auto_launch)
+                .await
+                .unwrap_or(crate::commands::settings::AutoLaunchStatus {
+                    supported: false,
+                    enabled: false,
+                });
+            Ok(serde_json::to_value(status).unwrap_or_default())
+        }
         "set_auto_launch" => {
             let enabled: bool = arg(&args, "enabled")?;
-            Ok(serde_json::to_value(
-                crate::commands::settings::set_auto_launch(enabled),
-            )
-            .unwrap_or_default())
+            match tokio::task::spawn_blocking(move || {
+                crate::commands::settings::set_auto_launch(enabled)
+            })
+            .await
+            {
+                Ok(Ok(status)) => Ok(serde_json::to_value(status).unwrap_or_default()),
+                Ok(Err(e)) => Err(Value::String(e)),
+                Err(e) => Err(Value::String(e.to_string())),
+            }
         }
 
         _ => dispatch(state, owner, cmd, args, tx),

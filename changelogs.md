@@ -1968,3 +1968,106 @@ VaultView 各自拉 `discoverShells` 暂不合并（一为启动解析、一为�
 
 - 下一轮：实机比对（build-debug 构建后 CU 对照运行中 Netcatty 逐项比，
   差异当场修）→ 子 agent 代码 review → push/本地 commit 收尾。
+
+## 2026-11-03 · 设置中心实机比对 + review 收尾（本地 commit，未 push）
+
+### 实机比对差异与当场修复（build-debug 构建，CU 对照运行中 Netcatty）
+
+1. **SFTP tab 标签**：字典键 `settings.tab.fileAssociations` 与 dialog 实际
+   查找的 `settings.tab.file-associations` 不一致导致显示裸 key；字典键改
+   连字符形式，PlaceholderTab 去掉 camelCase 转换，占位文案改为 SFTP 设置
+   说明（双击行为/默认视图/隐藏文件/自动同步/压缩传输/追随终端目录）。
+2. **外观**：透明度增 100/85/70 预设按钮；主题卡片顺序与文案对齐（浅色/
+   系统/深色，`theme.system` 改"系统"）；强调色行文案对齐（"使用自定义强调
+   色/覆盖主题自带的强调色"）；图标 section 标题改"应用图标"；语言/界面
+   字体行文案对齐；窗口透明度 section 标题 + NC 长描述。
+3. **终端**：新增「终端主题」section —— `followAppTheme` 开关（Netcatty
+   `settings.terminal.theme.followApp`，默认 true；关闭后终端固定深色，
+   主题预设库未移植故无跟随浅色分支）+ 关闭时提示行；字号 Stepper 加
+   `px` 后缀；字重标签改 `400 - 常规` 连字符形式；平滑描述改 NC 原文
+   "使用 macOS 原生字体抗锯齿"。
+4. **快捷键**：方案区文案整体对齐（快捷键方案/键盘快捷键/方案说明/
+   Mac (Cmd)/PC (Ctrl)/"请按键..."捕获提示）；三全局开关补 desc；
+   「自定义快捷键」section + 全部重置；43 条绑定全部用 Netcatty
+   zh-CN `settings.shortcuts.binding.*` 原文标签（i18n 回落：无本地化键时
+   用内置 label）；分类标题用 `nc-set-group-title`；按钮文案对齐
+   （设为禁用/设为启用/重置为默认）。
+5. **系统**：新增「软件更新」section 置顶（当前版本读 `appVersion()`、
+   检查更新禁用、自动更新禁用开关、更新源行），对齐 Netcatty 系统 tab
+   首节；网络代理行改 title=模式/desc=长描述；自启动描述补托盘表述占位。
+6. **侧栏**：删除 VaultView 底部禁用的「设置」残留按钮（Netcatty 侧栏
+   无此入口，设置入口仅顶栏齿轮）。
+
+### 不可对齐差异（记录在案）
+
+- 设置为全屏 overlay（Netcatty 是独立窗口，bridge.openSettingsWindow）。
+- 透明度为 CSS opacity 近似（原生窗口透明未移植）。
+- 主题预设库仅内置 snow/midnight，无主题市场/导入。
+- CJK 字体为普通下拉（Netcatty 为可搜索 combo + 字体刷新按钮）。
+- 行间距用 Stepper（Netcatty 为 slider）；更新器/崩溃日志/临时文件未移植。
+
+### 实机验证
+
+- 设置实时生效：深色主题点击后整窗即时变暗（截图确认）切回系统；透明度/
+  字体改动即时应用。
+- SSH：设置改动后点击 129 主机卡直连成功（提示符
+  `tianzry@tianzry-VMware-Virtual-Platform:~$`，tab 标题 129，状态"已连接"），
+  凭据走系统钥匙串，未输密码、密码未落盘。
+
+### 子 agent review 结论与处理
+
+- 高危：无。R4 双注册完整（lib.rs generate_handler! + server.rs dispatch），
+  R1 合规（无裸 invoke），前后端契约一致。
+- 已修：
+  1. `--termx-accent` 只写不读 → 自定义强调色实际无效。改为转换后覆写被
+     全站消费的 `--primary`/`--accent`（HSL 三元组）；新增纯函数
+     `hexToHslTriplet`/`accentToHslTriplet`（settingsStore.ts）。
+  2. `set_auto_launch` 注册表写失败静默转 `supported:false`，与"平台不
+     支持"混淆 → 改返回 `Result<AutoLaunchStatus, String>`（机器错误码，
+     R5 不直接展示）；前端 catch 改为回读 `getAutoLaunch` 同步真实状态。
+  3. headless（rssh-server.exe）会把服务端二进制写进 Run 键 →
+     `is_headless()` 守卫，拒绝登记并返回明确错误。
+  4. server.rs dispatcher 在 async 分发里同步跑 reg.exe → 两个 auto_launch
+     分支改 `tokio::task::spawn_blocking`。
+- 已知问题（本轮未修，记录待后续）：en 字典仅 14 键（选 English 大部分
+  回落中文）；settingsStore/buildXtermOptions/client.ts 新封装单测覆盖不全
+  （buildXtermOptions 依赖 xterm 运行时，jsdom 下导入风险高，暂缓）；
+  6 个死绑定 i18n 键；SettingsDialog Esc 在输入框聚焦时也关闭；
+  右键/中键绑定语义借键；`recording_enabled` 只写不回读；设置持久化无防抖。
+
+### 新增单测（R11）
+
+- settings.test.ts +2 例（共 15 例）：`hexToHslTriplet` hex→HSL 三元组
+  边界（纯黑/纯白/#3b82f6/非法）、`accentToHslTriplet` 三元组透传与拒绝。
+- followAppTheme normalize 1 例（默认 true、可覆盖）。
+
+### 门禁结果
+
+- `npm run test:run`：12 文件 **112/112** ✅；`npm run build`（tsc + vite）✅；
+  `cargo check` + `cargo test --lib`：**789/789** ✅（auto_launch 改动后复跑）。
+
+### 踩坑
+
+146. **Start-Process 启动的 GUI 子进程随 Shell 命令会话结束被杀**：
+     rssh.exe 三次启动均数秒内静默退出（stderr 空）。改用
+     `run_in_background` 常驻 shell 执行 `& rssh.exe` 后稳定。
+147. **过期视图陷阱复现（坑 142）**：SettingsTabs.tsx Read 返回旧快照
+     （640 行 settingsT 风格），磁盘实际是 939 行重构版（t()/Row/Toggle
+     新 API），6 个 Edit 挂 5 个。重读真实文件后按新 API 重做。同时发现
+     另一会话已 amend 历史（HEAD 3e0009c → 3724ff1，提交信息相同）。
+148. **Q-Dir 抢焦点导致坐标点击落错窗口**：设置打不开，原因是前台被
+     并行桌面会话的 Q-Dir 覆盖；必须先 `set_focus` termX 窗口元素再按
+     element_id 点击。UIA element id 跨 Exec 即失效，观察→点击必须同一
+     Exec 内完成。
+149. **build-debug.bat 退出码 1 但构建成功**：npm build + cargo build 均
+     成功，仅最后 NSIS 打包因 rssh.exe 被运行中进程占用报 os error 32；
+     debug exe 已正常生成，属无害。
+150. **StopCommand 对旧保活 shell 报 ExecutionNotFound**：改用
+     `Stop-Process -Id` 杀旧实例；TaskOutput 只适用子 agent，查 shell
+     后台任务靠完成通知。
+
+### push 状态
+
+- **本轮按用户指令未 push**：本地历史正被另一会话清理（删除/amend 含
+  push 失败记录的提交），避免双写冲突；远端 https 凭据已失效，后续统一
+  用 SSH 地址推送，等用户指令。
