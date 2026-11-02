@@ -2642,6 +2642,7 @@ button:disabled {
 
 /* 内容区 */
 .vault-content {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -4539,12 +4540,16 @@ button:disabled {
 }
 
 /* 框选矩形 & 轻提示 */
+.vault-content.selecting {
+  user-select: none;
+}
+
 .vault-marquee {
-  position: fixed;
+  position: absolute;
   z-index: 20;
-  border: 1px dashed hsl(var(--primary) / 0.7);
+  border: 1px solid hsl(var(--primary) / 0.8);
   border-radius: 2px;
-  background: hsl(var(--primary) / 0.08);
+  background: hsl(var(--primary) / 0.15);
   pointer-events: none;
 }
 

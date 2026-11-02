@@ -24,6 +24,7 @@ import * as api from "./backend/client";
 import type { Credential, Group, Profile } from "./backend/client";
 import { newId } from "./workspaceModel";
 import { Icon, type IconName } from "./ui/icons";
+import { useVaultHostMarquee } from "./useVaultHostMarquee";
 
 interface Props {
   profiles: Profile[];
@@ -343,16 +344,22 @@ export function VaultView({
   const [focusId, setFocusId] = useState<string | null>(null);
   const [dragIds, setDragIds] = useState<string[]>([]);
   const [dropGroupId, setDropGroupId] = useState<string | null>(null);
-  const [marquee, setMarquee] = useState<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } | null>(null);
-  const marqueeStart = useRef<{ x: number; y: number } | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
+
+  const {
+    marqueeRect,
+    onPointerDown: onMarqueePointerDown,
+    onClickCapture: onMarqueeClickCapture,
+  } = useVaultHostMarquee({
+    containerRef: contentRef,
+    viewMode: view,
+    isMultiSelectMode: selectMode,
+    selectedHostIds: selected,
+    setIsMultiSelectMode: setSelectMode,
+    setSelectedHostIds: setSelected,
+  });
 
   const [composer, setComposer] = useState<ComposerDraft | null>(null);
   const [composerBusy, setComposerBusy] = useState(false);
@@ -1050,81 +1057,6 @@ export function VaultView({
     void moveHostsTo(ids, groupId);
   }
 
-  useEffect(() => {
-    if (!marquee) return;
-    function onMove(e: PointerEvent) {
-      const start = marqueeStart.current;
-      const content = contentRef.current;
-      if (!start || !content) return;
-      const rect = content.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      setMarquee({
-        x: Math.min(start.x, x),
-        y: Math.min(start.y, y),
-        w: Math.abs(x - start.x),
-        h: Math.abs(y - start.y),
-      });
-      const all = content.querySelectorAll<HTMLElement>(
-        ".vault-host-card[data-nav-id]",
-      );
-      const next = new Set<string>();
-      all.forEach((el) => {
-        const b = el.getBoundingClientRect();
-        const left = b.left - rect.left;
-        const top = b.top - rect.top;
-        if (
-          left < Math.max(start.x, x) &&
-          left + b.width > Math.min(start.x, x) &&
-          top < Math.max(start.y, y) &&
-          top + b.height > Math.min(start.y, y)
-        ) {
-          const id = el.dataset.navId;
-          if (!id) return;
-          if (el.classList.contains("vault-group-card")) {
-            const gid = id.slice(8);
-            if (gid !== "__ungrouped") setSelectedGroups((prev) => new Set(prev).add(gid));
-          } else {
-            next.add(id);
-          }
-        }
-      });
-      setSelected((prev) => new Set([...prev, ...next]));
-    }
-    function onUp() {
-      marqueeStart.current = null;
-      setMarquee(null);
-    }
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-  }, [marquee]);
-
-  function startMarquee(e: ReactPointerEvent<HTMLDivElement>) {
-    const target = e.target as Element | null;
-    if (
-      target?.closest(
-        ".vault-host-card, .vault-section-head, .vault-tree-head, .vault-breadcrumb, .vault-empty, button, input, select, textarea",
-      )
-    ) {
-      return;
-    }
-    if (e.button !== 0) return;
-    const content = contentRef.current;
-    if (!content) return;
-    const rect = content.getBoundingClientRect();
-    const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    marqueeStart.current = point;
-    setMarquee({ ...point, w: 0, h: 0 });
-    setSelectMode(true);
-    setViewMenu(false);
-    setSortMenu(false);
-    setTagMenu(false);
-  }
-
   function handleContentKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
     if (e.key === "Escape" && selectMode) {
       exitSelectMode();
@@ -1246,6 +1178,7 @@ export function VaultView({
       <div
         key={p.id}
         data-nav-id={p.id}
+        data-host-id={p.id}
         className={`vault-host-card${compact ? " list" : ""}${
           isSelected ? " selected" : ""
         }${focusId === p.id ? " focused" : ""}`}
@@ -1344,6 +1277,7 @@ export function VaultView({
       <div
         key={g.id}
         data-nav-id={`group:${g.id}`}
+        data-group-path={g.id}
         className={`vault-host-card vault-group-card${compact ? " list" : ""}${
           isSelected ? " selected" : ""
         }${isDropTarget ? " drop-target" : ""}`}
@@ -1836,11 +1770,25 @@ export function VaultView({
           )}
 
           <div
-            className="vault-content"
+            className={`vault-content${marqueeRect ? " selecting" : ""}`}
             ref={contentRef}
-            onPointerDown={startMarquee}
+            onPointerDown={onMarqueePointerDown}
+            onClickCapture={onMarqueeClickCapture}
             onKeyDown={handleContentKeyDown}
           >
+            {marqueeRect && (
+              <div
+                data-vault-marquee="true"
+                aria-hidden="true"
+                className="vault-marquee"
+                style={{
+                  left: marqueeRect.left,
+                  top: marqueeRect.top,
+                  width: marqueeRect.right - marqueeRect.left,
+                  height: marqueeRect.bottom - marqueeRect.top,
+                }}
+              />
+            )}
             {/* 面包屑：树视图隐藏；根节点同时作为拖拽归组的投放点 */}
             {view !== "tree" && (
               <div className="vault-breadcrumb">
@@ -2553,23 +2501,6 @@ export function VaultView({
             </footer>
           </div>
         </div>
-      )}
-
-      {marquee && (
-        <div
-          className="vault-marquee"
-          style={{
-            // marquee 的 x/y 是相对 .vault-content 的坐标，这里换算成视口坐标，
-            // 避免依赖未设置的 --vault-content-x/y 变量。
-            position: "fixed",
-            left:
-              (contentRef.current?.getBoundingClientRect().left ?? 0) + marquee.x,
-            top:
-              (contentRef.current?.getBoundingClientRect().top ?? 0) + marquee.y,
-            width: marquee.w,
-            height: marquee.h,
-          }}
-        />
       )}
 
       {toast && <div className="vault-toast">{toast}</div>}

@@ -702,3 +702,33 @@
     外观，不含 `position`，浮层会落在文档流里把页面撑开；给标签编辑浮层显式 `fixed` 定位
     （`top: 84px; right: 24px`）。
 
+## 2026-11-02 · 沿用 netcatty 源码重做 Vault 框选
+
+### 改动
+
+1. **新增 `src/domain/vaultMarqueeSelection.ts`**：直接从 netcatty `domain/vaultMarqueeSelection.ts`
+   移植纯逻辑（4px 阈值、replace/add/toggle 选择模式、矩形相交、滚动内容坐标换算、边缘自动滚动、
+   滚动条命中判断等），不自行改写算法。
+2. **新增 `src/useVaultHostMarquee.ts`**：从 netcatty `components/vault/useVaultHostMarquee.ts`
+   移植 hook：
+   - 仅网格 / 列表视图启动，树形视图不启动；
+   - `[data-host-id]`、`[data-group-path]`、按钮、输入框等目标不启动框选；
+   - `pointerdown` 只记录起点，移动超过 4px 才进入多选并绘制矩形，空白单击不会误入多选；
+   - 支持 Shift 追加、Ctrl/Cmd 切换、Esc 取消并还原基线选择；
+   - 拖到容器上下边缘自动滚动，滚动时按缓存的卡片位置重新计算命中；
+   - 拖动结束后通过 capture 阶段抑制 click，避免松手时误连主机。
+3. **`src/VaultView.tsx`**：删除自写的 marquee 状态 / 监听 / 坐标换算，改为调用移植 hook；
+   主机卡新增 `data-host-id`，分组卡新增 `data-group-path`；框选矩形渲染在 `.vault-content`
+   内（绝对定位 + 滚动内容坐标）。
+4. **`src/styles.css`**：`.vault-content` 增加 `position: relative`，`.vault-marquee` 改为
+   `position: absolute`，并补 `.vault-content.selecting { user-select: none }`。
+
+### 踩坑
+
+91. **框选入口不能绑在 pointerdown 上**：空白处按下鼠标（哪怕只是轻微抖动）都会立刻进入
+    多选模式，表现为「点一下空白就进了多选」且偶尔复现。正确做法是直接移植 netcatty 的
+    `useVaultHostMarquee`：按下只记录起点，移动超过 4px 才切多选；同时它顺带解决了拖动结束
+    误触 click（suppressClick）与滚动 / 自动滚动下的命中问题——这些自己写很容易漏。
+
+
+
