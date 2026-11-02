@@ -109,4 +109,8 @@ describe("makeLeaf / defaultTitle", () => {
     expect(defaultTitle({ kind: "ssh", profileId: "p1", name: "prod-web" }, 3)).toBe("prod-web");
     expect(defaultTitle({ kind: "pty" }, 3)).toBe("本地终端 3");
   });
+
+  it("PTY 带显示名（本地 shell 主机）时优先用显示名", () => {
+    expect(defaultTitle({ kind: "pty", name: "Git Bash" }, 3)).toBe("Git Bash");
+  });
 });

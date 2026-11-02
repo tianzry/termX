@@ -73,6 +73,25 @@ describe("invoke 参数形状", () => {
       cols: 120,
       rows: 30,
       sessionId: null,
+      shell: null,
+      args: null,
+      startDir: null,
+    });
+  });
+
+  it("ptySpawn 本地主机透传 shell / args / startDir", async () => {
+    await ptySpawn(80, 24, {
+      shell: "wsl.exe",
+      args: ["-d", "Ubuntu"],
+      startDir: "~",
+    });
+    expect(mockedInvoke).toHaveBeenCalledWith("pty_spawn", {
+      cols: 80,
+      rows: 24,
+      sessionId: null,
+      shell: "wsl.exe",
+      args: ["-d", "Ubuntu"],
+      startDir: "~",
     });
   });
 

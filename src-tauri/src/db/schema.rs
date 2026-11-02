@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 33;
+const SCHEMA_VERSION: u32 = 34;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -719,6 +719,26 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             conn.execute_batch(
                 "ALTER TABLE profiles ADD COLUMN totp_auto_submit INTEGER NOT NULL DEFAULT 1;",
             )?;
+        }
+    }
+
+    if version < 34 && table_exists(conn, "profiles")? {
+        // 本地 shell 主机（Netcatty localShellHost 对齐）：protocol 区分
+        // ssh / local；local_shell_* 是保存时的 shell 选择快照（命令 / 参数 /
+        // 显示名 / 图标）；local_start_dir 是启动目录（`~` 在 spawn 时展开）。
+        // 全部可空 / 带默认值，旧行直接可读；幂等用 column_exists 兜底
+        // （与 v31/v32/v33 同款写法）。
+        for (col, decl) in [
+            ("protocol", "TEXT NOT NULL DEFAULT 'ssh'"),
+            ("local_shell", "TEXT DEFAULT NULL"),
+            ("local_shell_args", "TEXT DEFAULT NULL"),
+            ("local_shell_name", "TEXT DEFAULT NULL"),
+            ("local_shell_icon", "TEXT DEFAULT NULL"),
+            ("local_start_dir", "TEXT DEFAULT NULL"),
+        ] {
+            if !column_exists(conn, "profiles", col)? {
+                conn.execute_batch(&format!("ALTER TABLE profiles ADD COLUMN {col} {decl};"))?;
+            }
         }
     }
 

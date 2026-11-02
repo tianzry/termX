@@ -91,9 +91,6 @@ impl PtyHandle {
     }
 }
 
-/// 启动本地 shell，返回 (session_id, handle)。
-/// 读取线程通过 Tauri 事件 `pty:data:{id}` 推送数据。
-
 /// 本机实际可用的 shell 路径列表。启动时扫描一次进缓存；
 /// 用户在 Shell 设置页点"刷新"会重扫覆盖（用户 `brew install fish`
 /// 之类的中途变化得有补救手段，否则要 restart app 才看得到）。
@@ -334,22 +331,41 @@ pub fn default_shell() -> String {
     }
 }
 
-pub fn spawn(
+/// 启动本地 shell，返回 (session_id, handle)。
+/// 读取线程通过 Tauri 事件 `pty:data:{id}` 推送数据。
+/// 前端解析好的 shell + 参数 + 启动目录：
+/// - `args = Some(..)` 时原样透传（发现列表快照，如 `["-NoLogo"]` /
+///   `["--login","-i"]`），不再自动补 `-l`；`None` 时维持旧行为（非 Windows 补 `-l`）。
+/// - `cwd` 指定启动目录（`~` 已由调用方展开）；不覆写 PATH ——
+///   本地 shell 需要继承完整用户环境，与 `spawn_command`（connector 覆写
+///   PATH 到探测时刻）语义不同。
+pub fn spawn_local_shell(
     session_id: String,
     cols: u16,
     rows: u16,
     sink: PtySink,
-    shell_override: Option<String>,
+    shell: String,
+    args: Option<Vec<String>>,
+    cwd: Option<PathBuf>,
 ) -> AppResult<(String, PtyHandle)> {
-    let shell = shell_override
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(default_shell);
     let mut cmd = CommandBuilder::new(&shell);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("RSSH_APP", "1");
-    if !cfg!(target_os = "windows") {
-        cmd.arg("-l");
+    if let Some(dir) = &cwd {
+        cmd.cwd(dir);
+    }
+    match args {
+        Some(list) => {
+            for arg in list {
+                cmd.arg(arg);
+            }
+        }
+        None => {
+            if !cfg!(target_os = "windows") {
+                cmd.arg("-l");
+            }
+        }
     }
     spawn_builder(session_id, cols, rows, sink, cmd, shell)
 }

@@ -6,6 +6,36 @@ use crate::models::{ConnectorSpec, DynamicDiscoveryPlatform};
 use crate::state::{AppState, SessionKind, SessionOwner};
 use crate::terminal::pty;
 
+/// 启动目录 `~` / `~/...` 展开为主目录（对齐 Netcatty localShellHost 语义）。
+/// 空串 → None（继承全局起始目录）；拿不到主目录时 `~` 整项丢弃。
+pub(crate) fn expand_start_dir(start_dir: Option<String>) -> Option<std::path::PathBuf> {
+    let trimmed = start_dir.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())?;
+    if trimmed == "~" {
+        return dirs::home_dir();
+    }
+    if let Some(rest) = trimmed
+        .strip_prefix("~/")
+        .or_else(|| trimmed.strip_prefix("~\\"))
+    {
+        return dirs::home_dir().map(|h| h.join(rest));
+    }
+    Some(std::path::PathBuf::from(trimmed))
+}
+
+/// 本地 shell 解析（与 `default_shell` 命令同一套优先级）：
+/// 请求参数 → `local_shell` 设置 → `pty::default_shell()`。
+pub(crate) fn resolve_local_shell(db: &crate::db::Db, requested: Option<String>) -> String {
+    requested
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            crate::db::settings::get(db, "local_shell")
+                .ok()
+                .flatten()
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(pty::default_shell)
+}
+
 #[tauri::command]
 pub fn pty_spawn(
     app: AppHandle,
@@ -14,9 +44,13 @@ pub fn pty_spawn(
     cols: u16,
     rows: u16,
     session_id: Option<String>,
+    shell: Option<String>,
+    args: Option<Vec<String>>,
+    start_dir: Option<String>,
 ) -> AppResult<String> {
     let session_id = crate::commands::lifecycle::resolve_session_id(session_id)?;
-    let shell = crate::db::settings::get(&state.db, "local_shell")?.filter(|s| !s.is_empty());
+    let shell = resolve_local_shell(&state.db, shell);
+    let cwd = expand_start_dir(start_dir);
     let reservation = crate::commands::lifecycle::reserve_resource(
         &state,
         &session_id,
@@ -36,7 +70,7 @@ pub fn pty_spawn(
             );
         }
     });
-    let (id, handle) = pty::spawn(session_id, cols, rows, sink, shell)?;
+    let (id, handle) = pty::spawn_local_shell(session_id, cols, rows, sink, shell, args, cwd)?;
     reservation.activate_returned(&id, crate::commands::lifecycle::ReadySession::Pty(handle))?;
     Ok(id)
 }
@@ -177,6 +211,13 @@ pub fn refresh_shells() -> AppResult<Vec<String>> {
     Ok(pty::available_shells())
 }
 
+/// 本地终端主机面板的 shell 发现：返回带 id / 名称 / 命令 / 参数 / 图标 /
+/// 默认标记的结构化列表（对齐 Netcatty discoverShells）。
+#[tauri::command]
+pub fn discover_shells() -> AppResult<Vec<crate::models::DiscoveredShell>> {
+    Ok(crate::terminal::shell_discovery::discover())
+}
+
 #[tauri::command]
 pub fn pty_write(state: State<'_, AppState>, session_id: String, data: Vec<u8>) -> AppResult<()> {
     let handle = locked(&state.pty_sessions)?
@@ -212,4 +253,29 @@ pub fn pty_close(
         SessionKind::Pty,
         &SessionOwner::Window(window.label().to_owned()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_start_dir_handles_tilde_and_plain_paths() {
+        // 空 / 纯空白 → None（继承全局起始目录）
+        assert_eq!(expand_start_dir(None), None);
+        assert_eq!(expand_start_dir(Some("   ".into())), None);
+
+        // 普通绝对路径原样透传
+        let plain = expand_start_dir(Some("/tmp/work".into())).unwrap();
+        assert_eq!(plain, std::path::PathBuf::from("/tmp/work"));
+
+        // `~` 与 `~/...` 展开为主目录（拿不到主目录的环境里只验证不 panic）
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(expand_start_dir(Some("~".into())), Some(home.clone()));
+            assert_eq!(
+                expand_start_dir(Some("~/proj".into())),
+                Some(home.join("proj"))
+            );
+        }
+    }
 }

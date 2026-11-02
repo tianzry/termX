@@ -148,12 +148,18 @@ export function HostSidebar({
                     title={`${p.name} · ${p.host}:${p.port}`}
                     onClick={() => onConnect(p)}
                   >
-                    <span
-                      className="nc-tree-avatar"
-                      style={{ "--nc-avatar-hue": avatarHue(p) } as CSSProperties}
-                    >
-                      {avatarText(p)}
-                    </span>
+                    {p.protocol === "local" ? (
+                      <span className="nc-tree-avatar local">
+                        <Icon name="terminal" size={11} />
+                      </span>
+                    ) : (
+                      <span
+                        className="nc-tree-avatar"
+                        style={{ "--nc-avatar-hue": avatarHue(p) } as CSSProperties}
+                      >
+                        {avatarText(p)}
+                      </span>
+                    )}
                     <span className="nc-tree-label">{p.name}</span>
                   </button>
                 ))}

@@ -24,6 +24,7 @@ import * as api from "./backend/client";
 import type {
   Credential,
   CredentialType,
+  DiscoveredShell,
   Group,
   KnownHostEntry,
   Profile,
@@ -31,7 +32,12 @@ import type {
 import { newId } from "./workspaceModel";
 import { userVisibleError } from "./domain/sshErrors";
 import { shellDisplayName } from "./domain/shellName";
+import {
+  getVaultHostRowSubtitle,
+  LOCAL_SHELL_HOST_TAG,
+} from "./domain/localShellHost";
 import { Icon, type IconName } from "./ui/icons";
+import { LocalShellPanel } from "./LocalShellPanel";
 import { useVaultHostMarquee } from "./useVaultHostMarquee";
 
 interface Props {
@@ -526,6 +532,14 @@ export function VaultView({
   const toastTimer = useRef<number | null>(null);
   /** 本机默认 shell 命令（default_shell 命令，与 pty_spawn 同源），供本地卡显示名。 */
   const [localShellCmd, setLocalShellCmd] = useState("");
+  /** 本机发现的 shell（本地终端面板 Shell 下拉 + 本地卡名解析）。 */
+  const [discoveredShells, setDiscoveredShells] = useState<DiscoveredShell[]>(
+    [],
+  );
+  /** 设置项 local_shell（发现的 shell id 或自定义命令）；空 = 系统默认。 */
+  const [localShellSetting, setLocalShellSetting] = useState("");
+  /** 本地终端面板：null = 关闭；"new" = 新建；否则为编辑目标。 */
+  const [localPanel, setLocalPanel] = useState<Profile | "new" | null>(null);
 
   const {
     marqueeRect,
@@ -668,6 +682,18 @@ export function VaultView({
       .defaultShell()
       .then((s) => {
         if (alive) setLocalShellCmd(s);
+      })
+      .catch(() => {});
+    api
+      .discoverShells()
+      .then((s) => {
+        if (alive) setDiscoveredShells(s);
+      })
+      .catch(() => {});
+    api
+      .getSetting("local_shell")
+      .then((s) => {
+        if (alive) setLocalShellSetting(s ?? "");
       })
       .catch(() => {});
     return () => {
@@ -824,10 +850,13 @@ export function VaultView({
 
   function subtitle(p: Profile): string {
     const username = credById.get(p.credential_id)?.username;
-    return `${username ? `${username}@` : ""}${p.host}`;
+    return getVaultHostRowSubtitle(p, {
+      sshSubtitle: `${username ? `${username}@` : ""}${p.host}`,
+    });
   }
 
   function fullSubtitle(p: Profile): string {
+    if (p.protocol === "local") return subtitle(p);
     return `${subtitle(p)}:${p.port}`;
   }
 
@@ -1082,12 +1111,17 @@ export function VaultView({
     const copy: Profile = {
       ...p,
       id: newId(),
-      name: `${p.name} 副本`,
+      // 本地终端主机用带括号版「(副本)」（对齐 Netcatty），SSH 主机保持「副本」。
+      name: p.protocol === "local" ? `${p.name} (副本)` : `${p.name} 副本`,
     };
     void api
       .createProfile(copy)
       .then(() => {
         setOrder((prev) => [...prev, copy.id]);
+        const originTags = tags[p.id];
+        if (originTags?.length) {
+          setTags((prev) => ({ ...prev, [copy.id]: [...originTags] }));
+        }
         onDataChanged();
         showToast("已创建主机副本");
       })
@@ -2846,9 +2880,15 @@ export function VaultView({
             <Icon name="pin" size={12} />
           </span>
         )}
-        <span className="nc-avatar lg" style={avatarStyle(p.name)}>
-          {initial(p.name)}
-        </span>
+        {p.protocol === "local" ? (
+          <span className="nc-avatar lg local">
+            <Icon name="terminal" size={20} />
+          </span>
+        ) : (
+          <span className="nc-avatar lg" style={avatarStyle(p.name)}>
+            {initial(p.name)}
+          </span>
+        )}
         <span className="vault-host-card-main">
           <strong>{p.name}</strong>
           <span className="vault-host-card-sub">{subtitle(p)}</span>
@@ -2868,7 +2908,8 @@ export function VaultView({
             title={`Edit ${p.name}`}
             onClick={(e) => {
               e.stopPropagation();
-              openComposerForEdit(p);
+              if (p.protocol === "local") setLocalPanel(p);
+              else openComposerForEdit(p);
             }}
           >
             <Icon name="pencil" size={13} />
@@ -2881,7 +2922,13 @@ export function VaultView({
     );
   }
 
-  const localName = shellDisplayName(localShellCmd);
+  // 本地卡显示名：设置 local_shell → 发现列表名 / 命令名；空设置回退默认 shell。
+  const localMatchedShell = discoveredShells.find(
+    (s) => s.id === localShellSetting,
+  );
+  const localName = localShellSetting
+    ? (localMatchedShell?.name ?? shellDisplayName(localShellSetting))
+    : shellDisplayName(localShellCmd);
   const localCard = (compact = false) => (
     <div
       key="__local"
@@ -3301,7 +3348,9 @@ export function VaultView({
 
             {/* 新建主机：主按钮 + 下拉（分体）；打开右侧面板时这组操作折叠 */}
             <div
-              className={`vault-header-actions${composer ? " collapsed" : ""}`}
+              className={`vault-header-actions${
+                composer || localPanel ? " collapsed" : ""
+              }`}
             >
               <div className="vault-new-split">
                 <button className="vault-new-btn" onClick={openComposer}>
@@ -3327,6 +3376,8 @@ export function VaultView({
                           setNewMenu(false);
                           if (item.label === "新建分组") {
                             setGroupDialog({ id: null, name: "" });
+                          } else if (item.label === "本地终端 (CMD)") {
+                            setLocalPanel("new");
                           } else {
                             onLocal();
                           }
@@ -4147,6 +4198,28 @@ export function VaultView({
             </aside>
           </>
         )}
+
+        {localPanel !== null && (
+          <LocalShellPanel
+            initial={localPanel === "new" ? null : localPanel}
+            groups={groups}
+            shells={discoveredShells}
+            onClose={() => setLocalPanel(null)}
+            onSaved={(profile, isNew, open) => {
+              setLocalPanel(null);
+              if (isNew) {
+                setOrder((prev) => [...prev, profile.id]);
+                setTags((prev) => ({
+                  ...prev,
+                  [profile.id]: [LOCAL_SHELL_HOST_TAG],
+                }));
+              }
+              onDataChanged();
+              showToast(isNew ? "已创建本地终端" : "已保存本地终端");
+              if (open) onConnect(profile);
+            }}
+          />
+        )}
       </div>
 
       {totpDialog && composer && (
@@ -4336,7 +4409,8 @@ export function VaultView({
             onClick={() => {
               const p = ctxMenu.profile;
               setCtxMenu(null);
-              openComposerForEdit(p);
+              if (p.protocol === "local") setLocalPanel(p);
+              else openComposerForEdit(p);
             }}
           >
             <Icon name="pencil" size={14} />
@@ -4574,9 +4648,15 @@ export function VaultView({
                   key={p.id}
                   onClick={() => connectFromSwitcher(p)}
                 >
-                  <span className="nc-avatar sm" style={avatarStyle(p.name)}>
-                    {initial(p.name)}
-                  </span>
+                  {p.protocol === "local" ? (
+                    <span className="nc-avatar local">
+                      <Icon name="terminal" size={10} />
+                    </span>
+                  ) : (
+                    <span className="nc-avatar sm" style={avatarStyle(p.name)}>
+                      {initial(p.name)}
+                    </span>
+                  )}
                   <span className="vault-switcher-main">
                     <strong>{p.name}</strong>
                     <span>{fullSubtitle(p)}</span>

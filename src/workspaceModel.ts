@@ -11,7 +11,17 @@
 export type SplitDir = "horizontal" | "vertical";
 
 export type Connector =
-  | { kind: "pty" }
+  | {
+      kind: "pty";
+      /** 本地 shell 主机：shell 命令快照；缺省 = 后端默认 shell。 */
+      shell?: string;
+      /** 本地 shell 主机：shell 启动参数快照。 */
+      args?: string[];
+      /** 本地 shell 主机：启动目录（`~` 由后端展开为主目录）。 */
+      startDir?: string;
+      /** 本地 shell 主机：显示名（标签标题）。 */
+      name?: string;
+    }
   | { kind: "ssh"; profileId: string; name: string };
 
 export interface LeafNode {
@@ -128,5 +138,6 @@ export function defaultTitle(
   connector: Connector,
   ptySeq: number,
 ): string {
-  return connector.kind === "ssh" ? connector.name : `本地终端 ${ptySeq}`;
+  if (connector.kind === "ssh") return connector.name;
+  return connector.name || `本地终端 ${ptySeq}`;
 }

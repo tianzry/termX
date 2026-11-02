@@ -58,6 +58,28 @@ export interface Profile {
   /** TOTP 自动提交，默认 true */
   totp_auto_submit?: boolean;
   totp_regex?: string | null;
+  /** 协议类型：`ssh`（默认）/ `local`（本地 shell 主机，走 PTY） */
+  protocol?: string;
+  /** 本地主机：选中的 shell 命令；空 = 跟随 设置 → 终端 的默认本地 Shell */
+  local_shell?: string | null;
+  /** 本地主机：shell 启动参数快照；null = 按 shell 默认行为 */
+  local_shell_args?: string[] | null;
+  /** 本地主机：shell 显示名快照 */
+  local_shell_name?: string | null;
+  /** 本地主机：shell 图标快照 */
+  local_shell_icon?: string | null;
+  /** 本地主机：启动目录（`~` 由后端展开为主目录） */
+  local_start_dir?: string | null;
+}
+
+/** 本机发现的可用 shell（后端 `discover_shells`，对齐 Netcatty 形状）。 */
+export interface DiscoveredShell {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  icon: string;
+  is_default: boolean;
 }
 
 export interface RemoteEntry {
@@ -246,8 +268,30 @@ export function sshHostKeyCancel(promptId: string): Promise<void> {
 
 // ── 本地 PTY ──────────────────────────────────────────────
 
-export function ptySpawn(cols: number, rows: number): Promise<string> {
-  return invoke<string>("pty_spawn", { cols, rows, sessionId: null });
+/** 本地会话启动参数（本地 shell 主机 / 快速终端共用）。
+ * 全部可选：缺省时后端按 设置 → 默认 shell 兜底。 */
+export interface PtySpawnOptions {
+  /** shell 命令或发现列表里的 shell 解析结果 */
+  shell?: string;
+  /** shell 启动参数快照（发现列表元数据） */
+  args?: string[];
+  /** 启动目录（`~` 后端展开为主目录） */
+  startDir?: string;
+}
+
+export function ptySpawn(
+  cols: number,
+  rows: number,
+  opts?: PtySpawnOptions,
+): Promise<string> {
+  return invoke<string>("pty_spawn", {
+    cols,
+    rows,
+    sessionId: null,
+    shell: opts?.shell ?? null,
+    args: opts?.args ?? null,
+    startDir: opts?.startDir ?? null,
+  });
 }
 
 export function ptyWrite(sessionId: string, text: string): Promise<void> {
@@ -269,6 +313,21 @@ export function ptyClose(sessionId: string): Promise<void> {
 /** 本机默认 shell（与 pty_spawn 同一套解析：local_shell 设置优先）。 */
 export function defaultShell(): Promise<string> {
   return invoke<string>("default_shell");
+}
+
+/** 本机发现的可用 shell 列表（本地终端主机面板的 Shell 下拉）。 */
+export function discoverShells(): Promise<DiscoveredShell[]> {
+  return invoke<DiscoveredShell[]>("discover_shells");
+}
+
+/** 读设置项（不存在 = null）。 */
+export function getSetting(key: string): Promise<string | null> {
+  return invoke<string | null>("get_setting", { key });
+}
+
+/** 写设置项。 */
+export function setSetting(key: string, value: string): Promise<void> {
+  return invoke("set_setting", { key, value });
 }
 
 // ── 事件订阅 ──────────────────────────────────────────────

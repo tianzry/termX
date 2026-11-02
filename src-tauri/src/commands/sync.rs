@@ -679,6 +679,12 @@ mod tests {
             icon_color: None,
             totp_auto_submit: true,
             totp_regex: None,
+            protocol: "ssh".into(),
+            local_shell: None,
+            local_shell_args: None,
+            local_shell_name: None,
+            local_shell_icon: None,
+            local_start_dir: None,
         }
     }
 

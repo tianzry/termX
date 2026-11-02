@@ -2779,10 +2779,11 @@ button:disabled {
   font-size: 16px;
 }
 
+/* 对齐 Netcatty：本地主机 / 本地终端入口为实底蓝 + 白色 glyph */
 .nc-avatar.local {
-  color: hsl(var(--primary));
-  background: hsl(var(--primary) / 0.12);
-  border: 1px solid hsl(var(--primary) / 0.25);
+  color: #ffffff;
+  background: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary));
 }
 
 /* 分组树视图 */
@@ -3033,8 +3034,8 @@ button:disabled {
 }
 
 .nc-tree-avatar.local {
-  color: hsl(var(--primary));
-  background: hsl(var(--primary) / 0.12);
+  color: #ffffff;
+  background: hsl(var(--primary));
 }
 
 .nc-count {
@@ -3936,6 +3937,141 @@ button:disabled {
     width: 100%;
     border-radius: 12px 0 0 0;
   }
+}
+
+/* 本地终端新建 / 编辑面板（对齐 Netcatty LocalShellHostDetailsPanel 宽度） */
+.local-shell-panel {
+  width: 380px;
+}
+
+/* 本地终端面板 Shell combobox（对齐 Netcatty Combobox：输入 + 下拉 + 自由输入创建） */
+.lsh-combo {
+  position: relative;
+}
+.lsh-combo-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 6px 0 10px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 6px;
+  background: hsl(var(--secondary));
+}
+.lsh-combo-input:focus-within {
+  border-color: hsl(var(--primary) / 0.6);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.12);
+}
+.lsh-combo-lead {
+  flex-shrink: 0;
+  color: hsl(var(--muted-foreground));
+}
+.vault-composer-body .lsh-combo-input input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.vault-composer-body .lsh-combo-input input:focus {
+  border: none;
+  box-shadow: none;
+}
+.lsh-combo-input .nc-icon-btn {
+  flex-shrink: 0;
+}
+.lsh-combo-pop {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 6px;
+  background: hsl(var(--background));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
+.lsh-combo-opt {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.lsh-combo-opt:hover {
+  background: hsl(var(--secondary));
+}
+.lsh-combo-opt.is-active {
+  background: hsl(var(--primary) / 0.12);
+}
+.lsh-combo-opt-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.lsh-combo-opt-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lsh-combo-opt-sub {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lsh-combo-check {
+  flex-shrink: 0;
+  color: hsl(var(--primary));
+}
+.lsh-combo-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+.lsh-combo-create .lsh-combo-opt-label {
+  color: hsl(var(--primary));
+}
+.lsh-combo-hint {
+  margin: 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+.lsh-startdir {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.lsh-startdir input {
+  padding-right: 30px;
+}
+.lsh-startdir .nc-icon-btn {
+  position: absolute;
+  right: 4px;
+}
+.vault-composer-foot button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ── composer 分区（对照 netcatty HostDetails* 视觉） ─────── */

@@ -1595,3 +1595,198 @@ G known hosts / H 钥匙串。CU 观察 termX 时 WebView 内容会在 foreign c
 - 复检未改代码，沿用修复轮门禁：`npm run test:run` 78 例、`npm run build`、
   `cargo check`（含 `--features server`）、`cargo test --lib` 780 例全过；
   build-debug.bat 产物已启动并存活，CU 取证后正常退出。
+
+---
+
+## 2026-11-02 — 本地终端 / 本地 shell 主机（后端数据层 + shell 发现）
+
+目标：Vault 支持「本地终端主机」（protocol='local'），与 Netcatty
+localShellHost / shellDiscovery 语义 1:1 对齐。本节为后端部分。
+
+### 修改点
+
+1. **schema v34**（`db/schema.rs`）：profiles 增 6 列 —— `protocol`
+   (TEXT NOT NULL DEFAULT 'ssh')、`local_shell`、`local_shell_args`
+   (JSON 文本)、`local_shell_name`、`local_shell_icon`、`local_start_dir`
+   (均 TEXT DEFAULT NULL)。沿用 v33 的 `for (col,decl)` + `column_exists`
+   幂等写法；`SCHEMA_VERSION` 33 → 34。
+2. **models.rs**：Profile 增同名 6 字段（全部 `serde(default)`，protocol
+   默认 "ssh"）；新增 `DiscoveredShell { id, name, command, args, icon,
+   is_default }`。
+3. **db/profile.rs**：`PROFILE_COLUMNS` 16 → 22 列（single source of
+   truth）；`row_to_profile` 按索引 16-21 读；`local_shell_args` JSON
+   解析容错（坏 JSON → None + warn）；`validate_for_write` 对
+   `protocol == "local"` 豁免空 credential_id（SSH 主机不变量不变，
+   既有 `insert_rejects_empty_credential_id` 仍过）；insert upsert /
+   update 全列写。
+4. **shell 发现**（新文件 `terminal/shell_discovery.rs`，#[cfg(desktop)]）：
+   对齐 Netcatty shellDiscovery.cjs —— Windows 顺序 CMD → Windows
+   PowerShell → pwsh → WSL 发行版（`wsl.exe -l -q`，UTF-16LE 探测解码，
+   注册表 Lxss 兜底）→ Git Bash → Cygwin；默认标记 pwsh > powershell >
+   cmd；注册表走 `reg.exe`（CREATE_NO_WINDOW、5s 超时杀进程）；
+   WindowsApps 别名兜底。Unix 读 /etc/shells + realpath 去重 +
+   basename 消歧 + `$SHELL` 补头/标默认。OnceLock 进程内缓存。
+5. **PTY**：`terminal/pty.rs` 新增 `spawn_local_shell(shell, args,
+   cwd)` —— args=Some 原样透传不补 `-l`，None 维持旧行为；cwd 经
+   CommandBuilder::cwd；不覆写 PATH（本地 shell 需完整用户环境）。
+   旧 `spawn` 无调用方，删除。
+6. **命令**：`pty_spawn` 增可选 `shell` / `args` / `start_dir`
+   （`~`/`~/...` 经 `dirs::home_dir` 展开）；新命令 `discover_shells`。
+   解析 helper `resolve_local_shell`（请求 → 设置 → 默认）与
+   `expand_start_dir` 为 pub(crate)，Tauri 命令与 ws server 共用。
+7. **双注册**（R4）：lib.rs generate_handler 加 `discover_shells`
+   （#[cfg(desktop)]）；server.rs dispatcher 加 `"discover_shells"`，
+   `"pty_spawn"` 同步支持 shell/args/startDir。
+
+### 新增单测
+
+- db/profile.rs：`local_profile_roundtrip`、
+  `local_profile_allows_empty_credential_id`、
+  `legacy_profile_defaults_protocol_ssh`（mk_local helper）。
+- terminal/shell_discovery.rs：`parse_reg_value_line_matches_regedit_output`、
+  `wsl_distro_id_slugs_non_alphanumerics`、
+  `map_wsl_distro_icon_falls_back_to_linux`、`cmd_always_discovered`
+  （Windows）；`unix_name_icon_login_mappings`、
+  `path_slug_strips_leading_slash_and_separators`（Unix）；
+  `discover_returns_consistent_cache`（全平台）。
+- commands/pty.rs：`expand_start_dir_handles_tilde_and_plain_paths`。
+
+### 踩坑
+
+134. **Profile 结构体字面量散布广**：加字段后 9 处测试 fixture +
+     CLI `add.rs` 构造点报 E0063，全量 grep `totp_regex: None` 定位补齐。
+135. **server.rs 的 `optional_string_arg` 错误类型是 `Value` 不是
+     `AppError`**：直接 `?` 即可，不能套 `map_err(err_value)`。
+
+### 门禁（后端段）
+
+- `cargo check` ✅；`cargo check --features server` ✅；
+  `cargo test --lib` 789 例全过 ✅。
+
+## 2026-11-02 — 本地终端 / 本地 shell 主机（前端 UI + 会话接线）
+
+承接上一节后端数据层，本节为前端部分（A–C、F 的 UI 侧）。
+
+### 修改点
+
+1. **`src/LocalShellPanel.tsx`（新文件）**：本地终端新建 / 编辑共用面板，
+   右侧 overlay（复用 `vault-composer` 结构 + `.local-shell-panel`
+   380px），Esc / X 关闭。字段序：名称 → Shell（首项「系统默认 Shell」
+   value=''，其余为 discover_shells 列表）→ 分组 → 启动目录；页脚
+   取消 +（仅新建）保存并打开 + 保存。保存走 `createLocalShellHost`
+   语义（host='localhost'、名称回退链、空 shell 存 undefined），编辑时
+   `{...initial, ...host}` 合并保留 SFTP / TOTP 等字段；shellMeta 逻辑
+   对齐 Netcatty（选择未改动时优先主机快照）。
+2. **`src/VaultView.tsx`**：
+   - 新建主机 split button 下拉「本地终端 (CMD)」→ 打开本地面板
+     （不再走 onLocal）；「终端」按钮保持 onLocal 直开会话。
+   - 本地卡显示名改为「设置 local_shell → 发现列表名 / 命令名」解析，
+     空设置回退 default_shell 显示名；挂载时拉 discover_shells +
+     get_setting("local_shell")。
+   - local profile 与 SSH 主机同列：卡 / 行标题 = name，副标题经
+     `getVaultHostRowSubtitle`（local → local_shell_name || 「本地终端」）；
+     hover Edit 与右键「编辑」路由到本地面板（非 SSH composer）；
+     右键连接 / 复制 / 删除复用原链路；复制本地主机名用带括号版
+     「(副本)」（SSH 保持「副本」），并随副本继承原标签。
+   - 保存回调：新建时补手动顺序 + tags 表写 `["local"]`
+     （localStorage TAGS_KEY），随后 onDataChanged + toast；
+     「保存并打开」保存后立即 onConnect。
+3. **`src/App.tsx`**：`connect()` 对 `protocol === "local"` 走 PTY：
+   `resolveHostDefaultLocalShell`（发现列表 + 设置 local_shell）解析后
+   开 pty 标签（标题 = 主机名）；`openLocal()`（终端按钮 / 顶栏 +）按
+   设置 local_shell → `resolveShellSetting` 解析，空则后端默认。
+   挂载时预取 discover_shells。
+4. **`src/workspaceModel.ts`**：`Connector` pty 变体增可选
+   `shell / args / startDir / name`（旧 localStorage 快照向后兼容）；
+   `defaultTitle` pty 优先用 name。
+5. **`src/TerminalPane.tsx`**：pty 分支 `ptySpawn` 透传
+   `shell / args / startDir`。
+6. **`src/styles.css`**：`.local-shell-panel { width: 380px }`。
+
+### 新增 / 更新单测
+
+- `src/backend/client.test.ts`：`ptySpawn 显式传 sessionId: null` 断言
+  补 shell/args/startDir: null；新增 `ptySpawn 本地主机透传
+  shell / args / startDir`。
+- （域函数单测随后端段已就位：`src/domain/localShellHost.test.ts`
+  17 例，覆盖 createLocalShellHost / 副标题 / resolveShellSetting /
+  resolveHostDefaultLocalShell。）
+
+### 踩坑
+
+136. **编辑本地主机必须合并旧档案**：`createLocalShellHost` 只产出本地
+     相关字段，直接 updateProfile 会让 JSON 丢掉 SFTP / TOTP 等可选字段，
+     Rust `serde(default)` 把它们重置为默认值 —— 用 `{...initial, ...host}`
+     合并（显式 undefined 正好用于清空 shell 选择）。
+137. **`resolveHostDefaultLocalShell` 必须显式传 `resolveShellSetting`**：
+     ctx 里不传时 resolved 恒为 undefined，local_shell 会原样保留发现的
+     shell id（如 "wsl-ubuntu"）而不是命令，spawn 直接失败。
+
+### 门禁（全量，2026-11-02）
+
+- `npm run test:run`：11 文件 96 例全过 ✅。
+- `npm run build`：tsc --noEmit + vite 通过 ✅。
+- `cargo check` ✅；`cargo check --features server` ✅（仅既有 warning）；
+  `cargo test --lib` 789 例全过 ✅。
+
+## 2026-11-02 — 本地终端实机比对收尾 + 代码 review 修复（功能①闭环）
+
+### 修改点（对照运行中 Netcatty 1.1.90 的剩余差异 + review 必须修复项）
+
+1. **`src/ui/icons.tsx`**：删除上轮误插的未加引号重复键
+   `chevron-down: <path …/>`（导致 vitest 转换报语法错误）；`IconName`
+   联合补 `"save"`（此前只加了 paths 条目未加类型）。
+2. **`src/styles.css` 4 处**：`.lsh-combo-opt.is-active` 去蓝字（对齐
+   Netcatty 选中项深色文字）；`.lsh-combo-check` 勾选图标蓝色；
+   `.nc-avatar.local` / `.nc-tree-avatar.local` 改实底蓝 + 白色 glyph
+   （对齐 Netcatty 本地主机 / 本地终端入口头像）。
+3. **`src/VaultView.tsx`**：hostCard 头像按 `protocol === "local"` 分支
+   渲染实底蓝白 terminal 头像（grid / list 共用）；快速切换器行头像补
+   同一分支（review 必须修复项 2）。
+4. **`src/HostSidebar.tsx`**：终端态树行头像对 local 主机补同一分支。
+5. **`src/ConnectionManager.tsx`**（review 必须修复项 1）：CM 只列 SSH
+   连接（`sshProfiles = profiles.filter(p => p.protocol !== "local")`），
+   避免 local 档案进 SSH 表单被「凭据必填」卡死；tab 计数 / 跳板机
+   选项 / 空态 / 行列表同步改用 sshProfiles。
+6. **`src/workspaceModel.test.ts`**：补 `defaultTitle` pty 带 name 分支
+   单测（review 建议项，采纳）。
+
+### 实机复检结论（CU 对 termX debug 版逐项截图核对）
+
+- 新建本地终端面板 Shell 下拉：选中项浅蓝底 + 深色文字 + 蓝色勾，
+  选项结构（系统默认 Shell / CMD / PowerShell / Git Bash 带路径
+  sublabel）与 Netcatty 基线一致。
+- 已存本地主机卡：实底蓝白 terminal 头像 + 副标题 shell 名 + 「local」
+  标签 chip（chip 源自 Netcatty `createLocalShellHost` 默认 tags，两侧
+  一致）；伪 `__local` 最近卡同头像。
+- 终端态树侧栏：本地终端入口行与已存 local 主机行均为实底蓝白头像。
+- 快速切换器：local 行实底蓝白头像、SSH 行保持 hue 头像。
+- 连接管理器：连接 (1) 仅列 129，local 主机不再出现。
+
+### 踩坑
+
+138. **沙箱 Shell job 结束会杀 detached 子进程**：`Start-Process` /
+     脱离进程树启动的 rssh.exe 在命令结束时被回收（与坑 123 的 WMI 法
+     冲突时的新结论）。可靠保活法 = 前台直接跑 exe、靠超时自动转后台
+     shell 存续；重建前用 StopCommand 停该 shell 释放 exe 文件锁。
+139. **CU 工具名与 diff 基线**：`set_focus` / `screenshot` / `wait` 等
+     工具不存在（报错文案误导为 "Extension … not found"，实为工具名
+     不存在；存在的工具报 validation error，可据此探测）；窗口聚焦走
+     `perform_action(action="set_focus")`；`get_app_state` 默认 diff
+     模式，需整树时必须 `disableDiff: true`；动作参数用 pid 而非
+     app_name 更稳。
+140. **icons.tsx 加图标两处同步**：带连字符的键必须加引号；paths 条目
+     与 `IconName` 联合必须同时补，否则 tsc 在使用点报错。
+
+### review 结论（子 agent，2026-11-02）
+
+必须修复 2 项（CM local 死路、切换器头像）已修并实机复检；建议项采纳
+1 项（defaultTitle 单测）。未采纳 2 项及理由：`client.ts` 的
+`setSetting` 导出暂留（设置中心为下一功能，届时即用）；App 与
+VaultView 各自拉 `discoverShells` 暂不合并（一为启动解析、一为面板
+展示，合并需新增 prop 钻穿，收益小）。
+
+### 门禁（复跑）
+
+- `npm run test:run`：11 文件 97 例全过 ✅（新增 1 例）。
+- `npm run build` ✅；debug 重建 40s ✅（仅既有 6 条 warning）。

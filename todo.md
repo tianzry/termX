@@ -40,6 +40,7 @@
 | SSH 连接建立与管理（弹窗进度 / 逐跳日志 / 认证重试 / 主机密钥 / 超时 / 取消 / Enter 重连） | ✅ | `src/TerminalPane.tsx`、`src/terminal/TerminalConnectionDialog.tsx`、`src-tauri/src/ssh/client.rs` |
 | 三平台 CI 构建 + Windows 代码签名 | ✅ | `.github/workflows/release.yml` |
 | Known Hosts 管理页（列表 / 搜索 / 删除 / 转主机档案） | ✅ | `src/VaultView.tsx`、`src-tauri/src/ssh/known_hosts.rs` |
+| 本地终端（shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel + local 头像体系） | ✅ | `src/LocalShellPanel.tsx`、`src/domain/localShellHost.ts`、`src-tauri/src/terminal/shell_discovery.rs` |
 
 ---
 
@@ -244,3 +245,4 @@
 | 2026-11-02 | 代码质量问题 #4（前端无测试 runner）已解决：引入 Vitest 3 + jsdom 单元测试设施（9 文件 / 71 用例全绿），AGENTS.md 新增 R11 门禁（`npm run test:run` → `npm run build` / `cargo check`）。 |
 | 2026-11-02 | 第二轮 1:1 对齐块 D/E 完成：块 D 连接建立对话框文案/字段/超时逐字对齐 netcatty（认证对话框 SSH Key tab + 分体「继续/继续并保存」、主机密钥「尚未确认…/记住并继续」、逐跳日志中英混排、认证重试默认密码 tab + root 预填、测试连接 25s）；块 E 主机卡片右键菜单对齐 netcatty 9 项（删「标签…」与分隔线、删孤儿 tagEditor）、「新建主机」caret 文案（本地终端 (CMD)/导入/导出）；门禁修复块 A 遗留（v33 迁移补 table_exists 守卫、migration_32 断言改 SCHEMA_VERSION、PTY 冒烟测试 cfg(unix)）。门禁全绿（npm build ✓ / cargo check ✓ ×2 / cargo test --lib 780✓）。P0 #32 完成（6 / 38）。 |
 | 2026-11-02 | 范围修正：SSH agent 转发纳入移植（新增 P1 #39，与「代理」一起排期）；「不移植」节 SSH 代理条目改写为已纳入，mosh / eternalTerminal / X11 维持不移植；总数 38 → 39。实机验收（对运行中 Netcatty 1.1.90）差异清单已落 changelogs，修复进行中。 |
+| 2026-11-02 | 十功能计划①本地终端完成：shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel 1:1（对照运行中 Netcatty）；实机比对差异清零（下拉选中态 / local 实底蓝白头像含卡·树·切换器 / local 标签 chip）；子 agent review 两必须修复项（CM 过滤 local、切换器头像）已修；门禁 97/97 + cargo 全绿。 |

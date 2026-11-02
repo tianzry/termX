@@ -23,7 +23,33 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         icon_color: row.get(13)?,
         totp_auto_submit: row.get(14)?,
         totp_regex: row.get(15)?,
+        protocol: row.get(16)?,
+        local_shell: row.get(17)?,
+        local_shell_args: parse_local_shell_args(row.get(18)?),
+        local_shell_name: row.get(19)?,
+        local_shell_icon: row.get(20)?,
+        local_start_dir: row.get(21)?,
     })
+}
+
+/// local_shell_args 以 JSON 文本入库（`["-NoLogo"]` 之类）；NULL / 空 / 坏
+/// JSON 一律落回 None（= 按 shell 默认行为启动），与 algorithms 同款容错。
+fn parse_local_shell_args(raw: Option<String>) -> Option<Vec<String>> {
+    let raw = raw.filter(|s| !s.trim().is_empty())?;
+    match serde_json::from_str::<Vec<String>>(&raw) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            log::warn!(
+                "failed to parse profile.local_shell_args JSON ({} bytes), ignoring: {e}",
+                raw.len()
+            );
+            None
+        }
+    }
+}
+
+fn local_shell_args_json(args: &Option<Vec<String>>) -> Option<String> {
+    args.as_ref().map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()))
 }
 
 fn parse_algorithms(raw: Option<String>) -> SshAlgorithms {
@@ -51,7 +77,7 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir";
 
 pub fn list(db: &Db) -> AppResult<Vec<Profile>> {
     let conn = db.lock()?;
@@ -78,7 +104,9 @@ pub fn get(db: &Db, id: &str) -> AppResult<Profile> {
 /// 旧前端、未来新增的写入入口）最终都得过这道关。
 fn validate_for_write(p: &Profile) -> AppResult<()> {
     validate_name(&p.name)?;
-    if p.credential_id.is_empty() {
+    // 本地 shell 主机（protocol == "local"）没有 SSH 凭证概念，豁免空
+    // credential_id；SSH 主机维持"必须引用真实凭证"的既有不变量。
+    if p.protocol != "local" && p.credential_id.is_empty() {
         return Err(AppError::config(
             "profile_credential_id_required",
             serde_json::json!({ "id": p.id, "name": p.name }),
@@ -96,17 +124,22 @@ fn validate_for_write(p: &Profile) -> AppResult<()> {
 pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
     validate_for_write(p)?;
     let algorithms = algorithms_json(p)?;
+    let local_shell_args = local_shell_args_json(&p.local_shell_args);
     conn.execute(
         "INSERT INTO profiles (id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, \
-         sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) \
+         sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, \
+         protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
          init_command=excluded.init_command, group_id=excluded.group_id, algorithms=excluded.algorithms, \
          sftp_protocol=excluded.sftp_protocol, sftp_sudo=excluded.sftp_sudo, sftp_encoding=excluded.sftp_encoding, \
          icon_source=excluded.icon_source, icon_color=excluded.icon_color, \
-         totp_auto_submit=excluded.totp_auto_submit, totp_regex=excluded.totp_regex",
+         totp_auto_submit=excluded.totp_auto_submit, totp_regex=excluded.totp_regex, \
+         protocol=excluded.protocol, local_shell=excluded.local_shell, local_shell_args=excluded.local_shell_args, \
+         local_shell_name=excluded.local_shell_name, local_shell_icon=excluded.local_shell_icon, \
+         local_start_dir=excluded.local_start_dir",
         params![
             p.id,
             p.name,
@@ -123,7 +156,13 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.icon_source,
             p.icon_color,
             p.totp_auto_submit,
-            p.totp_regex
+            p.totp_regex,
+            p.protocol,
+            p.local_shell,
+            local_shell_args,
+            p.local_shell_name,
+            p.local_shell_icon,
+            p.local_start_dir
         ],
     )?;
     Ok(())
@@ -138,9 +177,11 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
     validate_for_write(p)?;
     let conn = db.lock()?;
     let algorithms = algorithms_json(p)?;
+    let local_shell_args = local_shell_args_json(&p.local_shell_args);
     conn.execute(
         "UPDATE profiles SET name=?1, host=?2, port=?3, credential_id=?4, bastion_profile_id=?5, init_command=?6, group_id=?7, algorithms=?8, \
-         sftp_protocol=?9, sftp_sudo=?10, sftp_encoding=?11, icon_source=?12, icon_color=?13, totp_auto_submit=?14, totp_regex=?15 WHERE id=?16",
+         sftp_protocol=?9, sftp_sudo=?10, sftp_encoding=?11, icon_source=?12, icon_color=?13, totp_auto_submit=?14, totp_regex=?15, \
+         protocol=?16, local_shell=?17, local_shell_args=?18, local_shell_name=?19, local_shell_icon=?20, local_start_dir=?21 WHERE id=?22",
         params![
             p.name,
             p.host,
@@ -157,6 +198,12 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.icon_color,
             p.totp_auto_submit,
             p.totp_regex,
+            p.protocol,
+            p.local_shell,
+            local_shell_args,
+            p.local_shell_name,
+            p.local_shell_icon,
+            p.local_start_dir,
             p.id
         ],
     )?;
@@ -212,7 +259,68 @@ mod tests {
             icon_color: None,
             totp_auto_submit: true,
             totp_regex: None,
+            protocol: "ssh".into(),
+            local_shell: None,
+            local_shell_args: None,
+            local_shell_name: None,
+            local_shell_icon: None,
+            local_start_dir: None,
         }
+    }
+
+    /// 本地 shell 主机：protocol == "local" 豁免空 credential_id
+    /// （Netcatty createLocalShellHost 语义：host 固定 localhost、无凭证）。
+    fn mk_local(id: &str, name: &str) -> Profile {
+        Profile {
+            id: id.into(),
+            name: name.into(),
+            host: "localhost".into(),
+            port: 22,
+            credential_id: String::new(),
+            protocol: "local".into(),
+            local_shell: Some("cmd.exe".into()),
+            local_shell_args: Some(vec![]),
+            local_shell_name: Some("CMD".into()),
+            local_shell_icon: Some("cmd".into()),
+            local_start_dir: Some("~".into()),
+            ..mk(id, name)
+        }
+    }
+
+    #[test]
+    fn local_profile_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        insert(&db, &mk_local("l1", "项目 A · CMD")).unwrap();
+        let got = get(&db, "l1").unwrap();
+        assert_eq!(got.protocol, "local");
+        assert_eq!(got.host, "localhost");
+        assert!(got.credential_id.is_empty());
+        assert_eq!(got.local_shell.as_deref(), Some("cmd.exe"));
+        assert_eq!(got.local_shell_args, Some(vec![]));
+        assert_eq!(got.local_shell_name.as_deref(), Some("CMD"));
+        assert_eq!(got.local_shell_icon.as_deref(), Some("cmd"));
+        assert_eq!(got.local_start_dir.as_deref(), Some("~"));
+    }
+
+    #[test]
+    fn local_profile_allows_empty_credential_id() {
+        let db = Db::open_in_memory().unwrap();
+        insert(&db, &mk_local("l1", "local-a")).unwrap();
+        let mut updated = mk_local("l1", "local-a");
+        updated.local_start_dir = None;
+        update(&db, &updated).unwrap();
+        assert!(get(&db, "l1").unwrap().local_start_dir.is_none());
+    }
+
+    #[test]
+    fn legacy_profile_defaults_protocol_ssh() {
+        // 旧行（无 protocol 列语义）经迁移后读出默认 "ssh"，
+        // 本地主机分支不得误伤历史 SSH 主机。
+        let db = Db::open_in_memory().unwrap();
+        insert(&db, &mk("p1", "alpha")).unwrap();
+        let got = get(&db, "p1").unwrap();
+        assert_eq!(got.protocol, "ssh");
+        assert!(got.local_shell.is_none());
     }
 
     #[test]

@@ -230,6 +230,8 @@ pub fn run() {
             #[cfg(desktop)]
             commands::pty::refresh_shells,
             #[cfg(desktop)]
+            commands::pty::discover_shells,
+            #[cfg(desktop)]
             commands::pty::pty_spawn,
             #[cfg(desktop)]
             commands::pty::pty_spawn_connector,

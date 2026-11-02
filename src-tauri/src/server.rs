@@ -443,6 +443,7 @@ fn dispatch(
 
         // ---- local PTY ----
         "list_shells" => Ok(json!(pty::available_shells())),
+        "discover_shells" => Ok(json!(crate::terminal::shell_discovery::discover())),
         "default_shell" => {
             let configured = crate::db::settings::get(&state.db, "local_shell")
                 .map_err(err_value)?
@@ -462,10 +463,21 @@ fn dispatch(
                 owner.clone(),
             )
             .map_err(err_value)?;
-            let shell = crate::db::settings::get(&state.db, "local_shell")
-                .ok()
-                .flatten()
-                .filter(|s| !s.is_empty());
+            // 与 Tauri `pty_spawn` 命令同一套解析：请求参数 → 设置 → 默认。
+            let shell = crate::commands::pty::resolve_local_shell(
+                &state.db,
+                optional_string_arg(&args, "shell")?,
+            );
+            let spawn_args: Option<Vec<String>> = match args.get("args") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(
+                    serde_json::from_value(v.clone())
+                        .map_err(|e| json!(format!("bad arg 'args': {e}")))?,
+                ),
+            };
+            let cwd = crate::commands::pty::expand_start_dir(optional_string_arg(
+                &args, "startDir",
+            )?);
             let tx = tx.clone();
             let sink: PtySink = Arc::new(move |id: &str, out: PtyOut| {
                 let msg = match out {
@@ -479,7 +491,8 @@ fn dispatch(
                 let _ = tx.send(Message::Text(msg.to_string()));
             });
             let (id, handle) =
-                pty::spawn(session_id, cols, rows, sink, shell).map_err(err_value)?;
+                pty::spawn_local_shell(session_id, cols, rows, sink, shell, spawn_args, cwd)
+                    .map_err(err_value)?;
             reservation
                 .activate_returned(&id, crate::commands::lifecycle::ReadySession::Pty(handle))
                 .map_err(err_value)?;

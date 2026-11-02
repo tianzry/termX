@@ -451,7 +451,15 @@ export function TerminalPane({
 
     if (!isSsh) {
       try {
-        const sid = await api.ptySpawn(c.term.cols, c.term.rows);
+        const localOpts =
+          tab.connector.kind === "pty"
+            ? {
+                shell: tab.connector.shell,
+                args: tab.connector.args,
+                startDir: tab.connector.startDir,
+              }
+            : undefined;
+        const sid = await api.ptySpawn(c.term.cols, c.term.rows, localOpts);
         if (!aliveRef.current || attempt !== attemptRef.current) {
           void api.ptyClose(sid);
           return;

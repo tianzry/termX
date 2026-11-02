@@ -76,7 +76,8 @@ export type IconName =
   | "folder-open"
   | "upload"
   | "download"
-  | "badge-check";
+  | "badge-check"
+  | "save";
 
 const paths: Record<IconName, ReactElement> = {
   terminal: (
@@ -470,6 +471,13 @@ const paths: Record<IconName, ReactElement> = {
     </>
   ),
   play: <polygon points="6 3 20 12 6 21 6 3" />,
+  save: (
+    <>
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </>
+  ),
   user: (
     <>
       <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />

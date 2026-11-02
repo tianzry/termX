@@ -28,11 +28,16 @@ import { ConnectionManager } from "./ConnectionManager";
 import * as api from "./backend/client";
 import type {
   Credential,
+  DiscoveredShell,
   Group,
   Profile,
   TermBridge,
   TerminalTransport,
 } from "./backend/client";
+import {
+  resolveHostDefaultLocalShell,
+  resolveShellSetting,
+} from "./domain/localShellHost";
 
 type Tool = "sftp" | "serial" | "telnet" | "forward" | null;
 
@@ -114,6 +119,10 @@ export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [credentials, setCredentials] = useState<Credential[]>([]);
+  /** 本机发现的 shell（本地主机连接时解析「系统默认 Shell」）。 */
+  const [discoveredShells, setDiscoveredShells] = useState<DiscoveredShell[]>(
+    [],
+  );
   const [recentIds, setRecentIds] = useState<string[]>(loadRecent);
   const [managerEditId, setManagerEditId] = useState<string | null>(null);
 
@@ -140,6 +149,19 @@ export default function App() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .discoverShells()
+      .then((s) => {
+        if (alive) setDiscoveredShells(s);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -191,13 +213,49 @@ export default function App() {
     setSurface(null);
     setSideOpen(true);
     setRecentIds((prev) => saveRecent("__local", prev));
-    workspaceRef.current?.newTab({ kind: "pty" });
+    void (async () => {
+      // shell 解析 = 设置 local_shell → 空用后端默认（对齐 Netcatty）。
+      let shell: string | undefined;
+      let args: string[] | undefined;
+      try {
+        const configured = (await api.getSetting("local_shell")) ?? "";
+        const resolved = resolveShellSetting(configured, discoveredShells);
+        shell = resolved?.command;
+        args = resolved?.args;
+      } catch {
+        /* 设置读取失败：走后端默认 shell */
+      }
+      workspaceRef.current?.newTab({ kind: "pty", shell, args });
+    })();
   }
 
   function connect(profile: Profile) {
     setSurface(null);
     setSideOpen(true);
     setRecentIds((prev) => saveRecent(profile.id, prev));
+    if (profile.protocol === "local") {
+      void (async () => {
+        let localShellSetting = "";
+        try {
+          localShellSetting = (await api.getSetting("local_shell")) ?? "";
+        } catch {
+          /* 仅用主机自身 shell 快照 */
+        }
+        const resolved = resolveHostDefaultLocalShell(profile, {
+          discoveredShells,
+          terminalSettings: { localShell: localShellSetting },
+          resolveShellSetting,
+        });
+        workspaceRef.current?.newTab({
+          kind: "pty",
+          name: profile.name,
+          shell: resolved.local_shell || undefined,
+          args: resolved.local_shell_args ?? undefined,
+          startDir: resolved.local_start_dir ?? undefined,
+        });
+      })();
+      return;
+    }
     workspaceRef.current?.newTab({
       kind: "ssh",
       profileId: profile.id,

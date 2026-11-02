@@ -118,6 +118,10 @@ export function ConnectionManager({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  // 本地终端主机由 Vault / LocalShellPanel 管理；CM 只列 SSH 连接，
+  // 避免 local 档案进 SSH 表单后被「凭据必填」卡死。
+  const sshProfiles = profiles.filter((p) => p.protocol !== "local");
+
   const [profDraft, setProfDraft] = useState<ProfDraft | null>(null);
   const [credDraft, setCredDraft] = useState<CredDraft | null>(null);
   const [groupDraft, setGroupDraft] = useState<GroupDraft | null>(null);
@@ -390,7 +394,7 @@ export function ConnectionManager({
             className={tab === "profiles" ? "active" : ""}
             onClick={() => setTab("profiles")}
           >
-            连接 ({profiles.length})
+            连接 ({sshProfiles.length})
           </button>
           <button
             className={tab === "creds" ? "active" : ""}
@@ -484,7 +488,7 @@ export function ConnectionManager({
                       }
                     >
                       <option value="">不使用</option>
-                      {profiles
+                      {sshProfiles
                         .filter((p) => p.id !== profDraft.id)
                         .map((p) => (
                           <option key={p.id} value={p.id}>
@@ -520,11 +524,11 @@ export function ConnectionManager({
                 </button>
               )}
 
-              {profiles.length === 0 && !profDraft && (
+              {sshProfiles.length === 0 && !profDraft && (
                 <div className="cm-empty">还没有连接，先「新建连接」。</div>
               )}
 
-              {profiles.map((p) => (
+              {sshProfiles.map((p) => (
                 <div key={p.id} className="cm-row">
                   <div className="cm-main">
                     <span className="cm-name">{p.name}</span>

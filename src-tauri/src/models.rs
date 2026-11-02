@@ -69,6 +69,46 @@ pub struct Profile {
     /// TOTP 自定义提示正则（RE2）；None = 用内置 JumpServer / Google Authenticator PAM 模式。
     #[serde(default)]
     pub totp_regex: Option<String>,
+    // ── 本地 shell 主机新增字段（schema v34，对齐 Netcatty localShellHost）──
+    /// 协议类型：`ssh`（默认）/ `local`（本地终端主机，走 PTY 不走 SSH）。
+    #[serde(default = "default_profile_protocol")]
+    pub protocol: String,
+    /// 本地主机：选中的 shell 命令；None = 跟随 设置 → 终端 的默认本地 Shell。
+    #[serde(default)]
+    pub local_shell: Option<String>,
+    /// 本地主机：shell 启动参数快照（DB 存 JSON 文本）；None = 按 shell 默认行为。
+    #[serde(default)]
+    pub local_shell_args: Option<Vec<String>>,
+    /// 本地主机：shell 显示名快照（保存时的发现列表元数据）。
+    #[serde(default)]
+    pub local_shell_name: Option<String>,
+    /// 本地主机：shell 图标快照（保存时的发现列表元数据）。
+    #[serde(default)]
+    pub local_shell_icon: Option<String>,
+    /// 本地主机：启动目录；`~` 在 spawn 时展开为主目录。None = 继承全局起始目录。
+    #[serde(default)]
+    pub local_start_dir: Option<String>,
+}
+
+/// `protocol` 的 serde 默认值：历史数据全是 SSH 主机。
+fn default_profile_protocol() -> String {
+    "ssh".to_string()
+}
+
+/// 本机发现的可用 shell（对齐 Netcatty shellDiscovery 的返回形状）。
+/// `id` 稳定标识（发现列表匹配用）；`command` 是实际可执行命令 / 路径；
+/// `is_default` = 系统默认 shell（Windows: pwsh > powershell > cmd；
+/// Unix: $SHELL，否则首个）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiscoveredShell {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub icon: String,
+    #[serde(default)]
+    pub is_default: bool,
 }
 
 /// `totp_auto_submit` 的 serde 默认值：Netcatty 行为是默认开启自动提交。
