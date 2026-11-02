@@ -1026,6 +1026,60 @@ async fn dispatch_async(
         "walk_local_dir" => {
             ok(crate::commands::sftp::walk_local_dir(arg::<String>(&args, "localRoot")?).await)
         }
+        "sftp_lstat" => {
+            let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
+            ok(h.lstat(&arg::<String>(&args, "path")?).await)
+        }
+        "sftp_realpath" => {
+            let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
+            ok(h.realpath(&arg::<String>(&args, "path")?).await)
+        }
+        "local_home" => ok(crate::commands::localfs::local_home().await),
+        "local_list_drives" => ok(crate::commands::localfs::local_list_drives().await),
+        "local_list_dir" => {
+            ok(crate::commands::localfs::local_list_dir(arg::<String>(&args, "path")?).await)
+        }
+        "local_stat" => {
+            ok(crate::commands::localfs::local_stat(
+                arg::<String>(&args, "path")?,
+                arg::<Option<bool>>(&args, "follow")?,
+            )
+            .await)
+        }
+        "local_realpath" => {
+            ok(crate::commands::localfs::local_realpath(arg::<String>(&args, "path")?).await)
+        }
+        "local_mkdir" => {
+            ok(crate::commands::localfs::local_mkdir(arg::<String>(&args, "path")?).await)
+        }
+        "local_rename" => {
+            ok(crate::commands::localfs::local_rename(
+                arg::<String>(&args, "oldPath")?,
+                arg::<String>(&args, "newPath")?,
+            )
+            .await)
+        }
+        "local_remove" => {
+            ok(crate::commands::localfs::local_remove(
+                arg::<String>(&args, "path")?,
+                arg::<Option<String>>(&args, "expectedType")?,
+            )
+            .await)
+        }
+        "local_read_file" => {
+            ok(crate::commands::localfs::local_read_file(
+                arg::<String>(&args, "path")?,
+                arg::<Option<u64>>(&args, "maxBytes")?,
+            )
+            .await)
+        }
+        "local_write_file" => {
+            ok(crate::commands::localfs::local_write_file(
+                arg::<String>(&args, "path")?,
+                arg::<Vec<u8>>(&args, "data")?,
+            )
+            .await)
+        }
         "sftp_download" => {
             let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
             ok(h.download(&arg::<String>(&args, "path")?).await)

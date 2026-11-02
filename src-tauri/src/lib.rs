@@ -310,7 +310,20 @@ pub fn run() {
             commands::sftp::sftp_remove,
             commands::sftp::sftp_rename,
             commands::sftp::sftp_stat,
+            commands::sftp::sftp_lstat,
+            commands::sftp::sftp_realpath,
             commands::sftp::sftp_chmod,
+            // Local FS (SFTP dual-pane B1)
+            commands::localfs::local_home,
+            commands::localfs::local_list_drives,
+            commands::localfs::local_list_dir,
+            commands::localfs::local_stat,
+            commands::localfs::local_realpath,
+            commands::localfs::local_mkdir,
+            commands::localfs::local_rename,
+            commands::localfs::local_remove,
+            commands::localfs::local_read_file,
+            commands::localfs::local_write_file,
             // CLI install
             #[cfg(desktop)]
             commands::cli::cli_status,

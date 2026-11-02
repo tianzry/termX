@@ -2155,3 +2155,51 @@ select_application/open_with_application；⑤ 临时文件注册表
 5. 编辑器 + 权限 + 移动到 + 剪贴板 + 打开方式 + 文件监视；
 6. 树视图 + 书签 + 快捷键 + 编码 UI；
 7. 门禁 → build-debug 实机比对 → 子 agent review → 提交。
+
+---
+
+## 2026-11-03 · SFTP 实现①：本地 FS 命令组 + sftp_lstat/realpath（后端）
+
+### 修改点
+
+1. **新建 `commands/localfs.rs`**（蓝图 B1）。`LocalEntry { name, kind(file|directory|symlink), size, mtime, link_target?, hidden }`
+   （owner 不实现——Windows 本地所有者列本来就显示 "--"）。10 个命令：
+   - `local_home`（dirs::home_dir）、`local_list_drives`（Win A:-Z: 探测，非 Win 返回 []）；
+   - `local_list_dir`：目录优先 + 名称大小写不敏感排序（与远端 list_dir 一致）；单条
+     元数据失败跳过、不毁掉整个列表；
+   - `local_stat(path, follow? 默认 true)`、`local_realpath`（canonicalize 后手写去掉
+     `\\?\` / `\\?\UNC\` 前缀）；
+   - `local_mkdir`（递归）、`local_rename`；
+   - `local_remove(path, expected_type?)`：lstat 与期望类型不符报 `local_type_stale`
+     （符号链接视为通配，前端可能按目标类型归类）；Win 指向目录的符号链接先试
+     remove_file、失败回落 remove_dir；
+   - `local_read_file(path, max_bytes?)`：超限读**尾部**（编辑器预览大文件），预分配封顶 1MiB；
+   - `local_write_file`。
+   - hidden 判定：Win 用 `file_attributes & FILE_ATTRIBUTE_HIDDEN`，非 Win 用 `.` 前缀。
+2. **远端补强**（蓝图 B2）：`FileStat` 增加 `is_symlink` 字段（只增不改，不破坏既有
+   序列化）；`SftpHandle` 新增 `lstat`（symlink_metadata）与 `realpath`（canonicalize），
+   命令层新增 `sftp_lstat` / `sftp_realpath`。整文件读写复用现有
+   `sftp_download` / `sftp_upload`，不新增。
+3. **双注册**（R4）：12 个新命令在 lib.rs `generate_handler!` 与 server.rs dispatcher
+   同步注册；server 侧参数 camelCase（sftpId/path/follow/oldPath/newPath/expectedType/
+   maxBytes/data）。
+4. **单测 +3**（R11）：`strip_extended_prefix` 三形态；`localfs_roundtrip`
+   （mkdir/write/list/stat/rename/尾读/type-stale 守卫/remove 全链路，临时目录自清理）；
+   `list_drives_shape`。
+5. client.ts 封装与前端按指令留到实现②，本轮不动前端。
+
+### 验证
+
+- `cargo check` ✓ 与 `cargo check --features server` ✓（仅既有 dead_code warning）。
+- `cargo test --lib`：792 passed（789 → 792，+3 新增）。
+
+### 踩坑
+
+1. **结构体字面量字段顺序 = 求值/move 顺序**：
+   `LocalEntry { name, ..., hidden: is_hidden(&name, ...) }` 里 `name` 先 move 再被借用，
+   直接 E0382。借用 `name` 的字段（hidden/mtime）必须在字面量之前先算成 let。
+2. `tokio::fs::DirEntry::metadata()` **不跟随**符号链接（等价 lstat），列表直接用；
+   链接的目标类型/大小需再跟一次 `tokio::fs::metadata(path)`，断链 → `link_target=None`
+   且保留链接自身大小。
+3. Windows 上指向目录的符号链接不能用 remove_file 删（需 remove_dir）；
+   `local_remove` 做了先 file 后 dir 的回落。

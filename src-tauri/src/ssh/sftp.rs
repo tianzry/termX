@@ -30,6 +30,7 @@ pub struct RemoteEntry {
 pub struct FileStat {
     pub name: String,
     pub is_dir: bool,
+    pub is_symlink: bool,
     pub size: u64,
     pub mtime: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -433,6 +434,7 @@ impl SftpHandle {
         Ok(FileStat {
             name,
             is_dir: meta.file_type().is_dir(),
+            is_symlink: meta.file_type().is_symlink(),
             size: meta.size.unwrap_or(0),
             mtime: meta.mtime.map(u64::from).unwrap_or(0),
             uid: meta.uid,
@@ -440,6 +442,40 @@ impl SftpHandle {
             user: meta.user.clone(),
             group: meta.group.clone(),
             permissions: meta.permissions,
+        })
+    }
+
+    /// LSTAT：不跟随符号链接的 metadata。双栏 UI 需要它区分链接与真实目录
+    /// （类型列、删除路径选择、冲突检测）。
+    pub async fn lstat(&self, path: &str) -> AppResult<FileStat> {
+        let meta = self.sftp.symlink_metadata(path).await.map_err(|e| {
+            AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "lstat", "err": e.to_string() }),
+            )
+        })?;
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        Ok(FileStat {
+            name,
+            is_dir: meta.file_type().is_dir(),
+            is_symlink: meta.file_type().is_symlink(),
+            size: meta.size.unwrap_or(0),
+            mtime: meta.mtime.map(u64::from).unwrap_or(0),
+            uid: meta.uid,
+            gid: meta.gid,
+            user: meta.user.clone(),
+            group: meta.group.clone(),
+            permissions: meta.permissions,
+        })
+    }
+
+    /// realpath：规范化远端路径（"." 解析为会话 cwd）。
+    pub async fn realpath(&self, path: &str) -> AppResult<String> {
+        self.sftp.canonicalize(path).await.map_err(|e| {
+            AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "realpath", "err": e.to_string() }),
+            )
         })
     }
 

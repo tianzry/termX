@@ -7,6 +7,7 @@ pub mod forward;
 pub mod group;
 pub mod keychain;
 pub mod lifecycle;
+pub mod localfs;
 pub mod plugin;
 pub mod profile;
 #[cfg(desktop)]

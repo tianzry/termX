@@ -600,6 +600,26 @@ pub async fn sftp_stat(
 }
 
 #[tauri::command]
+pub async fn sftp_lstat(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+) -> AppResult<FileStat> {
+    let h = get_sftp(&state, &sftp_id)?;
+    h.lstat(&path).await
+}
+
+#[tauri::command]
+pub async fn sftp_realpath(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+) -> AppResult<String> {
+    let h = get_sftp(&state, &sftp_id)?;
+    h.realpath(&path).await
+}
+
+#[tauri::command]
 pub async fn sftp_chmod(
     state: State<'_, AppState>,
     sftp_id: String,
