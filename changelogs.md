@@ -1969,7 +1969,7 @@ VaultView 各自拉 `discoverShells` 暂不合并（一为启动解析、一为�
 - 下一轮：实机比对（build-debug 构建后 CU 对照运行中 Netcatty 逐项比，
   差异当场修）→ 子 agent 代码 review → push/本地 commit 收尾。
 
-## 2026-11-03 · 设置中心实机比对 + review 收尾（本地 commit，未 push）
+## 2026-11-03 · 设置中心实机比对 + review 收尾（已推送）
 
 ### 实机比对差异与当场修复（build-debug 构建，CU 对照运行中 Netcatty）
 
@@ -2068,6 +2068,90 @@ VaultView 各自拉 `discoverShells` 暂不合并（一为启动解析、一为�
 
 ### push 状态
 
-- **本轮按用户指令未 push**：本地历史正被另一会话清理（删除/amend 含
-  push 失败记录的提交），避免双写冲突；远端 https 凭据已失效，后续统一
-  用 SSH 地址推送，等用户指令。
+- **已推送**（2026-11-03）：设置中心实现与收尾两个提交（`3724ff1`、
+  `f3f9dd3`）经 SSH 地址推送至 GitHub，远端 `main` = `f3f9dd3`。
+
+## 2026-11-03 · SFTP 移植研究：缺口清单（仅研究，未实现）
+
+对照运行中 Netcatty 1.1.90 SFTP 界面观察与源码（只读
+`g:\AiCode\termX\Netcatty`）盘点 termX 差距，定实现蓝图。详细研究存临时
+简报（不入库）：`termx-sftp-gap-plan.md`（蓝图总纲）、
+`termx-sftp-observations.md`（CU 界面观察）、`termx-sftp-ui-details.md`
+（对话框/快捷键/页脚/i18n 原文）、`termx-sftp-electron-bridges.md`
+（54 个 bridge 签名与事件形状）、`termx-sftp-rssh-ref.md`（rssh 可复用盘点）。
+
+### Netcatty SFTP 形态（对标基准）
+
+- 顶层根标签「SFTP」：左右**双栏**（焦点三角 + 点击聚焦清对侧选择），每栏
+  独立会话标签栏（+/×/拖拽重排/跨栏移动/中键关闭/右键复制）、两行工具栏
+  （行1：home/后退/前进/刷新 + **面包屑** + 路径双击编辑带建议；行2：编码、
+  书签、复制路径、树/列表切换、紧凑、过滤、新建文件夹/文件、显示隐藏）、
+  列头（名称/修改时间/大小/类型/所有者，排序/列宽/列显示菜单）、虚拟化
+  列表（".." 首行、单击/Ctrl/Shift 选择、双击行为可配）、页脚
+  （「N 个项目 - 已选 M 个」+ 当前路径）、空态 + 主机选择弹窗（本地/已连接/
+  主机三分区 + 搜索 + 侧位 chip + 键盘导航）。
+- **传输队列**：底部停靠面板（非 popover；默认 220px 可拖拽调高；最多 5 个
+  顶层任务 + 子任务分组）。状态机
+  `pending|queued|transferring|pausing|paused|attention|interrupted|completed|failed|cancelled`；
+  全局并发默认 2（1..16），按 host:/session:/local 资源键各自限流；
+  暂停/恢复（.part checkpoint + 源指纹/软校验）、优先、重试、清除已完成；
+  **冲突检测在前端**（启动前 stat 目标 → attention + 冲突对话框）。
+- **冲突对话框**：停止/跳过/创建副本/合并（仅目录对目录）/替换；文件冲突
+  显示双方大小与修改时间卡片；多项时「应用到剩余 N 个冲突」。
+- **编辑器**：双击文本文件 → 文本编辑器模态（读/写/保存回远端/word wrap）；
+  外部应用打开 = 下载到临时文件 + **文件监视**（stat 轮询 1s + 防抖 500ms，
+  上限 256）改动自动回写远端。
+- **拖放**：跨栏拖拽 = 传输；外部文件拖入 = 上传；本地拖出到资源管理器为
+  Electron 专属（`startLocalFileDrag`，Tauri 无等价，记差异）。
+- **编码**：`SftpFilenameEncoding`（auto/utf-8/gb18030）贯穿列表/读写/
+  传输/解压（对应 todo #25）。
+- 其他：权限对话框（chmod 9 复选 + 八进制）、移动到、剪贴板图片粘贴上传、
+  打开方式选择、树视图（懒加载 + 右键菜单）、书签、快捷键（11 条可配置 +
+  typeahead/方向键/Ctrl+F 聚焦过滤等硬编码）。
+
+### termX 现状
+
+- 前端 `src/SftpPanel.tsx`：单栏基础版（独立连接/复用 SSH 会话；
+  list/upload/download/mkdir/rename/delete/stat；内联输入新建/重命名；
+  简易传输行）。**无**双栏/标签栏/面包屑/列头/虚拟化/页脚/空态/主机选择器/
+  队列/冲突/编辑器/树视图/书签/快捷键/编码切换（已 grep 确认）。
+- 后端 `commands/sftp.rs`：connect/connectSession/close/home/list/stat/
+  mkdir/rename/remove/chmod/download(To)/upload(From)/walkRemote/
+  cancelTransfer + 流式进度事件 + 原生 pick 对话框；另有 walkLocalDir。
+- 可复用 rssh 原语：取消标志表 + CancelGuard、每传输事件名、原子 .part
+  落地、walk_directory、防路径穿越、arboard 剪贴板单例（纯文本）。
+
+### 缺口清单
+
+**前端全缺**（新建 `src/sftp/`）：① 双栏页 + 焦点模型；② 会话标签栏；
+③ 两行工具栏 + 面包屑 + 路径编辑；④ 列头 + 虚拟列表 + 选择 + 页脚；
+⑤ 空态 + 主机选择弹窗；⑥ 对话框群（新建文件夹/新建文件/覆盖确认/重命名/
+删除确认）；⑦ 传输队列底部面板 + 冲突/权限/移动到/剪贴板上传对话框；
+⑧ 文本编辑器 + 文件监视回写；⑨ 打开方式；⑩ 拖放（跨栏/拖入）；
+⑪ 树视图；⑫ 书签；⑬ 快捷键；⑭ 编码切换 UI。
+
+**后端需补**：① 本地 FS 命令组（local_home/list_drives/list_dir/stat/
+realpath/mkdir/rename/remove/read/write，形状对齐 RemoteEntry）；
+② sftp_lstat/sftp_realpath（整文件读写复用现有 download/upload）；
+③ 传输队列管理器 TransferCenter（并发/暂停恢复/优先/清理/统一生命周期
+事件 `sftp:transfer:global`，冲突判定留前端）；④ open_path/
+select_application/open_with_application；⑤ 临时文件注册表
+（register/unregister/delete）；⑥ 文件监视（轮询 stat + 防抖 +
+`filewatch:synced|error|stopped` 事件）；⑦ 剪贴板文件读
+（Windows CF_HDROP）+ 文本写；⑧ 解压（本地走系统 bsdtar、远端走 SSH exec，
+编码感知）。
+
+**降级/后置**：本地拖出到系统（Electron 专属，记差异）；终端侧栏版 SFTP
+不移植；pane 放大/压缩上传后置；断点续传基于 .part 偏移（若 russh-sftp
+无 offset read 则整传并记差异）。
+
+### 下一轮实现顺序
+
+1. 后端本地 FS 命令组 + sftp_lstat/realpath + cargo test；
+2. 前端骨架：双栏 + 标签栏 + 空态 + 主机选择器 + 连接流（替换 App.tsx
+   `surface==="sftp"` 挂载）；
+3. 文件列表 + 工具栏 + 面包屑 + 排序 + 页脚 + 选择 + 对话框群；
+4. 传输队列（TransferCenter + 底部面板 + 冲突对话框）；
+5. 编辑器 + 权限 + 移动到 + 剪贴板 + 打开方式 + 文件监视；
+6. 树视图 + 书签 + 快捷键 + 编码 UI；
+7. 门禁 → build-debug 实机比对 → 子 agent review → 提交。
