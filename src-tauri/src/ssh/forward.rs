@@ -305,6 +305,7 @@ async fn connect_authed(
         timeout_secs,
         log,
         None,
+        None,
     )
     .await?;
     client::authenticate(&mut handle, credential, None).await?;

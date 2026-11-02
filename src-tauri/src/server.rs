@@ -26,7 +26,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::error::{locked, AppError, AppResult};
 use crate::models::{
-    Credential, Forward, Group, HighlightRule, Profile, SerialProfile, Snippet, TelnetProfile,
+    AuthOverride, Credential, CredentialType, Forward, Group, HighlightRule, Profile,
+    SerialProfile, Snippet, TelnetProfile,
 };
 use crate::state::{AppState, SessionKind, SessionOwner};
 use crate::terminal::pty::{self, PtyOut, PtySink};
@@ -1452,6 +1453,45 @@ async fn ssh_connect(
         .secret_store
         .get(&crate::secret::cred_secret_key(&credential.id))
         .map_err(err_value)?;
+
+    // 连接弹窗的一次性认证覆盖（与桌面 command 同语义，不写回 DB）。
+    let auth_override: Option<AuthOverride> = match args.get("authOverride") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(serde_json::from_value(value.clone()).map_err(|e| {
+            err_value(AppError::config(
+                "invalid_auth_override",
+                json!({ "err": e.to_string() }),
+            ))
+        })?),
+    };
+    if let Some(override_input) = auth_override {
+        if let Some(credential_id) = override_input.credential_id {
+            let mut replacement =
+                crate::db::credential::get(&state.db, &credential_id).map_err(err_value)?;
+            replacement.secret = state
+                .secret_store
+                .get(&crate::secret::cred_secret_key(&replacement.id))
+                .map_err(err_value)?;
+            credential = replacement;
+        }
+        if let Some(username) = override_input.username {
+            if !username.is_empty() {
+                credential.username = username;
+            }
+        }
+        if let Some(password) = override_input.password {
+            credential.credential_type = CredentialType::Password;
+            credential.secret = Some(password);
+        }
+        if let Some(passphrase) = override_input.passphrase {
+            if matches!(credential.credential_type, CredentialType::Key) && !passphrase.is_empty() {
+                let cache_key = format!("cred:{}", credential.id);
+                if let Ok(mut cache) = locked(&state.passphrase_cache) {
+                    cache.insert(cache_key, zeroize::Zeroizing::new(passphrase));
+                }
+            }
+        }
+    }
 
     let chain_profiles =
         crate::ssh::bastion::resolve_chain(&state.db, &profile).map_err(err_value)?;

@@ -114,6 +114,56 @@ pub(crate) fn null_logger() -> LogFn {
     Arc::new(|_: String| ())
 }
 
+/// 连接进度事件 `ssh:progress:<sessionId>` 的发送器。
+///
+/// 对标 netcatty 的 `onChainProgress`：每次拨号 / 认证 / 开 shell 都向
+/// 连接弹窗推送一条结构化状态，前端据此渲染三段进度条与日志。
+/// 后台连接（SFTP / forward）没有弹窗，传 `None` 即可。
+#[derive(Clone)]
+pub struct ProgressEmitter {
+    app: crate::emitter::Host,
+    session_id: String,
+    hop: u32,
+    total: u32,
+    label: String,
+}
+
+impl ProgressEmitter {
+    pub fn root(app: crate::emitter::Host, session_id: String, label: String) -> Self {
+        Self {
+            app,
+            session_id,
+            hop: 1,
+            total: 1,
+            label,
+        }
+    }
+
+    /// 派生出某一跳的发送器（hop 从 1 开始，total >= 1）。
+    pub fn hop(&self, hop: u32, total: u32, label: String) -> Self {
+        Self {
+            app: self.app.clone(),
+            session_id: self.session_id.clone(),
+            hop,
+            total,
+            label,
+        }
+    }
+
+    pub fn emit(&self, status: &str, error: Option<String>) {
+        let payload = json!({
+            "hop": self.hop,
+            "total": self.total,
+            "label": self.label,
+            "status": status,
+            "error": error,
+        });
+        let _ = self
+            .app
+            .emit(&format!("ssh:progress:{}", self.session_id), payload);
+    }
+}
+
 /// 默认 SSH 客户端配置：开启 keepalive，远端死了 90 秒内能断开。
 /// Standalone bulk connections (SFTP's own connection, sftp.rs). Keep the
 /// russh default window (2MB): a small window would cap transfer throughput
@@ -309,7 +359,15 @@ async fn handle_unknown_host(
          This key is not known by any other names.\r\n\
          Are you sure you want to continue connecting (yes/no/[fingerprint])? "
     );
-    let answer = match prompt_host_key(&ctx, &banner).await {
+    let payload = json!({
+        "banner": banner,
+        "host": host,
+        "port": port,
+        "key_type": alg,
+        "fingerprint": fp,
+        "status": "unknown",
+    });
+    let answer = match prompt_host_key(&ctx, payload).await {
         Ok(a) => a,
         Err(_) => {
             log(format!(
@@ -319,6 +377,13 @@ async fn handle_unknown_host(
         }
     };
     let trimmed = answer.trim();
+    // `continue` = 仅本次信任、不写入 known_hosts（netcatty Continue 按钮）。
+    if trimmed.eq_ignore_ascii_case("continue") {
+        log(format!(
+            "Host key for {host}:{port} accepted for this session only."
+        ));
+        return Ok(true);
+    }
     if !(trimmed.eq_ignore_ascii_case("yes") || trimmed == fp) {
         log(format!("Host key rejected by user for {host}:{port}."));
         return Ok(false);
@@ -380,7 +445,16 @@ async fn handle_key_mismatch(
          the old key and trust the new one. Anything else aborts.\r\n\
          > "
     );
-    let answer = match prompt_host_key(&ctx, &banner).await {
+    let payload = json!({
+        "banner": banner,
+        "host": host,
+        "port": port,
+        "key_type": alg,
+        "fingerprint": fp,
+        "status": "changed",
+        "known_fingerprint": old_fps_str,
+    });
+    let answer = match prompt_host_key(&ctx, payload).await {
         Ok(a) => a,
         Err(_) => {
             set_mismatch();
@@ -390,7 +464,15 @@ async fn handle_key_mismatch(
             return Ok(false);
         }
     };
-    if answer.trim() != "replace" {
+    let trimmed = answer.trim();
+    // `continue` = 仅本次信任、保留旧 known_hosts 条目（netcatty Continue 按钮）。
+    if trimmed.eq_ignore_ascii_case("continue") {
+        log(format!(
+            "Host key change for {host}:{port} accepted for this session only."
+        ));
+        return Ok(true);
+    }
+    if trimmed != "replace" {
         set_mismatch();
         log(format!(
             "Host key change rejected by user for {host}:{port}."
@@ -436,6 +518,8 @@ pub struct DialCtx {
     pub timeout_secs: u64,
     pub log: LogFn,
     pub prompt_ctx: Option<AuthCtx>,
+    /// 连接弹窗进度（后台连接为 None）。
+    pub progress: Option<ProgressEmitter>,
 }
 
 fn new_handler(
@@ -492,10 +576,14 @@ pub async fn ssh_connect(
         timeout_secs,
         log,
         prompt_ctx,
+        progress,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
+    if let Some(p) = &progress {
+        p.emit("connecting", None);
+    }
     let (handler, mismatch, _fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx);
-    match timeout(
+    let result = match timeout(
         connect_timeout,
         client::connect(config, (host.as_str(), port), handler),
     )
@@ -506,7 +594,20 @@ pub async fn ssh_connect(
             "ssh_connect_timeout",
             json!({ "host": host, "port": port, "secs": timeout_secs }),
         )),
+    };
+    match &result {
+        Ok(_) => {
+            if let Some(p) = &progress {
+                p.emit("tcp-connected", None);
+            }
+        }
+        Err(e) => {
+            if let Some(p) = &progress {
+                p.emit("error", Some(e.to_string()));
+            }
+        }
     }
+    result
 }
 
 /// SSH connect that also returns the forwarded channel sender (for remote forwarding).
@@ -521,8 +622,12 @@ pub async fn ssh_connect_with_forward(
         timeout_secs,
         log,
         prompt_ctx,
+        progress,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
+    if let Some(p) = &progress {
+        p.emit("connecting", None);
+    }
     let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx);
     let handle = match timeout(
         connect_timeout,
@@ -530,12 +635,28 @@ pub async fn ssh_connect_with_forward(
     )
     .await
     {
-        Ok(result) => result.map_err(|e| map_connect_error(e, &host, port, &mismatch))?,
+        Ok(Ok(handle)) => {
+            if let Some(p) = &progress {
+                p.emit("tcp-connected", None);
+            }
+            handle
+        }
+        Ok(Err(e)) => {
+            let err = map_connect_error(e, &host, port, &mismatch);
+            if let Some(p) = &progress {
+                p.emit("error", Some(err.to_string()));
+            }
+            return Err(err);
+        }
         Err(_) => {
-            return Err(AppError::ssh(
+            let err = AppError::ssh(
                 "ssh_connect_timeout",
                 json!({ "host": host, "port": port, "secs": timeout_secs }),
-            ))
+            );
+            if let Some(p) = &progress {
+                p.emit("error", Some(err.to_string()));
+            }
+            return Err(err);
         }
     };
     Ok((handle, fwd))
@@ -558,8 +679,12 @@ where
         timeout_secs,
         log,
         prompt_ctx,
+        progress,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
+    if let Some(p) = &progress {
+        p.emit("connecting", None);
+    }
     let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx);
     let handle = match timeout(
         connect_timeout,
@@ -567,14 +692,28 @@ where
     )
     .await
     {
-        Ok(result) => result.map_err(|e| map_connect_error(e, &host, port, &mismatch))?,
+        Ok(Ok(handle)) => handle,
+        Ok(Err(e)) => {
+            let err = map_connect_error(e, &host, port, &mismatch);
+            if let Some(p) = &progress {
+                p.emit("error", Some(err.to_string()));
+            }
+            return Err(err);
+        }
         Err(_) => {
-            return Err(AppError::ssh(
+            let err = AppError::ssh(
                 "ssh_handshake_timeout",
                 json!({ "host": host, "port": port }),
-            ))
+            );
+            if let Some(p) = &progress {
+                p.emit("error", Some(err.to_string()));
+            }
+            return Err(err);
         }
     };
+    if let Some(p) = &progress {
+        p.emit("tcp-connected", None);
+    }
     Ok((handle, fwd))
 }
 
@@ -594,16 +733,28 @@ pub async fn establish_via_chain(
     timeout_secs: u64,
     log: LogFn,
     ctx: Option<&AuthCtx>,
+    progress: Option<&ProgressEmitter>,
 ) -> AppResult<(client::Handle<SshHandler>, ForwardedChannelRouter)> {
+    let total = (bastion_chain.len() + 1) as u32;
+    let target_label = profile_label(&target_profile);
+    let target_host = target_profile.host.clone();
+    let target_port = target_profile.port;
+
     if bastion_chain.is_empty() {
-        let target_host = target_profile.host.clone();
-        let target_port = target_profile.port;
         log(format!(
             "TCP connecting to {}:{} ...",
             target_host, target_port
         ));
+        let hop_progress = progress.map(|p| p.hop(1, total, target_label.clone()));
         let (h, fwd) = ssh_connect_with_forward(
-            dial_ctx_for_profile(&target_profile, &known_hosts_path, timeout_secs, &log, ctx),
+            dial_ctx_for_profile(
+                &target_profile,
+                &known_hosts_path,
+                timeout_secs,
+                &log,
+                ctx,
+                hop_progress,
+            ),
             target_host,
             target_port,
         )
@@ -612,88 +763,126 @@ pub async fn establish_via_chain(
         return Ok((h, fwd));
     }
 
-    let mut hops = bastion_chain.into_iter();
-    let (first_p, first_c) = hops.next().unwrap();
-    let first_name = first_p.name.clone();
-    let first_host = first_p.host.clone();
-    let first_port = first_p.port;
-    log(format!(
-        "Connecting to bastion {} ({}:{}) ...",
-        first_name, first_host, first_port
-    ));
-    let mut hop = ssh_connect(
-        dial_ctx_for_profile(&first_p, &known_hosts_path, timeout_secs, &log, ctx),
-        first_host,
-        first_port,
-    )
-    .await?;
-    log(format!(
-        "Bastion {} connected. Authenticating as {} ({}) ...",
-        first_name,
-        first_c.username,
-        first_c.credential_type.as_str()
-    ));
-    authenticate(&mut hop, first_c, ctx).await?;
-    log(format!("Bastion {} authenticated.", first_name));
+    let mut current: Option<client::Handle<SshHandler>> = None;
+    let mut prev_label = String::new();
+    let mut hop_index = 0u32;
 
-    let mut prev_name = first_name;
-    for (next_p, next_c) in hops {
-        let next_name = next_p.name.clone();
+    for (next_p, next_c) in bastion_chain {
+        hop_index += 1;
+        let next_label = profile_label(&next_p);
         let next_host = next_p.host.clone();
         let next_port = next_p.port;
-        log(format!(
-            "Opening tunnel through {} to bastion {} ({}:{}) ...",
-            prev_name, next_name, next_host, next_port
-        ));
-        let tunnel = open_tunnel_with_timeout(
-            &hop,
-            next_host.clone(),
-            next_port,
-            timeout_secs,
-            format!("{} → {}", prev_name, next_name),
-        )
-        .await?;
-        let (new_hop, _) = ssh_connect_stream(
-            dial_ctx_for_profile(&next_p, &known_hosts_path, timeout_secs, &log, ctx),
-            tunnel.into_stream(),
-            next_host,
-            next_port,
-        )
-        .await?;
-        hop = new_hop;
+        let hop_progress = progress.map(|p| p.hop(hop_index, total, next_label.clone()));
+
+        let (mut new_hop, _) = if let Some(prev) = current.as_ref() {
+            log(format!(
+                "Opening tunnel through {} to bastion {} ({}:{}) ...",
+                prev_label, next_label, next_host, next_port
+            ));
+            if let Some(p) = &hop_progress {
+                p.emit("forwarding", None);
+            }
+            let tunnel = open_tunnel_with_timeout(
+                prev,
+                next_host.clone(),
+                next_port,
+                timeout_secs,
+                format!("{} → {}", prev_label, next_label),
+            )
+            .await?;
+            ssh_connect_stream(
+                dial_ctx_for_profile(
+                    &next_p,
+                    &known_hosts_path,
+                    timeout_secs,
+                    &log,
+                    ctx,
+                    hop_progress.clone(),
+                ),
+                tunnel.into_stream(),
+                next_host,
+                next_port,
+            )
+            .await?
+        } else {
+            log(format!(
+                "Connecting to bastion {} ({}:{}) ...",
+                next_label, next_host, next_port
+            ));
+            let (h, fwd) = ssh_connect_with_forward(
+                dial_ctx_for_profile(
+                    &next_p,
+                    &known_hosts_path,
+                    timeout_secs,
+                    &log,
+                    ctx,
+                    hop_progress.clone(),
+                ),
+                next_host,
+                next_port,
+            )
+            .await?;
+            (h, fwd)
+        };
+
         log(format!(
             "Bastion {} connected. Authenticating as {} ({}) ...",
-            next_name,
+            next_label,
             next_c.username,
             next_c.credential_type.as_str()
         ));
-        authenticate(&mut hop, next_c, ctx).await?;
-        log(format!("Bastion {} authenticated.", next_name));
-        prev_name = next_name;
+        if let Some(p) = &hop_progress {
+            p.emit("authenticating", None);
+        }
+        authenticate(&mut new_hop, next_c, ctx).await?;
+        if let Some(p) = &hop_progress {
+            p.emit("authenticated", None);
+        }
+        log(format!("Bastion {} authenticated.", next_label));
+        current = Some(new_hop);
+        prev_label = next_label;
     }
 
-    let target_host = target_profile.host.clone();
-    let target_port = target_profile.port;
     log(format!(
         "Opening tunnel through {} to target {}:{} ...",
-        prev_name, target_host, target_port
+        prev_label, target_host, target_port
     ));
+    let target_progress = progress.map(|p| p.hop(total, total, target_label));
+    if let Some(p) = &target_progress {
+        p.emit("forwarding", None);
+    }
+    let prev = current.expect("bastion chain is non-empty");
     let tunnel = open_tunnel_with_timeout(
-        &hop,
+        &prev,
         target_host.clone(),
         target_port,
         timeout_secs,
-        format!("{} → target", prev_name),
+        format!("{} → target", prev_label),
     )
     .await?;
     log("Tunnel established. SSH handshake with target ...".to_owned());
     ssh_connect_stream(
-        dial_ctx_for_profile(&target_profile, &known_hosts_path, timeout_secs, &log, ctx),
+        dial_ctx_for_profile(
+            &target_profile,
+            &known_hosts_path,
+            timeout_secs,
+            &log,
+            ctx,
+            target_progress,
+        ),
         tunnel.into_stream(),
         target_host,
         target_port,
     )
     .await
+}
+
+fn profile_label(profile: &Profile) -> String {
+    if profile.name.is_empty() {
+        profile.host.clone()
+    } else {
+        profile.name.clone()
+    }
 }
 
 fn dial_ctx_for_profile(
@@ -702,6 +891,7 @@ fn dial_ctx_for_profile(
     timeout_secs: u64,
     log: &LogFn,
     ctx: Option<&AuthCtx>,
+    progress: Option<ProgressEmitter>,
 ) -> DialCtx {
     DialCtx {
         config: client_config_for_profile(profile),
@@ -709,6 +899,7 @@ fn dial_ctx_for_profile(
         timeout_secs,
         log: log.clone(),
         prompt_ctx: ctx.cloned(),
+        progress,
     }
 }
 
@@ -813,12 +1004,21 @@ mod tests {
         .expect("connection should fail promptly");
         assert!(result.is_err());
 
-        let (event, payload) = events.try_recv().unwrap();
-        assert_eq!(event, format!("ssh:data:{session_id}"));
+        // Connection progress now emits `ssh:progress:<sid>` events alongside the
+        // terminal log, so scan for the (exactly one) `ssh:data` payload instead
+        // of assuming it arrives first.
+        let data_event = format!("ssh:data:{session_id}");
+        let mut payload = None;
+        while let Ok((event, value)) = events.try_recv() {
+            if event == data_event {
+                assert!(payload.is_none(), "expected exactly one ssh:data event");
+                payload = Some(value);
+            }
+        }
+        let payload = payload.expect("connection log should emit terminal data");
         let encoded = payload.as_str().expect("terminal data must be base64 text");
         let expected = format!("\x1b[90m[ssh] TCP connecting to 127.0.0.1:{port} ...\x1b[0m\r\n");
         assert_eq!(STANDARD.decode(encoded).unwrap(), expected.as_bytes());
-        assert!(events.try_recv().is_err());
     }
 
     // ── map_connect_error ──────────────────────────────────────────
@@ -1450,6 +1650,11 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         owner: owner.clone(),
     });
 
+    let target_label = profile_label(&profile);
+    let total_hops = (bastion_chain.len() + 1) as u32;
+    let progress = ProgressEmitter::root(app.clone(), session_id.clone(), target_label.clone());
+    let target_progress = progress.hop(total_hops, total_hops, target_label);
+
     let (mut handle, _fwd) = establish_via_chain(
         bastion_chain,
         profile.clone(),
@@ -1457,6 +1662,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         timeout_secs,
         log.clone(),
         ctx.as_ref(),
+        Some(&progress),
     )
     .await?;
 
@@ -1465,7 +1671,9 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         credential.username,
         credential.credential_type.as_str()
     ));
+    target_progress.emit("authenticating", None);
     authenticate(&mut handle, credential, ctx.as_ref()).await?;
+    target_progress.emit("authenticated", None);
     log("Authenticated.".to_owned());
 
     // Open the shell channel BEFORE wrapping the handle in Arc<Mutex>.
@@ -1473,6 +1681,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
     // to hold `&Mutex<Handle>` for the inner await — fine for runtime, but
     // the compiler can't always prove that's `for<'a> Send`. Doing the
     // shell setup directly on the owned handle sidesteps the whole issue.
+    target_progress.emit("shell", None);
     log("Requesting PTY + shell ...".to_owned());
     let channel = handle
         .channel_open_session()
@@ -1490,6 +1699,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         .map_err(|e| AppError::ssh("ssh_shell_request_failed", json!({ "err": e.to_string() })))?;
 
     log("Shell ready.\r\n".to_owned());
+    target_progress.emit("connected", None);
 
     // Now wrap for downstream multiplexing (SFTP / forwarding share the conn).
     let ssh_handle: SshHandle = Arc::new(tokio::sync::Mutex::new(handle));

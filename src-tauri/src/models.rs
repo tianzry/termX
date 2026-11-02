@@ -211,6 +211,25 @@ pub struct Credential {
     pub save_to_remote: bool,
 }
 
+/// 一次性认证覆盖（连接弹窗认证失败后重试）。
+///
+/// 只影响本次连接，绝不写回 DB：
+/// - `username` 覆盖登录名；
+/// - `password` 覆盖为密码认证并替换 secret；
+/// - `credential_id` 改用另一条已保存凭据（密钥 / interactive / agent）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthOverride {
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub credential_id: Option<String>,
+    /// 私钥 passphrase（仅对 Key 类型凭据生效，写入本次进程的 passphrase 缓存）。
+    #[serde(default)]
+    pub passphrase: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ForwardType {

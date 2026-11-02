@@ -1,9 +1,16 @@
 /**
- * 单个终端窗格：自持 xterm、会话、事件订阅与交互 prompt 弹窗。
+ * 单个终端窗格：自持 xterm、会话、事件订阅与连接管理。
+ *
+ * 连接建立 / 管理状态机移植自 netcatty `components/Terminal.tsx` +
+ * `components/terminal/runtime/createTerminalSessionStarters.ts`：
+ * - connecting：连接弹窗（三阶段进度、逐跳日志、超时倒计时、取消）；
+ * - needsAuth：认证失败后在弹窗内重试（一次性覆盖，不写回 DB）；
+ * - hostKey：未知 / 变更的主机密钥校验；
+ * - disconnected：错误 + 关闭会话 / 重新连接（Enter 可重连）。
  *
  * 与旧版 App 单会话的区别：
  * - 每格独立一个 sessionId 与传输对象，互不影响；
- * - 断线后保留终端内容，叠一层「重连」遮罩；
+ * - 断线后保留终端内容，由连接弹窗提示；
  * - 支持被串口 / Telnet 侧栏面板临时「接管」按键路由（外部传输优先）。
  */
 
@@ -13,19 +20,40 @@ import { TerminalView, type TerminalController } from "./Terminal";
 import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import type {
+  AuthOverride,
   AuthPrompt,
   CloseInfo,
+  SshProgressEvent,
   TerminalDomain,
   TerminalTransport,
 } from "./backend/client";
 import type { Tab } from "./workspaceModel";
+import {
+  advanceIndeterminateConnectionProgress,
+  advanceMonotonicConnectionProgress,
+  CONNECTION_PROGRESS_START,
+  resolveHopConnectionProgress,
+} from "./domain/connectionProgress";
+import {
+  DEFAULT_SSH_AUTH_READY_TIMEOUT_SECONDS,
+  getConnectionTimeoutMs,
+  hasConnectionPassedTcpDial,
+  shouldRunConnectionTimeout,
+} from "./domain/sshConnectionTimeouts";
+import { toHostKeyInfo, type HostKeyInfo } from "./domain/hostKey";
+import { isAuthFailureMessage, userVisibleError } from "./domain/sshErrors";
+import {
+  TerminalConnectionDialog,
+  type ChainProgress,
+  type HostConnectionInfo,
+} from "./terminal/TerminalConnectionDialog";
+import type { AuthKeyOption, TerminalAuthMethod } from "./terminal/TerminalAuthDialog";
 
-type PaneStatus = "connecting" | "connected" | "closed" | "error";
+type PaneStatus = "connecting" | "connected" | "disconnected";
 
 type Prompt =
   | { kind: "auth"; sessionId: string; payload: AuthPrompt }
-  | { kind: "passphrase"; sessionId: string; payload: { prompt: string } }
-  | { kind: "hostkey"; sessionId: string; payload: { banner: string } };
+  | { kind: "passphrase"; sessionId: string; payload: { prompt: string } };
 
 /** 窗格对外的句柄：供工作区取尺寸 / 写入 / 路由外部会话。 */
 export interface PaneHandle {
@@ -58,6 +86,9 @@ interface Props {
   onSplit?: (dir: "horizontal" | "vertical") => void;
 }
 
+const AUTH_RETRY_MESSAGE = "认证失败，请检查凭据后重试。";
+const PROGRESS_ATTEMPT_TIMEOUT_MESSAGE = "连接超时，请重试。";
+
 export function TerminalPane({
   tab,
   paneId,
@@ -69,8 +100,24 @@ export function TerminalPane({
   onClosePane,
   onSplit,
 }: Props) {
+  const isSsh = tab.connector.kind === "ssh";
+  const sshProfileId = tab.connector.kind === "ssh" ? tab.connector.profileId : null;
+
   const [status, setStatus] = useState<PaneStatus>("connecting");
-  const [detail, setDetail] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [progressValue, setProgressValue] = useState(CONNECTION_PROGRESS_START);
+  const [progressLogs, setProgressLogs] = useState<string[]>([]);
+  const [chainProgress, setChainProgress] = useState<ChainProgress | null>(null);
+  const [showLogs, setShowLogs] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(DEFAULT_SSH_AUTH_READY_TIMEOUT_SECONDS);
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [authRetryMessage, setAuthRetryMessage] = useState<string | null>(null);
+  /** 当前是否在等待用户输入（keyboard-interactive / passphrase / 主机密钥）。 */
+  const [isAwaitingUserInput, setIsAwaitingUserInput] = useState(false);
+  const [isConnectionPastTcpDial, setIsConnectionPastTcpDial] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [disconnectedDismissed, setDisconnectedDismissed] = useState(false);
+  const [hostKeyInfo, setHostKeyInfo] = useState<HostKeyInfo | null>(null);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -82,6 +129,22 @@ export function TerminalPane({
     selection: string;
   } | null>(null);
 
+  // ── 连接弹窗（认证重试）表单状态 ──────────────────────────
+  const [hostInfo, setHostInfo] = useState<HostConnectionInfo>({
+    label: tab.title,
+    hostname: "",
+    port: 22,
+    protocol: "SSH",
+  });
+  const [keys, setKeys] = useState<AuthKeyOption[]>([]);
+  const [authMethod, setAuthMethod] = useState<TerminalAuthMethod>("password");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authKeyId, setAuthKeyId] = useState<string | null>(null);
+  const [authPassphrase, setAuthPassphrase] = useState("");
+  const [showAuthPassphrase, setShowAuthPassphrase] = useState(false);
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
+
   const paneRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<TerminalController | null>(null);
   const transportRef = useRef<TerminalTransport | null>(null);
@@ -89,6 +152,12 @@ export function TerminalPane({
   const unsubRef = useRef<UnlistenFn[]>([]);
   const promptUnsubRef = useRef<UnlistenFn[]>([]);
   const sidRef = useRef<string | null>(null);
+  /** 正在连接（尚未返回）时预生成的 sessionId，用于取消 / 超时。 */
+  const connectSidRef = useRef<string | null>(null);
+  /** 主机密钥 prompt 对应的 sessionId（响应时用）。 */
+  const hostKeySessionRef = useRef<string | null>(null);
+  /** 连接尝试代数：取消 / 超时后让仍在进行的旧尝试失效。 */
+  const attemptRef = useRef(0);
   const listenersRef = useRef(new Set<(sid: string | null) => void>());
   const pendingPromptRef = useRef<Prompt | null>(null);
   const aliveRef = useRef(true);
@@ -107,11 +176,10 @@ export function TerminalPane({
 
   function cancelPromptApi(p: Prompt) {
     if (p.kind === "auth") void api.sshAuthCancel(p.sessionId);
-    else if (p.kind === "passphrase") void api.sshPassphraseCancel(p.sessionId);
-    else void api.sshHostKeyCancel(p.sessionId);
+    else void api.sshPassphraseCancel(p.sessionId);
   }
 
-  /** 拆掉本窗格会话的监听与连接（不重连）。 */
+  /** 拆掉本窗格会话的事件监听与传输（不重连）。 */
   function teardown() {
     unsubRef.current.forEach((u) => u());
     unsubRef.current = [];
@@ -124,14 +192,19 @@ export function TerminalPane({
   useEffect(() => {
     return () => {
       aliveRef.current = false;
+      attemptRef.current += 1;
       if (pendingPromptRef.current) cancelPromptApi(pendingPromptRef.current);
       pendingPromptRef.current = null;
+      if (hostKeySessionRef.current) void api.sshHostKeyCancel(hostKeySessionRef.current);
+      hostKeySessionRef.current = null;
       unsubRef.current.forEach((u) => u());
       unsubRef.current = [];
       promptUnsubRef.current.forEach((u) => u());
       promptUnsubRef.current = [];
       transportRef.current?.close();
       transportRef.current = null;
+      if (connectSidRef.current) void api.sshDisconnect(connectSidRef.current);
+      connectSidRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -177,6 +250,112 @@ export function TerminalPane({
     if (active) controllerRef.current?.term.focus();
   }, [active]);
 
+  // 取档案 / 初始凭据 / 可选密钥，供连接弹窗展示与认证重试。
+  useEffect(() => {
+    if (!sshProfileId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const profile = await api.getProfile(sshProfileId);
+        if (cancelled) return;
+        setHostInfo({
+          label: profile.name || tab.title,
+          hostname: profile.host,
+          port: profile.port,
+          protocol: "SSH",
+        });
+        const credential = await api.getCredential(profile.credential_id);
+        if (cancelled) return;
+        setAuthMethod(credential.type === "key" ? "key" : "password");
+        setAuthUsername(credential.username);
+        setAuthKeyId(credential.type === "key" ? credential.id : null);
+      } catch {
+        // 档案读取失败不阻塞连接，弹窗使用 tab 标题兜底。
+      }
+      try {
+        const all = await api.listCredentials();
+        if (cancelled) return;
+        setKeys(
+          all.map((credential) => ({
+            id: credential.id,
+            label: credential.name || credential.username,
+            type: credential.type,
+            username: credential.username,
+          })),
+        );
+      } catch {
+        // 没有密钥列表时认证弹窗会提示「没有可用的 SSH 密钥凭据」。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sshProfileId, tab.title]);
+
+  // ── 连接进度事件（ssh:progress:<sid>）────────────────────
+  function handleProgress(p: SshProgressEvent) {
+    const total = Math.max(1, p.total);
+    const hop = Math.max(1, p.hop);
+
+    if (total > 1) {
+      setChainProgress({
+        currentHop: hop,
+        totalHops: total,
+        currentHostLabel: p.label,
+      });
+    }
+
+    const prefix = total > 1 ? `[${hop}/${total}] ` : "";
+    let logLine: string;
+    switch (p.status) {
+      case "connecting":
+        logLine = `${prefix}正在连接 ${p.label}…`;
+        break;
+      case "tcp-connected":
+        logLine = `${prefix}${p.label} - TCP 已连接`;
+        break;
+      case "authenticating":
+        logLine = `${prefix}${p.label} - 密钥交换完成`;
+        break;
+      case "authenticated":
+        logLine = `${prefix}${p.label} - 已认证`;
+        break;
+      case "connected":
+        logLine = `${prefix}${p.label} - 已连接`;
+        break;
+      case "forwarding":
+        logLine = `${prefix}${p.label} - 正在转发…`;
+        break;
+      case "shell":
+        logLine = `${prefix}正在打开 shell…`;
+        break;
+      case "error":
+        logLine = `${prefix}${p.label} - 错误${p.error ? `: ${p.error}` : ""}`;
+        break;
+      default:
+        logLine = `${prefix}${p.label} - ${p.status}${p.error ? `: ${p.error}` : ""}`;
+    }
+
+    if (p.status === "connecting" || p.status === "forwarding") {
+      setIsConnectionPastTcpDial(false);
+    }
+    if (hasConnectionPassedTcpDial(p.status)) {
+      setIsConnectionPastTcpDial(true);
+    }
+    if (
+      p.status === "authenticated" ||
+      p.status === "connected" ||
+      p.status === "shell" ||
+      p.status === "error"
+    ) {
+      setIsAwaitingUserInput(false);
+    }
+
+    setProgressLogs((prev) => [...prev, logLine]);
+    const hopProgress = resolveHopConnectionProgress(hop, total);
+    setProgressValue((prev) => advanceMonotonicConnectionProgress(prev, hopProgress));
+  }
+
   async function wire(domain: TerminalDomain, sid: string) {
     const transport: TerminalTransport = {
       kind: domain,
@@ -195,6 +374,9 @@ export function TerminalPane({
     };
     transportRef.current = transport;
     setStatus("connected");
+    setError(null);
+    setChainProgress(null);
+    setDisconnectedDismissed(false);
     notifySession(sid);
 
     unsubRef.current = [
@@ -204,13 +386,15 @@ export function TerminalPane({
       await api.onTerminalClose(domain, sid, (info: CloseInfo) => {
         transportRef.current = null;
         notifySession(null);
-        setStatus("closed");
         const suffix = info.signal
           ? `被信号 ${info.signal} 终止`
           : typeof info.exit_code === "number"
             ? `退出码 ${info.exit_code}`
             : "已断开";
-        setDetail(suffix);
+        setStatus("disconnected");
+        setError(suffix);
+        setProgressLogs((prev) => [...prev, suffix]);
+        setDisconnectedDismissed(false);
         onStatus(`${tab.title} ${suffix}`);
       }),
     ];
@@ -220,64 +404,165 @@ export function TerminalPane({
     controllerRef.current?.term.focus();
   }
 
-  async function connect() {
+  async function connect(authOverride?: AuthOverride) {
     const c = controllerRef.current;
     if (!c) return;
+    const attempt = ++attemptRef.current;
+
     setStatus("connecting");
-    setDetail("");
+    setError(null);
+    setNeedsAuth(false);
+    setAuthRetryMessage(null);
+    setChainProgress(null);
+    setProgressValue(CONNECTION_PROGRESS_START);
+    setProgressLogs([]);
+    setDisconnectedDismissed(false);
+    setIsConnectionPastTcpDial(false);
+    setIsAwaitingUserInput(false);
+    setIsCancelling(false);
+    setHostKeyInfo(null);
+    hostKeySessionRef.current = null;
+    setPromptBoth(null);
     teardown();
     notifySession(null);
-    setPromptBoth(null);
 
-    try {
-      if (tab.connector.kind === "ssh") {
-        const profileId = tab.connector.profileId;
-        // prompt 监听的 key 必须与 sshConnect 的 sessionId 一致，
-        // 且必须在 await 之前注册，否则认证 pending 期间的 prompt 会丢。
-        const sid = api.newSessionId();
-        promptUnsubRef.current = [
-          await api.onAuthPrompt(sid, (p) =>
-            setPromptBoth({ kind: "auth", sessionId: sid, payload: p }),
-          ),
-          await api.onPassphrasePrompt(sid, (p) =>
-            setPromptBoth({ kind: "passphrase", sessionId: sid, payload: p }),
-          ),
-          await api.onHostKeyPrompt(sid, (p) =>
-            setPromptBoth({ kind: "hostkey", sessionId: sid, payload: p }),
-          ),
-        ];
-        const actual = await api.sshConnect(
-          profileId,
-          c.term.cols,
-          c.term.rows,
-          sid,
-        );
-        if (!aliveRef.current) {
-          void api.sshDisconnect(actual);
-          return;
-        }
-        promptUnsubRef.current.forEach((u) => u());
-        promptUnsubRef.current = [];
-        setPromptBoth(null);
-        await wire("ssh", actual);
-      } else {
+    if (!isSsh) {
+      try {
         const sid = await api.ptySpawn(c.term.cols, c.term.rows);
-        if (!aliveRef.current) {
+        if (!aliveRef.current || attempt !== attemptRef.current) {
           void api.ptyClose(sid);
           return;
         }
         await wire("pty", sid);
+      } catch (e) {
+        if (!aliveRef.current || attempt !== attemptRef.current) return;
+        const message = userVisibleError(String(e));
+        setStatus("disconnected");
+        setError(message);
+        onStatus(`${tab.title} 连接失败：${message}`);
       }
-    } catch (e) {
-      if (!aliveRef.current) return;
+      return;
+    }
+
+    const profileId = sshProfileId;
+    if (!profileId) return;
+    const sid = api.newSessionId();
+    connectSidRef.current = sid;
+
+    // prompt 监听必须在 await sshConnect 之前注册，否则认证 pending 期间的
+    // 事件会丢。
+    promptUnsubRef.current = [
+      await api.onSshProgress(sid, handleProgress),
+      await api.onAuthPrompt(sid, (p) => {
+        setIsAwaitingUserInput(true);
+        setPromptBoth({ kind: "auth", sessionId: sid, payload: p });
+      }),
+      await api.onPassphrasePrompt(sid, (p) => {
+        setIsAwaitingUserInput(true);
+        setPromptBoth({ kind: "passphrase", sessionId: sid, payload: p });
+      }),
+      await api.onHostKeyPrompt(sid, (p) => {
+        hostKeySessionRef.current = sid;
+        setHostKeyInfo(toHostKeyInfo(p));
+      }),
+    ];
+
+    try {
+      const actual = await api.sshConnect(
+        profileId,
+        c.term.cols,
+        c.term.rows,
+        sid,
+        authOverride ?? null,
+      );
+      if (!aliveRef.current || attempt !== attemptRef.current) {
+        void api.sshDisconnect(actual);
+        return;
+      }
       promptUnsubRef.current.forEach((u) => u());
       promptUnsubRef.current = [];
+      connectSidRef.current = null;
+      setHostKeyInfo(null);
+      hostKeySessionRef.current = null;
+      setIsAwaitingUserInput(false);
       setPromptBoth(null);
-      setStatus("error");
-      setDetail(String(e));
-      onStatus(`${tab.title} 连接失败：${String(e)}`);
+      await wire("ssh", actual);
+    } catch (e) {
+      if (!aliveRef.current || attempt !== attemptRef.current) return;
+      promptUnsubRef.current.forEach((u) => u());
+      promptUnsubRef.current = [];
+      connectSidRef.current = null;
+      setPromptBoth(null);
+      setHostKeyInfo(null);
+      hostKeySessionRef.current = null;
+      setIsAwaitingUserInput(false);
+      setIsConnectionPastTcpDial(false);
+
+      const raw = String(e);
+      if (isAuthFailureMessage(raw)) {
+        // netcatty：认证失败 → 留在 connecting + 弹认证重试表单。
+        setChainProgress(null);
+        setError(null);
+        setNeedsAuth(true);
+        setAuthRetryMessage(AUTH_RETRY_MESSAGE);
+        setAuthPassword("");
+        setProgressLogs((prev) => [...prev, "认证失败，请重试。"]);
+        setStatus("connecting");
+      } else {
+        const message = userVisibleError(raw);
+        setChainProgress(null);
+        setNeedsAuth(false);
+        setAuthRetryMessage(null);
+        setError(message);
+        setStatus("disconnected");
+        onStatus(`${tab.title} 连接失败：${message}`);
+        controllerRef.current?.term.write(`\r\n[Failed to start SSH: ${message}]\r\n`);
+      }
     }
   }
+
+  // ── 超时倒计时 / 自动进度（对照 netcatty useTerminalEffects）────────
+  useEffect(() => {
+    if (!isSsh) return;
+    const timeoutState = {
+      status,
+      needsAuth,
+      needsHostKeyVerification: Boolean(hostKeyInfo),
+      isConnectionAwaitingUserInput: isAwaitingUserInput,
+      isConnectionPastTcpDial,
+      hasSshTcpConnectProgress: true,
+    };
+    if (!shouldRunConnectionTimeout(timeoutState)) return;
+
+    const connectionTimeout = getConnectionTimeoutMs(timeoutState);
+    setTimeLeft(connectionTimeout / 1000);
+    const countdown = setInterval(() => {
+      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    const timeout = setTimeout(() => {
+      attemptRef.current += 1;
+      const pendingSid = connectSidRef.current;
+      connectSidRef.current = null;
+      teardown();
+      if (pendingSid) void api.sshDisconnect(pendingSid);
+      notifySession(null);
+      setError(PROGRESS_ATTEMPT_TIMEOUT_MESSAGE);
+      setProgressLogs((prev) => [...prev, "连接超时。"]);
+      setStatus("disconnected");
+      setChainProgress(null);
+      setDisconnectedDismissed(false);
+    }, connectionTimeout);
+    const progressTick = setInterval(() => {
+      setProgressValue(advanceIndeterminateConnectionProgress);
+    }, 200);
+
+    return () => {
+      clearInterval(countdown);
+      clearTimeout(timeout);
+      clearInterval(progressTick);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, needsAuth, hostKeyInfo, isAwaitingUserInput, isConnectionPastTcpDial, isSsh]);
 
   // ── 交互 prompt 响应 ─────────────────────────────────────
 
@@ -286,6 +571,7 @@ export function TerminalPane({
     setBusy(true);
     await api.sshAuthRespond(prompt.sessionId, answers);
     setBusy(false);
+    setIsAwaitingUserInput(false);
     setPromptBoth(null);
   }
 
@@ -294,38 +580,135 @@ export function TerminalPane({
     setBusy(true);
     await api.sshPassphraseRespond(prompt.sessionId, answers[0] ?? "");
     setBusy(false);
-    setPromptBoth(null);
-  }
-
-  async function respondHostKey(accept: boolean) {
-    if (!prompt || prompt.kind !== "hostkey") return;
-    setBusy(true);
-    await api.sshHostKeyRespond(prompt.sessionId, accept ? "yes" : "no");
-    setBusy(false);
+    setIsAwaitingUserInput(false);
     setPromptBoth(null);
   }
 
   async function cancelPrompt() {
     if (!prompt) return;
     cancelPromptApi(prompt);
+    setIsAwaitingUserInput(false);
     setPromptBoth(null);
+  }
+
+  // ── 连接弹窗操作 ─────────────────────────────────────────
+
+  /** 取消连接（netcatty handleCancelConnect：结束会话并关闭标签 / 窗格）。 */
+  function handleCancelConnect() {
+    const pendingSid = connectSidRef.current;
+    if (hostKeySessionRef.current) {
+      void api.sshHostKeyRespond(hostKeySessionRef.current, "no");
+    }
+    hostKeySessionRef.current = null;
+    attemptRef.current += 1;
+    teardown();
+    connectSidRef.current = null;
+    if (pendingSid) void api.sshDisconnect(pendingSid);
+    notifySession(null);
+    setNeedsAuth(false);
+    setAuthRetryMessage(null);
+    setHostKeyInfo(null);
+    setIsAwaitingUserInput(false);
+    setError("连接已取消");
+    setProgressLogs((prev) => [...prev, "用户已取消。"]);
+    setStatus("disconnected");
+    setChainProgress(null);
+    setDisconnectedDismissed(false);
+    setIsCancelling(true);
+    setTimeout(() => setIsCancelling(false), 600);
+    onStatus(`${tab.title} 已取消连接`);
+    onClosePane?.();
   }
 
   /** 断开当前会话：只拆掉传输与监听，保留标签页与窗格。 */
   function disconnect() {
+    const wasConnecting = status === "connecting";
+    const pendingSid = connectSidRef.current;
+    attemptRef.current += 1;
     teardown();
+    connectSidRef.current = null;
+    if (wasConnecting && pendingSid) void api.sshDisconnect(pendingSid);
     notifySession(null);
     setPromptBoth(null);
-    setStatus("closed");
-    setDetail("会话已断开");
+    setHostKeyInfo(null);
+    hostKeySessionRef.current = null;
+    setNeedsAuth(false);
+    setAuthRetryMessage(null);
+    setIsAwaitingUserInput(false);
+    setChainProgress(null);
+    setError(null);
+    setStatus("disconnected");
+    setProgressLogs((prev) => [...prev, "用户已断开。"]);
+    setDisconnectedDismissed(true);
     onStatus(`${tab.title} 已断开`);
   }
 
+  /** 关闭断开后的会话（连接弹窗底部按钮）。 */
+  function handleCloseSession() {
+    const hadTransport = transportRef.current !== null;
+    const pendingSid = connectSidRef.current;
+    attemptRef.current += 1;
+    teardown();
+    connectSidRef.current = null;
+    if (!hadTransport && pendingSid) void api.sshDisconnect(pendingSid);
+    notifySession(null);
+    onClosePane?.();
+  }
+
+  function handleDismissDisconnected() {
+    setDisconnectedDismissed(true);
+    window.setTimeout(() => controllerRef.current?.term.focus(), 0);
+  }
+
+  function answerHostKey(answer: "continue" | "yes" | "replace") {
+    const sid = hostKeySessionRef.current;
+    if (sid) void api.sshHostKeyRespond(sid, answer);
+    hostKeySessionRef.current = null;
+    setHostKeyInfo(null);
+  }
+
+  function handleHostKeyClose() {
+    handleCancelConnect();
+  }
+
+  function handleHostKeyContinue() {
+    answerHostKey("continue");
+  }
+
+  function handleHostKeyAddAndContinue() {
+    answerHostKey(hostKeyInfo?.status === "changed" ? "replace" : "yes");
+  }
+
+  function submitAuth() {
+    const username = authUsername.trim();
+    const isValid =
+      username.length > 0 &&
+      (authMethod === "password" ? authPassword.length > 0 : Boolean(authKeyId));
+    if (!isValid) return;
+    const override: AuthOverride =
+      authMethod === "password"
+        ? { username, password: authPassword }
+        : {
+            username,
+            credential_id: authKeyId ?? undefined,
+            passphrase: authPassphrase || undefined,
+          };
+    void connect(override);
+  }
+
   const canDisconnect = status === "connected" || status === "connecting";
-  const canReconnect =
-    status === "connected" || status === "closed" || status === "error";
+  const canReconnect = status !== "connecting";
   // 系统监控只出现在远端 SSH 会话（netcatty isSystemSidebarEligible 排除本地 / 串口 / Telnet）
   const systemEligible = tab.connector.kind === "ssh";
+
+  const authValid =
+    authUsername.trim().length > 0 &&
+    (authMethod === "password" ? authPassword.length > 0 : Boolean(authKeyId));
+
+  // netcatty shouldShowTerminalConnectionDialog：status !== connected
+  // 且 disconnected 状态下未被用户 dismiss。
+  const showConnectionDialog =
+    isSsh && status !== "connected" && !(status === "disconnected" && disconnectedDismissed);
 
   /** 终端右键菜单（对照 netcatty TerminalContextMenu；坐标相对窗格左上角）。 */
   function openContextMenu(e: ReactMouseEvent<HTMLDivElement>) {
@@ -525,16 +908,69 @@ export function TerminalPane({
         }
       />
 
-      {status === "connecting" && (
+      {showConnectionDialog && (
+        <TerminalConnectionDialog
+          host={hostInfo}
+          status={status}
+          error={error}
+          progressValue={progressValue}
+          chainProgress={chainProgress}
+          needsAuth={needsAuth}
+          showLogs={showLogs}
+          setShowLogs={setShowLogs}
+          authProps={{
+            authMethod,
+            setAuthMethod,
+            authUsername,
+            setAuthUsername,
+            authPassword,
+            setAuthPassword,
+            authKeyId,
+            setAuthKeyId,
+            authPassphrase,
+            setAuthPassphrase,
+            showAuthPassphrase,
+            setShowAuthPassphrase,
+            showAuthPassword,
+            setShowAuthPassword,
+            authRetryMessage,
+            keys,
+            onSubmit: submitAuth,
+            onCancel: handleCancelConnect,
+            isValid: authValid,
+          }}
+          onDismissDisconnected={handleDismissDisconnected}
+          showEnterReconnectHint={status === "disconnected"}
+          hostKeyVerification={
+            hostKeyInfo
+              ? {
+                  hostKeyInfo,
+                  onClose: handleHostKeyClose,
+                  onContinue: handleHostKeyContinue,
+                  onAddAndContinue: handleHostKeyAddAndContinue,
+                }
+              : undefined
+          }
+          progressProps={{
+            timeLeft,
+            isAwaitingUserInput,
+            isCancelling,
+            progressLogs,
+            onCancelConnect: handleCancelConnect,
+            onCloseSession: handleCloseSession,
+            onRetry: () => void connect(),
+          }}
+        />
+      )}
+
+      {!isSsh && status === "connecting" && (
         <div className="pane-badge">连接中…</div>
       )}
 
-      {(status === "closed" || status === "error") && (
+      {!isSsh && status === "disconnected" && (
         <div className="pane-overlay" onContextMenu={openContextMenu}>
-          <div className="pane-overlay-title">
-            {status === "error" ? "连接失败" : "会话已结束"}
-          </div>
-          {detail && <div className="pane-overlay-detail">{detail}</div>}
+          <div className="pane-overlay-title">会话已结束</div>
+          {error && <div className="pane-overlay-detail">{error}</div>}
           <button onClick={() => void connect()} className="pane-reconnect">
             重连
           </button>
@@ -700,30 +1136,6 @@ export function TerminalPane({
                     disabled={busy}
                   >
                     确定
-                  </button>
-                  <button onClick={() => void cancelPrompt()} disabled={busy}>
-                    取消
-                  </button>
-                </div>
-              </>
-            )}
-
-            {prompt.kind === "hostkey" && (
-              <>
-                <h3>确认主机指纹</h3>
-                <pre className="prompt-instructions">{prompt.payload.banner}</pre>
-                <div className="modal-actions">
-                  <button
-                    onClick={() => void respondHostKey(true)}
-                    disabled={busy}
-                  >
-                    信任并继续
-                  </button>
-                  <button
-                    onClick={() => void respondHostKey(false)}
-                    disabled={busy}
-                  >
-                    拒绝
                   </button>
                   <button onClick={() => void cancelPrompt()} disabled={busy}>
                     取消

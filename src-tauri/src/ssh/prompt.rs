@@ -105,9 +105,13 @@ pub(crate) async fn prompt_passphrase(ctx: &AuthCtx, prompt: &str) -> AppResult<
     .await
 }
 
-/// 向终端弹一次主机密钥 TOFU 确认，等用户输入 yes / no / 指纹。
+/// 向终端弹一次主机密钥 TOFU 确认，等用户输入 yes / continue / replace / no。
+/// payload 至少包含 `banner`，额外携带结构化的主机 / 指纹信息供连接弹窗渲染。
 /// 调用方负责按返回字符串决定是否信任。
-pub(crate) async fn prompt_host_key(ctx: &AuthCtx, banner: &str) -> AppResult<String> {
+pub(crate) async fn prompt_host_key(
+    ctx: &AuthCtx,
+    payload: serde_json::Value,
+) -> AppResult<String> {
     let state = ctx.app.state();
     prompt_oneshot(
         &state.host_key_waiters,
@@ -116,7 +120,7 @@ pub(crate) async fn prompt_host_key(ctx: &AuthCtx, banner: &str) -> AppResult<St
         &ctx.prompt_id,
         &ctx.owner,
         "ssh:host_key_prompt",
-        json!({ "banner": banner }),
+        payload,
         "ssh_user_cancelled_hostkey",
     )
     .await

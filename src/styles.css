@@ -4566,3 +4566,669 @@ button:disabled {
   font-size: 12px;
   box-shadow: 0 8px 24px hsl(220 40% 10% / 0.3);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   终端连接弹窗（移植自 netcatty TerminalConnectionDialog /
+   TerminalConnectionProgress / TerminalAuthDialog /
+   TerminalHostKeyVerification）
+   ═══════════════════════════════════════════════════════════ */
+
+/* 覆盖层落在工具栏下方，z-index 高于终端、低于交互 prompt */
+.conn-mask {
+  --conn-card-bg: hsl(var(--background));
+  position: absolute;
+  inset: 30px 0 0 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.conn-card {
+  width: 540px;
+  max-width: 88%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--conn-card-bg) 95%, transparent);
+  border: 1px solid hsl(var(--border) / 0.7);
+  color: hsl(var(--foreground));
+  box-shadow:
+    0 16px 48px hsl(220 40% 20% / 0.18),
+    0 2px 6px hsl(220 40% 20% / 0.08);
+  outline: none;
+  overflow: hidden;
+}
+
+.conn-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.conn-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.conn-header-copy {
+  min-width: 0;
+}
+
+.conn-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.conn-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.conn-title {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conn-title-muted {
+  color: hsl(var(--muted-foreground));
+}
+
+.conn-subtitle {
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 三阶段图标 + 两段进度条 */
+.conn-stages {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.conn-stage {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  transition: all 0.2s;
+}
+
+.conn-stage.active {
+  background: hsl(var(--primary) / 0.15);
+  color: hsl(var(--primary));
+}
+
+.conn-stage.done {
+  color: hsl(var(--muted-foreground));
+}
+
+.conn-stage.error {
+  background: hsl(var(--destructive) / 0.2);
+  color: hsl(var(--destructive));
+}
+
+.conn-stage.verify {
+  background: hsl(38 92% 50% / 0.15);
+  color: hsl(38 92% 50%);
+  box-shadow: 0 0 0 2px hsl(38 92% 50% / 0.25);
+  animation: conn-pulse 1.6s ease-in-out infinite;
+}
+
+.conn-stage.changed {
+  background: hsl(var(--destructive) / 0.15);
+  color: hsl(var(--destructive));
+  box-shadow: 0 0 0 2px hsl(var(--destructive) / 0.25);
+  animation: conn-pulse 1.6s ease-in-out infinite;
+}
+
+.conn-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: hsl(var(--border) / 0.6);
+  overflow: hidden;
+}
+
+.conn-track-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  transition: width 0.3s ease;
+}
+
+.conn-track-fill.error {
+  background: hsl(var(--destructive));
+}
+
+.conn-spin {
+  animation: conn-spin 1s linear infinite;
+}
+
+@keyframes conn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes conn-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* 状态行 */
+.conn-status-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  line-height: 1.6;
+}
+
+.conn-status-ok {
+  color: hsl(152 60% 36%);
+}
+
+.conn-status-bad {
+  color: hsl(var(--destructive));
+  word-break: break-word;
+}
+
+.conn-log-dot {
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground));
+}
+
+.conn-log-dot.ok {
+  background: hsl(152 60% 42%);
+}
+
+.conn-log-dot.bad {
+  background: hsl(var(--destructive));
+}
+
+/* 日志框 */
+.conn-log-box {
+  border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: 8px;
+  background: hsl(var(--background) / 0.6);
+}
+
+.conn-log-scroll {
+  max-height: 11rem;
+  overflow-y: auto;
+  padding: 10px 14px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: hsl(var(--foreground) / 0.9);
+}
+
+.conn-log-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.6;
+}
+
+.conn-log-row.error {
+  color: hsl(var(--destructive));
+}
+
+.conn-log-text {
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* 通用按钮 */
+.conn-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground) / 0.85);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.conn-btn:hover:not(:disabled) {
+  background: hsl(var(--secondary));
+}
+
+.conn-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.conn-btn-sm {
+  height: 26px;
+  padding: 0 10px;
+}
+
+.conn-btn-icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.conn-btn-ghost {
+  border-color: transparent;
+  background: transparent;
+}
+
+.conn-btn-primary {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground, 0 0% 100%));
+}
+
+.conn-btn-primary:hover:not(:disabled) {
+  background: hsl(var(--primary) / 0.9);
+}
+
+.conn-dialog-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.conn-footer-actions {
+  margin-left: auto;
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.conn-hint {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.conn-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 认证重试表单 */
+.conn-auth-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: hsl(var(--muted) / 0.6);
+}
+
+.conn-auth-tabs button {
+  flex: 1;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.conn-auth-tabs button.active {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 3px hsl(220 40% 20% / 0.12);
+}
+
+.conn-auth-retry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--destructive) / 0.3);
+  border-radius: 8px;
+  background: hsl(var(--destructive) / 0.08);
+  color: hsl(var(--destructive));
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.conn-auth-retry-icon {
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.conn-auth-retry-text {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.conn-auth-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conn-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.conn-field input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+}
+
+.conn-field input:focus {
+  outline: none;
+  border-color: hsl(var(--primary));
+}
+
+.conn-field input.invalid {
+  border-color: hsl(var(--destructive) / 0.7);
+}
+
+.conn-input-wrap {
+  position: relative;
+}
+
+.conn-input-wrap input {
+  padding-right: 34px;
+}
+
+.conn-eye {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.conn-eye:hover:not(:disabled) {
+  background: hsl(var(--secondary));
+}
+
+.conn-empty {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 6px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 自绘密钥下拉 */
+.conn-key-picker {
+  position: relative;
+}
+
+.conn-key-trigger {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conn-key-trigger.selected {
+  border-color: hsl(var(--primary) / 0.6);
+  background: hsl(var(--primary) / 0.06);
+}
+
+.conn-key-trigger > svg {
+  margin-left: auto;
+  color: hsl(var(--muted-foreground));
+}
+
+.conn-key-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 5px;
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+}
+
+.conn-key-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.conn-key-label {
+  font-size: 12px;
+  color: hsl(var(--foreground));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conn-key-meta {
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.conn-key-placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.conn-key-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  box-shadow: 0 8px 24px hsl(220 40% 20% / 0.16);
+}
+
+.conn-key-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conn-key-menu button.selected,
+.conn-key-menu button:hover {
+  background: hsl(var(--secondary));
+}
+
+/* 主机密钥校验 */
+.conn-hostkey {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conn-hostkey-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.conn-hostkey-banner.warn {
+  border-color: hsl(38 92% 50% / 0.35);
+  background: hsl(38 92% 50% / 0.1);
+}
+
+.conn-hostkey-banner.danger {
+  border-color: hsl(var(--destructive) / 0.35);
+  background: hsl(var(--destructive) / 0.08);
+}
+
+.conn-hostkey-icon {
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.conn-hostkey-banner.warn .conn-hostkey-icon {
+  color: hsl(38 92% 42%);
+}
+
+.conn-hostkey-banner.danger .conn-hostkey-icon {
+  color: hsl(var(--destructive));
+}
+
+.conn-hostkey-copy {
+  min-width: 0;
+}
+
+.conn-hostkey-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.conn-hostkey-copy p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+  word-break: break-word;
+}
+
+.conn-hostkey-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.conn-hostkey-label,
+.conn-hostkey-known-label {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.conn-hostkey-fingerprint {
+  padding: 7px 10px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 6px;
+  background: hsl(var(--muted) / 0.4);
+  word-break: break-all;
+}
+
+.conn-hostkey-fingerprint.known {
+  border-color: hsl(var(--destructive) / 0.3);
+  background: hsl(var(--destructive) / 0.06);
+}
+
+.conn-hostkey-fingerprint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: hsl(var(--foreground) / 0.85);
+}
+
+.conn-hostkey-hint {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}

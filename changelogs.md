@@ -732,3 +732,60 @@
 
 
 
+
+## 2026-11-02 · SSH 连接建立与管理前后端移植（对齐 netcatty）
+
+### 改动
+
+后端（`src-tauri/src`）：
+
+1. **`ssh/client.rs`**：新增 `ProgressEmitter`，向 `ssh:progress:<sessionId>` 推送
+   `{hop,total,label,status,error}`；逐跳覆盖 `connecting / tcp-connected /
+   authenticating / authenticated / forwarding / shell / connected / error`。
+   `establish_via_chain` 新增 `progress: Option<&ProgressEmitter>`，空链与多跳链都按
+   netcatty 的逐跳语义发事件；`profile_label` 用 `name`（空则 `host`）作为弹窗标题。
+2. **`ssh/prompt.rs`**：`prompt_host_key` 改为结构化 payload（`ssh:host_key_prompt`
+   带 `banner/host/port/key_type/fingerprint/status/known_fingerprint`），
+   unknown 与 changed 分别标注 `status`。
+3. **`models.rs` + `commands/session.rs` + `server.rs`**：`AuthOverride` 增加
+   `passphrase`；一次性覆盖支持换凭据 / 改用户名 / 改密码 / 传私钥口令，均不写回 DB；
+   passphrase 走进程内 `passphrase_cache`（键 `cred:<id>`，与 `ssh/auth.rs` 一致）。
+4. **`ssh/client.rs` 测试**：连接日志测试不再假设首个事件是 `ssh:data`，改为扫描
+   唯一一条 `ssh:data`，容纳新增的 progress 事件。
+
+前端（`src`）：
+
+5. **新增领域层**：`domain/connectionProgress.ts`、`domain/sshConnectionTimeouts.ts`、
+   `domain/hostKey.ts`、`domain/sshErrors.ts`，逐字移植 netcatty 的进度函数、20s/120s/3600s
+   超时常量、`hasConnectionPassedTcpDial`、主机密钥模型与 `isAuthFailureMessage`。
+6. **新增组件**：`terminal/TerminalConnectionDialog.tsx`（540px 三阶段卡片 + 两段进度条 +
+   320ms 解锁）、`TerminalConnectionProgress.tsx`（倒计时 / 日志 / 关闭会话 / 重新连接）、
+   `TerminalAuthDialog.tsx`（密码 / SSH 密钥 tab、认证失败提示、密钥下拉、passphrase）、
+   `TerminalHostKeyVerification.tsx`（unknown 黄 / changed 红）。
+7. **`TerminalPane.tsx` 整体重写**：状态机对齐 netcatty（connecting / connected /
+   disconnected），预生成 sessionId 并在 `sshConnect` 前注册四类事件；移植逐跳日志映射、
+   超时倒计时与 200ms 不确定进度、认证失败分流（needsAuth + 清空密码）、取消连接、
+   断开后关闭会话 / 重新连接 / Enter 重连、主机密钥三种答复。
+8. **`backend/client.ts`**：新增 `onSshProgress`、`SshProgressEvent`、`AuthOverride.passphrase`，
+   `sshConnect` 透传一次性认证覆盖。
+9. **`ui/icons.tsx` / `styles.css`**：补 `plug / fingerprint / alert-triangle / eye(-off) /
+   play / user / loader` 图标与整套 `.conn-*` 样式。
+
+### 验证
+
+- `npm run build`（tsc --noEmit + vite build）通过。
+- 浏览器 harness（mock Tauri IPC）复验：连接弹窗三阶段 + 倒计时正常；连接完成后弹窗消失；
+  认证失败弹出重试表单；未知主机密钥弹出黄色校验卡片。
+- Rust 无法在本沙箱编译（缺 `glib-2.0`，Tauri 系统依赖），只做了人工代码审查。
+
+### 踩坑
+
+92. **新增 progress 事件会打乱既有断言顺序**：原测试断言第一个事件必须是 `ssh:data`，
+    `ProgressEmitter` 在拨号前先发 `connecting`，测试必然失败；不要删掉日志断言，改成扫描
+    事件流里唯一的一条 `ssh:data`。
+93. **认证重试的 passphrase 必须走缓存而不是改凭据**：临时覆盖不能落库，但
+    `decode_key_with_prompt` 只查 `passphrase_cache`，所以要用与 `ssh/auth.rs` 相同的
+    `cred:<credential_id>` 键写入 `Zeroizing<String>`。
+94. **取消连接复用 `ssh_disconnect` 即可**：它关闭 Pending 资源并清 prompt waiters，
+    `activate_returned` 会因记录已关闭而失败；前端再用 attempt 代数让旧回调失效，
+    不需要新增后端命令。

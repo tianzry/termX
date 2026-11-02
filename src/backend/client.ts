@@ -78,6 +78,36 @@ export interface AuthPrompt {
   prompts: Array<{ prompt: string; echo: boolean }>;
 }
 
+/** 主机密钥提示载荷（后端 `ssh:host_key_prompt`）。 */
+export interface HostKeyPrompt {
+  banner?: string;
+  host: string;
+  port: number;
+  key_type: string;
+  fingerprint: string;
+  status?: "unknown" | "changed";
+  known_fingerprint?: string;
+}
+
+/** 连接进度事件（后端 `ssh:progress:<sessionId>`）。 */
+export interface SshProgressEvent {
+  hop: number;
+  total: number;
+  label: string;
+  /** connecting | tcp-connected | authenticating | authenticated | forwarding | shell | connected | error */
+  status: string;
+  error: string | null;
+}
+
+/** 一次性认证覆盖（连接弹窗认证失败后重试，不写回 DB）。 */
+export interface AuthOverride {
+  username?: string;
+  password?: string;
+  credential_id?: string;
+  /** 私钥 passphrase（仅 key 凭据；后端写入本次进程缓存，不落库）。 */
+  passphrase?: string;
+}
+
 /** 会话退出信息（ssh:close / pty:close 事件载荷）。 */
 export interface CloseInfo {
   exit_code?: number;
@@ -139,6 +169,7 @@ export function sshConnect(
   cols: number,
   rows: number,
   sessionId?: string,
+  authOverride?: AuthOverride | null,
 ): Promise<string> {
   const sid = sessionId ?? crypto.randomUUID();
   return invoke<string>("ssh_connect", {
@@ -147,6 +178,7 @@ export function sshConnect(
     cols,
     rows,
     sessionId: sid,
+    authOverride: authOverride ?? null,
   });
 }
 
@@ -266,11 +298,20 @@ export function onPassphrasePrompt(
 
 export function onHostKeyPrompt(
   sessionId: string,
-  cb: (payload: { banner: string }) => void,
+  cb: (payload: HostKeyPrompt) => void,
 ): Promise<UnlistenFn> {
-  return listen<{ banner: string }>(
+  return listen<HostKeyPrompt>(
     `ssh:host_key_prompt:${sessionId}`,
     (ev) => cb(ev.payload),
+  );
+}
+
+export function onSshProgress(
+  sessionId: string,
+  cb: (payload: SshProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<SshProgressEvent>(`ssh:progress:${sessionId}`, (ev) =>
+    cb(ev.payload),
   );
 }
 

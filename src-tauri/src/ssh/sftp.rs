@@ -171,6 +171,7 @@ impl SftpHandle {
             timeout_secs,
             log: crate::ssh::client::null_logger(),
             prompt_ctx: None,
+            progress: None,
         };
         let mut handle = client::ssh_connect(dial, host, port).await?;
 

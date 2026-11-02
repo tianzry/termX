@@ -2,7 +2,7 @@ use serde_json::json;
 use tauri::{AppHandle, State};
 
 use crate::error::{locked, AppError, AppResult};
-use crate::models::{Credential, PluginExecResult, Profile};
+use crate::models::{AuthOverride, Credential, CredentialType, PluginExecResult, Profile};
 use crate::secret::cred_secret_key;
 use crate::ssh::client;
 use crate::state::{AppState, SessionKind, SessionOwner};
@@ -10,6 +10,49 @@ use crate::state::{AppState, SessionKind, SessionOwner};
 /// 把 SecretStore 里的 secret 灌到 Credential 上。
 fn load_secrets(state: &State<'_, AppState>, c: &mut Credential) -> AppResult<()> {
     c.secret = state.secret_store.get(&cred_secret_key(&c.id))?;
+    Ok(())
+}
+
+/// 应用连接弹窗的一次性认证覆盖（不写回 DB）。
+///
+/// `credential_id` 换用另一条已保存凭据；`username` / `password` 依次覆盖
+/// 登录名与密码认证。密码覆盖最后生效，因为它是用户在弹窗里刚输入的原文。
+fn apply_auth_override(
+    state: &State<'_, AppState>,
+    credential: &mut Credential,
+    override_input: Option<AuthOverride>,
+) -> AppResult<()> {
+    let Some(override_input) = override_input else {
+        return Ok(());
+    };
+    if let Some(credential_id) = override_input.credential_id {
+        let mut replacement =
+            crate::db::credential::get(&state.db, &credential_id).map_err(|e| match e {
+                AppError::NotFound(_) => AppError::not_found("profile_cred_not_found", json!({})),
+                other => other,
+            })?;
+        load_secrets(state, &mut replacement)?;
+        *credential = replacement;
+    }
+    if let Some(username) = override_input.username {
+        if !username.is_empty() {
+            credential.username = username;
+        }
+    }
+    if let Some(password) = override_input.password {
+        credential.credential_type = CredentialType::Password;
+        credential.secret = Some(password);
+    }
+    if let Some(passphrase) = override_input.passphrase {
+        if matches!(credential.credential_type, CredentialType::Key) && !passphrase.is_empty() {
+            // 与 ssh/auth.rs 的 `decode_key_with_prompt` 使用同一缓存键，
+            // 让本次连接直接命中弹窗里输入的 passphrase（不写回 DB）。
+            let cache_key = format!("cred:{}", credential.id);
+            if let Ok(mut cache) = locked(&state.passphrase_cache) {
+                cache.insert(cache_key, zeroize::Zeroizing::new(passphrase));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -26,6 +69,7 @@ pub async fn ssh_connect(
     cols: u32,
     rows: u32,
     session_id: Option<String>,
+    auth_override: Option<AuthOverride>,
 ) -> AppResult<String> {
     let requested_session_id = session_id.clone();
     let session_id = crate::commands::lifecycle::resolve_session_id(session_id)?;
@@ -43,6 +87,7 @@ pub async fn ssh_connect(
             other => other,
         })?;
     load_secrets(&state, &mut credential)?;
+    apply_auth_override(&state, &mut credential, auth_override)?;
 
     // 解析整条堡垒机链 + 给每一跳加载凭证（含 secret）
     let chain_profiles = crate::ssh::bastion::resolve_chain(&state.db, &profile)?;
