@@ -33,7 +33,6 @@ import type {
   TermBridge,
   TerminalTransport,
 } from "./backend/client";
-import type { HostPrefill } from "./VaultView";
 
 type Tool = "sftp" | "serial" | "telnet" | "forward" | null;
 
@@ -117,7 +116,6 @@ export default function App() {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [recentIds, setRecentIds] = useState<string[]>(loadRecent);
   const [managerEditId, setManagerEditId] = useState<string | null>(null);
-  const [managerPrefill, setManagerPrefill] = useState<HostPrefill | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -136,7 +134,6 @@ export default function App() {
 
   function openManager() {
     setManagerEditId(null);
-    setManagerPrefill(null);
     setShowManager(true);
   }
 
@@ -278,16 +275,6 @@ export default function App() {
               onLocal={openLocal}
               onSerial={openSerial}
               onOpenManager={openManager}
-              onEditProfile={(p) => {
-                setManagerEditId(p.id);
-                setManagerPrefill(null);
-                setShowManager(true);
-              }}
-              onQuickConnect={(prefill) => {
-                setManagerEditId(null);
-                setManagerPrefill(prefill);
-                setShowManager(true);
-              }}
               onDataChanged={() => void loadData()}
             />
           )}
@@ -335,16 +322,13 @@ export default function App() {
         <ConnectionManager
           profiles={profiles}
           editProfileId={managerEditId}
-          prefill={managerPrefill}
           onClose={() => {
             setShowManager(false);
             setManagerEditId(null);
-            setManagerPrefill(null);
           }}
           onConnect={(p) => {
             setShowManager(false);
             setManagerEditId(null);
-            setManagerPrefill(null);
             connect(p);
           }}
           onChanged={() => void loadData()}

@@ -25,12 +25,6 @@ import type { Credential, Group, Profile } from "./backend/client";
 import { newId } from "./workspaceModel";
 import { Icon, type IconName } from "./ui/icons";
 
-export interface HostPrefill {
-  name: string;
-  host: string;
-  port: number;
-}
-
 interface Props {
   profiles: Profile[];
   groups: Group[];
@@ -43,31 +37,46 @@ interface Props {
   onLocal: () => void;
   onSerial: () => void;
   onOpenManager: () => void;
-  onEditProfile: (profile: Profile) => void;
-  /** 快速连接：带预填信息打开连接管理器。 */
-  onQuickConnect: (prefill: HostPrefill) => void;
   /** 新建 / 删除后刷新 App 侧列表。 */
   onDataChanged: () => void;
 }
 
 type ViewMode = "grid" | "list" | "tree";
-type SortMode = "name-asc" | "name-desc" | "host-asc" | "host-desc";
+type SortMode =
+  | "manual"
+  | "az"
+  | "za"
+  | "newest"
+  | "oldest"
+  | "group"
+  | "ip";
+type ClickBehavior = "connect" | "select";
 
 const VIEW_KEY = "termx.vault.view.v1";
 const SORT_KEY = "termx.vault.sort.v1";
 const PINNED_KEY = "termx.pinned.v1";
 const SIDEBAR_W_KEY = "termx.vault.sidebar.v1";
+const ORDER_KEY = "termx.vault.order.v1";
+const TAGS_KEY = "termx.vault.tags.v1";
+const CLICK_KEY = "termx.vault.click.v1";
+const HOST_PANEL_W_KEY = "termx.vault.hostpanel.v1";
 const SIDEBAR_MIN = 208;
 const SIDEBAR_MAX = 320;
+const HOST_PANEL_MIN = 320;
+const HOST_PANEL_MAX = 520;
 
 type GroupTile = { id: string; name: string; count: number };
 
 type ComposerDraft = {
+  /** 为空时是新建，有值时是编辑既有主机。 */
+  id: string;
   name: string;
   host: string;
   port: string;
   credential_id: string;
   group_id: string;
+  /** 逗号分隔，落 localStorage 的标签表。 */
+  tags: string;
 };
 
 const navItems: Array<{
@@ -87,19 +96,22 @@ const navItems: Array<{
   { id: "logs", label: "日志", icon: "history" },
 ];
 
-/** 新建主机下拉里的未实现项：保留入口、禁用点击。 */
+/** 新建主机下拉：本地终端、分组可用；导入 / 导出需后端支持，暂置灰。 */
 const newHostMenu: Array<{ label: string; icon: IconName; enabled?: boolean }> = [
-  { label: "新建本地终端主机", icon: "terminal-square", enabled: true },
-  { label: "新建分组", icon: "folder" },
+  { label: "本地终端（PTY）", icon: "terminal-square", enabled: true },
+  { label: "新建分组", icon: "folder", enabled: true },
   { label: "导入主机", icon: "transfer" },
   { label: "导出主机", icon: "server" },
 ];
 
 const SORT_LABEL: Record<SortMode, string> = {
-  "name-asc": "名称 A → Z",
-  "name-desc": "名称 Z → A",
-  "host-asc": "主机 A → Z",
-  "host-desc": "主机 Z → A",
+  manual: "手动顺序",
+  az: "名称 A → Z",
+  za: "名称 Z → A",
+  newest: "从新到旧",
+  oldest: "从旧到新",
+  group: "按分组",
+  ip: "按 IP",
 };
 
 function clampWidth(n: number): number {
@@ -127,9 +139,12 @@ function readView(): ViewMode {
 function readSort(): SortMode {
   try {
     const v = localStorage.getItem(SORT_KEY);
-    return v && v in SORT_LABEL ? (v as SortMode) : "name-asc";
+    if (v === "name-asc") return "az";
+    if (v === "name-desc") return "za";
+    if (v === "host-asc" || v === "host-desc") return "ip";
+    return v && v in SORT_LABEL ? (v as SortMode) : "az";
   } catch {
-    return "name-asc";
+    return "az";
   }
 }
 
@@ -143,6 +158,60 @@ function readPinned(): string[] {
       : [];
   } catch {
     return [];
+  }
+}
+
+function readOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(ORDER_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((x): x is string => typeof x === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+type TagMap = Record<string, string[]>;
+
+function readTags(): TagMap {
+  try {
+    const raw = localStorage.getItem(TAGS_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: TagMap = {};
+    for (const [id, tags] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(tags)) {
+        out[id] = tags.filter((t): t is string => typeof t === "string");
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function readClickBehavior(): ClickBehavior {
+  try {
+    return localStorage.getItem(CLICK_KEY) === "select" ? "select" : "connect";
+  } catch {
+    return "connect";
+  }
+}
+
+function clampPanelWidth(n: number): number {
+  return Math.min(HOST_PANEL_MAX, Math.max(HOST_PANEL_MIN, n));
+}
+
+function readPanelWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(HOST_PANEL_W_KEY));
+    return Number.isFinite(n) && n > 0 ? clampPanelWidth(n) : 380;
+  } catch {
+    return 380;
   }
 }
 
@@ -219,8 +288,6 @@ export function VaultView({
   onLocal,
   onSerial,
   onOpenManager,
-  onEditProfile,
-  onQuickConnect,
   onDataChanged,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
@@ -228,26 +295,75 @@ export function VaultView({
   const [resizing, setResizing] = useState(false);
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
 
+  const [panelWidth, setPanelWidth] = useState(readPanelWidth);
+  const [panelResizing, setPanelResizing] = useState(false);
+  const panelResizeStart = useRef<{ x: number; width: number } | null>(null);
+
   const [query, setQuery] = useState("");
   const [view, setView] = useState<ViewMode>(readView);
   const [sort, setSort] = useState<SortMode>(readSort);
   const [viewMenu, setViewMenu] = useState(false);
   const [sortMenu, setSortMenu] = useState(false);
   const [newMenu, setNewMenu] = useState(false);
+  const [tagMenu, setTagMenu] = useState(false);
+  const [clickBehavior, setClickBehavior] =
+    useState<ClickBehavior>(readClickBehavior);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagQuery, setTagQuery] = useState("");
+  const [tagRename, setTagRename] = useState<{ from: string; value: string } | null>(
+    null,
+  );
 
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [pinnedIds, setPinnedIds] = useState<string[]>(readPinned);
+  const [order, setOrder] = useState<string[]>(readOrder);
+  const [tags, setTags] = useState<TagMap>(readTags);
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<{
     profile: Profile;
     x: number;
     y: number;
   } | null>(null);
+  const [groupCtx, setGroupCtx] = useState<{
+    group: GroupTile;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [tagEditor, setTagEditor] = useState<string | null>(null);
+  const [switcher, setSwitcher] = useState(false);
+  const [switcherQuery, setSwitcherQuery] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [groupDialog, setGroupDialog] = useState<{
+    id: string | null;
+    name: string;
+  } | null>(null);
+  const [moveMenu, setMoveMenu] = useState(false);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [dragIds, setDragIds] = useState<string[]>([]);
+  const [dropGroupId, setDropGroupId] = useState<string | null>(null);
+  const [marquee, setMarquee] = useState<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } | null>(null);
+  const marqueeStart = useRef<{ x: number; y: number } | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<number | null>(null);
 
   const [composer, setComposer] = useState<ComposerDraft | null>(null);
   const [composerBusy, setComposerBusy] = useState(false);
   const [composerErr, setComposerErr] = useState("");
+  const [wizard, setWizard] = useState<{
+    host: string;
+    port: string;
+    username: string;
+    credential_id: string;
+    name: string;
+  } | null>(null);
 
   // ── 持久化 ──────────────────────────────────────────────
 
@@ -264,8 +380,33 @@ export function VaultView({
   }, [pinnedIds]);
 
   useEffect(() => {
+    persist(ORDER_KEY, JSON.stringify(order));
+  }, [order]);
+
+  useEffect(() => {
+    persist(TAGS_KEY, JSON.stringify(tags));
+  }, [tags]);
+
+  useEffect(() => {
+    persist(CLICK_KEY, clickBehavior);
+  }, [clickBehavior]);
+
+  useEffect(() => {
     if (!collapsed) persist(SIDEBAR_W_KEY, String(sidebarWidth));
   }, [sidebarWidth, collapsed]);
+
+  useEffect(() => {
+    persist(HOST_PANEL_W_KEY, String(panelWidth));
+  }, [panelWidth]);
+
+  // 新出现的主机自动补进手动顺序表尾，保证「手动顺序 / 从新到旧」可用。
+  useEffect(() => {
+    setOrder((prev) => {
+      const known = new Set(prev);
+      const missing = profiles.map((p) => p.id).filter((id) => !known.has(id));
+      return missing.length ? [...prev, ...missing] : prev;
+    });
+  }, [profiles]);
 
   // ── 侧栏拖拽调宽 ────────────────────────────────────────
 
@@ -300,9 +441,50 @@ export function VaultView({
     document.body.style.userSelect = "none";
   }
 
+  // ── 右侧主机面板拖拽调宽 ────────────────────────────────
+
+  useEffect(() => {
+    if (!panelResizing) return;
+    function onMove(e: PointerEvent) {
+      const start = panelResizeStart.current;
+      if (!start) return;
+      setPanelWidth(clampPanelWidth(start.width - e.clientX + start.x));
+    }
+    function stop() {
+      panelResizeStart.current = null;
+      setPanelResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", stop);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [panelResizing]);
+
+  function startPanelResize(e: ReactPointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    panelResizeStart.current = { x: e.clientX, width: panelWidth };
+    setPanelResizing(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
   // ── 弹出层关闭 ──────────────────────────────────────────
 
-  const popupOpen = viewMenu || sortMenu || newMenu || Boolean(ctxMenu);
+  const popupOpen =
+    viewMenu ||
+    sortMenu ||
+    newMenu ||
+    tagMenu ||
+    moveMenu ||
+    Boolean(ctxMenu) ||
+    Boolean(groupCtx);
+
   useEffect(() => {
     if (!popupOpen) return;
     function onPointerDown(e: MouseEvent) {
@@ -311,14 +493,22 @@ export function VaultView({
       setViewMenu(false);
       setSortMenu(false);
       setNewMenu(false);
+      setTagMenu(false);
+      setMoveMenu(false);
       setCtxMenu(null);
+      setGroupCtx(null);
+      setTagRename(null);
     }
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       setViewMenu(false);
       setSortMenu(false);
       setNewMenu(false);
+      setTagMenu(false);
+      setMoveMenu(false);
       setCtxMenu(null);
+      setGroupCtx(null);
+      setTagRename(null);
     }
     window.addEventListener("mousedown", onPointerDown);
     window.addEventListener("keydown", onKey);
@@ -327,6 +517,18 @@ export function VaultView({
       window.removeEventListener("keydown", onKey);
     };
   }, [popupOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  function showToast(message: string) {
+    setToast(message);
+    if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), 2200);
+  }
 
   // ── 数据派生 ────────────────────────────────────────────
 
@@ -337,32 +539,78 @@ export function VaultView({
 
   function subtitle(p: Profile): string {
     const username = credById.get(p.credential_id)?.username;
-    return `${username ? `${username}@` : ""}${p.host}:${p.port}`;
+    return `${username ? `${username}@` : ""}${p.host}`;
+  }
+
+  function fullSubtitle(p: Profile): string {
+    return `${subtitle(p)}:${p.port}`;
+  }
+
+  function orderRank(id: string): number {
+    const i = order.indexOf(id);
+    if (i >= 0) return i;
+    return 100000 + profiles.findIndex((p) => p.id === id);
+  }
+
+  function ipRank(host: string): number {
+    const parts = host.split(".");
+    if (parts.length === 4 && parts.every((x) => /^\d{1,3}$/.test(x))) {
+      return parts.reduce((acc, x) => acc * 256 + Number(x), 0);
+    }
+    return Number.MAX_SAFE_INTEGER;
   }
 
   function sortHosts(list: Profile[]): Profile[] {
     const out = [...list];
     switch (sort) {
-      case "name-desc":
+      case "za":
         return out.sort((a, b) => b.name.localeCompare(a.name, "zh-Hans-CN"));
-      case "host-asc":
-        return out.sort((a, b) => a.host.localeCompare(b.host));
-      case "host-desc":
-        return out.sort((a, b) => b.host.localeCompare(a.host));
+      case "newest":
+        return out.sort((a, b) => orderRank(b.id) - orderRank(a.id));
+      case "oldest":
+        return out.sort((a, b) => orderRank(a.id) - orderRank(b.id));
+      case "group": {
+        const groupName = (p: Profile) =>
+          (p.group_id ? groupById.get(p.group_id)?.name : "") ?? "未分组";
+        return out.sort(
+          (a, b) =>
+            groupName(a).localeCompare(groupName(b), "zh-Hans-CN") ||
+            a.name.localeCompare(b.name, "zh-Hans-CN"),
+        );
+      }
+      case "ip":
+        return out.sort(
+          (a, b) =>
+            ipRank(a.host) - ipRank(b.host) || a.host.localeCompare(b.host),
+        );
+      case "manual":
+        return out.sort((a, b) => orderRank(a.id) - orderRank(b.id));
       default:
         return out.sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
     }
   }
 
+  const allTagNames = Array.from(
+    new Set(Object.values(tags).flatMap((list) => list)),
+  ).sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+
   // 识别为快速连接时，关键字不参与过滤：列表保持完整，另在顶部给出直连建议行。
   const filterKeyword = quick ? "" : keyword;
-  const visible = profiles.filter(
-    (p) =>
-      !filterKeyword ||
+  const visible = profiles.filter((p) => {
+    if (selectedTags.length) {
+      const own = tags[p.id] ?? [];
+      if (!selectedTags.every((t) => own.includes(t))) return false;
+    }
+    if (!filterKeyword) return true;
+    const username = credById.get(p.credential_id)?.username?.toLowerCase() ?? "";
+    return (
       p.name.toLowerCase().includes(filterKeyword) ||
       p.host.toLowerCase().includes(filterKeyword) ||
-      String(p.port).includes(filterKeyword),
-  );
+      String(p.port).includes(filterKeyword) ||
+      username.includes(filterKeyword) ||
+      (tags[p.id] ?? []).some((t) => t.toLowerCase().includes(filterKeyword))
+    );
+  });
 
   const activeGroupName =
     activeGroupId === null
@@ -411,11 +659,12 @@ export function VaultView({
     },
   ].filter((s) => s.hosts.length > 0);
 
-  // 最近连接：按记录顺序取前 8 个仍存在的条目。
+  // 最近连接：按记录顺序，排除已置顶（避免与「已置顶」重复），最多 6 条。
   const recentProfiles = recentIds
+    .filter((id) => id !== "__local" && !pinnedIds.includes(id))
     .map((id) => visible.find((p) => p.id === id))
     .filter((p): p is Profile => Boolean(p))
-    .slice(0, 8);
+    .slice(0, 6);
   const showLocalRecently =
     recentIds.includes("__local") && (!keyword || "local".includes(keyword));
 
@@ -426,6 +675,16 @@ export function VaultView({
   );
 
   const atRoot = activeGroupId === null;
+
+  const switcherHosts = sortHosts(visible).filter((p) => {
+    const q = switcherQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      p.name.toLowerCase().includes(q) ||
+      p.host.toLowerCase().includes(q) ||
+      (credById.get(p.credential_id)?.username ?? "").toLowerCase().includes(q)
+    );
+  });
 
   // ── 选择 / 置顶 / 删除 ──────────────────────────────────
 
@@ -438,8 +697,34 @@ export function VaultView({
     });
   }
 
+  function toggleGroupSelect(id: string) {
+    setSelectedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   function selectAllVisible() {
     setSelected(new Set(scopedHosts.map((p) => p.id)));
+    setSelectedGroups(
+      new Set(
+        atRoot && view !== "tree"
+          ? groupTiles.filter((g) => g.id !== "__ungrouped").map((g) => g.id)
+          : [],
+      ),
+    );
+  }
+
+  function clearSelection() {
+    setSelected(new Set());
+    setSelectedGroups(new Set());
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    clearSelection();
   }
 
   function togglePin(id: string) {
@@ -466,32 +751,84 @@ export function VaultView({
   }
 
   async function deleteSelected() {
-    if (selected.size === 0) return;
-    if (!confirm(`删除选中的 ${selected.size} 台主机？`)) return;
+    if (selected.size === 0 && selectedGroups.size === 0) return;
+    const label = `删除选中的 ${selected.size} 台主机${
+      selectedGroups.size ? `和 ${selectedGroups.size} 个分组` : ""
+    }？`;
+    if (!confirm(label)) return;
     try {
       for (const id of selected) await api.deleteProfile(id);
+      for (const id of selectedGroups) await api.deleteGroup(id);
     } catch {
       /* 忽略单条失败，后续统一刷新 */
     }
     setPinnedIds((prev) => prev.filter((id) => !selected.has(id)));
-    setSelected(new Set());
-    setSelectMode(false);
+    setTags((prev) => {
+      const next = { ...prev };
+      for (const id of selected) delete next[id];
+      return next;
+    });
+    exitSelectMode();
     onDataChanged();
+  }
+
+  function duplicateHost(p: Profile) {
+    const copy: Profile = {
+      ...p,
+      id: newId(),
+      name: `${p.name} 副本`,
+    };
+    void api
+      .createProfile(copy)
+      .then(() => {
+        setOrder((prev) => [...prev, copy.id]);
+        onDataChanged();
+        showToast("已创建主机副本");
+      })
+      .catch(() => showToast("复制失败"));
   }
 
   function copyHostname(p: Profile) {
     void navigator.clipboard?.writeText(p.host).catch(() => undefined);
+    showToast("主机名已复制");
+  }
+
+  async function copyCredentials(p: Profile) {
+    const cred = credById.get(p.credential_id);
+    if (!cred) {
+      showToast("该主机没有绑定凭据");
+      return;
+    }
+    const username = cred.username || "(未设置用户名)";
+    const secret =
+      cred.type === "password" && cred.secret ? `\n密码：${cred.secret}` : "";
+    try {
+      await navigator.clipboard.writeText(
+        `${username}@${p.host}:${p.port}${secret}`,
+      );
+      showToast("账密信息已复制");
+    } catch {
+      showToast("复制失败");
+    }
   }
 
   function handleCardClick(p: Profile) {
-    if (selectMode) toggleSelect(p.id);
-    else onConnect(p);
+    if (selectMode) {
+      toggleSelect(p.id);
+      return;
+    }
+    if (clickBehavior === "select" && focusId !== p.id) {
+      setFocusId(p.id);
+      return;
+    }
+    onConnect(p);
   }
 
   function handleCardKey(e: ReactKeyboardEvent<HTMLDivElement>, p: Profile) {
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
-    handleCardClick(p);
+    if (selectMode) toggleSelect(p.id);
+    else onConnect(p);
   }
 
   function openContextMenu(e: ReactMouseEvent<HTMLDivElement>, p: Profile) {
@@ -499,30 +836,355 @@ export function VaultView({
     setCtxMenu({
       profile: p,
       x: Math.min(e.clientX, window.innerWidth - 216),
-      y: Math.min(e.clientY, window.innerHeight - 330),
+      y: Math.min(e.clientY, window.innerHeight - 380),
     });
   }
 
-  // ── 快速连接 ────────────────────────────────────────────
-
-  function runQuickConnect() {
-    if (!quick) return;
-    const name = quick.username ? `${quick.username}@${quick.host}` : quick.host;
-    onQuickConnect({ name, host: quick.host, port: quick.port });
+  function openGroupMenu(e: ReactMouseEvent<HTMLDivElement>, g: GroupTile) {
+    e.preventDefault();
+    if (g.id === "__ungrouped") return;
+    setGroupCtx({
+      group: g,
+      x: Math.min(e.clientX, window.innerWidth - 216),
+      y: Math.min(e.clientY, window.innerHeight - 200),
+    });
   }
 
-  // ── 新建主机右侧面板 ────────────────────────────────────
+  async function moveHostsTo(ids: string[], groupId: string | null) {
+    const targets = profiles.filter((p) => ids.includes(p.id));
+    try {
+      for (const p of targets) {
+        await api.updateProfile({ ...p, group_id: groupId });
+      }
+      showToast(
+        groupId
+          ? `已移动 ${targets.length} 台主机到「${
+              groupById.get(groupId)?.name ?? "分组"
+            }」`
+          : `已将 ${targets.length} 台主机移出分组`,
+      );
+    } catch {
+      showToast("移动失败");
+    }
+    onDataChanged();
+  }
+
+  async function saveGroupDialog() {
+    const d = groupDialog;
+    if (!d) return;
+    const name = d.name.trim();
+    if (!name) return;
+    try {
+      if (d.id) {
+        const target = groups.find((g) => g.id === d.id);
+        if (target) await api.updateGroup({ ...target, name });
+      } else {
+        await api.createGroup({
+          id: newId(),
+          name,
+          color: "#6ea8fe",
+          sort_order: groups.length,
+        });
+      }
+      setGroupDialog(null);
+      onDataChanged();
+    } catch {
+      showToast("保存分组失败");
+    }
+  }
+
+  async function deleteGroupById(id: string, name: string) {
+    const count = profiles.filter((p) => p.group_id === id).length;
+    const label = count
+      ? `删除分组「${name}」？组内 ${count} 台主机将变为未分组。`
+      : `删除分组「${name}」？`;
+    if (!confirm(label)) return;
+    try {
+      await api.deleteGroup(id);
+      if (activeGroupId === id) setActiveGroupId(null);
+      setSelectedGroups((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      onDataChanged();
+    } catch {
+      showToast("删除分组失败");
+    }
+  }
+
+  function setHostTags(id: string, next: string[]) {
+    setTags((prev) => {
+      const copy = { ...prev };
+      if (next.length) copy[id] = next;
+      else delete copy[id];
+      return copy;
+    });
+  }
+
+  function renameTag(from: string, to: string) {
+    const name = to.trim();
+    if (!name || name === from) {
+      setTagRename(null);
+      return;
+    }
+    setTags((prev) => {
+      const next: TagMap = {};
+      for (const [id, list] of Object.entries(prev)) {
+        const replaced = list.map((t) => (t === from ? name : t));
+        next[id] = Array.from(new Set(replaced));
+      }
+      return next;
+    });
+    setSelectedTags((prev) =>
+      prev.map((t) => (t === from ? name : t)),
+    );
+    setTagRename(null);
+  }
+
+  function removeTag(tag: string) {
+    setTags((prev) => {
+      const next: TagMap = {};
+      for (const [id, list] of Object.entries(prev)) {
+        const rest = list.filter((t) => t !== tag);
+        if (rest.length) next[id] = rest;
+      }
+      return next;
+    });
+    setSelectedTags((prev) => prev.filter((t) => t !== tag));
+  }
+
+  // ── 快速切换器 / 快速连接向导 ────────────────────────────
+
+  function openQuickSwitcher() {
+    setSwitcherQuery("");
+    setSwitcher(true);
+  }
+
+  function connectFromSwitcher(p: Profile) {
+    setSwitcher(false);
+    onConnect(p);
+  }
+
+  function runQuickConnect() {
+    if (!quick) {
+      openQuickSwitcher();
+      return;
+    }
+    const matched = credentials.find(
+      (c) => c.username === quick.username,
+    );
+    setWizard({
+      host: quick.host,
+      port: String(quick.port),
+      username: quick.username ?? (matched?.username ?? ""),
+      credential_id: matched?.id ?? credentials[0]?.id ?? "",
+      name: quick.username ? `${quick.username}@${quick.host}` : quick.host,
+    });
+  }
+
+  async function saveWizard(andConnect: boolean) {
+    const w = wizard;
+    if (!w) return;
+    if (!w.credential_id) {
+      showToast("请先选择凭据，或到连接管理器创建");
+      return;
+    }
+    const profile: Profile = {
+      id: newId(),
+      name: w.name.trim() || `${w.username || "user"}@${w.host}`,
+      host: w.host,
+      port: Number(w.port) || 22,
+      credential_id: w.credential_id,
+      bastion_profile_id: null,
+      init_command: null,
+      group_id:
+        activeGroupId && activeGroupId !== "__ungrouped" ? activeGroupId : null,
+    };
+    try {
+      await api.createProfile(profile);
+      setOrder((prev) => [...prev, profile.id]);
+      setWizard(null);
+      setQuery("");
+      onDataChanged();
+      if (andConnect) onConnect(profile);
+      else showToast("主机已保存");
+    } catch {
+      showToast("保存失败");
+    }
+  }
+
+  // ── 拖拽归组 / 框选 / 键盘导航 ───────────────────────────
+
+  function startHostDrag(
+    e: React.DragEvent<HTMLElement>,
+    p: Profile,
+  ) {
+    if (selectMode) {
+      e.preventDefault();
+      return;
+    }
+    const ids = selected.has(p.id) ? Array.from(selected) : [p.id];
+    setDragIds(ids);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", ids.join(","));
+  }
+
+  function endHostDrag() {
+    setDragIds([]);
+    setDropGroupId(null);
+  }
+
+  function allowDrop(e: React.DragEvent<HTMLElement>, groupId: string | null) {
+    if (dragIds.length === 0) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDropGroupId(groupId ?? "__root");
+  }
+
+  function dropOnGroup(e: React.DragEvent<HTMLElement>, groupId: string | null) {
+    e.preventDefault();
+    if (dragIds.length === 0) return;
+    const ids = dragIds;
+    endHostDrag();
+    void moveHostsTo(ids, groupId);
+  }
+
+  useEffect(() => {
+    if (!marquee) return;
+    function onMove(e: PointerEvent) {
+      const start = marqueeStart.current;
+      const content = contentRef.current;
+      if (!start || !content) return;
+      const rect = content.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      setMarquee({
+        x: Math.min(start.x, x),
+        y: Math.min(start.y, y),
+        w: Math.abs(x - start.x),
+        h: Math.abs(y - start.y),
+      });
+      const all = content.querySelectorAll<HTMLElement>(
+        ".vault-host-card[data-nav-id]",
+      );
+      const next = new Set<string>();
+      all.forEach((el) => {
+        const b = el.getBoundingClientRect();
+        const left = b.left - rect.left;
+        const top = b.top - rect.top;
+        if (
+          left < Math.max(start.x, x) &&
+          left + b.width > Math.min(start.x, x) &&
+          top < Math.max(start.y, y) &&
+          top + b.height > Math.min(start.y, y)
+        ) {
+          const id = el.dataset.navId;
+          if (!id) return;
+          if (el.classList.contains("vault-group-card")) {
+            const gid = id.slice(8);
+            if (gid !== "__ungrouped") setSelectedGroups((prev) => new Set(prev).add(gid));
+          } else {
+            next.add(id);
+          }
+        }
+      });
+      setSelected((prev) => new Set([...prev, ...next]));
+    }
+    function onUp() {
+      marqueeStart.current = null;
+      setMarquee(null);
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [marquee]);
+
+  function startMarquee(e: ReactPointerEvent<HTMLDivElement>) {
+    const target = e.target as Element | null;
+    if (
+      target?.closest(
+        ".vault-host-card, .vault-section-head, .vault-tree-head, .vault-breadcrumb, .vault-empty, button, input, select, textarea",
+      )
+    ) {
+      return;
+    }
+    if (e.button !== 0) return;
+    const content = contentRef.current;
+    if (!content) return;
+    const rect = content.getBoundingClientRect();
+    const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    marqueeStart.current = point;
+    setMarquee({ ...point, w: 0, h: 0 });
+    setSelectMode(true);
+    setViewMenu(false);
+    setSortMenu(false);
+    setTagMenu(false);
+  }
+
+  function handleContentKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape" && selectMode) {
+      exitSelectMode();
+      return;
+    }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "ArrowRight" && e.key !== "ArrowLeft") {
+      return;
+    }
+    const content = contentRef.current;
+    if (!content) return;
+    const cards = Array.from(
+      content.querySelectorAll<HTMLElement>(".vault-host-card"),
+    );
+    if (cards.length === 0) return;
+    const active = document.activeElement as HTMLElement | null;
+    const index = active ? cards.indexOf(active) : -1;
+    e.preventDefault();
+    const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1;
+    const next = cards[Math.max(0, Math.min(cards.length - 1, index + step))] ?? cards[0];
+    next.focus();
+  }
+
 
   function openComposer() {
     setComposerErr("");
     setComposer({
+      id: "",
       name: "",
       host: "",
       port: "22",
       credential_id: credentials[0]?.id ?? "",
       group_id: activeGroupId && activeGroupId !== "__ungrouped" ? activeGroupId : "",
+      tags: "",
     });
     setNewMenu(false);
+  }
+
+  function openComposerForEdit(p: Profile) {
+    setComposerErr("");
+    setComposer({
+      id: p.id,
+      name: p.name,
+      host: p.host,
+      port: String(p.port),
+      credential_id: p.credential_id,
+      group_id: p.group_id ?? "",
+      tags: (tags[p.id] ?? []).join(", "),
+    });
+    setCtxMenu(null);
+  }
+
+  function parseTags(raw: string): string[] {
+    return Array.from(
+      new Set(
+        raw
+          .split(/[,，]/)
+          .map((t) => t.trim())
+          .filter(Boolean),
+      ),
+    ).slice(0, 12);
   }
 
   async function saveComposer(andConnect: boolean) {
@@ -538,8 +1200,9 @@ export function VaultView({
     }
     setComposerBusy(true);
     setComposerErr("");
-    const profile: Profile = {
-      id: newId(),
+    const parsedTags = parseTags(d.tags);
+    const base: Profile = {
+      id: d.id || newId(),
       name: d.name.trim(),
       host: d.host.trim(),
       port: Number(d.port) || 22,
@@ -549,10 +1212,22 @@ export function VaultView({
       group_id: d.group_id || null,
     };
     try {
-      await api.createProfile(profile);
+      if (d.id) {
+        const existing = profiles.find((p) => p.id === d.id);
+        await api.updateProfile({
+          ...base,
+          bastion_profile_id: existing?.bastion_profile_id ?? null,
+          init_command: existing?.init_command ?? null,
+          algorithms: existing?.algorithms,
+        });
+      } else {
+        await api.createProfile(base);
+        setOrder((prev) => [...prev, base.id]);
+      }
+      setHostTags(base.id, parsedTags);
       setComposer(null);
       onDataChanged();
-      if (andConnect) onConnect(profile);
+      if (andConnect) onConnect(base);
     } catch (e) {
       setComposerErr(String(e));
     } finally {
@@ -566,19 +1241,27 @@ export function VaultView({
     const compact = view !== "grid";
     const isSelected = selected.has(p.id);
     const isPinned = pinnedIds.includes(p.id);
+    const ownTags = tags[p.id] ?? [];
     return (
       <div
         key={p.id}
+        data-nav-id={p.id}
         className={`vault-host-card${compact ? " list" : ""}${
           isSelected ? " selected" : ""
-        }`}
+        }${focusId === p.id ? " focused" : ""}`}
         role={selectMode ? "checkbox" : "button"}
         aria-checked={selectMode ? isSelected : undefined}
         tabIndex={0}
+        draggable={!selectMode}
+        onDragStart={(e) => startHostDrag(e, p)}
+        onDragEnd={endHostDrag}
+        onFocus={() => setFocusId(p.id)}
         onClick={() => handleCardClick(p)}
         onKeyDown={(e) => handleCardKey(e, p)}
         onContextMenu={(e) => openContextMenu(e, p)}
-        title={`${p.name} · ${subtitle(p)}`}
+        title={`${p.name} · ${fullSubtitle(p)}${
+          ownTags.length ? ` · 标签：${ownTags.join("、")}` : ""
+        }`}
       >
         {selectMode && (
           <span className="vault-host-check">
@@ -596,6 +1279,15 @@ export function VaultView({
         <span className="vault-host-card-main">
           <strong>{p.name}</strong>
           <span className="vault-host-card-sub">{subtitle(p)}</span>
+          {ownTags.length > 0 && (
+            <span className="vault-host-tags">
+              {ownTags.slice(0, 3).map((t) => (
+                <span key={t} className="vault-host-tag">
+                  {t}
+                </span>
+              ))}
+            </span>
+          )}
         </span>
         {!selectMode && (
           <button
@@ -603,7 +1295,7 @@ export function VaultView({
             title="编辑主机"
             onClick={(e) => {
               e.stopPropagation();
-              onEditProfile(p);
+              openComposerForEdit(p);
             }}
           >
             <Icon name="pencil" size={13} />
@@ -645,24 +1337,48 @@ export function VaultView({
 
   function groupCard(g: GroupTile) {
     const compact = view !== "grid";
+    const isSelected = selectedGroups.has(g.id);
+    const isDropTarget = dropGroupId === g.id;
+    const editable = g.id !== "__ungrouped";
     return (
       <div
         key={g.id}
-        className={`vault-host-card vault-group-card${compact ? " list" : ""}`}
-        role="button"
+        data-nav-id={`group:${g.id}`}
+        className={`vault-host-card vault-group-card${compact ? " list" : ""}${
+          isSelected ? " selected" : ""
+        }${isDropTarget ? " drop-target" : ""}`}
+        role={selectMode ? "checkbox" : "button"}
+        aria-checked={selectMode ? isSelected : undefined}
         tabIndex={0}
+        onDragOver={editable ? (e) => allowDrop(e, g.id) : undefined}
+        onDragLeave={() => setDropGroupId(null)}
+        onDrop={editable ? (e) => dropOnGroup(e, g.id) : undefined}
         onClick={() => {
+          if (selectMode) {
+            if (editable) toggleGroupSelect(g.id);
+            return;
+          }
           setActiveGroupId(g.id);
-          setSelected(new Set());
+          clearSelection();
         }}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
+          if (selectMode) {
+            if (editable) toggleGroupSelect(g.id);
+            return;
+          }
           setActiveGroupId(g.id);
-          setSelected(new Set());
+          clearSelection();
         }}
+        onContextMenu={(e) => openGroupMenu(e, g)}
         title={`进入分组 ${g.name}`}
       >
+        {selectMode && editable && (
+          <span className="vault-host-check">
+            <Icon name={isSelected ? "check-square" : "square"} size={18} />
+          </span>
+        )}
         <span className="nc-avatar lg group">
           <Icon name="folder" size={20} />
         </span>
@@ -670,6 +1386,18 @@ export function VaultView({
           <strong>{g.name}</strong>
           <span className="vault-host-card-sub">{g.count} 台主机</span>
         </span>
+        {!selectMode && editable && (
+          <button
+            className="vault-host-edit"
+            title="重命名分组"
+            onClick={(e) => {
+              e.stopPropagation();
+              setGroupDialog({ id: g.id, name: g.name });
+            }}
+          >
+            <Icon name="pencil" size={13} />
+          </button>
+        )}
         <span className="vault-host-card-go">
           <Icon name="chevron-right" size={14} />
         </span>
@@ -703,6 +1431,15 @@ export function VaultView({
             <Icon name="terminal" size={19} />
           </button>
           {!collapsed && <span className="vault-wordmark">termX</span>}
+          {!collapsed && (
+            <button
+              className="vault-collapse-btn"
+              title="收起导航"
+              onClick={() => setCollapsed(true)}
+            >
+              <Icon name="chevron-right" size={14} />
+            </button>
+          )}
         </div>
 
         <nav className="vault-nav">
@@ -768,11 +1505,10 @@ export function VaultView({
             </div>
             <button
               className={`vault-connect-btn${quick ? " primary" : ""}`}
-              disabled={!quick}
               title={
                 quick
                   ? `快速连接 ${quick.host}:${quick.port}`
-                  : "输入 user@host 或 ssh 命令后可快速连接"
+                  : "打开快速切换器，按名称 / 主机快速定位主机"
               }
               onClick={runQuickConnect}
             >
@@ -801,21 +1537,138 @@ export function VaultView({
                         onClick={() => {
                           setView(m);
                           if (m === "tree") setActiveGroupId(null);
-                          setSelected(new Set());
+                          clearSelection();
                           setViewMenu(false);
                         }}
                       >
                         <Icon name={viewIcon(m)} size={14} />
-                        {m === "grid" ? "网格" : m === "list" ? "列表" : "树"}
+                        {m === "grid" ? "网格" : m === "list" ? "列表" : "树形"}
                       </button>
                     ))}
+                    <div className="term-menu-sep" />
+                    <button
+                      className={clickBehavior === "connect" ? "active" : ""}
+                      onClick={() => {
+                        setClickBehavior("connect");
+                        setViewMenu(false);
+                      }}
+                    >
+                      <Icon name="terminal" size={14} />
+                      单击直接连接
+                    </button>
+                    <button
+                      className={clickBehavior === "select" ? "active" : ""}
+                      onClick={() => {
+                        setClickBehavior("select");
+                        setViewMenu(false);
+                      }}
+                    >
+                      <Icon name="check-square" size={14} />
+                      单击先选中
+                    </button>
                   </div>
                 )}
               </div>
-              <button className="vault-icon-btn" disabled title="标签筛选（尚未实现）">
-                <Icon name="tag" size={16} />
-                <Icon name="chevron-down" size={10} />
-              </button>
+              <div className="vault-view-wrap">
+                <button
+                  className={`vault-icon-btn${selectedTags.length ? " active" : ""}`}
+                  title={
+                    selectedTags.length
+                      ? `标签筛选：${selectedTags.join("、")}`
+                      : "标签筛选"
+                  }
+                  onClick={() => {
+                    setTagMenu((v) => !v);
+                    setViewMenu(false);
+                    setSortMenu(false);
+                  }}
+                >
+                  <Icon name="tag" size={16} />
+                  <Icon name="chevron-down" size={10} />
+                </button>
+                {tagMenu && (
+                  <div className="vault-view-menu vault-tag-menu vault-popmenu">
+                    <div className="vault-tag-search">
+                      <Icon name="search" size={13} />
+                      <input
+                        value={tagQuery}
+                        placeholder="搜索标签…"
+                        onChange={(e) => setTagQuery(e.target.value)}
+                      />
+                    </div>
+                    {(() => {
+                      const filtered = allTagNames.filter((t) =>
+                        t.toLowerCase().includes(tagQuery.trim().toLowerCase()),
+                      );
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="vault-tag-empty">
+                            暂无标签；可在主机右键菜单「标签…」里添加
+                          </div>
+                        );
+                      }
+                      return filtered.map((t) => (
+                        <div className="vault-tag-row" key={t}>
+                          {tagRename?.from === t ? (
+                            <input
+                              className="vault-tag-rename"
+                              autoFocus
+                              value={tagRename.value}
+                              onChange={(e) =>
+                                setTagRename({ from: t, value: e.target.value })
+                              }
+                              onBlur={() => renameTag(t, tagRename.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") renameTag(t, tagRename.value);
+                                if (e.key === "Escape") setTagRename(null);
+                              }}
+                            />
+                          ) : (
+                            <>
+                              <label className="vault-tag-check">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedTags.includes(t)}
+                                  onChange={() =>
+                                    setSelectedTags((prev) =>
+                                      prev.includes(t)
+                                        ? prev.filter((x) => x !== t)
+                                        : [...prev, t],
+                                    )
+                                  }
+                                />
+                                <span>{t}</span>
+                              </label>
+                              <button
+                                className="vault-tag-act"
+                                title="重命名标签"
+                                onClick={() => setTagRename({ from: t, value: t })}
+                              >
+                                <Icon name="pencil" size={12} />
+                              </button>
+                              <button
+                                className="vault-tag-act"
+                                title="删除标签"
+                                onClick={() => removeTag(t)}
+                              >
+                                <Icon name="trash" size={12} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ));
+                    })()}
+                    {selectedTags.length > 0 && (
+                      <button
+                        className="vault-tag-clear"
+                        onClick={() => setSelectedTags([])}
+                      >
+                        清空筛选（{selectedTags.length}）
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
               <div className="vault-view-wrap">
                 <button
                   className="vault-icon-btn"
@@ -850,8 +1703,11 @@ export function VaultView({
                 className={`vault-icon-btn${selectMode ? " active" : ""}`}
                 title={selectMode ? "退出多选" : "多选"}
                 onClick={() => {
-                  setSelectMode((v) => !v);
-                  setSelected(new Set());
+                  if (selectMode) exitSelectMode();
+                  else {
+                    setSelectMode(true);
+                    clearSelection();
+                  }
                 }}
               >
                 <Icon name="check-square" size={16} />
@@ -859,83 +1715,147 @@ export function VaultView({
             </div>
 
             {/* 新建主机：主按钮 + 下拉（分体）；打开右侧面板时这组操作折叠 */}
-            {!composer && (
-              <>
-                <div className="vault-new-split">
-                  <button className="vault-new-btn" onClick={openComposer}>
-                    <Icon name="plus" size={14} />
-                    新建主机
-                  </button>
-                  <button
-                    className="vault-new-btn-caret"
-                    title="更多新建方式"
-                    onClick={() => setNewMenu((v) => !v)}
-                  >
-                    <Icon name="chevron-down" size={14} />
-                  </button>
-                  {newMenu && (
-                    <div className="vault-view-menu vault-new-menu vault-popmenu">
-                      {newHostMenu.map((item) => (
-                        <button
-                          key={item.label}
-                          className={item.enabled ? "" : "disabled"}
-                          disabled={!item.enabled}
-                          onClick={() => {
-                            if (!item.enabled) return;
-                            setNewMenu(false);
+            <div
+              className={`vault-header-actions${composer ? " collapsed" : ""}`}
+            >
+              <div className="vault-new-split">
+                <button className="vault-new-btn" onClick={openComposer}>
+                  <Icon name="plus" size={14} />
+                  新建主机
+                </button>
+                <button
+                  className="vault-new-btn-caret"
+                  title="更多新建方式"
+                  onClick={() => setNewMenu((v) => !v)}
+                >
+                  <Icon name="chevron-down" size={14} />
+                </button>
+                {newMenu && (
+                  <div className="vault-view-menu vault-new-menu vault-popmenu">
+                    {newHostMenu.map((item) => (
+                      <button
+                        key={item.label}
+                        className={item.enabled ? "" : "disabled"}
+                        disabled={!item.enabled}
+                        onClick={() => {
+                          if (!item.enabled) return;
+                          setNewMenu(false);
+                          if (item.label === "新建分组") {
+                            setGroupDialog({ id: null, name: "" });
+                          } else {
                             onLocal();
-                          }}
-                          title={
-                            item.enabled ? item.label : `${item.label}（尚未实现）`
                           }
-                        >
-                          <Icon name={item.icon} size={14} />
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                        }}
+                        title={
+                          item.enabled ? item.label : `${item.label}（尚未实现）`
+                        }
+                      >
+                        <Icon name={item.icon} size={14} />
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-                <button className="vault-secondary-btn" onClick={onLocal}>
-                  <Icon name="terminal-square" size={14} />
-                  终端
-                </button>
-                <button className="vault-secondary-btn" onClick={onSerial}>
-                  <Icon name="usb" size={14} />
-                  串口
-                </button>
-              </>
-            )}
+              <button className="vault-secondary-btn" onClick={onLocal}>
+                <Icon name="terminal-square" size={14} />
+                终端
+              </button>
+              <button className="vault-secondary-btn" onClick={onSerial}>
+                <Icon name="usb" size={14} />
+                串口
+              </button>
+            </div>
           </header>
 
           {selectMode && (
             <div className="vault-select-bar">
-              <span className="vault-select-count">已选 {selected.size} 台主机</span>
+              <span className="vault-select-count">
+                已选 {selected.size} 台主机
+                {selectedGroups.size > 0 && `和 ${selectedGroups.size} 个分组`}
+              </span>
               <span className="vault-select-spacer" />
               <button onClick={selectAllVisible}>全选</button>
-              <button onClick={() => setSelected(new Set())}>取消</button>
+              <button onClick={clearSelection}>取消全选</button>
+              <button
+                disabled={selected.size === 0}
+                onClick={() => {
+                  profiles
+                    .filter((p) => selected.has(p.id))
+                    .forEach((p) => onConnect(p));
+                }}
+              >
+                连接（{selected.size}）
+              </button>
+              <div className="vault-view-wrap">
+                <button
+                  disabled={selected.size === 0}
+                  onClick={() => setMoveMenu((v) => !v)}
+                >
+                  移动到分组（{selected.size}）
+                </button>
+                {moveMenu && (
+                  <div className="vault-view-menu vault-move-menu vault-popmenu">
+                    <button
+                      onClick={() => {
+                        const ids = Array.from(selected);
+                        setMoveMenu(false);
+                        void moveHostsTo(ids, null);
+                      }}
+                    >
+                      未分组
+                    </button>
+                    {groups.map((g) => (
+                      <button
+                        key={g.id}
+                        onClick={() => {
+                          const ids = Array.from(selected);
+                          setMoveMenu(false);
+                          void moveHostsTo(ids, g.id);
+                        }}
+                      >
+                        <Icon name="folder" size={14} />
+                        {g.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 className="danger"
-                disabled={selected.size === 0}
+                disabled={selected.size === 0 && selectedGroups.size === 0}
                 onClick={() => void deleteSelected()}
               >
-                批量删除
+                删除（{selected.size + selectedGroups.size}）
+              </button>
+              <button className="vault-select-close" title="关闭" onClick={exitSelectMode}>
+                <Icon name="x" size={14} />
               </button>
             </div>
           )}
 
-          <div className="vault-content">
-            {/* 面包屑：树视图隐藏 */}
+          <div
+            className="vault-content"
+            ref={contentRef}
+            onPointerDown={startMarquee}
+            onKeyDown={handleContentKeyDown}
+          >
+            {/* 面包屑：树视图隐藏；根节点同时作为拖拽归组的投放点 */}
             {view !== "tree" && (
               <div className="vault-breadcrumb">
                 <button
-                  className="vault-all-hosts"
-                  title="全部主机"
+                  className={`vault-all-hosts${
+                    dropGroupId === "__root" ? " drop-target" : ""
+                  }`}
+                  title="全部主机（可拖拽主机到此移出分组）"
                   onClick={() => {
                     setActiveGroupId(null);
-                    setSelected(new Set());
+                    clearSelection();
                   }}
+                  onDragOver={(e) => allowDrop(e, null)}
+                  onDragLeave={() => setDropGroupId(null)}
+                  onDrop={(e) => dropOnGroup(e, null)}
                 >
                   全部主机
                 </button>
@@ -1025,6 +1945,28 @@ export function VaultView({
               <div className="vault-section-head">
                 <h3 className="vault-section-title">主机</h3>
                 <div className="vault-section-meta">
+                  {view === "tree" && atRoot && treeSections.length > 0 && (
+                    <div className="vault-tree-tools">
+                      <button
+                        className="vault-tree-tool"
+                        title="展开全部"
+                        onClick={() => setCollapsedGroups(new Set())}
+                      >
+                        <Icon name="chevron-down" size={13} />
+                      </button>
+                      <button
+                        className="vault-tree-tool"
+                        title="折叠全部"
+                        onClick={() =>
+                          setCollapsedGroups(
+                            new Set(treeSections.map((s) => s.id)),
+                          )
+                        }
+                      >
+                        <Icon name="chevron-right" size={13} />
+                      </button>
+                    </div>
+                  )}
                   <span>{scopedHosts.length} 条</span>
                   <span className="vault-live-pill">
                     {activeSessionCount} 个在线
@@ -1035,17 +1977,48 @@ export function VaultView({
               {view === "tree" ? (
                 atRoot ? (
                   <div className="vault-tree">
-                    {treeSections.map((section) => (
-                      <div className="vault-tree-group" key={section.id}>
-                        <div className="vault-tree-head">
-                          <Icon name="chevron-down" size={12} />
-                          <Icon name="folder" size={14} />
-                          <span>{section.name}</span>
-                          <span className="nc-count">{section.hosts.length}</span>
+                    {treeSections.map((section) => {
+                      const isFolded = collapsedGroups.has(section.id);
+                      return (
+                        <div className="vault-tree-group" key={section.id}>
+                          <div
+                            className={`vault-tree-head${
+                              dropGroupId === section.id ? " drop-target" : ""
+                            }${
+                              isFolded ? " folded" : ""
+                            }`}
+                            onClick={() =>
+                              setCollapsedGroups((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(section.id)) next.delete(section.id);
+                                else next.add(section.id);
+                                return next;
+                              })
+                            }
+                            onDragOver={
+                              section.id !== "__ungrouped"
+                                ? (e) => allowDrop(e, section.id)
+                                : undefined
+                            }
+                            onDragLeave={() => setDropGroupId(null)}
+                            onDrop={
+                              section.id !== "__ungrouped"
+                                ? (e) => dropOnGroup(e, section.id)
+                                : undefined
+                            }
+                          >
+                            <Icon
+                              name={isFolded ? "chevron-right" : "chevron-down"}
+                              size={12}
+                            />
+                            <Icon name="folder" size={14} />
+                            <span>{section.name}</span>
+                            <span className="nc-count">{section.hosts.length}</span>
+                          </div>
+                          {!isFolded && section.hosts.map((p) => hostCard(p))}
                         </div>
-                        {section.hosts.map((p) => hostCard(p))}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="vault-tree">
@@ -1086,11 +2059,28 @@ export function VaultView({
         </div>
 
         {composer && (
-          <aside className="vault-composer" data-section="vault-composer">
+          <>
+            <div
+              className="vault-composer-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              title="拖拽调整面板宽度"
+              style={{ right: panelWidth }}
+              onPointerDown={startPanelResize}
+            />
+            <aside
+              className={`vault-composer${panelResizing ? " resizing" : ""}`}
+              data-section="vault-composer"
+              style={{ width: panelWidth }}
+            >
             <header className="vault-composer-head">
               <div className="vault-composer-heading">
-                <span className="vault-composer-title">新建主机</span>
-                <span className="vault-composer-sub">保存后可在首页快速连接</span>
+                <span className="vault-composer-title">
+                  {composer.id ? "编辑主机" : "新建主机"}
+                </span>
+                <span className="vault-composer-sub">
+                  {composer.id ? "修改后立即生效" : "保存后可在首页快速连接"}
+                </span>
               </div>
               <button
                 className="nc-icon-btn"
@@ -1170,6 +2160,16 @@ export function VaultView({
                   ))}
                 </select>
               </label>
+              <label>
+                标签
+                <input
+                  value={composer.tags}
+                  placeholder="逗号分隔，例如 生产, 数据库"
+                  onChange={(e) =>
+                    setComposer({ ...composer, tags: e.target.value })
+                  }
+                />
+              </label>
             </div>
 
             <footer className="vault-composer-foot">
@@ -1188,7 +2188,8 @@ export function VaultView({
                 保存并连接
               </button>
             </footer>
-          </aside>
+            </aside>
+          </>
         )}
       </div>
 
@@ -1220,7 +2221,7 @@ export function VaultView({
             onClick={() => {
               const p = ctxMenu.profile;
               setCtxMenu(null);
-              onEditProfile(p);
+              openComposerForEdit(p);
             }}
           >
             <Icon name="pencil" size={14} />
@@ -1228,16 +2229,42 @@ export function VaultView({
           </button>
           <button
             onClick={() => {
+              const p = ctxMenu.profile;
+              setCtxMenu(null);
+              duplicateHost(p);
+            }}
+          >
+            <Icon name="copy" size={14} />
+            复制副本
+          </button>
+          <button
+            onClick={() => {
               copyHostname(ctxMenu.profile);
               setCtxMenu(null);
             }}
           >
-            <Icon name="copy" size={14} />
+            <Icon name="server" size={14} />
             复制主机名
           </button>
-          <button disabled title="尚未实现">
+          <button
+            onClick={() => {
+              const p = ctxMenu.profile;
+              setCtxMenu(null);
+              void copyCredentials(p);
+            }}
+          >
             <Icon name="clipboard-paste" size={14} />
             复制账密信息
+          </button>
+          <button
+            onClick={() => {
+              const p = ctxMenu.profile;
+              setCtxMenu(null);
+              setTagEditor(p.id);
+            }}
+          >
+            <Icon name="tag" size={14} />
+            标签…
           </button>
           <button onClick={() => togglePin(ctxMenu.profile.id)}>
             <Icon name="pin" size={14} />
@@ -1257,6 +2284,295 @@ export function VaultView({
           </button>
         </div>
       )}
+
+      {groupCtx && (
+        <div
+          className="term-context-menu vault-context-menu vault-popmenu"
+          style={{ left: groupCtx.x, top: groupCtx.y }}
+        >
+          <button
+            disabled
+            title="termX 分组暂为单层，暂不支持子分组"
+          >
+            <Icon name="folder" size={14} />
+            新建子分组
+          </button>
+          <button
+            onClick={() => {
+              const g = groupCtx.group;
+              setGroupCtx(null);
+              setGroupDialog({ id: g.id, name: g.name });
+            }}
+          >
+            <Icon name="pencil" size={14} />
+            分组设置
+          </button>
+          <div className="term-menu-sep" />
+          <button
+            className="danger"
+            onClick={() => {
+              const g = groupCtx.group;
+              setGroupCtx(null);
+              void deleteGroupById(g.id, g.name);
+            }}
+          >
+            <Icon name="trash" size={14} />
+            删除分组
+          </button>
+        </div>
+      )}
+
+      {tagEditor && (
+        <div className="vault-tag-editor vault-popmenu" data-section="tag-editor">
+          <div className="vault-tag-editor-head">
+            <span>标签</span>
+            <button
+              className="nc-icon-btn"
+              title="关闭"
+              onClick={() => setTagEditor(null)}
+            >
+              <Icon name="x" size={13} />
+            </button>
+          </div>
+          {(() => {
+            const id = tagEditor;
+            const own = tags[id] ?? [];
+            return (
+              <>
+                {allTagNames.length === 0 && (
+                  <p className="vault-tag-editor-hint">
+                    还没有标签，直接输入新标签后回车。
+                  </p>
+                )}
+                <div className="vault-tag-editor-list">
+                  {allTagNames.map((t) => (
+                    <label key={t} className="vault-tag-check">
+                      <input
+                        type="checkbox"
+                        checked={own.includes(t)}
+                        onChange={() =>
+                          setHostTags(
+                            id,
+                            own.includes(t)
+                              ? own.filter((x) => x !== t)
+                              : [...own, t],
+                          )
+                        }
+                      />
+                      <span>{t}</span>
+                    </label>
+                  ))}
+                </div>
+                <input
+                  className="vault-tag-editor-input"
+                  placeholder="新标签，回车添加"
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    const value = e.currentTarget.value.trim();
+                    if (!value) return;
+                    if (!own.includes(value)) setHostTags(id, [...own, value]);
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </>
+            );
+          })()}
+        </div>
+      )}
+
+      {switcher && (
+        <div className="vault-modal-mask" onClick={() => setSwitcher(false)}>
+          <div
+            className="vault-switcher"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="vault-switcher-head">
+              <Icon name="search" size={14} />
+              <input
+                autoFocus
+                value={switcherQuery}
+                placeholder="快速切换主机…"
+                onChange={(e) => setSwitcherQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setSwitcher(false);
+                  if (e.key === "Enter" && switcherHosts[0]) {
+                    connectFromSwitcher(switcherHosts[0]);
+                  }
+                }}
+              />
+              <span className="vault-switcher-hint">Esc</span>
+            </div>
+            <div className="vault-switcher-list">
+              {switcherHosts.length === 0 && (
+                <div className="vault-switcher-empty">没有匹配的主机</div>
+              )}
+              {switcherHosts.slice(0, 40).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => connectFromSwitcher(p)}
+                >
+                  <span className="nc-avatar sm" style={avatarStyle(p.name)}>
+                    {initial(p.name)}
+                  </span>
+                  <span className="vault-switcher-main">
+                    <strong>{p.name}</strong>
+                    <span>{fullSubtitle(p)}</span>
+                  </span>
+                  <Icon name="terminal" size={13} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {wizard && (
+        <div className="vault-modal-mask" onClick={() => setWizard(null)}>
+          <div
+            className="vault-wizard"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="vault-wizard-head">
+              <span>快速连接</span>
+              <button
+                className="nc-icon-btn"
+                title="关闭"
+                onClick={() => setWizard(null)}
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </header>
+            <div className="vault-wizard-body">
+              <p className="vault-wizard-target">
+                <Icon name="zap" size={14} />
+                {wizard.host}:{wizard.port}
+              </p>
+              <label>
+                保存名称
+                <input
+                  value={wizard.name}
+                  onChange={(e) => setWizard({ ...wizard, name: e.target.value })}
+                />
+              </label>
+              <label>
+                用户名
+                <input
+                  value={wizard.username}
+                  placeholder="root"
+                  onChange={(e) =>
+                    setWizard({ ...wizard, username: e.target.value })
+                  }
+                />
+              </label>
+              <label>
+                端口
+                <input
+                  value={wizard.port}
+                  inputMode="numeric"
+                  onChange={(e) =>
+                    setWizard({ ...wizard, port: e.target.value })
+                  }
+                />
+              </label>
+              <label>
+                凭据
+                <select
+                  value={wizard.credential_id}
+                  onChange={(e) =>
+                    setWizard({ ...wizard, credential_id: e.target.value })
+                  }
+                >
+                  <option value="">请选择…</option>
+                  {credentials.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}（{c.username}
+                      {c.type === "password" ? " · 密码" : c.type === "key" ? " · 私钥" : ""})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {credentials.length === 0 && (
+                <button className="vault-composer-link" onClick={onOpenManager}>
+                  还没有凭据，先到连接管理器创建
+                </button>
+              )}
+            </div>
+            <footer className="vault-wizard-foot">
+              <button
+                className="vault-secondary-btn"
+                onClick={() => void saveWizard(false)}
+              >
+                保存为主机
+              </button>
+              <button className="vault-new-btn" onClick={() => void saveWizard(true)}>
+                保存并连接
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {groupDialog && (
+        <div className="vault-modal-mask" onClick={() => setGroupDialog(null)}>
+          <div
+            className="vault-group-dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header>
+              <span>{groupDialog.id ? "分组设置" : "新建分组"}</span>
+              <button
+                className="nc-icon-btn"
+                title="关闭"
+                onClick={() => setGroupDialog(null)}
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </header>
+            <input
+              autoFocus
+              value={groupDialog.name}
+              placeholder="分组名称"
+              onChange={(e) =>
+                setGroupDialog({ ...groupDialog, name: e.target.value })
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void saveGroupDialog();
+                if (e.key === "Escape") setGroupDialog(null);
+              }}
+            />
+            <footer>
+              <button
+                className="vault-secondary-btn"
+                onClick={() => setGroupDialog(null)}
+              >
+                取消
+              </button>
+              <button className="vault-new-btn" onClick={() => void saveGroupDialog()}>
+                保存
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {marquee && (
+        <div
+          className="vault-marquee"
+          style={{
+            // marquee 的 x/y 是相对 .vault-content 的坐标，这里换算成视口坐标，
+            // 避免依赖未设置的 --vault-content-x/y 变量。
+            position: "fixed",
+            left:
+              (contentRef.current?.getBoundingClientRect().left ?? 0) + marquee.x,
+            top:
+              (contentRef.current?.getBoundingClientRect().top ?? 0) + marquee.y,
+            width: marquee.w,
+            height: marquee.h,
+          }}
+        />
+      )}
+
+      {toast && <div className="vault-toast">{toast}</div>}
     </section>
   );
 }
