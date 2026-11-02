@@ -159,6 +159,16 @@ pub fn list_shells() -> AppResult<Vec<String>> {
     Ok(pty::available_shells())
 }
 
+/// 本机「默认 shell」解析结果 —— 与 `pty_spawn` 完全同一套逻辑
+///（`local_shell` 设置优先，空则退回 `pty::default_shell()`），
+/// 供前端主机首页的本地终端卡显示真实 shell 名。
+#[tauri::command]
+pub fn default_shell(state: State<'_, AppState>) -> AppResult<String> {
+    let configured = crate::db::settings::get(&state.db, "local_shell")?
+        .filter(|s| !s.is_empty());
+    Ok(configured.unwrap_or_else(pty::default_shell))
+}
+
 /// Shell 设置页"刷新"按钮触发：用户装了新 shell 后不必重启 app。
 /// 同步重扫一遍（< 1ms），返回最新列表，前端直接覆盖下拉。
 #[tauri::command]

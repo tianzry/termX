@@ -75,8 +75,8 @@ export function TerminalConnectionProgress({
             <Icon name="loader" size={12} className="conn-spin" />
             <span>
               {isAwaitingUserInput
-                ? "等待用户输入…"
-                : `${timeLeft} 秒后超时`}
+                ? "等待用户输入"
+                : `将在 ${timeLeft}s 后超时`}
             </span>
           </>
         ) : status === "connected" ? (
@@ -106,7 +106,7 @@ export function TerminalConnectionProgress({
             {onRetry && (
               <button type="button" className="conn-btn conn-btn-primary" onClick={onRetry}>
                 <Icon name="play" size={12} />
-                {reconnectLabel ?? "重新连接"}
+                {reconnectLabel ?? "重新开始"}
               </button>
             )}
           </div>

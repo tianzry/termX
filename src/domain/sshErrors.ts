@@ -1,9 +1,10 @@
 /**
- * SSH 错误分类（对齐 netcatty createTerminalSessionStarters 的
- * `isAuthFailureMessage`）。
+ * SSH 错误分类与展示（对齐 netcatty createTerminalSessionStarters 的
+ * `isAuthFailureMessage`；R5：用户可见错误必须经本模块解析成中文）。
  *
- * termX 后端把 AppError 序列化成 `__rssh_err__|{"code":...}` 字符串；
- * 前端先解码出 code，再回退到文本匹配（russh / OpenSSH 服务端的原文）。
+ * termX 后端把 AppError 序列化成 `__rssh_err__|{"code":...,"params":...}`
+ * 信封字符串；前端先解码出 code + params，再映射为中文文案。任何情况下
+ * 都不把原始信封直接展示给用户。
  */
 
 export function decodeAppError(raw: string): { code?: string; params?: Record<string, unknown>; message: string } {
@@ -42,7 +43,96 @@ export function isAuthFailureMessage(raw: string): boolean {
   );
 }
 
-/** 取给用户看的错误文本：解码后的错误优先保留原文（含 code 便于排查）。 */
+function str(params: Record<string, unknown> | undefined, key: string): string {
+  const v = params?.[key];
+  return v === undefined || v === null ? "" : String(v);
+}
+
+/** code → 中文文案（params 插值）。与 src-tauri/src/error.rs 的 code 对齐。 */
+const ERROR_MESSAGES: Record<
+  string,
+  (params: Record<string, unknown> | undefined) => string
+> = {
+  // ── SSH 连接 ──
+  ssh_connect_failed: (p) => `SSH 连接失败：${str(p, "err")}`,
+  ssh_connect_timeout: (p) =>
+    `连接 ${str(p, "host")}:${str(p, "port")} 超时（${str(p, "secs")} 秒）。请检查网络或端口。`,
+  ssh_handshake_timeout: (p) =>
+    `与 ${str(p, "host")}:${str(p, "port")} 的 SSH 握手超时。`,
+  ssh_host_key_changed: (p) =>
+    `${str(p, "host")}:${str(p, "port")} 的主机密钥与记录不符，可能已被更换。`,
+  ssh_task_cancelled: () => "连接已取消。",
+  ssh_session_closed: () => "会话已关闭。",
+  ssh_disconnected: () => "已与主机断开连接。",
+  ssh_open_channel_failed: (p) => `打开通道失败：${str(p, "err")}`,
+  ssh_pty_request_failed: (p) => `请求终端（PTY）失败：${str(p, "err")}`,
+  ssh_shell_request_failed: (p) => `启动 Shell 失败：${str(p, "err")}`,
+  ssh_bastion_tunnel_failed: () => "堡垒机隧道建立失败。",
+  ssh_bastion_tunnel_timeout: () => "堡垒机隧道超时。",
+  plugin_exec_failed: (p) => `插件执行失败：${str(p, "err")}`,
+  // ── 认证 ──
+  ssh_auth_rejected: () => "认证被服务器拒绝。",
+  ssh_password_auth_failed: (p) => `密码认证失败：${str(p, "err")}`,
+  ssh_pubkey_auth_failed: () => "公钥认证失败。",
+  ssh_auth_failed: (p) =>
+    str(p, "err") ? `认证失败：${str(p, "err")}` : "认证失败。",
+  ssh_interactive_requires_terminal: () => "交互式认证需要终端输入。",
+  ssh_privkey_encrypted_no_ctx: () => "私钥已加密，但未提供解密上下文。",
+  ssh_passphrase_too_many: () => "私钥口令尝试次数过多。",
+  ssh_privkey_missing: () => "未找到私钥。",
+  ssh_rsa_sigalg_failed: (p) => `RSA 签名算法协商失败：${str(p, "err")}`,
+  ssh_agent_pageant_failed: (p) => `Pageant 不可用：${str(p, "err")}`,
+  ssh_agent_list_failed: (p) => `读取代理身份列表失败：${str(p, "err")}`,
+  ssh_agent_no_identity: () => "代理中没有可用身份。",
+  ssh_agent_all_rejected: () => "代理中的所有身份均被服务器拒绝。",
+  ssh_default_keys_not_found: () => "未在 ~/.ssh 找到默认密钥。",
+  ssh_kbi_start_failed: (p) => `启动交互式认证失败：${str(p, "err")}`,
+  ssh_kbi_response_failed: (p) => `交互式认证应答失败：${str(p, "err")}`,
+  ssh_user_cancelled_passphrase: () => "已取消输入私钥口令。",
+  ssh_user_cancelled_hostkey: () => "已取消主机密钥确认。",
+  // ── 堡垒机 ──
+  bastion_cycle: () => "堡垒机链路中检测到循环。",
+  bastion_too_many_hops: () => "堡垒机跳数过多。",
+  bastion_profile_not_found: (p) => `未找到堡垒机档案：${str(p, "id")}`,
+  bastion_cred_not_found: (p) => `未找到堡垒机凭据：${str(p, "name")}`,
+  // ── 资源缺失 ──
+  profile_not_found: (p) => `未找到主机档案：${str(p, "id")}`,
+  profile_cred_not_found: () => "未找到主机关联的凭据。",
+  credential_not_found: (p) => `未找到凭据：${str(p, "id")}`,
+  session_not_found: (p) => `会话不存在：${str(p, "id")}`,
+  ssh_session_not_found: () => "SSH 会话不存在或已结束。",
+  ssh_session_not_found_msg: () => "SSH 会话不存在或已结束。",
+  pty_not_found: () => "本地终端会话不存在。",
+  fwd_not_found: () => "端口转发会话不存在。",
+  fwd_profile_not_found: () => "未找到端口转发档案。",
+  fwd_cred_not_found: () => "未找到端口转发凭据。",
+  // ── 通用 ──
+  db_error: (p) => `数据库错误：${str(p, "err")}`,
+  io_error: (p) => `读写错误：${str(p, "err")}`,
+  lock_poisoned: () => "内部锁异常，请重试。",
+  name_empty: () => "名称不能为空。",
+  pty_op_failed: (p) => `本地终端操作失败：${str(p, "err")}`,
+  key_generation_failed: (p) => `生成密钥失败：${str(p, "error")}`,
+  label_required: () => "标签不能为空。",
+  private_key_required: () => "私钥内容不能为空。",
+  invalid_private_key: (p) => `无效的私钥：${str(p, "error")}`,
+  crypto_password_or_corrupted: () => "口令错误或数据已损坏。",
+  secret_decrypt_failed_or_wrong_key: () => "解密失败：口令错误或数据已损坏。",
+  serde_failed: (p) => `数据解析失败：${str(p, "err")}`,
+  fwd_session_closed: () => "端口转发会话已关闭。",
+  fwd_rule_stopped_unexpectedly: () => "端口转发规则意外停止。",
+};
+
+/**
+ * 取给用户看的错误文本（R5）：
+ * - 信封 → 按 code 映射中文；未知 code 回退 params.err/泛化文案；
+ * - 非信封 → 原样返回（前端本地文案或服务器原文）。
+ */
 export function userVisibleError(raw: string): string {
-  return raw;
+  const { code, params, message } = decodeAppError(raw);
+  if (!code) return message;
+  const render = ERROR_MESSAGES[code];
+  if (render) return render(params);
+  const detail = str(params, "err") || str(params, "error");
+  return detail ? `操作失败：${detail}` : "操作失败，请重试。";
 }

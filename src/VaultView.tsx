@@ -8,7 +8,7 @@
  * - 顶部 56px 工具栏：搜索（支持快速连接）/ 连接 / 视图 / 标签 / 排序 /
  *   多选 / 新建主机（分体按钮）/ 终端 / 串口。
  * - 内容区：「全部主机」面包屑（树视图隐藏）→ 已置顶 → 最近连接 →
- *   分组 → 主机（带条数与真实在线数）。
+ *   分组 → 主机（排除已置顶 / 最近，空则整节隐藏，对齐 Netcatty）。
  */
 
 import {
@@ -21,8 +21,16 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import * as api from "./backend/client";
-import type { Credential, Group, Profile } from "./backend/client";
+import type {
+  Credential,
+  CredentialType,
+  Group,
+  KnownHostEntry,
+  Profile,
+} from "./backend/client";
 import { newId } from "./workspaceModel";
+import { userVisibleError } from "./domain/sshErrors";
+import { shellDisplayName } from "./domain/shellName";
 import { Icon, type IconName } from "./ui/icons";
 import { useVaultHostMarquee } from "./useVaultHostMarquee";
 
@@ -32,12 +40,9 @@ interface Props {
   credentials: Credential[];
   /** 最近连接过的条目 id（SSH 档案 id 或 "__local"）。 */
   recentIds: string[];
-  /** 当前打开的终端会话数，用于「N 个在线」。 */
-  activeSessionCount: number;
   onConnect: (profile: Profile) => void;
   onLocal: () => void;
   onSerial: () => void;
-  onOpenManager: () => void;
   /** 新建 / 删除后刷新 App 侧列表。 */
   onDataChanged: () => void;
 }
@@ -61,6 +66,20 @@ const ORDER_KEY = "termx.vault.order.v1";
 const TAGS_KEY = "termx.vault.tags.v1";
 const CLICK_KEY = "termx.vault.click.v1";
 const HOST_PANEL_W_KEY = "termx.vault.hostpanel.v1";
+const KH_VIEW_KEY = "termx.vault.khView.v1";
+const KC_VIEW_KEY = "termx.vault.kcView.v1";
+
+/** 已知主机页排序（对齐 netcatty SortDropdown 的五种模式）。 */
+type KhSortMode = "manual" | "az" | "za" | "newest" | "oldest";
+const KH_SORT_LABEL: Record<KhSortMode, string> = {
+  manual: "手动顺序",
+  az: "A-z",
+  za: "Z-a",
+  newest: "从新到旧",
+  oldest: "从旧到新",
+};
+/** 对齐 netcatty RENDER_LIMIT：超出部分只提示、不渲染。 */
+const KH_RENDER_LIMIT = 100;
 const SIDEBAR_MIN = 208;
 const SIDEBAR_MAX = 320;
 const HOST_PANEL_MIN = 320;
@@ -68,8 +87,48 @@ const HOST_PANEL_MAX = 520;
 
 type GroupTile = { id: string; name: string; count: number };
 
+/** 登录方式（对齐 netcatty HostDetailsConnectionSections 的四个选项）。 */
+type AuthMethod = "auto" | "password" | "key" | "certificate";
+
+const AUTH_METHODS: Array<{
+  value: AuthMethod;
+  label: string;
+  hint: string;
+  enabled: boolean;
+}> = [
+  {
+    value: "auto",
+    label: "自动选择",
+    hint: "先尝试系统密钥和本地密钥，最后使用已保存的密码。",
+    enabled: true,
+  },
+  {
+    value: "password",
+    label: "仅密码",
+    hint: "只使用已保存的密码和交互式密码提示。",
+    enabled: true,
+  },
+  {
+    value: "key",
+    label: "密钥",
+    hint: "使用选中的密钥；如果同时保存了密码，可在失败后尝试密码。",
+    enabled: true,
+  },
+  {
+    value: "certificate",
+    label: "证书",
+    hint: "使用选中的 SSH 证书；termX 尚未移植证书认证。",
+    enabled: false,
+  },
+];
+
+const MFA_HINT = "适用于必须通过 keyboard-interactive 输入密码和 MFA 的服务器。";
+
+/** 凭据选择器类型（对齐 netcatty「+ 密钥 / 证书 / 本地密钥」菜单）。 */
+type CredPick = "key" | "certificate" | "localKeyFile" | null;
+
 type ComposerDraft = {
-  /** 为空时是新建，有值时是编辑既有主机。 */
+  /** 新建时预生成的 id（TOTP 等按 profile_id 落 SecretStore 需要稳定 id）。 */
   id: string;
   name: string;
   host: string;
@@ -78,7 +137,56 @@ type ComposerDraft = {
   group_id: string;
   /** 逗号分隔，落 localStorage 的标签表。 */
   tags: string;
+  auth_method: AuthMethod;
+  username: string;
+  /** 明文密码输入框内容；编辑已有凭据时留空 = 保持原 secret 不变。 */
+  password: string;
+  /** 关闭时密码只用于本次保存不入库（secret 传 null）。 */
+  save_password: boolean;
+  /** 打开 = keyboard-interactive 优先（MFA 服务器）。 */
+  mfa: boolean;
+  /** `~/.ssh` 下的私钥文件名（auth_method=key 时生效）。 */
+  key_file: string;
+  init_command: string;
+  // ── Netcatty 1:1 对齐新增（schema v33）──
+  sftp_protocol: "auto" | "sftp" | "scp";
+  sftp_sudo: boolean;
+  sftp_encoding: "auto" | "utf-8" | "gb18030";
+  icon_source: "auto" | "custom";
+  /** ICON_COLORS 的 value；"" = 自动。 */
+  icon_color: string;
+  totp_auto_submit: boolean;
+  totp_regex: string;
 };
+
+/** 登录方式 + MFA → termX Credential 类型。auto→agent（先系统密钥再本地密钥）。 */
+function effectiveCredType(d: ComposerDraft): CredentialType {
+  if (d.mfa) return "interactive";
+  switch (d.auth_method) {
+    case "password":
+      return "password";
+    case "key":
+      return "key";
+    default:
+      return "agent";
+  }
+}
+
+function authMethodOfCredential(c: Credential): {
+  auth: AuthMethod;
+  mfa: boolean;
+} {
+  switch (c.type) {
+    case "password":
+      return { auth: "password", mfa: false };
+    case "key":
+      return { auth: "key", mfa: false };
+    case "interactive":
+      return { auth: "password", mfa: true };
+    default:
+      return { auth: "auto", mfa: false };
+  }
+}
 
 const navItems: Array<{
   id: string;
@@ -88,21 +196,22 @@ const navItems: Array<{
 }> = [
   { id: "hosts", label: "主机", icon: "grid", enabled: true },
   { id: "monitor", label: "监控", icon: "activity" },
-  { id: "keys", label: "钥匙串", icon: "key" },
+  { id: "keys", label: "钥匙串", icon: "key", enabled: true },
   { id: "proxies", label: "代理", icon: "network" },
   { id: "port", label: "端口转发", icon: "transfer" },
   { id: "snippets", label: "脚本", icon: "file-code" },
   { id: "notes", label: "笔记", icon: "file-text" },
-  { id: "known-hosts", label: "已知主机", icon: "shield" },
+  { id: "known-hosts", label: "已知主机", icon: "shield", enabled: true },
   { id: "logs", label: "日志", icon: "history" },
 ];
 
-/** 新建主机下拉：本地终端、分组可用；导入 / 导出需后端支持，暂置灰。 */
+/** 新建主机下拉（对齐 Netcatty：本地终端 (CMD)/新建分组/导入/导出）。
+ * 本地终端、分组可用；导入 / 导出需后端支持，暂置灰。 */
 const newHostMenu: Array<{ label: string; icon: IconName; enabled?: boolean }> = [
-  { label: "本地终端（PTY）", icon: "terminal-square", enabled: true },
+  { label: "本地终端 (CMD)", icon: "terminal-square", enabled: true },
   { label: "新建分组", icon: "folder", enabled: true },
-  { label: "导入主机", icon: "transfer" },
-  { label: "导出主机", icon: "server" },
+  { label: "导入", icon: "upload" },
+  { label: "导出", icon: "download" },
 ];
 
 const SORT_LABEL: Record<SortMode, string> = {
@@ -136,6 +245,77 @@ function readView(): ViewMode {
     return "grid";
   }
 }
+
+function readKhView(): "grid" | "list" {
+  try {
+    return localStorage.getItem(KH_VIEW_KEY) === "list" ? "list" : "grid";
+  } catch {
+    return "grid";
+  }
+}
+
+function readKcView(): "grid" | "list" {
+  try {
+    return localStorage.getItem(KC_VIEW_KEY) === "list" ? "list" : "grid";
+  } catch {
+    return "grid";
+  }
+}
+
+/** 从公钥行首段推导密钥类型显示名（对齐 netcatty getKeyTypeDisplay）。 */
+function kcTypeOf(publicLine: string): string {
+  const head = publicLine.trim().split(/\s+/)[0] ?? "";
+  switch (head) {
+    case "ssh-ed25519":
+      return "ED25519";
+    case "ssh-rsa":
+      return "RSA";
+    case "ecdsa-sha2-nistp256":
+      return "ECDSA P-256";
+    case "ecdsa-sha2-nistp384":
+      return "ECDSA P-384";
+    case "ecdsa-sha2-nistp521":
+      return "ECDSA P-521";
+    case "ssh-dss":
+      return "DSA";
+    case "sk-ssh-ed25519@openssh.com":
+      return "ED25519-SK";
+    case "sk-ecdsa-sha2-nistp256@openssh.com":
+      return "ECDSA-SK";
+    default:
+      return head ? head.toUpperCase() : "KEY";
+  }
+}
+
+/** 钥匙串侧滑面板模式（对齐 netcatty panelStack 的四种密钥面板）。 */
+type KcMode = "import" | "generate" | "view" | "edit";
+const KC_PANEL_TITLE: Record<KcMode, string> = {
+  import: "新建密钥",
+  generate: "生成密钥",
+  view: "密钥详情",
+  edit: "编辑密钥",
+};
+
+interface KcDraft {
+  label: string;
+  privateKey: string;
+  publicKey: string;
+  passphrase: string;
+  savePassphrase: boolean;
+  algorithm: "ED25519" | "ECDSA" | "RSA";
+  /** RSA 位宽 / ECDSA 曲率（256/384/521）。 */
+  bits: number;
+}
+
+const KC_EMPTY_DRAFT: KcDraft = {
+  label: "",
+  privateKey: "",
+  publicKey: "",
+  passphrase: "",
+  savePassphrase: false,
+  algorithm: "ED25519",
+  bits: 4096,
+};
 
 function readSort(): SortMode {
   try {
@@ -284,11 +464,9 @@ export function VaultView({
   groups,
   credentials,
   recentIds,
-  activeSessionCount,
   onConnect,
   onLocal,
   onSerial,
-  onOpenManager,
   onDataChanged,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
@@ -332,7 +510,6 @@ export function VaultView({
     x: number;
     y: number;
   } | null>(null);
-  const [tagEditor, setTagEditor] = useState<string | null>(null);
   const [switcher, setSwitcher] = useState(false);
   const [switcherQuery, setSwitcherQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -347,6 +524,8 @@ export function VaultView({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
+  /** 本机默认 shell 命令（default_shell 命令，与 pty_spawn 同源），供本地卡显示名。 */
+  const [localShellCmd, setLocalShellCmd] = useState("");
 
   const {
     marqueeRect,
@@ -364,19 +543,86 @@ export function VaultView({
   const [composer, setComposer] = useState<ComposerDraft | null>(null);
   const [composerBusy, setComposerBusy] = useState(false);
   const [composerErr, setComposerErr] = useState("");
-  const [wizard, setWizard] = useState<{
-    host: string;
-    port: string;
-    username: string;
-    credential_id: string;
-    name: string;
+  const [showPassword, setShowPassword] = useState(false);
+  /** 编辑态：已保存密码以掩码 ••••• 展示，明文不进 input（对齐 Netcatty HostDetails）。 */
+  const [passMasked, setPassMasked] = useState(false);
+  const [keyFiles, setKeyFiles] = useState<string[]>([]);
+  /** 绑定凭据的原始 secret（getCredential 取回）；密码框留空时原样回填，避免误删。 */
+  const composerSecretRef = useRef<string | null>(null);
+  /** 「+ 密钥 / 证书 / 本地密钥」菜单与当前选择器类型。 */
+  const [credMenu, setCredMenu] = useState(false);
+  const [credPick, setCredPick] = useState<CredPick>(null);
+  const [credSearch, setCredSearch] = useState("");
+  /** 当前 composer 主机是否已配置 TOTP（secret 在 SecretStore，不落库）。 */
+  const [totpConfigured, setTotpConfigured] = useState(false);
+  const [totpDialog, setTotpDialog] = useState<{
+    secret: string;
+    autoSubmit: boolean;
+    regex: string;
   } | null>(null);
+  /** 测试连接对话框状态（对齐 netcatty HostConnectionTestDialog 文案）。 */
+  const [testState, setTestState] = useState<{
+    status: "connecting" | "success" | "failed";
+    seconds: number;
+    error: string;
+  } | null>(null);
+  const testCleanupRef = useRef<(() => void) | null>(null);
+
+  const [activeNav, setActiveNav] = useState("hosts");
+  const [knownHosts, setKnownHosts] = useState<KnownHostEntry[]>([]);
+  const [khLoading, setKhLoading] = useState(false);
+  const [khErr, setKhErr] = useState("");
+  const [khQuery, setKhQuery] = useState("");
+  const [khView, setKhView] = useState<"grid" | "list">(readKhView);
+  const [khSort, setKhSort] = useState<KhSortMode>("manual");
+  const [khViewMenu, setKhViewMenu] = useState(false);
+  const [khSortMenu, setKhSortMenu] = useState(false);
+  const [khScanning, setKhScanning] = useState(false);
+  /** 删除确认对话框目标（对齐 netcatty VaultDeleteConfirmDialog）。 */
+  const [khDelete, setKhDelete] = useState<KnownHostEntry | null>(null);
+  /** 卡片右键菜单（两项：转换为主机 / 删除）。 */
+  const [khCtx, setKhCtx] = useState<{
+    entry: KnownHostEntry;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  // ── 钥匙串页状态 ────────────────────────────────────────
+  const [kcView, setKcView] = useState<"grid" | "list">(readKcView);
+  const [kcQuery, setKcQuery] = useState("");
+  const [kcNewMenu, setKcNewMenu] = useState(false);
+  const [kcViewMenu, setKcViewMenu] = useState(false);
+  /** 侧滑面板：null = 关闭；id 仅 view/edit 模式携带。 */
+  const [kcPanel, setKcPanel] = useState<{ mode: KcMode; id: string | null } | null>(null);
+  const [kcDraft, setKcDraft] = useState<KcDraft>(KC_EMPTY_DRAFT);
+  const [kcShowPass, setKcShowPass] = useState(false);
+  const [kcBusy, setKcBusy] = useState(false);
+  const [kcErr, setKcErr] = useState("");
+  /** 删除确认对话框目标（对齐 netcatty VaultDeleteConfirmDialog）。 */
+  const [kcDelete, setKcDelete] = useState<Credential | null>(null);
+  /** 卡片右键菜单（复制公钥 / 编辑 / 删除）。 */
+  const [kcCtx, setKcCtx] = useState<{
+    cred: Credential;
+    x: number;
+    y: number;
+  } | null>(null);
+  /** 详情面板「复制公钥」后的 2s 勾选反馈（对齐 netcatty ViewKeyPanel）。 */
+  const [kcCopied, setKcCopied] = useState(false);
+  const kcFileRef = useRef<HTMLInputElement | null>(null);
 
   // ── 持久化 ──────────────────────────────────────────────
 
   useEffect(() => {
     persist(VIEW_KEY, view);
   }, [view]);
+
+  useEffect(() => {
+    persist(KH_VIEW_KEY, khView);
+  }, [khView]);
+
+  useEffect(() => {
+    persist(KC_VIEW_KEY, kcView);
+  }, [kcView]);
 
   useEffect(() => {
     persist(SORT_KEY, sort);
@@ -414,6 +660,20 @@ export function VaultView({
       return missing.length ? [...prev, ...missing] : prev;
     });
   }, [profiles]);
+
+  // 本地终端卡显示真实默认 shell 名（对齐 Netcatty「Git Bash / Git Bash」）。
+  useEffect(() => {
+    let alive = true;
+    api
+      .defaultShell()
+      .then((s) => {
+        if (alive) setLocalShellCmd(s);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // ── 侧栏拖拽调宽 ────────────────────────────────────────
 
@@ -489,8 +749,14 @@ export function VaultView({
     newMenu ||
     tagMenu ||
     moveMenu ||
+    khViewMenu ||
+    khSortMenu ||
+    kcNewMenu ||
+    kcViewMenu ||
     Boolean(ctxMenu) ||
-    Boolean(groupCtx);
+    Boolean(groupCtx) ||
+    Boolean(khCtx) ||
+    Boolean(kcCtx);
 
   useEffect(() => {
     if (!popupOpen) return;
@@ -502,8 +768,14 @@ export function VaultView({
       setNewMenu(false);
       setTagMenu(false);
       setMoveMenu(false);
+      setKhViewMenu(false);
+      setKhSortMenu(false);
+      setKcNewMenu(false);
+      setKcViewMenu(false);
       setCtxMenu(null);
       setGroupCtx(null);
+      setKhCtx(null);
+      setKcCtx(null);
       setTagRename(null);
     }
     function onKey(e: KeyboardEvent) {
@@ -513,8 +785,14 @@ export function VaultView({
       setNewMenu(false);
       setTagMenu(false);
       setMoveMenu(false);
+      setKhViewMenu(false);
+      setKhSortMenu(false);
+      setKcNewMenu(false);
+      setKcViewMenu(false);
       setCtxMenu(null);
       setGroupCtx(null);
+      setKhCtx(null);
+      setKcCtx(null);
       setTagRename(null);
     }
     window.addEventListener("mousedown", onPointerDown);
@@ -682,6 +960,27 @@ export function VaultView({
   );
 
   const atRoot = activeGroupId === null;
+
+  // 对齐 Netcatty useVaultHostCollections：根部「主机」分区排除「已置顶」与
+  // 「最近连接」里已出现的条目（visibleDisplayedHosts）；剩余为空且其它分区
+  // 有内容时整节隐藏（shouldHideEmptyRootHostsSection）。
+  const recentIdSet = new Set(recentProfiles.map((p) => p.id));
+  const rootRemaining =
+    atRoot && !keyword
+      ? scopedHosts.filter(
+          (p) => !pinnedIds.includes(p.id) && !recentIdSet.has(p.id),
+        )
+      : scopedHosts;
+  const hideRootHostsSection =
+    atRoot &&
+    view !== "tree" &&
+    !keyword &&
+    profiles.length > 0 &&
+    rootRemaining.length === 0 &&
+    (pinnedHosts.length > 0 ||
+      recentProfiles.length > 0 ||
+      showLocalRecently ||
+      groupTiles.length > 0);
 
   const switcherHosts = sortHosts(visible).filter((p) => {
     const q = switcherQuery.trim().toLowerCase();
@@ -978,47 +1277,23 @@ export function VaultView({
       openQuickSwitcher();
       return;
     }
-    const matched = credentials.find(
-      (c) => c.username === quick.username,
+    // 对齐 Netcatty 运行版：快速连接 = 打开 composer「主机详情」预填，
+    // 不再有独立「快速连接」模态。
+    openComposer();
+    setComposer((d) =>
+      d
+        ? {
+            ...d,
+            name: quick.username
+              ? `${quick.username}@${quick.host}`
+              : quick.host,
+            host: quick.host,
+            port: String(quick.port),
+            username: quick.username || d.username,
+          }
+        : d,
     );
-    setWizard({
-      host: quick.host,
-      port: String(quick.port),
-      username: quick.username ?? (matched?.username ?? ""),
-      credential_id: matched?.id ?? credentials[0]?.id ?? "",
-      name: quick.username ? `${quick.username}@${quick.host}` : quick.host,
-    });
-  }
-
-  async function saveWizard(andConnect: boolean) {
-    const w = wizard;
-    if (!w) return;
-    if (!w.credential_id) {
-      showToast("请先选择凭据，或到连接管理器创建");
-      return;
-    }
-    const profile: Profile = {
-      id: newId(),
-      name: w.name.trim() || `${w.username || "user"}@${w.host}`,
-      host: w.host,
-      port: Number(w.port) || 22,
-      credential_id: w.credential_id,
-      bastion_profile_id: null,
-      init_command: null,
-      group_id:
-        activeGroupId && activeGroupId !== "__ungrouped" ? activeGroupId : null,
-    };
-    try {
-      await api.createProfile(profile);
-      setOrder((prev) => [...prev, profile.id]);
-      setWizard(null);
-      setQuery("");
-      onDataChanged();
-      if (andConnect) onConnect(profile);
-      else showToast("主机已保存");
-    } catch {
-      showToast("保存失败");
-    }
+    setQuery("");
   }
 
   // ── 拖拽归组 / 框选 / 键盘导航 ───────────────────────────
@@ -1082,30 +1357,135 @@ export function VaultView({
 
   function openComposer() {
     setComposerErr("");
+    setShowPassword(false);
+    setPassMasked(false);
+    composerSecretRef.current = null;
+    setCredMenu(false);
+    setCredPick(null);
+    setCredSearch("");
+    setTotpConfigured(false);
     setComposer({
-      id: "",
+      id: newId(),
       name: "",
       host: "",
       port: "22",
-      credential_id: credentials[0]?.id ?? "",
+      credential_id: "",
       group_id: activeGroupId && activeGroupId !== "__ungrouped" ? activeGroupId : "",
       tags: "",
+      auth_method: "auto",
+      username: "root",
+      password: "",
+      save_password: true,
+      mfa: false,
+      key_file: "",
+      init_command: "",
+      sftp_protocol: "auto",
+      sftp_sudo: false,
+      sftp_encoding: "auto",
+      icon_source: "auto",
+      icon_color: "",
+      totp_auto_submit: true,
+      totp_regex: "",
     });
     setNewMenu(false);
   }
 
   function openComposerForEdit(p: Profile) {
     setComposerErr("");
+    setShowPassword(false);
+    setPassMasked(false);
+    composerSecretRef.current = null;
+    setCredMenu(false);
+    setCredSearch("");
+    const cred = credentials.find((c) => c.id === p.credential_id);
+    const { auth, mfa } = cred
+      ? authMethodOfCredential(cred)
+      : { auth: "auto" as AuthMethod, mfa: false };
+    // 编辑既有主机：凭据选择器按已绑凭据类型展开（密钥）。
+    setCredPick(cred?.type === "key" ? "key" : null);
     setComposer({
       id: p.id,
       name: p.name,
       host: p.host,
       port: String(p.port),
-      credential_id: p.credential_id,
+      credential_id: cred ? p.credential_id : "",
       group_id: p.group_id ?? "",
       tags: (tags[p.id] ?? []).join(", "),
+      auth_method: auth,
+      username: cred?.username ?? "",
+      password: "",
+      save_password: true,
+      mfa,
+      key_file: "",
+      init_command: p.init_command ?? "",
+      sftp_protocol:
+        p.sftp_protocol === "sftp" || p.sftp_protocol === "scp"
+          ? p.sftp_protocol
+          : "auto",
+      sftp_sudo: p.sftp_sudo ?? false,
+      sftp_encoding:
+        p.sftp_encoding === "utf-8" || p.sftp_encoding === "gb18030"
+          ? p.sftp_encoding
+          : "auto",
+      icon_source: p.icon_source === "custom" ? "custom" : "auto",
+      icon_color: p.icon_color ?? "",
+      totp_auto_submit: p.totp_auto_submit ?? true,
+      totp_regex: p.totp_regex ?? "",
     });
+    if (cred) {
+      // 取回原 secret：密码框留空时原样回填；已有保存密码则显示掩码（D7）。
+      void api
+        .getCredential(cred.id)
+        .then((full) => {
+          composerSecretRef.current = full.secret;
+          if (
+            (cred.type === "password" || cred.type === "interactive") &&
+            full.secret
+          ) {
+            setPassMasked(true);
+          }
+        })
+        .catch(() => {});
+    }
+    // TOTP 配置状态（secret 本体不进前端，除非打开设置对话框）。
+    void api
+      .getProfileTotp(p.id)
+      .then((s) => setTotpConfigured(Boolean(s)))
+      .catch(() => setTotpConfigured(false));
     setCtxMenu(null);
+  }
+
+  /** 清除已绑定身份：保留用户名，改走「新建凭据」路径。 */
+  function clearComposerIdentity() {
+    composerSecretRef.current = null;
+    setPassMasked(false);
+    setComposer((d) => (d ? { ...d, credential_id: "", password: "" } : d));
+  }
+
+  function bindComposerCredential(id: string) {
+    const cred = credentials.find((c) => c.id === id);
+    if (!cred) return;
+    const { auth, mfa } = authMethodOfCredential(cred);
+    composerSecretRef.current = null;
+    setPassMasked(false);
+    setComposer((d) =>
+      d
+        ? {
+            ...d,
+            credential_id: id,
+            username: cred.username,
+            auth_method: auth,
+            mfa,
+            password: "",
+          }
+        : d,
+    );
+    void api
+      .getCredential(id)
+      .then((full) => {
+        composerSecretRef.current = full.secret;
+      })
+      .catch(() => {});
   }
 
   function parseTags(raw: string): string[] {
@@ -1119,37 +1499,95 @@ export function VaultView({
     ).slice(0, 12);
   }
 
-  async function saveComposer(andConnect: boolean) {
-    const d = composer;
-    if (!d) return;
+  /**
+   * 校验并落库当前草稿，返回保存后的 Profile；失败返回 null（错误写 composerErr）。
+   * 「保存」与「测试连接」共用，保证两条路径的校验 / 凭据 upsert 完全一致。
+   */
+  async function persistComposerDraft(
+    d: ComposerDraft,
+  ): Promise<Profile | null> {
     if (!d.name.trim() || !d.host.trim()) {
       setComposerErr("名称与主机为必填");
-      return;
+      return null;
     }
-    if (!d.credential_id) {
-      setComposerErr("请选择凭据；没有凭据时先打开连接管理器创建");
-      return;
+    const port = Number(d.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setComposerErr("端口需在 1–65535 之间");
+      return null;
+    }
+    if (d.auth_method === "certificate") {
+      setComposerErr("证书认证尚未移植，请选择其他登录方式");
+      return null;
+    }
+    const effType = effectiveCredType(d);
+    const username = d.username.trim();
+    if (!d.credential_id && !username) {
+      setComposerErr("请填写用户名");
+      return null;
+    }
+    if (effType === "key" && !d.key_file && !composerSecretRef.current) {
+      setComposerErr("请选择本地密钥");
+      return null;
     }
     setComposerBusy(true);
     setComposerErr("");
-    const parsedTags = parseTags(d.tags);
-    const base: Profile = {
-      id: d.id || newId(),
-      name: d.name.trim(),
-      host: d.host.trim(),
-      port: Number(d.port) || 22,
-      credential_id: d.credential_id,
-      bastion_profile_id: null,
-      init_command: null,
-      group_id: d.group_id || null,
-    };
     try {
-      if (d.id) {
+      // ── 凭据 upsert（先于 Profile，保证连接能解析到新凭据）──
+      let secret: string | null = null;
+      if (effType === "password" || effType === "interactive") {
+        if (d.password) secret = d.save_password ? d.password : null;
+        else secret = d.save_password ? composerSecretRef.current : null; // 关「保存密码」= 删除已存口令
+      } else if (effType === "key") {
+        secret = d.key_file
+          ? await api.readDefaultKeyFile(d.key_file)
+          : composerSecretRef.current;
+      }
+      let credentialId = d.credential_id;
+      if (!credentialId) {
+        credentialId = newId();
+        await api.createCredential({
+          id: credentialId,
+          name: `${username}@${d.host.trim()}`,
+          username,
+          type: effType,
+          secret,
+          save_to_remote: false,
+        });
+      } else {
+        const existing = credentials.find((c) => c.id === credentialId);
+        await api.updateCredential({
+          id: credentialId,
+          name: existing?.name ?? d.name.trim(),
+          username: username || existing?.username || "",
+          type: effType,
+          secret,
+          save_to_remote: existing?.save_to_remote ?? false,
+        });
+      }
+      const parsedTags = parseTags(d.tags);
+      const base: Profile = {
+        id: d.id,
+        name: d.name.trim(),
+        host: d.host.trim(),
+        port,
+        credential_id: credentialId,
+        bastion_profile_id: null,
+        init_command: d.init_command.trim() || null,
+        group_id: d.group_id || null,
+        sftp_protocol: d.sftp_protocol,
+        sftp_sudo: d.sftp_sudo,
+        sftp_encoding: d.sftp_encoding,
+        icon_source: d.icon_source,
+        icon_color: d.icon_color || null,
+        totp_auto_submit: d.totp_auto_submit,
+        totp_regex: d.totp_regex.trim() || null,
+      };
+      const isEdit = profiles.some((p) => p.id === d.id);
+      if (isEdit) {
         const existing = profiles.find((p) => p.id === d.id);
         await api.updateProfile({
           ...base,
           bastion_profile_id: existing?.bastion_profile_id ?? null,
-          init_command: existing?.init_command ?? null,
           algorithms: existing?.algorithms,
         });
       } else {
@@ -1157,14 +1595,1216 @@ export function VaultView({
         setOrder((prev) => [...prev, base.id]);
       }
       setHostTags(base.id, parsedTags);
-      setComposer(null);
-      onDataChanged();
-      if (andConnect) onConnect(base);
+      return base;
     } catch (e) {
-      setComposerErr(String(e));
+      setComposerErr(userVisibleError(String(e)));
+      return null;
     } finally {
       setComposerBusy(false);
     }
+  }
+
+  async function saveComposer() {
+    const d = composer;
+    if (!d) return;
+    const saved = await persistComposerDraft(d);
+    if (!saved) return;
+    setComposer(null);
+    onDataChanged();
+  }
+
+  // ── 测试连接（对齐 netcatty HostConnectionTestDialog）─────────────
+
+  function stopConnectionTest() {
+    testCleanupRef.current?.();
+    testCleanupRef.current = null;
+    setTestState(null);
+  }
+
+  /** 先落库草稿（新建 / 更新），再走真实 ssh_connect，进度事件驱动状态机。 */
+  async function startConnectionTest() {
+    const d = composer;
+    if (!d || testState) return;
+    const saved = await persistComposerDraft(d);
+    if (!saved) return;
+    onDataChanged();
+    const sessionId = newId();
+    let settled = false;
+    let seconds = 0;
+    let unlistenFn: (() => void) | null = null;
+    setTestState({ status: "connecting", seconds: 0, error: "" });
+    // 对齐 netcatty hostConnectionTest 默认 deadline：
+    // TEST_TCP_CONNECT_TIMEOUT_MS(8s) + TEST_AUTH_READY_TIMEOUT_MS(15s) + TEST_DEADLINE_GRACE_MS(2s)。
+    const timer = window.setInterval(() => {
+      seconds += 1;
+      setTestState((s) =>
+        s && s.status === "connecting" ? { ...s, seconds } : s,
+      );
+      if (seconds >= 25) fail("连接超时");
+    }, 1000);
+    function finish(status: "success" | "failed", error: string) {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(timer);
+      unlistenFn?.();
+      void api.sshDisconnect(sessionId).catch(() => {});
+      setTestState({ status, seconds, error });
+    }
+    function fail(error: string) {
+      finish("failed", error);
+    }
+    unlistenFn = await api
+      .onSshProgress(sessionId, (ev) => {
+        if (ev.status === "error")
+          fail(userVisibleError(ev.error ?? "连接失败。"));
+        else if (ev.status === "connected" || ev.status === "shell")
+          finish("success", "");
+      })
+      .catch(() => () => {});
+    testCleanupRef.current = () => {
+      window.clearInterval(timer);
+      unlistenFn?.();
+      void api.sshDisconnect(sessionId).catch(() => {});
+    };
+    try {
+      await api.sshConnect(saved.id, 80, 24, sessionId);
+    } catch (e) {
+      fail(userVisibleError(String(e)));
+    }
+  }
+
+  // ── TOTP 验证器（对齐 netcatty「设置验证器」对话框）──────────────
+
+  function openTotpDialog() {
+    const d = composer;
+    if (!d) return;
+    setTotpDialog({
+      secret: "",
+      autoSubmit: d.totp_auto_submit,
+      regex: d.totp_regex,
+    });
+    if (totpConfigured) {
+      // 已配置：回填现有密钥便于查看 / 替换。
+      void api
+        .getProfileTotp(d.id)
+        .then((s) =>
+          setTotpDialog((cur) => (cur ? { ...cur, secret: s ?? "" } : cur)),
+        )
+        .catch(() => {});
+    }
+  }
+
+  /** 从 otpauth URI 提取 secret 参数；非 URI 原样返回（视为 Base32 密钥）。 */
+  function parseTotpInput(raw: string): string | null {
+    const text = raw.trim();
+    if (!text) return null;
+    if (/^otpauth:\/\//i.test(text)) {
+      if (/\/hotp\//i.test(text)) return null; // HOTP 不支持
+      const m = /[?&]secret=([a-z2-7=]+)/i.exec(text);
+      return m ? (m[1] ?? "") : null;
+    }
+    return text;
+  }
+
+  async function saveTotpDialog() {
+    const d = composer;
+    const dlg = totpDialog;
+    if (!d || !dlg) return;
+    const secret = parseTotpInput(dlg.secret);
+    if (!secret) {
+      setComposerErr("无法从该内容读取 TOTP 密钥。");
+      return;
+    }
+    try {
+      await api.setProfileTotp(d.id, secret);
+      setComposer({
+        ...d,
+        totp_auto_submit: dlg.autoSubmit,
+        totp_regex: dlg.regex,
+      });
+      setTotpConfigured(true);
+      setComposerErr("");
+      setTotpDialog(null);
+    } catch (e) {
+      setComposerErr(userVisibleError(String(e)));
+    }
+  }
+
+  async function removeTotp() {
+    const d = composer;
+    if (!d) return;
+    if (!window.confirm("移除验证器？这台主机将不再保存这个 TOTP 密钥。"))
+      return;
+    try {
+      await api.setProfileTotp(d.id, null);
+      setTotpConfigured(false);
+      setComposer({ ...d, totp_regex: "" });
+    } catch (e) {
+      setComposerErr(userVisibleError(String(e)));
+    }
+  }
+
+  // ── 已知主机管理 ────────────────────────────────────────
+
+  function loadKnownHosts() {
+    setKhLoading(true);
+    setKhErr("");
+    api
+      .knownHostsList()
+      .then(setKnownHosts)
+      .catch((e) => setKhErr(userVisibleError(String(e))))
+      .finally(() => setKhLoading(false));
+  }
+
+  useEffect(() => {
+    if (activeNav === "known-hosts") loadKnownHosts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNav]);
+
+  const composerOpen = composer !== null;
+  /** composer 是否为编辑既有主机（标题 / 身份 chip 显隐据此）。 */
+  const isEditComposer =
+    composer !== null && profiles.some((p) => p.id === composer.id);
+  /** 已绑定凭据类型：绑定密钥时隐藏内联密码框（证书凭据尚未移植）。 */
+  const boundCredType = composer?.credential_id
+    ? credentials.find((c) => c.id === composer.credential_id)?.type
+    : undefined;
+  const composerPasswordVisible = boundCredType !== "key";
+  useEffect(() => {
+    if (!composerOpen) return;
+    let alive = true;
+    api
+      .listSshKeyFiles()
+      .then((f) => {
+        if (alive) setKeyFiles(f);
+      })
+      .catch(() => {
+        if (alive) setKeyFiles([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [composerOpen]);
+
+  /** 删除走确认对话框（对齐 netcatty VaultDeleteConfirmDialog），不用 window.confirm。 */
+  function confirmDeleteKnownHost() {
+    const entry = khDelete;
+    if (!entry) return;
+    setKhDelete(null);
+    api
+      .knownHostsRemove(entry.host, entry.port)
+      .then((n) => {
+        showToast(n > 0 ? `已移除 ${n} 条记录` : "没有找到匹配条目");
+        loadKnownHosts();
+      })
+      .catch((e) => setKhErr(userVisibleError(String(e))));
+  }
+
+  /** 「扫描系统」：重读 ~/.ssh/known_hosts（列表本身即系统文件）。 */
+  async function scanSystemKnownHosts() {
+    setKhScanning(true);
+    try {
+      const count = await api.knownHostsScanSystem();
+      if (count === null) showToast("未找到系统 known_hosts 文件。");
+      else if (count === 0) showToast("known_hosts 中没有可用条目。");
+      else showToast(`已扫描系统 known_hosts，共 ${count} 条。`);
+      loadKnownHosts();
+    } catch (e) {
+      showToast(`扫描系统 known_hosts 失败：${userVisibleError(String(e))}`);
+    } finally {
+      setKhScanning(false);
+    }
+  }
+
+  /** 「导入文件」：选外部 known_hosts 去重合并进系统文件。 */
+  async function importKnownHostsFile() {
+    let path: string | null = null;
+    try {
+      path = await api.sftpPickOpenPath();
+    } catch (e) {
+      setKhErr(userVisibleError(String(e)));
+      return;
+    }
+    if (!path) return;
+    try {
+      const n = await api.knownHostsImportFile(path);
+      showToast(n > 0 ? `已导入 ${n} 个新主机。` : "没有发现新的主机。");
+      loadKnownHosts();
+    } catch (e) {
+      setKhErr(userVisibleError(String(e)));
+    }
+  }
+
+  /** 对齐 netcatty「转换为 host」：label=主机名、用户名留空、自动认证。 */
+  function convertKnownHostToProfile(entry: KnownHostEntry) {
+    const credId = newId();
+    const profile: Profile = {
+      id: newId(),
+      name: entry.host,
+      host: entry.host,
+      port: entry.port,
+      credential_id: credId,
+      bastion_profile_id: null,
+      init_command: null,
+      group_id: null,
+    };
+    api
+      .createCredential({
+        id: credId,
+        name: `${entry.host}（已知主机）`,
+        username: "",
+        type: "agent",
+        secret: null,
+        save_to_remote: false,
+      })
+      .then(() => api.createProfile(profile))
+      .then(() => {
+        setOrder((prev) => [...prev, profile.id]);
+        onDataChanged();
+        showToast("已转换为主机档案");
+      })
+      .catch((e) => setKhErr(userVisibleError(String(e))));
+  }
+
+  // ── 钥匙串页动作（对齐 netcatty KeychainManager） ─────────
+
+  function openKcImport() {
+    setKcDraft({ ...KC_EMPTY_DRAFT });
+    setKcShowPass(false);
+    setKcErr("");
+    setKcPanel({ mode: "import", id: null });
+  }
+
+  function openKcGenerate() {
+    setKcDraft({ ...KC_EMPTY_DRAFT });
+    setKcShowPass(false);
+    setKcErr("");
+    setKcPanel({ mode: "generate", id: null });
+  }
+
+  function openKcView(cred: Credential) {
+    setKcErr("");
+    setKcCopied(false);
+    setKcPanel({ mode: "view", id: cred.id });
+  }
+
+  /** 编辑需要私钥全文（列表接口不返回 secret），用 getCredential 补全。 */
+  function openKcEdit(cred: Credential) {
+    setKcErr("");
+    setKcDraft({ ...KC_EMPTY_DRAFT, label: cred.name, publicKey: cred.username });
+    setKcPanel({ mode: "edit", id: cred.id });
+    api
+      .getCredential(cred.id)
+      .then((full) =>
+        setKcDraft((prev) => ({ ...prev, privateKey: full.secret ?? "" })),
+      )
+      .catch((e) => setKcErr(userVisibleError(String(e))));
+  }
+
+  function closeKcPanel() {
+    setKcPanel(null);
+    setKcDraft(KC_EMPTY_DRAFT);
+    setKcShowPass(false);
+    setKcErr("");
+  }
+
+  /** 导入面板读文件：内容进私钥框，文件名（去扩展名）做默认 Label。 */
+  function kcReadFile(file: File) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content =
+        typeof e.target?.result === "string" ? e.target.result : "";
+      if (!content) return;
+      const label = file.name.replace(/\.(pem|key|pub|ppk)$/i, "");
+      setKcDraft((prev) => ({
+        ...prev,
+        privateKey: content,
+        label: prev.label || label,
+      }));
+    };
+    reader.readAsText(file);
+  }
+
+  async function saveKcImport() {
+    const label = kcDraft.label.trim();
+    const privateKey = kcDraft.privateKey.trim();
+    if (!label || !privateKey) {
+      setKcErr("Label 和私钥为必填项");
+      return;
+    }
+    setKcBusy(true);
+    setKcErr("");
+    try {
+      const publicKey = kcDraft.publicKey.trim();
+      await api.keychainImportKey(label, privateKey, publicKey || undefined);
+      onDataChanged();
+      showToast("密钥已保存");
+      closeKcPanel();
+    } catch (e) {
+      setKcErr(userVisibleError(String(e)));
+    } finally {
+      setKcBusy(false);
+    }
+  }
+
+  async function runKcGenerate() {
+    const label = kcDraft.label.trim();
+    if (!label) {
+      setKcErr("请填写密钥的 Label");
+      return;
+    }
+    setKcBusy(true);
+    setKcErr("");
+    try {
+      const bits = kcDraft.algorithm === "ED25519" ? undefined : kcDraft.bits;
+      await api.keychainGenerateKey(
+        label,
+        kcDraft.algorithm,
+        bits,
+        kcDraft.passphrase || undefined,
+      );
+      onDataChanged();
+      showToast("密钥已生成");
+      closeKcPanel();
+    } catch (e) {
+      setKcErr(userVisibleError(String(e)));
+    } finally {
+      setKcBusy(false);
+    }
+  }
+
+  async function saveKcEdit() {
+    const id = kcPanel?.id;
+    if (!id) return;
+    const cred = credentials.find((c) => c.id === id);
+    if (!cred) return;
+    const label = kcDraft.label.trim();
+    const privateKey = kcDraft.privateKey.trim();
+    if (!label || !privateKey) {
+      setKcErr("Label 和私钥为必填项");
+      return;
+    }
+    setKcBusy(true);
+    setKcErr("");
+    try {
+      await api.updateCredential({
+        ...cred,
+        name: label,
+        username: kcDraft.publicKey.trim(),
+        secret: privateKey,
+      });
+      onDataChanged();
+      showToast("修改已保存");
+      closeKcPanel();
+    } catch (e) {
+      setKcErr(userVisibleError(String(e)));
+    } finally {
+      setKcBusy(false);
+    }
+  }
+
+  function confirmKcDeleteKey() {
+    const cred = kcDelete;
+    if (!cred) return;
+    setKcDelete(null);
+    api
+      .deleteCredential(cred.id)
+      .then(() => {
+        if (kcPanel?.id === cred.id) closeKcPanel();
+        onDataChanged();
+        showToast("密钥已删除");
+      })
+      .catch((e) => setKcErr(userVisibleError(String(e))));
+  }
+
+  function copyKcPublicKey(cred: Credential) {
+    if (!cred.username) return;
+    navigator.clipboard
+      .writeText(cred.username)
+      .then(() => showToast("公钥已复制"))
+      .catch(() => showToast("复制失败"));
+  }
+
+  /** 单张已知主机卡片（网格 / 列表共用，对齐 netcatty HostItem）。 */
+  function khCard(e: KnownHostEntry, index: number, convertedSet: Set<string>) {
+    const converted = convertedSet.has(`${e.host}:${e.port}`);
+    return (
+      <div
+        key={`${e.host}-${e.port}-${index}`}
+        className={`kh-card${khView === "list" ? " list" : ""}${
+          converted ? " converted" : ""
+        }`}
+        onContextMenu={(ev) => {
+          ev.preventDefault();
+          setKhCtx({
+            entry: e,
+            x: Math.min(ev.clientX, window.innerWidth - 216),
+            y: Math.min(ev.clientY, window.innerHeight - 140),
+          });
+        }}
+      >
+        <span className="kh-card-icon">
+          <Icon name="server" size={18} />
+        </span>
+        <span
+          className="kh-card-name"
+          title={e.port !== 22 ? `${e.host}:${e.port}` : e.host}
+        >
+          {e.host}
+        </span>
+        <span className="kh-card-actions">
+          {!converted && (
+            <button
+              className="nc-icon-btn"
+              title="转换为主机"
+              onClick={() => convertKnownHostToProfile(e)}
+            >
+              <Icon name="arrow-right" size={14} />
+            </button>
+          )}
+          <button
+            className="nc-icon-btn danger"
+            title="删除"
+            onClick={() => setKhDelete(e)}
+          >
+            <Icon name="trash" size={14} />
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  function knownHostsPanel() {
+    // 按主机名去重、保留文件里靠后的条目（更晚写入 = 更新），对齐 netcatty。
+    const deduped: KnownHostEntry[] = [];
+    {
+      const byHost = new Map<string, number>();
+      knownHosts.forEach((e, i) => byHost.set(e.host, i));
+      knownHosts.forEach((e, i) => {
+        if (byHost.get(e.host) === i) deduped.push(e);
+      });
+    }
+    const keyword = khQuery.trim().toLowerCase();
+    const filtered0 = keyword
+      ? deduped.filter(
+          (e) =>
+            e.host.toLowerCase().includes(keyword) ||
+            e.key_type.toLowerCase().includes(keyword),
+        )
+      : deduped;
+    const orderOf = (e: KnownHostEntry) => deduped.indexOf(e);
+    const filtered = [...filtered0].sort((a, b) => {
+      switch (khSort) {
+        case "az":
+          return a.host.localeCompare(b.host);
+        case "za":
+          return b.host.localeCompare(a.host);
+        case "newest":
+          return orderOf(b) - orderOf(a);
+        case "oldest":
+          return orderOf(a) - orderOf(b);
+        default:
+          return 0;
+      }
+    });
+    const displayed = filtered.slice(0, KH_RENDER_LIMIT);
+    // 已存在同 host:port 的主机档案 → 视为已转换（卡片降透明、隐藏转换按钮）。
+    const convertedSet = new Set(profiles.map((p) => `${p.host}:${p.port}`));
+    return (
+      <div className="vault-known-hosts">
+        <div className="kh-toolbar">
+          <div className="vault-search kh-search">
+            <Icon name="search" size={14} className="nc-search-icon" />
+            <input
+              value={khQuery}
+              placeholder="搜索已知主机..."
+              onChange={(e) => setKhQuery(e.target.value)}
+            />
+          </div>
+          <div className="kh-toolbar-tools">
+            <div className="vault-view-wrap">
+              <button
+                className="vault-icon-btn"
+                title="切换视图"
+                onClick={() => {
+                  setKhViewMenu((v) => !v);
+                  setKhSortMenu(false);
+                }}
+              >
+                <Icon name={khView === "grid" ? "grid" : "list"} size={16} />
+                <Icon name="chevron-down" size={10} />
+              </button>
+              {khViewMenu && (
+                <div className="vault-view-menu vault-popmenu">
+                  <button
+                    className={khView === "grid" ? "active" : ""}
+                    onClick={() => {
+                      setKhView("grid");
+                      setKhViewMenu(false);
+                    }}
+                  >
+                    <Icon name="grid" size={14} />
+                    网格
+                  </button>
+                  <button
+                    className={khView === "list" ? "active" : ""}
+                    onClick={() => {
+                      setKhView("list");
+                      setKhViewMenu(false);
+                    }}
+                  >
+                    <Icon name="list" size={14} />
+                    列表
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="vault-view-wrap">
+              <button
+                className="vault-icon-btn"
+                title={`排序：${KH_SORT_LABEL[khSort]}`}
+                onClick={() => {
+                  setKhSortMenu((v) => !v);
+                  setKhViewMenu(false);
+                }}
+              >
+                <Icon name="sort" size={16} />
+                <Icon name="chevron-down" size={10} />
+              </button>
+              {khSortMenu && (
+                <div className="vault-view-menu vault-popmenu">
+                  {(Object.keys(KH_SORT_LABEL) as KhSortMode[]).map((m) => (
+                    <button
+                      key={m}
+                      className={khSort === m ? "active" : ""}
+                      onClick={() => {
+                        setKhSort(m);
+                        setKhSortMenu(false);
+                      }}
+                    >
+                      <Icon name="sort" size={14} />
+                      {KH_SORT_LABEL[m]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="kh-toolbar-sep" />
+          <button
+            className="kh-action-btn"
+            onClick={scanSystemKnownHosts}
+            disabled={khScanning}
+          >
+            <Icon
+              name="refresh"
+              size={14}
+              className={khScanning ? "kh-spin" : undefined}
+            />
+            扫描系统
+          </button>
+          <button className="kh-action-btn" onClick={importKnownHostsFile}>
+            <Icon name="import" size={14} />
+            导入文件
+          </button>
+        </div>
+        {khErr && <div className="vault-composer-err">{khErr}</div>}
+        <div className={khView === "grid" ? "kh-grid" : "kh-list"}>
+          {displayed.length === 0 && !khLoading ? (
+            keyword ? (
+              <div className="vault-empty kh-empty-full">
+                <span className="vault-empty-icon">
+                  <Icon name="search" size={26} />
+                </span>
+                <h2>没有匹配的已知主机</h2>
+                <p>换个关键词试试。</p>
+              </div>
+            ) : (
+              <div className="kh-empty">
+                <span className="kh-empty-icon">
+                  <Icon name="shield" size={32} />
+                </span>
+                <h3>暂无已知主机</h3>
+                <p>
+                  Known Hosts 是你之前连接过的 SSH
+                  server。导入系统的 known_hosts 文件以开始。
+                </p>
+                <div className="kh-empty-actions">
+                  <button
+                    className="kh-action-btn"
+                    onClick={scanSystemKnownHosts}
+                    disabled={khScanning}
+                  >
+                    <Icon
+                      name="refresh"
+                      size={14}
+                      className={khScanning ? "kh-spin" : undefined}
+                    />
+                    扫描系统
+                  </button>
+                  <button
+                    className="kh-action-btn outline"
+                    onClick={importKnownHostsFile}
+                  >
+                    <Icon name="folder-open" size={14} />
+                    浏览文件
+                  </button>
+                </div>
+              </div>
+            )
+          ) : (
+            displayed.map((e, i) => khCard(e, i, convertedSet))
+          )}
+          {filtered.length > KH_RENDER_LIMIT && (
+            <div className="kh-limit-note">
+              显示 {displayed.length}/{filtered.length} 个主机。使用搜索查找特定主机。
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── 钥匙串页（对齐 netcatty KeychainManager / KeyCard） ────
+
+  /** 单张密钥卡片（网格 / 列表共用，对齐 netcatty KeyCard）。 */
+  function kcCard(cred: Credential) {
+    const active =
+      kcPanel !== null &&
+      (kcPanel.mode === "view" || kcPanel.mode === "edit") &&
+      kcPanel.id === cred.id;
+    return (
+      <div
+        key={cred.id}
+        className={`kc-card${kcView === "list" ? " list" : ""}${
+          active ? " selected" : ""
+        }`}
+        onClick={() => openKcView(cred)}
+        onContextMenu={(ev) => {
+          ev.preventDefault();
+          setKcCtx({
+            cred,
+            x: Math.min(ev.clientX, window.innerWidth - 200),
+            y: Math.min(ev.clientY, window.innerHeight - 150),
+          });
+        }}
+      >
+        <span className="kc-card-icon">
+          <Icon name="key" size={16} />
+        </span>
+        <span className="kc-card-main">
+          <span className="kc-card-label" title={cred.name}>
+            {cred.name}
+          </span>
+          <span className="kc-card-type">Type {kcTypeOf(cred.username)}</span>
+        </span>
+        <span className="kc-card-actions">
+          <button
+            className="nc-icon-btn"
+            title="编辑"
+            onClick={(e) => {
+              e.stopPropagation();
+              openKcEdit(cred);
+            }}
+          >
+            <Icon name="pencil" size={14} />
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  /** 钥匙串侧滑面板（对齐 netcatty AsidePanel + 四种密钥面板）。 */
+  function kcPanelAside() {
+    if (!kcPanel) return null;
+    const panel = kcPanel;
+    const current =
+      panel.id !== null
+        ? credentials.find((c) => c.id === panel.id) ?? null
+        : null;
+    const passInput = (
+      <div className="kc-pass-wrap">
+        <input
+          className="kc-input"
+          type={kcShowPass ? "text" : "password"}
+          value={kcDraft.passphrase}
+          placeholder="Passphrase（可选）"
+          disabled={kcBusy}
+          onChange={(e) =>
+            setKcDraft({ ...kcDraft, passphrase: e.target.value })
+          }
+        />
+        <button
+          className="nc-icon-btn kc-pass-eye"
+          title={kcShowPass ? "隐藏密码短语" : "显示密码短语"}
+          onClick={() => setKcShowPass(!kcShowPass)}
+        >
+          <Icon name={kcShowPass ? "eye-off" : "eye"} size={14} />
+        </button>
+      </div>
+    );
+    const savePassRow = (
+      <label className="kc-check-row">
+        <input
+          type="checkbox"
+          checked={kcDraft.savePassphrase}
+          disabled={kcBusy}
+          onChange={(e) =>
+            setKcDraft({ ...kcDraft, savePassphrase: e.target.checked })
+          }
+        />
+        <span>保存 Passphrase</span>
+      </label>
+    );
+    return (
+      <aside className="kc-panel" data-section="keychain-panel">
+        <header className="kc-panel-head">
+          <span className="kc-panel-title">{KC_PANEL_TITLE[panel.mode]}</span>
+          <div className="kc-panel-head-actions">
+            {panel.mode === "view" && current && (
+              <>
+                <button
+                  className="nc-icon-btn"
+                  title="复制公钥"
+                  disabled={!current.username}
+                  onClick={() => {
+                    copyKcPublicKey(current);
+                    setKcCopied(true);
+                    window.setTimeout(() => setKcCopied(false), 2000);
+                  }}
+                >
+                  <Icon name={kcCopied ? "check" : "copy"} size={15} />
+                </button>
+                <button
+                  className="nc-icon-btn"
+                  title="编辑"
+                  onClick={() => openKcEdit(current)}
+                >
+                  <Icon name="pencil" size={15} />
+                </button>
+                <button
+                  className="nc-icon-btn danger"
+                  title="删除"
+                  onClick={() => setKcDelete(current)}
+                >
+                  <Icon name="trash" size={15} />
+                </button>
+              </>
+            )}
+            <button
+              className="nc-icon-btn"
+              title="关闭面板"
+              onClick={closeKcPanel}
+            >
+              <Icon name="x" size={15} />
+            </button>
+          </div>
+        </header>
+        <div className="kc-panel-body">
+          {kcErr && <div className="vault-composer-err">{kcErr}</div>}
+
+          {panel.mode === "import" && (
+            <>
+              <div className="kc-field">
+                <span className="kc-label">名称</span>
+                <input
+                  className="kc-input"
+                  value={kcDraft.label}
+                  placeholder="密钥 Label"
+                  onChange={(e) =>
+                    setKcDraft({ ...kcDraft, label: e.target.value })
+                  }
+                />
+              </div>
+              <div className="kc-field">
+                <span className="kc-label">私钥 *</span>
+                <textarea
+                  className="kc-textarea"
+                  value={kcDraft.privateKey}
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  onChange={(e) =>
+                    setKcDraft({ ...kcDraft, privateKey: e.target.value })
+                  }
+                />
+              </div>
+              <div className="kc-field">
+                <span className="kc-label">公钥</span>
+                <textarea
+                  className="kc-textarea short"
+                  value={kcDraft.publicKey}
+                  placeholder="ssh-ed25519 AAAAC3... user@host"
+                  onChange={(e) =>
+                    setKcDraft({ ...kcDraft, publicKey: e.target.value })
+                  }
+                />
+              </div>
+              <div className="kc-field">
+                <span className="kc-label">密码短语</span>
+                {passInput}
+              </div>
+              {savePassRow}
+              <div
+                className="kc-dropzone"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) kcReadFile(file);
+                }}
+              >
+                <div className="kc-dropzone-hint">
+                  <Icon name="upload" size={16} />
+                  <span>将密钥文件拖到这里</span>
+                </div>
+                <button
+                  className="kh-action-btn kc-block"
+                  onClick={() => kcFileRef.current?.click()}
+                >
+                  从文件导入
+                </button>
+              </div>
+              <button
+                className="kc-primary-btn kc-block kc-btn-lg"
+                disabled={
+                  kcBusy ||
+                  !kcDraft.label.trim() ||
+                  !kcDraft.privateKey.trim()
+                }
+                onClick={() => void saveKcImport()}
+              >
+                保存密钥
+              </button>
+            </>
+          )}
+
+          {panel.mode === "generate" && (
+            <>
+              <div className="kc-field">
+                <span className="kc-label">名称</span>
+                <input
+                  className="kc-input"
+                  value={kcDraft.label}
+                  placeholder="密钥 Label"
+                  disabled={kcBusy}
+                  onChange={(e) =>
+                    setKcDraft({ ...kcDraft, label: e.target.value })
+                  }
+                />
+              </div>
+              <div className="kc-field">
+                <span className="kc-label">密钥类型</span>
+                <select
+                  className="kc-select"
+                  value={kcDraft.algorithm}
+                  disabled={kcBusy}
+                  onChange={(e) => {
+                    const algorithm = e.target.value as KcDraft["algorithm"];
+                    setKcDraft({
+                      ...kcDraft,
+                      algorithm,
+                      bits:
+                        algorithm === "RSA"
+                          ? 4096
+                          : algorithm === "ECDSA"
+                            ? 256
+                            : kcDraft.bits,
+                    });
+                  }}
+                >
+                  <optgroup label="标准密钥">
+                    <option value="ED25519">ED25519</option>
+                    <option value="ECDSA">ECDSA</option>
+                    <option value="RSA">RSA</option>
+                  </optgroup>
+                  <optgroup label="安全密钥 · FIDO2">
+                    <option value="ED25519-SK" disabled>
+                      ED25519-SK
+                    </option>
+                    <option value="ECDSA-SK" disabled>
+                      ECDSA-SK
+                    </option>
+                  </optgroup>
+                </select>
+              </div>
+              {kcDraft.algorithm !== "ED25519" && (
+                <div className="kc-field">
+                  <span className="kc-label">密钥长度</span>
+                  <select
+                    className="kc-select"
+                    value={String(kcDraft.bits)}
+                    disabled={kcBusy}
+                    onChange={(e) =>
+                      setKcDraft({ ...kcDraft, bits: Number(e.target.value) })
+                    }
+                  >
+                    {(kcDraft.algorithm === "RSA"
+                      ? [4096, 2048, 1024]
+                      : [256, 384, 521]
+                    ).map((size) => (
+                      <option key={size} value={String(size)}>
+                        {kcDraft.algorithm === "RSA"
+                          ? `${size} bits`
+                          : `P-${size}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className="kc-field">
+                <span className="kc-label">密码短语</span>
+                {passInput}
+              </div>
+              {savePassRow}
+              <button
+                className="kc-primary-btn kc-block kc-btn-lg"
+                disabled={kcBusy || !kcDraft.label.trim()}
+                onClick={() => void runKcGenerate()}
+              >
+                {kcBusy ? "正在生成…" : "生成并保存"}
+              </button>
+            </>
+          )}
+
+          {panel.mode === "view" && current && (
+            <>
+              <div className="kc-field">
+                <span className="kc-label">名称</span>
+                <p className="kc-view-value">{current.name}</p>
+              </div>
+              {current.username && (
+                <div className="kc-field">
+                  <span className="kc-label">公钥</span>
+                  <div className="kc-pub-box">
+                    <div className="kc-pub-text">{current.username}</div>
+                    <div className="kc-pub-side">
+                      <button
+                        className="nc-icon-btn"
+                        title="复制公钥"
+                        onClick={() => {
+                          copyKcPublicKey(current);
+                          setKcCopied(true);
+                          window.setTimeout(() => setKcCopied(false), 2000);
+                        }}
+                      >
+                        <Icon name={kcCopied ? "check" : "copy"} size={12} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="kc-field">
+                <span className="kc-label">类型</span>
+                <p className="kc-view-value">{kcTypeOf(current.username)}</p>
+              </div>
+            </>
+          )}
+
+          {panel.mode === "edit" && (
+            <>
+              <div className="kc-field">
+                <span className="kc-label">Label *</span>
+                <input
+                  className="kc-input"
+                  value={kcDraft.label}
+                  placeholder="密钥 Label"
+                  onChange={(e) =>
+                    setKcDraft({ ...kcDraft, label: e.target.value })
+                  }
+                />
+              </div>
+              <div className="kc-field">
+                <span className="kc-label">私钥 *</span>
+                <textarea
+                  className="kc-textarea tall"
+                  value={kcDraft.privateKey}
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  onChange={(e) =>
+                    setKcDraft({ ...kcDraft, privateKey: e.target.value })
+                  }
+                />
+              </div>
+              <div className="kc-field">
+                <span className="kc-label">公钥</span>
+                <textarea
+                  className="kc-textarea short"
+                  value={kcDraft.publicKey}
+                  placeholder="ssh-ed25519 AAAA..."
+                  onChange={(e) =>
+                    setKcDraft({ ...kcDraft, publicKey: e.target.value })
+                  }
+                />
+              </div>
+              <div className="kc-field">
+                <span className="kc-label">密码短语</span>
+                {passInput}
+              </div>
+              {savePassRow}
+              <button
+                className="kc-primary-btn kc-block kc-btn-lg"
+                disabled={
+                  kcBusy ||
+                  !kcDraft.label.trim() ||
+                  !kcDraft.privateKey.trim()
+                }
+                onClick={() => void saveKcEdit()}
+              >
+                保存修改
+              </button>
+            </>
+          )}
+        </div>
+      </aside>
+    );
+  }
+
+  function keysPanel() {
+    const allKeys = credentials.filter((c) => c.type === "key");
+    const q = kcQuery.trim().toLowerCase();
+    const filtered = q
+      ? allKeys.filter(
+          (c) =>
+            c.name.toLowerCase().includes(q) ||
+            kcTypeOf(c.username).toLowerCase().includes(q) ||
+            c.username.toLowerCase().includes(q),
+        )
+      : allKeys;
+    return (
+      <div className={`vault-keychain${kcPanel ? " panel-open" : ""}`}>
+        <input
+          ref={kcFileRef}
+          type="file"
+          className="kc-file-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) kcReadFile(file);
+            e.target.value = "";
+          }}
+        />
+        <div className="kc-body">
+          <div className="kc-toolbar">
+            <div className="kc-toolbar-actions">
+              <div className="kc-split">
+                <button className="kc-split-main" onClick={openKcImport}>
+                  <Icon name="plus" size={14} />
+                  新建密钥
+                </button>
+                <button
+                  className="kc-split-caret"
+                  title="更多新建方式"
+                  onClick={() => setKcNewMenu((v) => !v)}
+                >
+                  <Icon name="chevron-down" size={14} />
+                </button>
+                {kcNewMenu && (
+                  <div className="vault-view-menu vault-new-menu vault-popmenu">
+                    <button
+                      onClick={() => {
+                        setKcNewMenu(false);
+                        openKcGenerate();
+                      }}
+                    >
+                      <Icon name="key" size={14} />
+                      生成密钥
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button className="kh-action-btn" onClick={openKcImport}>
+                <Icon name="badge-check" size={14} />
+                导入证书
+              </button>
+              <button
+                className="kh-action-btn"
+                disabled
+                title="身份存储尚未移植"
+              >
+                <Icon name="user" size={14} />
+                新建身份
+              </button>
+            </div>
+            <div className="kc-toolbar-right">
+              {!kcPanel && (
+                <div className="vault-search kc-search">
+                  <Icon name="search" size={14} className="nc-search-icon" />
+                  <input
+                    value={kcQuery}
+                    placeholder="搜索..."
+                    onChange={(e) => setKcQuery(e.target.value)}
+                  />
+                </div>
+              )}
+              <div className="vault-view-wrap">
+                <button
+                  className="vault-icon-btn"
+                  title="切换视图"
+                  onClick={() => setKcViewMenu((v) => !v)}
+                >
+                  <Icon name={kcView === "grid" ? "grid" : "list"} size={16} />
+                  <Icon name="chevron-down" size={10} />
+                </button>
+                {kcViewMenu && (
+                  <div className="vault-view-menu vault-popmenu">
+                    <button
+                      className={kcView === "grid" ? "active" : ""}
+                      onClick={() => {
+                        setKcView("grid");
+                        setKcViewMenu(false);
+                      }}
+                    >
+                      <Icon name="grid" size={14} />
+                      网格
+                    </button>
+                    <button
+                      className={kcView === "list" ? "active" : ""}
+                      onClick={() => {
+                        setKcView("list");
+                        setKcViewMenu(false);
+                      }}
+                    >
+                      <Icon name="list" size={14} />
+                      列表
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="kc-section">
+            <div className="kc-section-head">
+              <h3 className="vault-section-title">密钥</h3>
+              <span className="kc-section-count">{filtered.length} 项</span>
+            </div>
+            {allKeys.length === 0 ? (
+              <div className="kc-empty">
+                <span className="kc-empty-icon">
+                  <Icon name="shield" size={32} />
+                </span>
+                <h3>设置密钥</h3>
+                <p>导入或生成 SSH 密钥用于安全认证。</p>
+                <div className="kc-empty-actions">
+                  <button className="kh-action-btn" onClick={openKcImport}>
+                    <Icon name="upload" size={14} />
+                    导入
+                  </button>
+                  <button className="kc-primary-btn" onClick={openKcGenerate}>
+                    <Icon name="plus" size={14} />
+                    生成
+                  </button>
+                </div>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="kc-no-results">没有匹配结果</div>
+            ) : (
+              <div className={kcView === "grid" ? "kc-grid" : "kc-list"}>
+                {filtered.map((c) => kcCard(c))}
+              </div>
+            )}
+          </div>
+        </div>
+        {kcPanelAside()}
+      </div>
+    );
   }
 
   // ── 卡片 ────────────────────────────────────────────────
@@ -1225,7 +2865,7 @@ export function VaultView({
         {!selectMode && (
           <button
             className="vault-host-edit"
-            title="编辑主机"
+            title={`Edit ${p.name}`}
             onClick={(e) => {
               e.stopPropagation();
               openComposerForEdit(p);
@@ -1241,6 +2881,7 @@ export function VaultView({
     );
   }
 
+  const localName = shellDisplayName(localShellCmd);
   const localCard = (compact = false) => (
     <div
       key="__local"
@@ -1259,8 +2900,8 @@ export function VaultView({
         <Icon name="terminal" size={20} />
       </span>
       <span className="vault-host-card-main">
-        <strong>本地终端</strong>
-        <span className="vault-host-card-sub">PTY · 当前系统</span>
+        <strong>{localName}</strong>
+        <span className="vault-host-card-sub">{localName}</span>
       </span>
       <span className="vault-host-card-go">
         <Icon name="terminal" size={14} />
@@ -1382,11 +3023,21 @@ export function VaultView({
             return (
               <button
                 key={item.id}
-                className={`vault-nav-item${item.id === "hosts" ? " active" : ""}${
-                  collapsed ? " collapsed" : ""
-                }`}
+                className={`vault-nav-item${
+                  item.id === activeNav ? " active" : ""
+                }${collapsed ? " collapsed" : ""}`}
                 disabled={!enabled}
                 title={enabled ? item.label : `${item.label}（尚未实现）`}
+                onClick={() => {
+                  if (!enabled) return;
+                  setActiveNav(item.id);
+                  setComposer(null);
+                  setCtxMenu(null);
+                  if (item.id !== "hosts") {
+                    setSelectMode(false);
+                    setSelected(new Set());
+                  }
+                }}
               >
                 <Icon name={item.icon} size={16} />
                 {!collapsed && <span>{item.label}</span>}
@@ -1537,7 +3188,7 @@ export function VaultView({
                       if (filtered.length === 0) {
                         return (
                           <div className="vault-tag-empty">
-                            暂无标签；可在主机右键菜单「标签…」里添加
+                            暂无标签；可在主机右键「编辑」的标签字段里添加
                           </div>
                         );
                       }
@@ -1769,6 +3420,7 @@ export function VaultView({
             </div>
           )}
 
+          {activeNav === "hosts" ? (
           <div
             className={`vault-content${marqueeRect ? " selecting" : ""}`}
             ref={contentRef}
@@ -1872,15 +3524,10 @@ export function VaultView({
 
             {atRoot && view !== "tree" && groupTiles.length > 0 && (
               <section className="vault-section">
-                <div className="vault-section-head">
-                  <h3 className="vault-section-title">
-                    <Icon name="folder" size={14} />
-                    分组
-                  </h3>
-                  <div className="vault-section-meta">
-                    <span>共 {groupTiles.length} 个</span>
-                  </div>
-                </div>
+                <h3 className="vault-section-title">
+                  <Icon name="folder" size={14} />
+                  分组
+                </h3>
                 {view === "grid" ? (
                   <div className="vault-grid">{groupTiles.map((g) => groupCard(g))}</div>
                 ) : (
@@ -1889,6 +3536,7 @@ export function VaultView({
               </section>
             )}
 
+            {!hideRootHostsSection && (
             <section className="vault-section">
               <div className="vault-section-head">
                 <h3 className="vault-section-title">主机</h3>
@@ -1915,10 +3563,6 @@ export function VaultView({
                       </button>
                     </div>
                   )}
-                  <span>{scopedHosts.length} 条</span>
-                  <span className="vault-live-pill">
-                    {activeSessionCount} 个在线
-                  </span>
                 </div>
               </div>
 
@@ -1974,7 +3618,7 @@ export function VaultView({
                   </div>
                 )
               ) : (
-                hostCollection(scopedHosts)
+                hostCollection(rootRemaining)
               )}
 
               {profiles.length === 0 && (
@@ -2003,7 +3647,13 @@ export function VaultView({
                 </div>
               )}
             </section>
+            )}
           </div>
+          ) : activeNav === "known-hosts" ? (
+            knownHostsPanel()
+          ) : activeNav === "keys" ? (
+            keysPanel()
+          ) : null}
         </div>
 
         {composer && (
@@ -2024,116 +3674,474 @@ export function VaultView({
             <header className="vault-composer-head">
               <div className="vault-composer-heading">
                 <span className="vault-composer-title">
-                  {composer.id ? "编辑主机" : "新建主机"}
-                </span>
-                <span className="vault-composer-sub">
-                  {composer.id ? "修改后立即生效" : "保存后可在首页快速连接"}
+                  {profiles.some((p) => p.id === composer.id)
+                    ? "主机详情"
+                    : "新建主机"}
                 </span>
               </div>
-              <button
-                className="nc-icon-btn"
-                title="关闭面板"
-                onClick={() => setComposer(null)}
-              >
-                <Icon name="x" size={15} />
-              </button>
+              <div className="vault-composer-head-actions">
+                <button
+                  className="nc-icon-btn"
+                  title="测试连接"
+                  disabled={
+                    composerBusy ||
+                    !composer.name.trim() ||
+                    !composer.host.trim()
+                  }
+                  onClick={() => void startConnectionTest()}
+                >
+                  <Icon name="zap" size={15} />
+                </button>
+                <button
+                  className="nc-icon-btn"
+                  title="保存"
+                  disabled={
+                    composerBusy ||
+                    !composer.name.trim() ||
+                    !composer.host.trim()
+                  }
+                  onClick={() => void saveComposer()}
+                >
+                  <Icon name="check" size={15} />
+                </button>
+                <button
+                  className="nc-icon-btn"
+                  title="关闭面板"
+                  onClick={() => setComposer(null)}
+                >
+                  <Icon name="x" size={15} />
+                </button>
+              </div>
             </header>
 
             <div className="vault-composer-body">
               {composerErr && <div className="vault-composer-err">{composerErr}</div>}
-              <label>
-                名称
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="sliders" size={13} />
+                  <span>通用</span>
+                </div>
                 <input
                   value={composer.name}
-                  placeholder="例如 生产 Web"
+                  placeholder="名称（例如：Production Server）"
                   onChange={(e) =>
                     setComposer({ ...composer, name: e.target.value })
                   }
                 />
-              </label>
-              <label>
-                主机
-                <input
-                  value={composer.host}
-                  placeholder="hostname 或 IP"
-                  onChange={(e) =>
-                    setComposer({ ...composer, host: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                端口
-                <input
-                  value={composer.port}
-                  inputMode="numeric"
-                  onChange={(e) =>
-                    setComposer({ ...composer, port: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                凭据
-                <select
-                  value={composer.credential_id}
-                  onChange={(e) =>
-                    setComposer({ ...composer, credential_id: e.target.value })
-                  }
-                >
-                  <option value="">请选择…</option>
-                  {credentials.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}（{c.username}）
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {credentials.length === 0 && (
-                <button className="vault-composer-link" onClick={onOpenManager}>
-                  还没有凭据，打开连接管理器创建
-                </button>
-              )}
-              <label>
-                分组
+                {/* 对齐 Netcatty：分组 / 标签不带可见 label，仅占位符。 */}
                 <select
                   value={composer.group_id}
                   onChange={(e) =>
                     setComposer({ ...composer, group_id: e.target.value })
                   }
                 >
-                  <option value="">未分组</option>
+                  <option value="">父级 Group</option>
                   {groups.map((g) => (
                     <option key={g.id} value={g.id}>
                       {g.name}
                     </option>
                   ))}
                 </select>
-              </label>
-              <label>
-                标签
                 <input
                   value={composer.tags}
-                  placeholder="逗号分隔，例如 生产, 数据库"
+                  placeholder="Add tags..."
                   onChange={(e) =>
                     setComposer({ ...composer, tags: e.target.value })
                   }
                 />
-              </label>
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="server" size={13} />
+                  <span>地址</span>
+                </div>
+                <input
+                  value={composer.host}
+                  placeholder="IP 或 主机名"
+                  onChange={(e) =>
+                    setComposer({ ...composer, host: e.target.value })
+                  }
+                />
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="key" size={13} />
+                  <span>端口与凭据</span>
+                </div>
+                <div className="host-port-line">
+                  <span className="host-port-line-prefix">SSH on</span>
+                  <input
+                    className="host-port-line-input"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={composer.port}
+                    inputMode="numeric"
+                    aria-label="端口"
+                    onChange={(e) =>
+                      setComposer({ ...composer, port: e.target.value })
+                    }
+                  />
+                  <span className="host-port-line-suffix">端口</span>
+                </div>
+
+                <div className="host-setting-row">
+                  <span className="host-setting-label">登录方式</span>
+                  <select
+                    value={composer.auth_method}
+                    onChange={(e) =>
+                      setComposer({
+                        ...composer,
+                        auth_method: e.target.value as AuthMethod,
+                      })
+                    }
+                  >
+                    {AUTH_METHODS.map((m) => (
+                      <option
+                        key={m.value}
+                        value={m.value}
+                        disabled={!m.enabled}
+                      >
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="host-setting-hint">
+                  {
+                    (
+                      AUTH_METHODS.find(
+                        (m) => m.value === composer.auth_method,
+                      ) ?? AUTH_METHODS[0]
+                    ).hint
+                  }
+                </p>
+
+                <div className="host-setting-row">
+                  <span
+                    className="host-setting-label"
+                    title={MFA_HINT}
+                  >
+                    优先交互式认证
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={composer.mfa}
+                    className={`host-switch${composer.mfa ? " on" : ""}`}
+                    onClick={() =>
+                      setComposer({ ...composer, mfa: !composer.mfa })
+                    }
+                  >
+                    <span className="host-switch-knob" />
+                  </button>
+                </div>
+                <p className="host-setting-hint">{MFA_HINT}</p>
+
+                <div className="host-setting-row">
+                  <span className="host-setting-label">用户名</span>
+                  <input
+                    value={composer.username}
+                    placeholder="用户名"
+                    onChange={(e) =>
+                      setComposer({ ...composer, username: e.target.value })
+                    }
+                  />
+                </div>
+
+                {composerPasswordVisible && (
+                  <>
+                    <div className="host-setting-row">
+                      <span className="host-setting-label">密码</span>
+                      <span className="host-pass-wrap">
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={
+                            passMasked && composer.password === ""
+                              ? "•••••"
+                              : composer.password
+                          }
+                          placeholder="登录密码"
+                          onFocus={(e) => {
+                            // 掩码态：全选便于直接输入替换。
+                            if (passMasked && composer.password === "")
+                              e.target.select();
+                          }}
+                          onChange={(e) => {
+                            if (passMasked) {
+                              setPassMasked(false);
+                              setComposer({
+                                ...composer,
+                                password: e.target.value.replaceAll("•", ""),
+                              });
+                            } else {
+                              setComposer({
+                                ...composer,
+                                password: e.target.value,
+                              });
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="host-eye-btn"
+                          title={showPassword ? "隐藏密码" : "显示密码"}
+                          onClick={() => setShowPassword((v) => !v)}
+                        >
+                          <Icon
+                            name={showPassword ? "eye-off" : "eye"}
+                            size={14}
+                          />
+                        </button>
+                      </span>
+                    </div>
+                    {(composer.password !== "" || passMasked) && (
+                      <div className="host-setting-row">
+                        <span className="host-setting-label">保存密码</span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={composer.save_password}
+                          className={`host-switch${composer.save_password ? " on" : ""}`}
+                          onClick={() =>
+                            setComposer({
+                              ...composer,
+                              save_password: !composer.save_password,
+                            })
+                          }
+                        >
+                          <span className="host-switch-knob" />
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {composer.credential_id && !isEditComposer ? (
+                  <div className="host-identity-row">
+                    <Icon name="user" size={13} />
+                    <span className="host-identity-name">
+                      {(() => {
+                        const c = credentials.find(
+                          (x) => x.id === composer.credential_id,
+                        );
+                        return c ? c.name : "已选身份";
+                      })()}
+                    </span>
+                    <button
+                      className="nc-icon-btn"
+                      title="取消选择，改用下方内联凭据"
+                      onClick={() => {
+                        clearComposerIdentity();
+                        setCredPick(null);
+                      }}
+                    >
+                      <Icon name="x" size={13} />
+                    </button>
+                  </div>
+                ) : credPick === null ? (
+                  <div className="host-cred-link-row">
+                    <button
+                      type="button"
+                      className="host-link-btn"
+                      onClick={() => setCredMenu((v) => !v)}
+                    >
+                      <Icon name="plus" size={12} />
+                      密钥 / 证书 / 本地密钥
+                    </button>
+                    {credMenu && (
+                      <div className="vault-view-menu vault-popmenu host-cred-menu">
+                        {(
+                          [
+                            { v: "key", label: "密钥", icon: "key" },
+                            {
+                              v: "certificate",
+                              label: "证书",
+                              icon: "shield",
+                            },
+                            {
+                              v: "localKeyFile",
+                              label: "本地密钥文件",
+                              icon: "file-text",
+                            },
+                          ] as Array<{
+                            v: Exclude<CredPick, null>;
+                            label: string;
+                            icon: IconName;
+                          }>
+                        ).map((item) => (
+                          <button
+                            key={item.v}
+                            onClick={() => {
+                              setCredPick(item.v);
+                              setCredSearch("");
+                              setCredMenu(false);
+                            }}
+                          >
+                            <Icon name={item.icon} size={14} />
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : credPick === "localKeyFile" ? (
+                  <div className="host-setting-row">
+                    <span className="host-setting-label">本地密钥文件</span>
+                    <span className="host-localkey-wrap">
+                      <select
+                        value={composer.key_file}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setComposer({
+                            ...composer,
+                            key_file: v,
+                            auth_method: v ? "key" : composer.auth_method,
+                          });
+                        }}
+                      >
+                        <option value="">~/.ssh/id_ed25519</option>
+                        {keyFiles.map((k) => (
+                          <option key={k} value={k}>
+                            ~/.ssh/{k}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="nc-icon-btn"
+                        title="取消本地密钥"
+                        onClick={() => {
+                          setCredPick(null);
+                          setComposer({ ...composer, key_file: "" });
+                        }}
+                      >
+                        <Icon name="x" size={13} />
+                      </button>
+                    </span>
+                  </div>
+                ) : (
+                  (() => {
+                    const isCert = credPick === "certificate";
+                    const pool = credentials.filter(
+                      (c) => c.type === (isCert ? "certificate" : "key"),
+                    );
+                    const kw = credSearch.trim().toLowerCase();
+                    const filtered = kw
+                      ? pool.filter(
+                          (c) =>
+                            c.name.toLowerCase().includes(kw) ||
+                            c.username.toLowerCase().includes(kw),
+                        )
+                      : pool;
+                    return (
+                      <div className="host-key-combo">
+                        <div className="host-key-combo-search">
+                          <Icon name="search" size={13} />
+                          <input
+                            autoFocus
+                            value={credSearch}
+                            placeholder={
+                              isCert ? "搜索证书…" : "搜索密钥…"
+                            }
+                            onChange={(e) => setCredSearch(e.target.value)}
+                          />
+                          <button
+                            className="nc-icon-btn"
+                            title="取消"
+                            onClick={() => {
+                              setCredPick(null);
+                              setCredSearch("");
+                            }}
+                          >
+                            <Icon name="x" size={13} />
+                          </button>
+                        </div>
+                        {filtered.length === 0 ? (
+                          <div className="host-key-combo-empty">
+                            {isCert ? "暂无证书" : "暂无密钥"}
+                          </div>
+                        ) : (
+                          filtered.map((c) => (
+                            <button
+                              key={c.id}
+                              className="host-key-combo-item"
+                              onClick={() => {
+                                bindComposerCredential(c.id);
+                                setCredSearch("");
+                              }}
+                            >
+                              <Icon name="key" size={13} />
+                              <span>{c.name}</span>
+                              {c.username && (
+                                <span className="host-key-combo-user">
+                                  {c.username}
+                                </span>
+                              )}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    );
+                  })()
+                )}
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="shield" size={13} />
+                  <span>验证器 (TOTP)</span>
+                </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">
+                    {totpConfigured ? "已保存 TOTP 密钥" : "为这台主机保存 TOTP 密钥"}
+                  </span>
+                  {totpConfigured ? (
+                    <span className="host-totp-actions">
+                      <button
+                        type="button"
+                        className="host-link-btn"
+                        onClick={openTotpDialog}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="host-link-btn danger"
+                        onClick={() => void removeTotp()}
+                      >
+                        移除验证器
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="host-link-btn"
+                      onClick={openTotpDialog}
+                    >
+                      设置…
+                    </button>
+                  )}
+                </div>
+                <p className="host-setting-hint">
+                  能打开这个保险库的人会同时得到验证码和密码。请只在个人设备上使用。
+                </p>
+              </section>
             </div>
 
             <footer className="vault-composer-foot">
               <button
-                className="vault-secondary-btn"
-                disabled={composerBusy}
-                onClick={() => void saveComposer(false)}
+                className="vault-new-btn host-save-full"
+                disabled={
+                  composerBusy ||
+                  !composer.name.trim() ||
+                  !composer.host.trim()
+                }
+                onClick={() => void saveComposer()}
               >
                 保存
-              </button>
-              <button
-                className="vault-new-btn"
-                disabled={composerBusy}
-                onClick={() => void saveComposer(true)}
-              >
-                保存并连接
               </button>
             </footer>
             </aside>
@@ -2141,11 +4149,171 @@ export function VaultView({
         )}
       </div>
 
+      {totpDialog && composer && (
+        <div className="vault-modal-mask" onClick={() => setTotpDialog(null)}>
+          <div
+            className="vault-group-dialog vault-totp-dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header>
+              <span>设置验证器</span>
+              <button
+                className="nc-icon-btn"
+                title="关闭"
+                onClick={() => setTotpDialog(null)}
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </header>
+            <label className="host-totp-field">
+              密钥或 otpauth URI
+              <input
+                autoFocus
+                value={totpDialog.secret}
+                placeholder="粘贴 otpauth://totp/... 或 Base32 密钥"
+                onChange={(e) =>
+                  setTotpDialog({ ...totpDialog, secret: e.target.value })
+                }
+              />
+            </label>
+            <div className="host-totp-import-row">
+              <button type="button" disabled title="尚未实现">
+                <Icon name="folder-input" size={14} />
+                导入二维码图片
+              </button>
+              <button type="button" disabled title="尚未实现">
+                <Icon name="monitor" size={14} />
+                从屏幕扫描二维码
+              </button>
+            </div>
+            <div className="host-setting-row">
+              <span
+                className="host-setting-label"
+                title="每次连接只提交一次，且提示必须精确匹配 JumpServer、Google Authenticator PAM，或你填写的正则。"
+              >
+                在已知 TOTP 提示上自动提交
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={totpDialog.autoSubmit}
+                className={`host-switch${totpDialog.autoSubmit ? " on" : ""}`}
+                onClick={() =>
+                  setTotpDialog({
+                    ...totpDialog,
+                    autoSubmit: !totpDialog.autoSubmit,
+                  })
+                }
+              >
+                <span className="host-switch-knob" />
+              </button>
+            </div>
+            <label className="host-totp-field">
+              自定义提示正则
+              <input
+                value={totpDialog.regex}
+                placeholder="可选的 RE2 正则表达式"
+                onChange={(e) =>
+                  setTotpDialog({ ...totpDialog, regex: e.target.value })
+                }
+              />
+            </label>
+            <footer>
+              <button
+                className="vault-secondary-btn"
+                onClick={() => setTotpDialog(null)}
+              >
+                取消
+              </button>
+              <button
+                className="vault-new-btn"
+                disabled={!totpDialog.secret.trim()}
+                onClick={() => void saveTotpDialog()}
+              >
+                保存
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {testState && (
+        <div className="vault-modal-mask" onClick={stopConnectionTest}>
+          <div
+            className="vault-group-dialog vault-test-dialog"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header>
+              <span>测试连接</span>
+              <button
+                className="nc-icon-btn"
+                title="关闭"
+                onClick={stopConnectionTest}
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </header>
+            <div className="host-test-body">
+              {testState.status === "connecting" && (
+                <>
+                  <Icon name="loader" size={18} className="host-test-spin" />
+                  <p>正在连接… {25 - testState.seconds} 秒后超时</p>
+                </>
+              )}
+              {testState.status === "success" && (
+                <>
+                  <Icon name="check" size={18} className="host-test-ok" />
+                  <p>连接成功</p>
+                  <p className="host-test-hint">
+                    主机已接受您的凭据。您可以关闭此窗口。
+                  </p>
+                </>
+              )}
+              {testState.status === "failed" && (
+                <>
+                  <Icon
+                    name="alert-triangle"
+                    size={18}
+                    className="host-test-fail"
+                  />
+                  <p>连接失败。</p>
+                  {testState.error && (
+                    <p className="host-test-hint">{testState.error}</p>
+                  )}
+                </>
+              )}
+            </div>
+            <footer>
+              <button
+                className="vault-secondary-btn"
+                onClick={stopConnectionTest}
+              >
+                关闭
+              </button>
+              {testState.status === "failed" && (
+                <button
+                  className="vault-new-btn"
+                  onClick={() => {
+                    stopConnectionTest();
+                    void startConnectionTest();
+                  }}
+                >
+                  重试
+                </button>
+              )}
+            </footer>
+          </div>
+        </div>
+      )}
+
       {ctxMenu && (
         <div
           className="term-context-menu vault-context-menu vault-popmenu"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
         >
+          {/* 条目与顺序 1:1 对齐 Netcatty 主机卡片右键菜单：
+              连接 / 打开 SFTP / 打开浏览器 / 编辑 / 复制 / 复制主机地址 /
+              复制账密信息 / 置顶·取消置顶 / 删除（无分隔线）。 */}
           <button
             onClick={() => {
               const p = ctxMenu.profile;
@@ -2153,18 +4321,17 @@ export function VaultView({
               onConnect(p);
             }}
           >
-            <Icon name="terminal" size={14} />
+            <Icon name="plug" size={14} />
             连接
           </button>
           <button disabled title="尚未实现">
             <Icon name="columns" size={14} />
-            双栏 SFTP
+            打开 SFTP
           </button>
           <button disabled title="尚未实现">
             <Icon name="globe" size={14} />
-            主机浏览器
+            打开浏览器
           </button>
-          <div className="term-menu-sep" />
           <button
             onClick={() => {
               const p = ctxMenu.profile;
@@ -2183,7 +4350,7 @@ export function VaultView({
             }}
           >
             <Icon name="copy" size={14} />
-            复制副本
+            复制
           </button>
           <button
             onClick={() => {
@@ -2191,8 +4358,8 @@ export function VaultView({
               setCtxMenu(null);
             }}
           >
-            <Icon name="server" size={14} />
-            复制主机名
+            <Icon name="copy" size={14} />
+            复制主机地址
           </button>
           <button
             onClick={() => {
@@ -2204,21 +4371,10 @@ export function VaultView({
             <Icon name="clipboard-paste" size={14} />
             复制账密信息
           </button>
-          <button
-            onClick={() => {
-              const p = ctxMenu.profile;
-              setCtxMenu(null);
-              setTagEditor(p.id);
-            }}
-          >
-            <Icon name="tag" size={14} />
-            标签…
-          </button>
           <button onClick={() => togglePin(ctxMenu.profile.id)}>
             <Icon name="pin" size={14} />
             {pinnedIds.includes(ctxMenu.profile.id) ? "取消置顶" : "置顶"}
           </button>
-          <div className="term-menu-sep" />
           <button
             className="danger"
             onClick={() => {
@@ -2270,61 +4426,120 @@ export function VaultView({
         </div>
       )}
 
-      {tagEditor && (
-        <div className="vault-tag-editor vault-popmenu" data-section="tag-editor">
-          <div className="vault-tag-editor-head">
-            <span>标签</span>
+      {khCtx && (
+        <div
+          className="term-context-menu vault-context-menu vault-popmenu"
+          style={{ left: khCtx.x, top: khCtx.y }}
+        >
+          {!profiles.some(
+            (p) =>
+              p.host === khCtx.entry.host && p.port === khCtx.entry.port,
+          ) && (
             <button
-              className="nc-icon-btn"
-              title="关闭"
-              onClick={() => setTagEditor(null)}
+              onClick={() => {
+                const e = khCtx.entry;
+                setKhCtx(null);
+                convertKnownHostToProfile(e);
+              }}
             >
-              <Icon name="x" size={13} />
+              <Icon name="arrow-right" size={14} />
+              转换为主机
             </button>
+          )}
+          <button
+            className="danger"
+            onClick={() => {
+              const e = khCtx.entry;
+              setKhCtx(null);
+              setKhDelete(e);
+            }}
+          >
+            <Icon name="trash" size={14} />
+            删除
+          </button>
+        </div>
+      )}
+
+      {khDelete && (
+        <div className="modal-mask" onMouseDown={() => setKhDelete(null)}>
+          <div
+            className="modal kh-delete-modal"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h3 className="kh-delete-title">
+              <Icon name="alert-triangle" size={18} />
+              删除“{khDelete.host}”？
+            </h3>
+            <p className="kh-delete-desc">此操作不可撤销。</p>
+            <div className="modal-actions">
+              <button onClick={() => setKhDelete(null)}>取消</button>
+              <button className="danger" onClick={confirmDeleteKnownHost}>
+                删除
+              </button>
+            </div>
           </div>
-          {(() => {
-            const id = tagEditor;
-            const own = tags[id] ?? [];
-            return (
-              <>
-                {allTagNames.length === 0 && (
-                  <p className="vault-tag-editor-hint">
-                    还没有标签，直接输入新标签后回车。
-                  </p>
-                )}
-                <div className="vault-tag-editor-list">
-                  {allTagNames.map((t) => (
-                    <label key={t} className="vault-tag-check">
-                      <input
-                        type="checkbox"
-                        checked={own.includes(t)}
-                        onChange={() =>
-                          setHostTags(
-                            id,
-                            own.includes(t)
-                              ? own.filter((x) => x !== t)
-                              : [...own, t],
-                          )
-                        }
-                      />
-                      <span>{t}</span>
-                    </label>
-                  ))}
-                </div>
-                <input
-                  className="vault-tag-editor-input"
-                  placeholder="新标签，回车添加"
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter") return;
-                    const value = e.currentTarget.value.trim();
-                    if (!value) return;
-                    if (!own.includes(value)) setHostTags(id, [...own, value]);
-                    e.currentTarget.value = "";
-                  }}
-                />
-              </>
-            );
-          })()}
+        </div>
+      )}
+
+      {kcCtx && (
+        <div
+          className="term-context-menu vault-context-menu vault-popmenu"
+          style={{ left: kcCtx.x, top: kcCtx.y }}
+        >
+          <button
+            disabled={!kcCtx.cred.username}
+            onClick={() => {
+              const c = kcCtx.cred;
+              setKcCtx(null);
+              copyKcPublicKey(c);
+            }}
+          >
+            <Icon name="copy" size={14} />
+            复制公钥
+          </button>
+          <button
+            onClick={() => {
+              const c = kcCtx.cred;
+              setKcCtx(null);
+              openKcEdit(c);
+            }}
+          >
+            <Icon name="pencil" size={14} />
+            编辑
+          </button>
+          <div className="term-menu-sep" />
+          <button
+            className="danger"
+            onClick={() => {
+              const c = kcCtx.cred;
+              setKcCtx(null);
+              setKcDelete(c);
+            }}
+          >
+            <Icon name="trash" size={14} />
+            删除
+          </button>
+        </div>
+      )}
+
+      {kcDelete && (
+        <div className="modal-mask" onMouseDown={() => setKcDelete(null)}>
+          <div
+            className="modal kh-delete-modal"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h3 className="kh-delete-title">
+              <Icon name="alert-triangle" size={18} />
+              删除“{kcDelete.name}”？
+            </h3>
+            <p className="kh-delete-desc">此操作不可撤销。</p>
+            <div className="modal-actions">
+              <button onClick={() => setKcDelete(null)}>取消</button>
+              <button className="danger" onClick={confirmKcDeleteKey}>
+                删除
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2370,92 +4585,6 @@ export function VaultView({
                 </button>
               ))}
             </div>
-          </div>
-        </div>
-      )}
-
-      {wizard && (
-        <div className="vault-modal-mask" onClick={() => setWizard(null)}>
-          <div
-            className="vault-wizard"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="vault-wizard-head">
-              <span>快速连接</span>
-              <button
-                className="nc-icon-btn"
-                title="关闭"
-                onClick={() => setWizard(null)}
-              >
-                <Icon name="x" size={14} />
-              </button>
-            </header>
-            <div className="vault-wizard-body">
-              <p className="vault-wizard-target">
-                <Icon name="zap" size={14} />
-                {wizard.host}:{wizard.port}
-              </p>
-              <label>
-                保存名称
-                <input
-                  value={wizard.name}
-                  onChange={(e) => setWizard({ ...wizard, name: e.target.value })}
-                />
-              </label>
-              <label>
-                用户名
-                <input
-                  value={wizard.username}
-                  placeholder="root"
-                  onChange={(e) =>
-                    setWizard({ ...wizard, username: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                端口
-                <input
-                  value={wizard.port}
-                  inputMode="numeric"
-                  onChange={(e) =>
-                    setWizard({ ...wizard, port: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                凭据
-                <select
-                  value={wizard.credential_id}
-                  onChange={(e) =>
-                    setWizard({ ...wizard, credential_id: e.target.value })
-                  }
-                >
-                  <option value="">请选择…</option>
-                  {credentials.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}（{c.username}
-                      {c.type === "password" ? " · 密码" : c.type === "key" ? " · 私钥" : ""})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {credentials.length === 0 && (
-                <button className="vault-composer-link" onClick={onOpenManager}>
-                  还没有凭据，先到连接管理器创建
-                </button>
-              )}
-            </div>
-            <footer className="vault-wizard-foot">
-              <button
-                className="vault-secondary-btn"
-                onClick={() => void saveWizard(false)}
-              >
-                保存为主机
-              </button>
-              <button className="vault-new-btn" onClick={() => void saveWizard(true)}>
-                保存并连接
-              </button>
-            </footer>
           </div>
         </div>
       )}

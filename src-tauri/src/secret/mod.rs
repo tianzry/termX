@@ -243,6 +243,12 @@ pub fn telnet_login_script_key(profile_id: &str, version: &str) -> String {
     format!("telnet:{profile_id}:login_script:{version}")
 }
 
+/// TOTP 密钥约定（AGENTS.md R6）：`totp:<profile_id>`。
+/// TOTP secret 不入 profiles 表，只走 SecretStore。
+pub fn totp_secret_key(profile_id: &str) -> String {
+    format!("totp:{profile_id}")
+}
+
 pub fn setting_key(name: &str) -> String {
     format!("setting:{name}")
 }

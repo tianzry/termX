@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import * as api from "./backend/client";
+import { userVisibleError } from "./domain/sshErrors";
 import type { Forward, ForwardRule, ForwardStats } from "./backend/client";
 
 interface ActiveInfo {
@@ -43,7 +44,7 @@ export function ForwardPanel() {
       setProfiles(ps);
       setProfileId((cur) => cur || ps[0]?.id || "");
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -86,7 +87,7 @@ export function ForwardPanel() {
       setRules([]);
       await refresh();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -112,7 +113,7 @@ export function ForwardPanel() {
       });
       await refresh();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -125,7 +126,7 @@ export function ForwardPanel() {
       const activeId = await api.forwardStart(f.id);
       setActive((a) => ({ ...a, [f.id]: { activeId, stats: null } }));
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -144,7 +145,7 @@ export function ForwardPanel() {
         return next;
       });
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -159,7 +160,7 @@ export function ForwardPanel() {
       const s = await api.forwardStats(info.activeId);
       setActive((a) => ({ ...a, [f.id]: { ...info, stats: s } }));
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -175,7 +176,7 @@ export function ForwardPanel() {
       else await api.forwardRuleStop(info.activeId, index);
       await stats(f);
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }

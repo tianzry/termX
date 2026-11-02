@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import * as api from "./backend/client";
+import { userVisibleError } from "./domain/sshErrors";
 import type { CredentialType, FileStat, RemoteEntry } from "./backend/client";
 
 interface Props {
@@ -87,7 +88,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       setStat(null);
       setRenaming(null);
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -112,7 +113,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       const home = await api.sftpHome(id);
       await refresh(home);
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -128,7 +129,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       const home = await api.sftpHome(id);
       await refresh(home);
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -220,7 +221,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       if (isCanceled(rowId)) {
         patchRow(rowId, { status: "canceled", current: undefined });
       } else {
-        patchRow(rowId, { status: "error", error: String(e), current: undefined });
+        patchRow(rowId, { status: "error", error: userVisibleError(String(e)), current: undefined });
       }
     } finally {
       un();
@@ -274,7 +275,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       if (isCanceled(rowId)) {
         patchRow(rowId, { status: "canceled", current: undefined });
       } else {
-        patchRow(rowId, { status: "error", error: String(e), current: undefined });
+        patchRow(rowId, { status: "error", error: userVisibleError(String(e)), current: undefined });
       }
     } finally {
       canceled.current.delete(rowId);
@@ -330,7 +331,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       if (isCanceled(rowId)) {
         patchRow(rowId, { status: "canceled", current: undefined });
       } else {
-        patchRow(rowId, { status: "error", error: String(e), current: undefined });
+        patchRow(rowId, { status: "error", error: userVisibleError(String(e)), current: undefined });
       }
       await refresh();
     } finally {
@@ -386,7 +387,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       if (isCanceled(rowId)) {
         patchRow(rowId, { status: "canceled", current: undefined });
       } else {
-        patchRow(rowId, { status: "error", error: String(e), current: undefined });
+        patchRow(rowId, { status: "error", error: userVisibleError(String(e)), current: undefined });
       }
       await refresh();
     } finally {
@@ -403,7 +404,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       setMkdirName("");
       await refresh();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import * as api from "./backend/client";
+import { userVisibleError } from "./domain/sshErrors";
 import type { SerialConfig, TermBridge } from "./backend/client";
 
 interface Props {
@@ -48,7 +49,7 @@ export function SerialPanel({ bridge }: Props) {
       setPorts(list);
       setPort((cur) => cur || list[0] || "");
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -90,7 +91,7 @@ export function SerialPanel({ bridge }: Props) {
       setSid(actualId);
     } catch (e) {
       teardown();
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -115,7 +116,7 @@ export function SerialPanel({ bridge }: Props) {
       await api.serialWrite(sid, text);
       setSendText("");
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -128,7 +129,7 @@ export function SerialPanel({ bridge }: Props) {
     try {
       await fn();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }

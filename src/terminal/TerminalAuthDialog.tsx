@@ -2,10 +2,12 @@
  * 连接认证重试弹窗（移植自 netcatty/components/terminal/TerminalAuthDialog.tsx）。
  *
  * 对齐要点：
- * - 密码 / SSH 密钥两个 tab；
+ * - 密码 / SSH Key 两个 tab；
  * - 认证失败提示条（authRetryMessage）；
- * - 用户名、密码、密钥选择、passphrase；
- * - Enter 直接提交，“继续”是主操作，“关闭”取消连接。
+ * - 用户名、密码、密钥选择、密码短语；
+ * - Enter 与主按钮「继续」走 onSubmitWithoutSave ?? onSubmit；
+ * - caret 下拉「继续并保存」走 onSubmit（写回凭据）；
+ * - 「关闭」取消连接。
  */
 import { useState, type KeyboardEvent } from "react";
 import { Icon } from "../ui/icons";
@@ -38,6 +40,8 @@ export interface TerminalAuthDialogProps {
   authRetryMessage: string | null;
   keys: AuthKeyOption[];
   onSubmit: () => void;
+  /** 不写回凭据的提交（netcatty onSubmitWithoutSave）；「继续」主按钮与 Enter 使用。 */
+  onSubmitWithoutSave?: () => void;
   onCancel: () => void;
   isValid: boolean;
 }
@@ -60,17 +64,23 @@ export function TerminalAuthDialog({
   authRetryMessage,
   keys,
   onSubmit,
+  onSubmitWithoutSave,
   onCancel,
   isValid,
 }: TerminalAuthDialogProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [submitOptionsOpen, setSubmitOptionsOpen] = useState(false);
   const selectedKey = authKeyId ? keys.find((k) => k.id === authKeyId) ?? null : null;
   const selectableKeys = keys.filter((k) => k.type === "key");
+
+  // netcatty：主按钮「继续」与 Enter 走 onSubmitWithoutSave ?? onSubmit，
+  // caret 下拉「继续并保存」才走 onSubmit。
+  const handleContinue = onSubmitWithoutSave ?? onSubmit;
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && isValid) {
       e.preventDefault();
-      onSubmit();
+      handleContinue();
     }
   };
 
@@ -91,7 +101,7 @@ export function TerminalAuthDialog({
           onClick={() => setAuthMethod("key")}
         >
           <Icon name="key" size={13} />
-          SSH 密钥
+          SSH Key
         </button>
       </div>
 
@@ -110,7 +120,7 @@ export function TerminalAuthDialog({
           <input
             value={authUsername}
             onChange={(e) => setAuthUsername(e.target.value)}
-            placeholder="用户名"
+            placeholder="root"
           />
         </label>
 
@@ -122,7 +132,7 @@ export function TerminalAuthDialog({
                 type={showAuthPassword ? "text" : "password"}
                 value={authPassword}
                 onChange={(e) => setAuthPassword(e.target.value)}
-                placeholder="密码"
+                placeholder="输入密码"
                 className={authRetryMessage ? "invalid" : ""}
                 autoFocus={Boolean(authRetryMessage)}
                 onKeyDown={handleKeyDown}
@@ -141,7 +151,7 @@ export function TerminalAuthDialog({
             <div className="conn-field">
               <span>选择密钥</span>
               {selectableKeys.length === 0 ? (
-                <div className="conn-empty">没有可用的 SSH 密钥凭据</div>
+                <div className="conn-empty">暂无密钥，请先在钥匙串中添加。</div>
               ) : (
                 <div className="conn-key-picker">
                   <button
@@ -160,7 +170,7 @@ export function TerminalAuthDialog({
                         </span>
                       </>
                     ) : (
-                      <span className="conn-key-placeholder">选择密钥</span>
+                      <span className="conn-key-placeholder">选择 SSH密钥</span>
                     )}
                     <Icon name="chevron-down" size={16} />
                   </button>
@@ -193,13 +203,13 @@ export function TerminalAuthDialog({
             </div>
 
             <label className="conn-field">
-              <span>私钥口令（可选）</span>
+              <span>密码短语</span>
               <div className="conn-input-wrap">
                 <input
                   type={showAuthPassphrase ? "text" : "password"}
                   value={authPassphrase}
                   onChange={(e) => setAuthPassphrase(e.target.value)}
-                  placeholder="私钥口令"
+                  placeholder="可选：所选私钥的密码短语"
                   disabled={!selectedKey}
                   onKeyDown={handleKeyDown}
                 />
@@ -221,14 +231,42 @@ export function TerminalAuthDialog({
         <button type="button" className="conn-btn" onClick={onCancel}>
           关闭
         </button>
-        <button
-          type="button"
-          className="conn-btn conn-btn-primary"
-          disabled={!isValid}
-          onClick={onSubmit}
-        >
-          继续
-        </button>
+        <div className="conn-btn-split">
+          <button
+            type="button"
+            className="conn-btn conn-btn-primary conn-btn-split-main"
+            disabled={!isValid}
+            onClick={handleContinue}
+          >
+            继续
+          </button>
+          <button
+            type="button"
+            className="conn-btn conn-btn-primary conn-btn-split-caret"
+            disabled={!isValid}
+            aria-label="继续并保存"
+            aria-haspopup="menu"
+            aria-expanded={submitOptionsOpen}
+            onClick={() => setSubmitOptionsOpen((v) => !v)}
+          >
+            <Icon name="chevron-down" size={13} />
+          </button>
+          {submitOptionsOpen && (
+            <div className="conn-save-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!isValid}
+                onClick={() => {
+                  setSubmitOptionsOpen(false);
+                  onSubmit();
+                }}
+              >
+                继续并保存
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </>
   );

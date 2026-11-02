@@ -789,3 +789,809 @@
 94. **取消连接复用 `ssh_disconnect` 即可**：它关闭 Pending 资源并清 prompt waiters，
     `activate_returned` 会因记录已关闭而失败；前端再用 attempt 代数让旧回调失效，
     不需要新增后端命令。
+
+---
+
+## 2026-11-02 · Vault composer 面板 netcatty 化 + 已知主机管理（移植收尾）
+
+### 改动
+
+后端（`src-tauri`）：
+
+1. **`src/ssh/known_hosts.rs`**：新增 `KnownHostEntry`（host/port/key_type/public_key/fingerprint/hashed）
+   与 `parse_line` / `parse_host_port` / `parse_known_hosts`，解析规则对齐 netcatty：
+   `[host]:port` 方括号、逗号多模式取第一个、`|1|` 哈希条目显示 `(hashed)`、IPv6 不带端口不拆、
+   坏行静默跳过；指纹用 `russh::keys::ssh_key::PublicKey::from_openssh` + `HashAlg::Sha256`。
+   补 8 个单元测试。
+2. **`src/commands/profile.rs`**：新增 `list_ssh_key_files`（只列 `~/.ssh` 下真实私钥文件名：
+   单层文件名校验 `is_plain_file_name` + 内容嗅探 `looks_like_private_key` + 1MiB 上限，
+   不返回也不写日志任何内容）；`read_default_key_file` 从硬编码白名单泛化为同套安全校验；
+   新增 `known_hosts_list` / `known_hosts_remove`（包装 `remove_host`）。补 2 个校验测试。
+3. **`src/lib.rs`**：注册上述三条 command。
+4. **`build.rs`**：Windows 下输出 `cargo:rustc-link-arg=-MANIFESTDEPENDENCY:...Common-Controls v6...`，
+   修复 `cargo test` harness exe 加载期崩溃（见踩坑 95）。
+
+前端（`src`）：
+
+5. **`src/backend/client.ts`**：`readDefaultKeyFile` 参数泛化；新增 `listSshKeyFiles`、
+   `KnownHostEntry`、`knownHostsList`、`knownHostsRemove`。
+6. **`src/VaultView.tsx` composer 重构**（一比一 netcatty HostDetails 分区）：
+   - 名称 → 地址 → 「端口与凭据」：`SSH on [端口] 端口` 组合行、登录方式下拉
+     （auto/password/key/certificate，certificate 禁用占位）带 hint、MFA 开关
+     （开=keyboard-interactive 优先）、已选身份显示 + 清除、「使用已有凭据」下拉绑定、
+     内联凭据编辑（密码显示切换、编辑留空=保持原 secret 不变、保存密码开关、
+     `~/.ssh` 私钥下拉）→ 高级占位区（Mosh/永恒终端/SSH 代理/X11/TOTP/操作系统/发行版
+     全部「未移植」禁用行）→ 分组/标签/初始化命令。
+   - 认证映射：auto→agent、password→password、key→key（PEM 来自所选文件）、MFA 开→interactive。
+   - 保存时凭据 upsert：未绑定则新建（`username@host`），已绑定则更新；
+     `composerSecretRef` 回填原 secret 支撑「留空保持不变」。
+7. **`src/VaultView.tsx` 已知主机管理页**：导航 known-hosts 可点击；`activeNav` 分流内容区；
+   列表渲染（主机/端口/类型/SHA256 指纹、哈希条目只读徽标）、搜索过滤、删除（confirm）、
+   「转换为主机档案」（agent 凭据 + label=hostname、用户名留空）。
+8. **`src/styles.css`**：新增 `host-details-*` / `host-port-line` / `host-switch` /
+   `host-identity-row` / `host-pass-wrap` / `host-badge` 与 `vault-known-hosts*` 样式。
+
+### 验证
+
+- `npm run build`（tsc --noEmit + vite build）通过（61 模块）。
+- `cargo check` 通过；`cargo test known_hosts` **14 passed / 0 failed**；
+  `cargo test commands::profile` 5 passed / 0 failed（含新增 2 个校验测试）。
+- 踩坑 95 修复前测试 exe 全部无法启动；修复后 Windows 上 `cargo test` 首次真正跑通。
+
+### 踩坑
+
+95. **Windows `cargo test` 加载期崩 `0xc0000139`（STATUS_ENTRYPOINT_NOT_FOUND）的根因是清单**：
+    编译全部通过、exe 一启动就挂。用 PE 导入表逐函数比对 System32 导出表定位到
+    `comctl32.dll!TaskDialogIndirect`——`rfd` / `tauri-plugin-dialog` 静态导入 comctl32 **v6**
+    的函数，而该版本只有当 exe 内嵌清单声明 `Microsoft.Windows.Common-Controls` v6 依赖时
+    才会被加载器激活；GUI bin 由 tauri-build 的 winres 内嵌了这份清单，`cargo test` 的
+    harness exe 却什么都没有（资源 .lib 无符号被链接器丢弃），加载器落到 v5.8 的
+    System32 comctl32.dll 上找不到入口点。修复：build.rs 里
+    `cargo:rustc-link-arg=-MANIFESTDEPENDENCY:...`。注意**不能用
+    `cargo:rustc-link-arg-tests`**——本包只有 lib 单元测试、没有 `[[test]]` 目标，
+    cargo 直接报「does not have a test target」；而全局 `rustc-link-arg` 对已带自定义
+    清单的 GUI bin 会被 link.exe 忽略，无副作用。
+96. **PE 导出目录偏移极易搞错，错一位就"全报 missing"**：`IMAGE_EXPORT_DIRECTORY`
+    里 NumberOfFunctions=+20、**NumberOfNames=+24**、AddressOfFunctions=+28、
+    **AddressOfNames=+32**；把 +20/+28 当成名字数量/名字表读出的全是垃圾 RVA。
+    另外 exe 目录放外部 `.exe.manifest` 做实验不可靠（exe 若已内嵌清单会被忽略），
+    不如直接在 exe 字节里搜 `urn:schemas-microsoft-com:asm.v1` 判断有无内嵌清单。
+97. **PS5 脚本里单行 `if (...) { return @{...} }` 会解析失败**：hashtable 字面量收尾的
+    `} }` 在语句块中产生歧义，报错位置还飘到几十行之后（Unexpected token '}'）；
+    把 hashtable 返回写成多行即可。排查用
+    `[System.Management.Automation.Language.Parser]::ParseFile` 拿精确行列。
+98. **沙箱会拦截 cargo 写操作并把构建产物移入回收站**（exit -1073741511），cargo 命令必须
+    `dangerouslyDisableSandbox`；此前"产物损坏导致测试崩溃"的猜测被全量 `cargo clean`
+    重建后仍复现同一崩溃证伪——环境问题要先用最小 probe 工程隔离，再定位二进制层面根因。
+99. **known_hosts 哈希条目（`|1|...`）不可按明文主机删除**：`remove_host` 按明文 host+port
+    匹配行，哈希条目明文不可恢复，因此列表里只显示「哈希条目」徽标、不给删除/转换按钮。
+100. **新增 command 只注册了 `lib.rs` 会违反 R4**：本轮收尾新增的
+    `list_ssh_key_files` / `known_hosts_list` / `known_hosts_remove` 最初只进了 GUI 的
+    `generate_handler!`，headless dispatcher（`server.rs`）漏注册——`read_default_key_file`
+    本来就在 dispatcher 里，同族的 vault 命令必须两处对齐。补注册时把
+    `known_hosts_list/remove` 拆成 `*_impl(&AppState)` + 薄 command 包装：带
+    `State<AppState>` 提取器的函数 dispatcher 无法直接调用，这是仓库既有的双宿主模式
+    （对照 `list_recordings_impl` / `export_config_impl`）。验证：
+    `cargo check --features server` 通过（默认 `cargo check` 不编译 server.rs，
+    改 dispatcher 必须显式带 feature 检查）。
+
+## 2026-11-02 · 差距盘点：主机管理/连接建立 与 Netcatty 1:1 对齐（第二轮）
+
+上一轮被判「仅能连能用、不算 1:1」。本轮逐控件盘点差距（对照
+`Netcatty/components/HostDetailsPanel.tsx`、`HostDetailsConnectionSections.tsx`、
+`KeychainEditPanel.tsx`、`KnownHostsManager.tsx` 与 zh-CN i18n）：
+
+### A. Composer（VaultView.tsx L2408-2744）
+
+| 项 | 现状 | 目标（Netcatty） |
+| --- | --- | --- |
+| 标题 | 编辑主机/新建主机 | **主机详情**/新建主机 |
+| 头部按钮 | 仅 X 关闭 | 测试连接(zap) + 保存(check) + X，禁用条件=名称或地址为空 |
+| 底部 | 保存 + 保存并连接 | 固定「保存」单按钮 |
+| 分区顺序 | 名称→地址→端口凭据→**高级占位区**→组织与初始化 | 通用→地址→端口与凭据→验证器(TOTP)→SFTP 设置→颜色与图标 |
+| 高级占位区 | ADVANCE_PLACEHOLDERS 7 行「未移植」 | **删除**（运行中 Netcatty composer 无此入口） |
+| 名称 | label「名称」placeholder「例如 生产 Web」 | 无 label，placeholder「名称（例如：Production Server）」 |
+| 分组/标签 | 在底部「组织与初始化」 | 移入「通用」分区；分组 placeholder「父级 Group」；标签 placeholder「Add tags...」 |
+| 地址 placeholder | 主机名或 IP 地址 | 「IP 或 主机名」 |
+| 登录方式 | 下拉+hint ✓ | 保留；「MFA / 交互式登录」改名「优先交互式认证」（hint 不变） |
+| 用户名 | 默认空，placeholder「例如 root」 | **默认 root** |
+| 密钥选择 | auth=key 时直接显示「本地私钥」下拉 | 「+ 密钥/证书/本地密钥」链接按钮→菜单→身份行：「搜索密钥…」combo（空态「暂无密钥」）+X 删除 |
+| 保存密码 | 密码区常显 checkbox「保存密码到钥匙串」 | 编辑模式且已存密码时显示「保存密码」toggle |
+| TOTP | 无 | 分区「验证器 (TOTP)」：hint+「设置…」→对话框「设置验证器」（密钥或 otpauth URI 输入、导入二维码图片/屏幕扫描[禁用占位]、自动提交 toggle 默认开、自定义提示正则、取消/保存） |
+| SFTP | 无 | 分区「SFTP 设置」：文件协议(auto/仅 SFTP/SCP 模式)、Sudo 提权模式 toggle(scp 时禁用)、文件名编码(auto/UTF-8/GB18030) |
+| 颜色与图标 | 无 | 分区「颜色与图标」：图标预览、「来源」(自动探测/自定义)、「图标颜色」(自动+16 色) |
+
+### B. 已知主机页（VaultView.tsx knownHostsPanel L1463-1553）
+
+- 现状：标题栏+计数+刷新按钮、行式列表、搜索「搜索主机 / 类型 / 指纹…」。
+- 目标：工具栏=搜索「搜索已知主机...」+视图图标+排序图标+「扫描系统」+「导入文件」；
+  卡片网格，每卡两按钮（未转主机的显示「转换为主机」箭头、所有卡都有删除）；
+  卡片右键菜单同两项；删除有确认；空态「暂无已知主机」+
+  「Known Hosts 是你之前连接过的 SSH server。导入系统的 known_hosts 文件以开始。」
+- 后端缺：`known_hosts_scan_system`（重读合并 ~/.ssh/known_hosts）、
+  `known_hosts_import_file(path)`（导入外部 known_hosts 文件，去重合并）。
+  前端选文件可复用已有 `sftp_pick_open_path`。
+
+### C. 钥匙串页（完全缺失）
+
+- navItems 里 keys 未 enabled；无页面。
+- 目标：工具栏「新建密钥」(caret 下拉：生成密钥/导入密钥)+「导入证书」+「新建身份」+
+  搜索「搜索...」+视图图标；分区「密钥 N 项」；空态=盾牌图标+「设置密钥」+
+  「导入或生成 SSH 密钥用于安全认证。」+「导入」「生成」按钮；
+  编辑面板（对照 KeychainEditPanel）：label 输入、私钥 textarea
+  (placeholder「-----BEGIN OPENSSH PRIVATE KEY-----」)、公钥 textarea
+  (placeholder「ssh-ed25519 AAAA...」)、保存禁用=!label||!privateKey。
+- 后端缺：密钥生成（ed25519/rsa，russh::keys::generate_keypair）、导入；
+  私钥必须走 SecretStore。方案：复用 credentials 表（type=key/certificate，
+  secret=私钥走 SecretStore，公钥存 username 字段——内部约定需注释说明）。
+
+### D. 连接对话框（待核对 src/terminal/ 或 ConnectionManager）
+
+- 主机密钥弹窗文案对齐：「无法验证 {hostname} 的真实性。」/按钮「加入并继续」；
+  变更后「主机指纹已变化」/「更新并继续」；指纹行「{keyType} 指纹为 SHA256：」。
+- 认证重试表单、进度对话框文案对齐（正在连接…/连接失败。/重试）。
+
+### E. 工具栏/卡片行为
+
+- 主机卡片右键现在是功能菜单（连接/编辑/复制/删除…）→ **删除右键菜单，右键=连接**
+  （Netcatty 单击与右键都是连接；编辑仅走 hover Edit 按钮）。
+- 缺 composer 开关图标（打开面板时高亮，右侧三按钮隐藏已实现）。
+- 快速连接解析 ✓ 已有（占位符与闪电图标一致）。
+
+### F. Profile 新字段（后端，schema v33）
+
+models.rs Profile 需新增（全部 serde(default) 保证旧数据兼容）：
+`sftp_protocol: Option<String>`(auto/sftp/scp)、`sftp_sudo: bool`、
+`sftp_encoding: Option<String>`(auto/utf-8/gb18030)、`icon_source: Option<String>`、
+`icon_color: Option<String>`、`totp_auto_submit: bool`(默认 true)、
+`totp_regex: Option<String>`。**TOTP secret 是密钥材料，按 R6 走 SecretStore
+（key 约定 `totp:<profile_id>`），不入 profiles 表**。
+schema.rs SCHEMA_VERSION 32→33 开新块 ALTER TABLE profiles ADD COLUMN；
+profile.rs upsert/from_row 同步；client.ts Profile 类型同步。
+
+### 实施顺序
+
+composer（含 profile 新字段后端）→ 已知主机 → 钥匙串 → 连接对话框 →
+工具栏/卡片 → 后端收尾（双注册+测试）。每块后 `npm run build`；
+收尾跑 `cargo check` / `cargo check --features server` / `cargo test --lib`。
+
+## 2026-11-02 · 前端单元测试设施（Vitest + jsdom）
+
+目标：补上审计缺口「前端无测试 runner，门禁只有 tsc --noEmit」（todo.md 代码质量问题 #4）。
+只加 devDependencies，不动 React / Vite / TS 版本；测试不依赖真实网络 / SSH / Tauri 运行时。
+
+### 修改点
+
+1. **依赖（全部 devDependencies）**：`vitest@^3`（3.2.7）、`@vitest/coverage-v8@^3`、
+   `jsdom`（29.x）、`@testing-library/react`（16.x，React 19 兼容）、`@testing-library/dom`、
+   `@testing-library/jest-dom`（7.x）。
+2. **配置**：新建 `vitest.config.ts`（environment=jsdom、setupFiles、
+   include `src/**/*.{test,spec}.{ts,tsx}`、exclude `src-tauri/` 与 `dist/`）+
+   `src/test/setup.ts`（jest-dom 匹配器 + 每用例后 RTL cleanup）。
+   **刻意独立于 vite.config.ts**：vitest 存在 vitest.config.ts 时只读它，
+   避免测试配置与 Tauri devServer（端口/HMR/watch）互相牵扯。
+3. **脚本**：`npm test`（watch）、`npm run test:run`（一次性/门禁）、`npm run test:coverage`。
+4. **测试（9 文件 71 用例，全部通过，约 5s）**：
+   - `src/domain/sshErrors.test.ts`：`__rssh_err__|` 前缀解码、认证失败 code/原文判定；
+   - `src/domain/sshConnectionTimeouts.test.ts`：拨号/认证两段超时切换、超时启用条件；
+   - `src/domain/hostKey.test.ts`：snake_case 载荷 → camelCase 映射、端口兜底；
+   - `src/domain/connectionProgress.test.ts`：进度只增不减、95% 封顶、多跳映射；
+   - `src/domain/vaultMarqueeSelection.test.ts`：框选矩形/阈值/修饰键模式/相交判定/合并语义/滚动坐标换算；
+   - `src/workspaceModel.test.ts`：splitLeaf/removeLeaf/replaceLeaf/updateRatio 夹取/叶子收集顺序；
+   - `src/backend/workspaceStore.test.ts`：localStorage 往返、坏 JSON/版本/结构损坏兜底；
+   - `src/backend/client.test.ts`：mock `@tauri-apps/api` 验证 invoke 参数形状
+     （sessionId 注入、authOverride null 兜底、write 上行 number[]、base64 下行解码、事件名约定）；
+   - `src/terminal/TerminalAuthDialog.test.tsx`：认证重试表单（禁用态、Enter 提交、密钥下拉、空态）。
+5. **AGENTS.md**：新增置顶规则 **R11**（每次改完代码必须跑 `npm run test:run`，
+   门禁顺序 `npm run test:run` → `npm run build` / `cargo check`；新增可测试逻辑同步补测试）；
+   「构建命令」「测试现状」「事实表」「Pr5 提交前自查」「不要做的事」同步增量更新。
+
+### 踩坑经验
+
+1. **RTL 在 vitest 非 globals 模式不会自动 cleanup**：首个用例渲染残留在
+   `document.body`，后续用例 `getByRole` 报 "Found multiple elements"。
+   解法：`src/test/setup.ts` 里 `afterEach(() => cleanup())`（开 `globals: true` 也可，
+   但会要求 tsconfig 加 `types: ["vitest/globals"]`，选择显式 import + 手动 cleanup）。
+2. **jest-dom 7.x 要走 `@testing-library/jest-dom/vitest` 子入口**才能扩展 vitest 的
+   `expect`（老文档里的裸 import 只扩 jest 全局）。
+3. **Tauri mock 用 `vi.mock` 顶层工厂**（自动 hoist 到 import 之前）：
+   `vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))`，
+   再把 `invoke as unknown as ReturnType<typeof vi.fn>` 拿回 mock 句柄，
+   避免泛型 `invoke<T>` 与 mockResolvedValue 的类型摩擦。
+4. **测试文件放 src/ 内会被 `npm run build` 的 tsc --noEmit 一并检查**
+   （tsconfig include: ["src"]）——这是优点不是坑：测试与构建共用一套类型门禁，
+   无需第二份 tsconfig；代价是写测试要过 `noUnusedLocals/noUnusedParameters`。
+5. **查询文案重复的控件用 role 定位**：认证弹窗里「选择密钥」既是字段 label
+   又是下拉触发按钮文案，`getByText` 命中两个节点，改 `getByRole("button", { name })`。
+6. **并行会话影响**：落地时 `npm run build` 被另一会话编辑中的
+   `src/VaultView.tsx` 染红（15 个 tsc 错误全部在该文件：未用变量 +
+   `ADVANCE_PLACEHOLDERS` 删除进行中等），与测试设施无关——测试文件本身 0 类型错误、
+   `npm run test:run` 全绿。VaultView 收尾后构建门禁即恢复。
+
+## 2026-11-02 · 第二轮 1:1 对齐 · 块 F（Profile 新字段后端）+ 块 A（Composer 重构）
+
+对照差距盘点 A/F 两节落地。实施顺序第一、二块完成。
+
+### 修改点
+
+后端（`src-tauri`）：
+
+1. **块 F · Profile 新字段（schema v32→33）**：
+   - `src/models.rs`：Profile 新增 7 字段 `sftp_protocol: Option<String>`、
+     `sftp_sudo: bool`、`sftp_encoding: Option<String>`、`icon_source: Option<String>`、
+     `icon_color: Option<String>`、`totp_auto_submit: bool`（`default_totp_auto_submit`
+     返回 true）、`totp_regex: Option<String>`，全部 `serde(default)` 兼容旧数据。
+   - `src/db/schema.rs`：`SCHEMA_VERSION = 33`；`if version < 33` 迁移块
+     ALTER TABLE profiles ADD COLUMN ×7（5 个 TEXT DEFAULT NULL +
+     sftp_sudo INTEGER NOT NULL DEFAULT 0 + totp_auto_submit INTEGER NOT NULL DEFAULT 1），
+     每列带 `column_exists` 幂等守卫。
+   - `src/db/profile.rs`：`PROFILE_COLUMNS` 常量（16 列）统一 list/get/insert_tx/update
+     的 SQL 列清单；`row_to_profile` 读 16 列；测试夹具 `mk` 补 7 字段。
+   - 全部 Profile 字面量构造点补 7 字段默认值：`bin/rssh/commands/add.rs`、
+     `db/group.rs`、`ssh/bastion.rs`、`ssh/forward.rs`、`ssh/client.rs`（4 处）、
+     `commands/sync.rs`、`sync/config.rs`。（`bin/rssh/main.rs:44` 是枚举变体
+     `Cmd::Profile`，不是字面量，无需改。）
+   - TOTP secret 按 R6 走 SecretStore：`src/secret/mod.rs` 新增
+     `totp_secret_key(profile_id) -> "totp:<profile_id>"`，不入 profiles 表。
+2. **块 A 后端 · TOTP 读写命令**：`src/commands/profile.rs` 新增
+   `profile_totp_get_impl/_get`、`profile_totp_set_impl/_set`（secret 为 None/空白=移除），
+   `lib.rs` 与 `server.rs` dispatcher 双注册（R4）。
+3. **`cargo check --all-targets` 通过**（仅 6 个遗留 warning）。
+
+前端（`src`）：
+
+4. **`src/backend/client.ts`**：Profile 接口加 7 可选字段；新增
+   `getProfileTotp(profileId)` / `setProfileTotp(profileId, secret | null)`。
+5. **`src/ui/icons.tsx`**：新增 `"check"` 图标（composer 头部保存按钮用）。
+6. **`src/VaultView.tsx` composer 全量重写（对照 Netcatty HostDetails）**：
+   - 删除 `ADVANCE_PLACEHOLDERS`；新增 `ICON_COLORS`（自动 + 16 色含 hex）、`CredPick`。
+   - `ComposerDraft` 新增 `sftp_protocol/sftp_sudo/sftp_encoding/icon_source/icon_color/
+     totp_auto_submit/totp_regex`；**id 改为新建时预生成 `newId()`**（TOTP secret 在
+     保存前就要有稳定 key）。
+   - 新 state：`credMenu/credPick/credSearch/totpConfigured/totpDialog/testState/
+     testCleanupRef`。
+   - `openComposer`：username 默认 `"root"`；`openComposerForEdit`：回填 7 新字段、
+     载入 TOTP 配置状态、按已绑凭据类型展开凭据选择器。
+   - 保存拆成 `persistComposerDraft(d): Promise<Profile | null>`（校验 + 凭据 upsert +
+     落库，返回 Profile）与 `saveComposer()`（persist 后关闭）——测试连接复用 persist。
+   - **测试连接**：`startConnectionTest` 先落库再 `sshConnect`，监听
+     `ssh:progress:<sessionId>` 驱动状态机（connecting→…→connected/error），
+     `stopConnectionTest` 清理监听与会话；对话框展示阶段文案/错误/成功。
+   - **TOTP 对话框**：`openTotpDialog/parseTotpInput/saveTotpDialog/removeTotp`，
+     支持裸密钥或 `otpauth://` URI 解析、自动提交 toggle（默认开）、自定义提示正则、
+     导入二维码图片占位（禁用）、屏幕扫描占位（禁用）。
+   - JSX 六分区：通用（名称无 label + 分组「父级 Group」+ 标签「Add tags...」）→
+     地址（placeholder「IP 或 主机名」）→ 端口与凭据（「+ 密钥/证书/本地密钥」链接按钮
+     弹菜单、身份行、「搜索密钥…」combo 空态「暂无密钥」、保存密码 toggle）→
+     验证器 (TOTP) → SFTP 设置（协议 / Sudo 提权 scp 时禁用 / 文件名编码）→
+     颜色与图标（预览 / 来源 / 自动+16 色）。
+   - 头部：标题「主机详情/新建主机」+ 测试连接(zap) + 保存(check) + 关闭(x)，
+     禁用条件=名称或地址为空；底部固定单「保存」按钮。
+7. **`src/styles.css`**：新增 `vault-composer-head-actions`、`host-link-btn(.danger)`、
+   `host-cred-link-row/-menu`、`host-localkey-wrap`、`host-key-combo*`、
+   `host-totp-*`、`vault-totp-dialog`、`vault-test-dialog`、`host-test-*`、
+   `host-switch.disabled`、`host-icon-preview`、`host-color-swatch*`、`host-save-full`。
+
+### 验证
+
+- `npm run build`（tsc --noEmit + vite build）通过（61 模块）。
+
+### 踩坑
+
+101. **`CredentialType` 没有 `"certificate"`，三元链收窄触发 TS2367**：
+    `cred?.type === "key" ? "key" : cred?.type === "certificate" ? ...` 在 false 分支
+    被 TS 收窄为排除 `"key"` 的联合，与 `"certificate"` 比较报「no overlap」。
+    termX 未移植证书凭据（AUTH_METHODS 里 certificate 项 enabled:false），
+    直接 `setCredPick(cred?.type === "key" ? "key" : null)`。
+102. **server.rs headless dispatcher 的参数 key 是 camelCase**：`fn arg<T>` 注释
+    「camelCase, as Tauri sends it on the wire」，`profile_totp_get/set` 必须
+    `arg::<String>(&args, "profileId")`，写成 `"profile_id"` 会运行时取不到参数。
+103. **事件监听句柄的 TDZ**：`startConnectionTest` 里 `const unlisten = await listen(...)`
+    之后才能在回调里 unlisten，但完成回调 `finish` 在 listen 注册前就闭包引用它会 TDZ；
+    改先 `let unlistenFn: (() => void) | null = null`、listen 成功后赋值。
+104. **composer 草稿 id 必须新建时预生成**：TOTP secret 的 SecretStore key 是
+    `totp:<profile_id>`，若 id 在保存时才生成，设置 TOTP 对话框就没有稳定 key 可写。
+
+## 2026-11-02 · 第二轮 1:1 对齐 · 块 B（已知主机页 + 扫描/导入后端）
+
+对照差距盘点 B 节与 `Netcatty/components/KnownHostsManager.tsx`、zh-CN i18n 落地。
+
+### 修改点
+
+后端（`src-tauri`）：
+
+1. **`src/ssh/known_hosts.rs`**：新增 `merge_entries(content, path)`——外部 known_hosts
+   文本去重合并进目标文件：注释/空行/坏行跳过；非哈希条目按
+   (host, port, key_type, public_key) 去重并规范化为 `host` / `[host]:port` 形式；
+   哈希条目按整行精确去重原样追加；目标文件不存在则创建（含父目录）、结尾换行补齐。
+   补 5 个单元测试（建文件/去重/规范化/哈希行/全重复不改文件）。
+2. **`src/commands/profile.rs`**：新增 `known_hosts_scan_system_impl/_command`
+   （重读 `~/.ssh/known_hosts`；`None`=文件不存在，`Some(n)`=条数——termX 列表本身
+   即系统文件，扫描=重读）与 `known_hosts_import_file_impl/_command`
+   （外部文件去重合并，返回新增条数）。
+3. **双注册（R4）**：`lib.rs` generate_handler + `server.rs` dispatcher
+   （`known_hosts_import_file` 取 camelCase `"path"` 参数）。
+
+前端（`src`）：
+
+4. **`src/ui/icons.tsx`**：新增 `arrow-right` / `import` / `folder-open`（lucide 路径）。
+5. **`src/backend/client.ts`**：新增 `knownHostsScanSystem()`（number|null）、
+   `knownHostsImportFile(path)`。
+6. **`src/VaultView.tsx` 已知主机页重写**：
+   - 工具栏：搜索「搜索已知主机...」+ 视图切换（网格/列表，持久化
+     `termx.vault.khView.v1`）+ 排序（手动顺序/A-z/Z-a/从新到旧/从旧到新，
+     文件顺序≈发现顺序）+ 分隔线 +「扫描系统」（refresh 旋转）+「导入文件」。
+   - 卡片：按主机名去重保留靠后条目（对齐 netcatty）；server 图标 + 主机名，
+     hover 显示操作（未转换→转换为主机 arrow-right；删除 trash）；
+     已存在同 host:port 档案 → 卡片降透明、隐藏转换按钮；右键菜单同两项。
+   - 删除改走确认对话框：标题「删除“{host}”？」+「此操作不可撤销。」+ 取消/删除
+     （对齐 VaultDeleteConfirmDialog），弃用 window.confirm。
+   - 空态：盾牌圆角图标 +「暂无已知主机」+「Known Hosts 是你之前连接过的 SSH
+     server。导入系统的 known_hosts 文件以开始。」+ 扫描系统/浏览文件按钮。
+   - RENDER_LIMIT=100 +「显示 x/y 个主机。使用搜索查找特定主机。」提示。
+   - 新弹层（khViewMenu/khSortMenu/khCtx）接入既有点击外部/Escape 关闭逻辑。
+7. **`src/styles.css`**：删除旧 `vault-known-host-row` 系列，新增 `kh-toolbar*`、
+   `kh-action-btn(.outline)`、`kh-spin`、`kh-grid/kh-list`、`kh-card(.list/.converted)`、
+   `kh-card-icon/-name/-actions`（hover 显隐）、`kh-empty*`、`kh-limit-note`、
+   `kh-delete-modal/-title/-desc`。
+
+### 验证
+
+- `cargo check --all-targets --features server` 通过（仅遗留 warning）。
+- `cargo test --lib known_hosts`：**19 passed / 0 failed**（含新增 5 个合并测试）。
+- `npm run build` 通过（61 模块）。
+
+### 踩坑
+
+105. **已知主机「扫描系统」语义在 termX 与 netcatty 不同**：netcatty 的应用内列表
+    与系统文件分离，扫描=把系统条目导进应用存储；termX 的列表就是
+    `~/.ssh/known_hosts` 本身（TOFU `learn_known_hosts_path` 也写这里），
+    所以 `known_hosts_scan_system` 只能做「重读并报告条数」，toast 文案相应改为
+    「已扫描系统 known_hosts，共 N 条。」；「导入文件」才是真正的合并入口。
+106. **`parse_line` 逗号多模式取第一个别名，端口只挂在被取的那段上**：
+    `a.example,b.example:2200` 解析为 host=a.example port=22——写合并测试时
+    别指望从第二个别名拿端口。
+107. **文件级合并去重键不能只用 host:port**：同主机多密钥（轮换/多算法）合法存在，
+    用 (host, port, key_type, public_key) 四元组；哈希条目明文不可恢复，
+    退化为整行精确去重。
+
+## 2026-11-02 · 第二轮 1:1 对齐 · 块 C（钥匙串页 + 密钥生成/导入后端）
+
+对照差距盘点 C 节与 `Netcatty/components/KeychainManager.tsx`、
+`KeychainEditPanel.tsx`、`keychain/{KeyCard,GenerateStandardPanel,ImportKeyPanel,ViewKeyPanel}.tsx`
+及 zh-CN i18n 落地。
+
+### 修改点
+
+后端（`src-tauri`）：
+
+1. **`Cargo.toml`**：新增 `rand = { version = "0.10", features = ["thread_rng"] }`
+   （ssh-key 的 `PrivateKey::random` 要 rand_core 0.10 的 CryptoRng，
+   rand 0.10 的 ThreadRng 与之同版本对齐）。
+2. **新增 `src/commands/keychain.rs`**：
+   - `keychain_generate_key_impl/_command`：ED25519 / ECDSA(P-256/384/521) /
+     RSA（缺省 4096，其他位宽走 `private::RsaKeypair::random`）；
+     comment 约定 `{label}@termx`；passphrase 非空时加密私钥（`encrypt(rng, pw)`）；
+     产出 OpenSSH 文本（私钥 LF 行尾）。
+   - `keychain_import_key_impl/_command`：先 `PrivateKey::from_openssh`，
+     失败回退 `decode_secret_key`（PPK/传统 PEM/PKCS#8）；公钥缺省时从私钥推导。
+   - 复用 `credentials` 表：`credential_type=key`，私钥走 SecretStore
+     （`cred:<id>:secret`），**公钥行存 username 字段**（内部约定，模块头注释说明）；
+     passphrase 不持久化。
+3. **双注册（R4）**：`lib.rs` generate_handler + `server.rs` dispatcher
+   （`bits` 取 `as_u64→u32`，`passphrase`/`publicKey` 可选）。
+4. 测试：`cargo test --lib keychain` **5 passed**（ed25519 落库断言 / RSA 2048 位宽 /
+   带口令加密私钥往返 / 空 label 与未知算法拒绝 / 导入往返 + 垃圾输入拒绝）。
+
+前端（`src`）：
+
+5. **`src/ui/icons.tsx`**：新增 `upload` / `badge-check`（lucide 路径）。
+6. **`src/backend/client.ts`**：新增 `keychainGenerateKey(label, algorithm, bits?, passphrase?)`、
+   `keychainImportKey(label, privateKey, publicKey?)`（均返回 Credential）。
+7. **`src/VaultView.tsx` 钥匙串页**：
+   - navItems keys 启用；视图模式持久化 `termx.vault.kcView.v1`。
+   - 工具栏：「新建密钥」split button（主体=导入面板，caret 下拉=「生成密钥」）+
+     「导入证书」（badge-check，同开导入面板）+ 搜索「搜索...」（面板打开时隐藏）+
+     视图下拉（网格/列表）。
+   - 分区：「密钥」+「{n} 项」；空态 = 盾牌圆角图标 +「设置密钥」+
+     「导入或生成 SSH 密钥用于安全认证。」+ 导入/生成按钮；无结果「没有匹配结果」。
+   - 卡片（对照 KeyCard）：grid 68px / list 56px，key 图标 + label +
+     `Type {type}` mono 小字（类型由公钥行首段推导 `kcTypeOf`），hover 显铅笔编辑，
+     选中 ring；右键 = 复制公钥（无公钥禁用）/ 编辑 / 分隔 / 删除。
+   - 侧滑面板（380px，内容 margin-right 让位）四模式，标题映射
+     新建密钥/生成密钥/密钥详情/编辑密钥：
+     导入（名称/私钥 */公钥/密码短语+眼睛+保存 Passphrase/拖放区「将密钥文件拖到这里」+
+     「从文件导入」/「保存密钥」，禁用=!label||!privateKey）；
+     生成（密钥类型 select：标准密钥 ED25519/ECDSA/RSA + 安全密钥 · FIDO2 组置灰，
+     RSA bits [4096,2048,1024] / ECDSA P-[256,384,521]，「正在生成…」/「生成并保存」）；
+     详情（名称/公钥盒+复制 2s 勾选反馈/类型，头部 复制/编辑/删除 图标钮）；
+     编辑（对照 KeychainEditPanel：Label */私钥 *（placeholder
+     「-----BEGIN OPENSSH PRIVATE KEY-----」）/公钥（placeholder「ssh-ed25519 AAAA...」）/
+     密码短语，「保存修改」禁用=!label||!privateKey）。
+   - 删除确认对话框复用 kh-delete-modal（删除“{name}”？/ 此操作不可撤销。）；
+     新弹层（kcNewMenu/kcViewMenu/kcCtx）接入既有点击外部/Escape 关闭逻辑。
+8. **`src/styles.css`**：新增 kc-* 系列（工具栏/split button/主按钮/卡片/空态/无结果/
+   侧滑面板/表单控件/拖放区/公钥盒）+ `.term-context-menu button:disabled` 置灰。
+
+### 验证
+
+- `cargo check --all-targets --features server` 通过；`cargo test --lib keychain` 5/5。
+- `npm run build` 通过；`npm run test:run` **71 passed / 0 failed**。
+
+### 踩坑
+
+108. **`PrivateKey::random` 对 RSA 固定 4096 位**：ssh-key 的 `random()` 内部用
+    DEFAULT_RSA_KEY_SIZE，忽略位宽参数——其他位宽必须走
+    `private::RsaKeypair::random(rng, bits)` + `PrivateKey::try_from(KeypairData::from(kp))`。
+109. **ssh-key 的 rand 版本对齐**：russh 0.62.7 re-export 的 ssh-key 0.7.0-rc.11
+    依赖 rand_core 0.10；ThreadRng 必须来自 rand 0.10（`rand::rng()`，
+    feature `thread_rng`）。rand_core 0.10 里 `CryptoRng: Rng + TryCryptoRng<Error=Infallible>`，
+    所以同一个 ThreadRng 同时满足 `random()` 与 `encrypt()` 两处约束。
+110. **钥匙串存储约定**：credentials 表没有公钥字段——约定公钥行存 username，
+    密钥类型显示由前端从公钥行首段推导（`kcTypeOf`），避免 schema 变更；
+    passphrase 只在生成时用于加密私钥本体，从不单独持久化。
+111. **Netcatty「新建身份」是条件渲染**：仅当 `onSaveIdentity` prop 存在才渲染；
+    termX 无身份功能，不渲染（差距盘点允许）。「导出密钥」/ 导出面板不在块 C 目标内，
+    未实现；「导入证书」按钮在 netcatty 也是打开导入面板（证书暂无独立存储）。
+112. **凭据列表接口不返回 secret**：编辑面板私钥需 `getCredential(id)` 二次取全量；
+    `update_credential` 的 `save_credential_secrets` 对空/ null secret 是**删除**
+    SecretStore 条目——编辑保存前强制私钥非空（必填校验），不会误删。
+
+## 2026-11-02 · 第二轮 1:1 对齐 · 块 D（连接建立对话框 1:1）
+
+对照 `Netcatty/components/terminal/{TerminalConnectionDialog,TerminalAuthDialog,
+TerminalHostKeyVerification,TerminalConnectionProgress}.tsx`、
+`components/host-details/HostConnectionTestDialog.tsx`、
+`components/terminal/runtime/createTerminalSessionStarters.ts`（逐跳日志）、
+`components/terminal/hooks/useTerminalAuthState.ts`（认证默认值）与
+zh-CN i18n（vault.ts 636-680、133-141）逐字对齐。
+
+### 修改点
+
+1. **`src/terminal/TerminalAuthDialog.tsx`**：
+   - tab「SSH 密钥」→「SSH Key」；用户名 placeholder→「root」；
+     密码 placeholder→「输入密码」；密钥空态→「暂无密钥，请先在钥匙串中添加。」；
+     密钥选择器未选时 placeholder→「选择 SSH密钥」（hostForm.auth.selectKey）；
+     「私钥口令（可选）」→「密码短语」，placeholder→「可选：所选私钥的密码短语」。
+   - 新增 `onSubmitWithoutSave?` prop：Enter 与主按钮「继续」走
+     `onSubmitWithoutSave ?? onSubmit`；caret 下拉「继续并保存」走 `onSubmit`。
+   - 底部由单「继续」按钮改为分体按钮（继续 + caret「继续并保存」）。
+2. **`src/terminal/TerminalConnectionDialog.tsx`**：链式标题
+   `{hop}/{total}:`→`Chain {current} / {total}: `（zh-CN 保留英文）；
+   连接中关闭按钮「取消中…」→「正在取消...」；断连 X 的 title→「关闭断连提示」。
+3. **`src/terminal/TerminalHostKeyVerification.tsx`**：标题「未知的主机密钥」→
+   「确认主机指纹」、「主机密钥已变更」→「主机指纹已变化」；描述→
+   「尚未确认 {host} 的真实性。」/「{host} 的已保存指纹与当前服务器不一致。」；
+   指纹标签→「{keyType} 指纹为 SHA256：」；hint→「如果这个指纹属于你预期连接的
+   服务器，可以记住它。」/「只有在你确认这台主机确实变更过时才继续。」；
+   「加入并继续」→「记住并继续」（changed 仍「更新并继续」）。
+4. **`src/terminal/TerminalConnectionProgress.tsx`**：倒计时→「将在 {seconds}s 后超时」；
+   「等待用户输入…」→「等待用户输入」（去省略号）；重试按钮默认文案
+   「重新连接」→「重新开始」（startOver）。
+5. **`src/TerminalPane.tsx`**：
+   - 逐跳日志行逐字对齐 netcatty zh-CN 实际输出：`Connecting to {label}...` /
+     `{label} - TCP connected` / `Key exchange complete` / `Authenticated` /
+     `{label} - 已连接` / `Forwarding...` / `Opening shell...` / `Error: ...`；
+     新增 auth-attempt 分支（`✗ {error}`、`✗ All authentication methods exhausted`、
+     等待输入原样、其余 `Trying {error}...`），并据此切换「等待用户输入」状态。
+   - 认证重试默认值对齐 useTerminalAuthState：默认密码 tab（不再按凭据类型自动切
+     key tab）、不预选密钥、用户名预填 `credential.username || "root"`（初值 "root"）。
+   - AUTH_RETRY_MESSAGE→「身份验证失败。请检查凭据后重试。」；重试日志行→
+     「身份验证失败，请重试。」（terminal.auth.retryMessage/retryLog 原文）。
+   - 新增 `submitAuthAndSave`（继续并保存）：先按一次性覆盖连接，再异步写回
+     凭据（密码：username+secret；换选密钥：updateProfile 改 credential_id +
+     更新 username），落库失败不阻塞连接；authProps 接线
+     `onSubmit=submitAuthAndSave` / `onSubmitWithoutSave=submitAuth`。
+6. **`src/backend/client.ts`**：SshProgressEvent.status 注释补充 `auth-attempt`。
+7. **`src/styles.css`**：新增 `.conn-btn-split*` / `.conn-save-menu`（分体按钮 +
+   上拉菜单）；`.conn-dialog-actions` 改 `space-between`（对齐 netcatty 底部布局）。
+8. **`src/VaultView.tsx`**：测试连接超时 30s→25s，倒计时文案同步
+   （对齐 netcatty deadline = TCP 8s + auth 15s + grace 2s）。
+
+### 验证
+
+- `npx tsc --noEmit` 通过（块 D 完成时点）。
+- 测试连接入口已在既有 ssh 连接链路上（ssh_connect + 进度事件 + 成功即
+  sshDisconnect，「只认证不开 shell」语义以连接成功后立即断开实现，代码注释说明）。
+
+### 踩坑
+
+113. **netcatty zh-CN 逐跳日志是中英混排**：`terminal.progress.connecting/
+    tcpConnected/keyExchangeComplete/trying/authenticated/forwarding/openingShell/
+    error` 等键在 zh-CN 语言包里**不存在**，`tr(key, fallback)` 回落英文原文；
+    只有 `terminal.progress.connected`=「已连接」有译文。1:1 输出就是英文行 +
+    一行「已连接」，不能全翻成中文。
+114. **认证重试表单默认值以 useTerminalAuthState 为准**：永远默认密码 tab、
+    密钥不预选、用户名 `host.username || "root"`——即使主机存的是密钥认证，
+    重试表单也停在密码 tab（此前 termX 会按凭据类型自动切 tab / 预选密钥，已删）。
+115. **分体按钮语义映射**：netcatty「继续」= `onSubmitWithoutSave`
+    （不写回）、「继续并保存」= `onSubmit`（写回主机）。termX 侧
+    「继续」= 既有一次性覆盖（不写 DB），「继续并保存」= 新增
+    `submitAuthAndSave` 经 `updateCredential`/`updateProfile` 落库；
+    netcatty 的 HostConnectionTestDialog 两个槽位传的是同一个 submitAuth。
+116. **测试连接 deadline 不是整数 30s**：netcatty 为
+    `TEST_TCP_CONNECT_TIMEOUT_MS(8000) + TEST_AUTH_READY_TIMEOUT_MS(15000) +
+    TEST_DEADLINE_GRACE_MS(2000)` = 25s，termX 原 30s 倒计时改为 25s。
+117. **主机密钥文案以 netcatty zh-CN 原文为准**：任务描述里的「无法验证
+    {hostname} 的真实性」「加入并继续」是近似表述，实际原文是
+    「尚未确认 {host} 的真实性。」与「记住并继续」（vault.ts 673/679）。
+
+## 2026-11-02 · 第二轮 1:1 对齐 · 块 E（主机卡片行为对齐）
+
+对照 `Netcatty/components/vault/VaultHostListSection.tsx`（卡片右键 9 项）、
+`components/host/HostTreeContextMenus.tsx`、`components/vault/VaultViewLayout.tsx`
+（工具栏新建主机分体按钮 + 终端/串口）与 zh-CN i18n（core.ts 784-806、
+vault.ts 507/560/1030）落地。
+
+### 修改点
+
+1. **`src/VaultView.tsx` 主机卡片右键菜单 1:1**（9 项、无分隔线、顺序对齐）：
+   连接（图标 terminal→plug）/ 打开 SFTP（原「双栏 SFTP」，未实现置灰）/
+   打开浏览器（原「主机浏览器」，置灰）/ 编辑 / 复制（原「复制副本」）/
+   复制主机地址（原「复制主机名」，图标 server→copy）/ 复制账密信息 /
+   置顶·取消置顶 / 删除（danger）。删除 Netcatty 没有的「标签…」条目与
+   两条分隔线（Netcatty 菜单无分隔线）。
+2. **删除孤儿 tagEditor 弹层**：其唯一入口是上面的「标签…」条目；标签仍可经
+   右键「编辑」composer 的标签字段编辑，故连同 `tagEditor` state 一并移除，
+   标签筛选空态文案同步改为「可在主机右键「编辑」的标签字段里添加」。
+3. **工具栏「新建主机」caret 下拉文案对齐**：本地终端（PTY）→「本地终端 (CMD)」、
+   导入主机→「导入」（图标 transfer→upload）、导出主机→「导出」（图标
+   server→download）；「新建分组」不变。导入/导出后端未支持仍置灰
+   （title「尚未实现」）。「终端」「串口」按钮已存在且文案/图标与 Netcatty
+   一致（common.terminal / serial.button，terminal-square / usb），无需改。
+4. **`src/ui/icons.tsx`**：新增 `download` 图标（lucide download 路径）。
+5. **已知主机卡片右键菜单（转换为主机 / 删除）保留不动**（khCtx）。
+
+### 验证
+
+- `npx tsc --noEmit` 通过（块 E 完成时点）。
+- 单击连接（handleCardClick ↔ netcatty resolveHostActivateAction）、右键弹菜单
+  （openContextMenu ↔ ContextMenuTrigger）、hover Edit 按钮（.vault-host-edit ↔
+  renderHostEditButton）此前已与 Netcatty 一致，本轮无需改代码。
+
+### 踩坑
+
+118. **任务描述与 Netcatty 实际行为矛盾（右键连接 vs 右键菜单）**：任务写
+    「单击/右键都连接……删除 Netcatty 没有的右键菜单」，但 Netcatty 主机卡片
+    实际包 `<ContextMenu><ContextMenuTrigger>`，右键弹出完整 9 项菜单
+    （VaultHostListSection.tsx 1247-1360），并非右键连接。按 1:1 原则保留
+    右键菜单并对齐 9 项；单击连接行为不变。
+119. **菜单项文案以 zh-CN 键为准**：「复制」（action.duplicate，非「复制副本」）、
+    「复制主机地址」（terminal.statusbar.copyHostname.label，非「复制主机名」）、
+    「打开 SFTP」（vault.hosts.openSftp）、「打开浏览器」（terminal.browser.open）、
+    「本地终端 (CMD)」（vault.hosts.newLocalShell，半角括号前带空格）。
+    「打开 SFTP」图标 Netcatty 用 Files，termX 图标集无 files，沿用 columns。
+120. **tagEditor 弹层随「标签…」条目删除**：删条目后该弹层成为不可达死代码，
+    一并删除 state 与 JSX；标签编辑能力未丢失（composer 标签字段），
+    标签筛选面板空态提示同步改写，避免指向已删除的菜单项。
+
+### 门禁修复（跑全门禁时发现，均为块 A 遗留）
+
+1. **`src/db/schema.rs` v33 迁移补 `table_exists` 守卫**：块 A 的
+   `if version < 33` 块直接 `ALTER TABLE profiles`，而迁移单测按最小 fixture
+   stamp 旧版本（无 profiles 表），导致 8 个 migration 测试全挂在
+   「no such table: profiles」。改为 `if version < 33 && table_exists(conn,
+   "profiles")?`，与 v23/v24/v31/v32 同款写法；真实库自 v1 起就有 profiles，
+   生产行为不变。
+2. **`migration_32_*` 三个测试的版本断言**：原写死 `assert_eq!(version, 32)`，
+   块 A 把 SCHEMA_VERSION 提到 33 后 migrate 会 stamp 33；改断言
+   `SCHEMA_VERSION`，后续再提版本不再破坏。
+3. **`src/terminal/pty.rs` 本地 PTY 冒烟测试加 `#[cfg(all(test, unix))]`**：
+   `local_pty_write_roundtrip` / `local_pty_exit_code_reported` 依赖
+   `/bin/cat`、`/bin/sh`，Windows 无等价二进制，此前在 Windows 上必挂；
+   整个 tests mod 仅 unix 编译（模块内仅这 2 个测试）。
+4. **`src/terminal/TerminalAuthDialog.test.tsx` 随块 D 文案更新**：4 个用例
+   仍按旧文案定位（placeholder「密码」→「输入密码」、空态「没有可用的 SSH 密钥
+   凭据」→「暂无密钥，请先在钥匙串中添加。」、「私钥口令」→「可选：所选私钥的
+   密码短语」、按钮「选择密钥」→「选择 SSH密钥」）；顺带补「继续并保存」
+   caret 菜单走 onSubmit 的断言。
+
+门禁结果：`npm run test:run` 71 ✓；`npm run build` ✓；`cargo check` ✓
+（6 个遗留 warning）；`cargo check --features server` ✓；`cargo test --lib`
+780 passed / 0 failed。
+
+### 踩坑（门禁）
+
+121. **新增迁移块必须带 table_exists 守卫**：迁移单测的最小 fixture 只建
+    该步骤相关的表；任何新 `ALTER TABLE <t>` 迁移块都要先
+    `table_exists(conn, "<t>")?`，否则所有 stamp 旧版本的迁移测试全挂。
+122. **迁移测试不要写死版本号**：断言迁移后的 user_user_version 应写
+    `SCHEMA_VERSION` 而非字面量，SCHEMA_VERSION 提升时不必回头改测试。
+
+## 2026-11-02 · SSH 1:1 验收（实机比对）发现、环境踩坑与范围变更
+
+### 验收方式
+
+对照**运行中的 Netcatty 1.1.90**（pid 7900，只读：不改设置、不增删主机、测试标签用完即关）
+与 termX debug 版（`src-tauri/target/debug/rssh.exe`，WMI 启动，pid 4724）逐区比对：
+A 工具栏 / B 主机首页 / C 卡片右键 / D composer 新建+编辑 / E 删除 / F 连接建立 /
+G known hosts / H 钥匙串。CU 观察 termX 时 WebView 内容会在 foreign child
+（msedgewebview2）进程中重复出现，element_id 必须取 `foreign_child_windows` 标记之前的主树。
+
+### 差异清单（本轮修复输入）
+
+- D 区 composer（基线=运行版，源码新于运行版的部分不算差异）：
+  D1 多「初始化命令」（新+编）；D2 新建缺密码+眼睛；D3 缺「优先交互式认证」hint；
+  D4 TOTP 缺 hint+「设置…」（编辑缺整节）；D5 编辑缺「保存密码」toggle；
+  D6 编辑缺「密钥/证书/本地密钥」；D7 编辑密码空+「留空保持不变」vs 运行版 ••••• 掩码；
+  D8 编辑多身份 chip 行；D9 新建字段顺序（密钥按钮应在密码之后）；D10 端口 edit vs spinner；
+  D11 多「分组/标签」可见 label；D12 composer 的「SFTP 设置」「颜色与图标」两分区
+  运行版没有（上一轮按新于运行版的源码添加，应撤下）。
+- B 区：B1 多「主机」全量分区+「N 条 / M 个在线」计数；B2 本地终端卡应显示实际
+  shell 名（运行版为「Git Bash」）；B3 hover 编辑按钮运行版为英文 "Edit {名称}"。
+- F 区：F6 连接失败 UI 与顶栏标签直接显示原始 `__rssh_err__|{...}` 信封
+  （违反 R5，高优先级）；F7 快速连接是独立模态，运行版为 composer 预填「主机详情」；
+  F8 会话视图隐藏左导航（运行版保留）；连接中内联条按钮/文案差异
+  （运行版：「{host}:{port}」+显示日志+关闭+「将在 120s 后超时」）；
+  工具栏缺「复制主机地址」「启用广播模式」，断开 tooltip 应为「断开连接」；
+  F2 关 pane 后顶栏残留「129 已连接」陈旧状态。
+- H 区：H1 钥匙串缺「新建身份」按钮（运行版有；上一轮按源码判为条件渲染未渲染，
+  以运行版为准需补）。
+- 一致项：C 右键=直接连接（运行版无菜单）、G known hosts 页、自动认证、
+  关 pane 断开会话、A 区占位口径、钥匙串空态文案。
+- 未比对（Netcatty 只读限制）：E 多选批量删除确认框、新建主机 caret 菜单；
+  termX 保持现状并在验收报告说明。
+
+### 环境踩坑
+
+123. **Shell 工具启动的 termX 实例会被回收**：启动命令结束数秒后进程树回收把
+    实例杀掉（此前「启动后崩溃」全部由此 + 双实例引起）。实机验证必须用
+    `Invoke-CimMethod -ClassName Win32_Process -MethodName Create` 脱离进程树启动。
+124. **双实例 / 快速重启 = setup panic（exit 101）**：第二实例撞 SQLite 锁
+    （`db_error disk I/O error`）或 WebView2 `0x800700AA 资源在使用中`，
+    在 tauri app.rs:1425 panic。实机必须确保单实例；第二实例应优雅失败（未做，待办）。
+125. **CU 点击 termX 元素必须取主树 id**：WebView 内容在 foreign child 中重复
+    出现，用子树 element_id 会报 "Action path changed"；解析 get_app_state
+    文本时按 "foreign_child_windows" 切分取前段。
+
+### 范围变更
+
+- 用户范围修正（2026-11-02）：**SSH agent 转发纳入移植范围**，按 Netcatty 的
+  agent 列表 / 转发开关 / 认证走 agent 1:1 实现，与「代理」模块一起排期
+  （todo.md P1 #39）；mosh / eternalTerminal / X11 转发仍不移植。
+  安全口径：agent socket（SSH_AUTH_SOCK）路径与密钥信息不进日志、提交与文档。
+
+## 2026-11-02 · 验收差异修复（F6 / D1–D12 / B1–B3 / F2 / F7 / F8 / 工具栏 / H1）
+
+### 修复内容（对照上一条目的差异清单，口径=运行中 Netcatty 1.1.90）
+
+- **F6（R5，最高优先级）**：重写 `src/domain/sshErrors.ts` —— 新增
+  `ERROR_MESSAGES` 全量中文映射（覆盖 error.rs 全部 code：连接 / 超时 / 认证 /
+  密钥 / agent / bastion / DB / secret 等）与 `userVisibleError(raw)`；
+  所有用户可见错误展示点改为经它解析，不再泄漏 `__rssh_err__|{...}` 信封：
+  TerminalPane 进度日志与失败态、VaultView composer 错误 / 测试连接 / TOTP /
+  known hosts / 钥匙串操作、ConnectionManager / Forward / Serial / Telnet /
+  Sftp 五个面板。补 4 个 userVisibleError 单测。
+- **D1–D12 composer**（src/VaultView.tsx）：D1 删「初始化命令」字段（DB 列保留）；
+  D2 新建态加密码框+眼睛；D3「优先交互式认证」开关下加可见 hint；D4 TOTP 区
+  核对已对齐（hint+「设置…」均在）；D5 编辑态加「保存密码」toggle（关闭=删除
+  已存口令）；D6 编辑态保留「密钥/证书/本地密钥」链接按钮+菜单；D7 编辑态已有
+  保存密码时显示掩码 ••••• + 眼睛，明文不进 input（focus 全选、输入即替换）；
+  D8 编辑态删身份 chip 行（仅新建态显示）；D9 新建字段顺序对齐（端口→登录方式
+  +hint→MFA+hint→用户名→密码+眼睛→保存密码→凭据链接）；D10 端口改
+  `type=number` spinner（1–65535）；D11 去掉「分组/标签」可见 label；
+  D12 撤下 composer「SFTP 设置」「颜色与图标」两分区（DB 字段保留，
+  ICON_COLORS 常量删除）。
+- **B1**：根部「主机」分区排除已置顶 / 最近连接条目（对齐
+  `useVaultHostCollections` 的 visibleDisplayedHosts）；剩余为空且其它分区有
+  内容时整节隐藏（shouldHideEmptyRootHostsSection）；删「N 条」「N 个在线」
+  「共 N 个」三处计数，`activeSessionCount` prop 从 VaultView/App 一并移除。
+- **B2**：本地终端卡显示真实默认 shell 名（「Git Bash / Git Bash」）。新增后端
+  命令 `default_shell`（R4 双注册：lib.rs + server.rs dispatcher），前端
+  `api.defaultShell()` + 纯函数 `shellDisplayName`（src/domain/shellName.ts，
+  含单测）。
+- **B3**：卡片 hover 编辑按钮 tooltip 改 `Edit {主机名}`。
+- **F2**：Workspace 增加 paneStatus map（paneId→文案），顶栏状态只反映活动
+  窗格；`registerPane(null)` 时删条目 —— 关 pane / 切标签后陈旧状态自动回落「就绪」。
+- **F7**：废除独立「快速连接」模态（wizard state / saveWizard / 模态 JSX 全删），
+  搜索框识别为快速连接时改为打开 composer 并预填 host/port/username
+  （名称预填 `user@host`）。
+- **F8**：`connect()` / `openLocal()` 打开会话时 `setSideOpen(true)`，左侧主机
+  导航栏保持可见。
+- **工具栏**：加「复制主机地址」（复制 hostInfo.hostname，tooltip 2s「已复制」
+  反馈；无主机名时禁用）；「启用广播模式」按任务口径置灰占位
+  （title「广播模式尚未移植」）；断开按钮 tooltip 改「断开连接」。
+- **连接中内联条**：核对已对齐（「{host}:{port}」+「显示日志」+「关闭」+
+  「将在 Ns 后超时」），TerminalConnectionProgress 此前已按 Netcatty 移植，
+  本轮无需改动。
+- **H1**：钥匙串工具栏「导入证书」后加「新建身份」按钮；身份存储未移植，
+  按钮 `disabled` + title「身份存储尚未移植」，不做假功能。
+- 明确不改（与运行版一致 / 任务口径）：卡片右键=直接连接、known hosts 页、
+  A 区禁用占位、多选批量删除。
+
+### 踩坑
+
+126. **B2 为什么加 `default_shell` 命令而不是复用 `list_shells`**：本地卡要显示
+    的是「实际会启动的那个 shell」，与 `pty_spawn` 的解析必须同源 ——
+    `local_shell` 设置优先、空则 `pty::default_shell()`（Windows 按
+    cmd > pwsh > powershell 偏好挑）。list_shells 只给候选清单，前端自己挑会和
+    后端逻辑漂移。故把 `terminal::pty::default_shell` 改 pub，commands/pty.rs
+    加薄命令镜像 pty_spawn 第 19 行的取值逻辑。
+127. **广播模式只做置灰占位**：广播（多会话同写）依赖未移植的会话组管理，
+    任务允许「实现不了则置灰占位 + title 说明」；工具栏 radio 图标按钮
+    `disabled`，title「广播模式尚未移植」。
+128. **H1「新建身份」同为禁用占位**：身份（identity）存储层未移植，按钮保留
+    但禁用，title「身份存储尚未移植」；待存储层移植后再启用，避免造假功能。
+129. **删 wizard 后孤儿 prop 会咬人**：`onOpenManager`（VaultView）与
+    `activeSessionCount` 的唯一使用点在 wizard / 在线计数，删除 JSX 后
+    `noUnusedParameters` 直接 build 失败 —— 删大段 UI 时要顺着 Props 接口、
+    解构与 App 调用处三处一起清。
+130. **termX 的 `CredentialType` 没有 certificate**：composer 派生
+    `composerPasswordVisible` 里 `!== "certificate"` 的比较被 TS2367 拒绝
+    （无重叠）；证书凭据未移植，比较只保留 `!== "key"`，注释注明。
+
+### 门禁结果（2026-11-02）
+
+- `npm run test:run`：10 文件 78 用例全过（含新增 shellName 4 例、
+  sshErrors userVisibleError 4 例）。
+- `npm run build`：tsc + vite 通过。
+- `cargo check` / `cargo check --features server`：通过（仅既有 dead_code 警告）。
+- `cargo test --lib`：780 passed / 0 failed。
+- `build-debug.bat`：产物 `src-tauri/target/debug/rssh.exe`（+ MSI / NSIS 包）
+  构建成功；未启动程序，复检由主 agent 用 Computer Use 执行。
+
+### 遗留风险
+
+- 广播模式、「新建身份」、证书凭据为占位 / 未移植，后续移植时需回填真功能。
+- styles.css 中 `.vault-wizard*` 样式随 wizard 删除变为孤儿（无引用，不影响构建）。
+- 快速连接预填 composer 后，用户若直接关闭 composer 不会建立连接（与运行版
+  行为一致：快速连接入口=预填的主机详情）。
+
+## 2026-11-02 · 修复后实机复检与 B2 定论
+
+### 复检方式与覆盖
+
+- 用 build-debug.bat 产物（`src-tauri/target/debug/rssh.exe`）经 WMI
+  `Win32_Process Create` 脱离进程树启动，CU 对运行中 termX 与 Netcatty
+  逐项比对。复检中 CU 前台多次被并行桌面会话抢走（见踩坑 132），
+  后半程改为「已取得运行时证据 + 代码级核对」收尾。
+- **运行时证据（CU dump 实测）**：
+  - B1 ✓ 首页仅「全部主机 / 最近连接 / 分组」三区，无「主机」全量分区、
+    无「N 条 / N 个在线 / 共 N 个」计数；
+  - B3 ✓ 卡片 hover 编辑按钮 tooltip = `Edit 129`（英文，随运行版）；
+  - composer 新建态 ✓：无「初始化命令」、密码框+眼睛、MFA 可见 hint、
+    字段顺序（端口→登录方式→MFA→用户名→密码→凭据链接）、端口
+    spinner 默认 22、无「分组 / 标签」可见 label、无 SFTP 设置 / 颜色图标分区
+    （D1/D2/D3/D9/D10/D11/D12 逐项对上了运行版记录）；
+  - B2 部分：本地卡已显示真实 shell 名，但本机解析为「CMD / CMD」，
+    Netcatty 运行版显示「Git Bash / Git Bash」→ 见下方定论。
+- **代码级核对（运行时 dump 受限项）**：D4 TOTP 区在 VaultView 为无条件渲染
+  （hint+「设置…」/「编辑/移除验证器」均在），dump 缺失系 UIA 滚动虚拟化
+  （踩坑 133），判已修；D5–D8 编辑态、F7 快速连接预填、H1 新建身份占位、
+  工具栏复制主机地址 / 广播占位以修复 diff + 代码核对佐证。
+
+### B2 定论（残留差异，判为功能缺口而非 SSH 范围内缺陷）
+
+- Netcatty 运行版「Git Bash / Git Bash」卡是**用户已保存的本地 shell 主机**
+  （`protocol: 'local'`，`label` 与 `localShellName` 均为 'Git Bash'，
+  经「新建主机 → 本地终端」弹窗选 Git Bash 创建），副标题逻辑
+  `getVaultHostRowSubtitle` = `localShellName || t('localShell.subtitle')`
+  （Netcatty `domain/localShellHost.ts`、`components/vault/VaultHostListSection.tsx`）。
+- termX 尚无「本地 shell 主机」数据模型与创建流程（shell 选择弹窗、保存主机、
+  按保存 shell 启动），内置 `__local` 卡只能显示系统默认 shell 名
+  （本机 = CMD，`pty::default_shell()` 按 cmd > pwsh > powershell 偏好）。
+- 裁决：CMD vs Git Bash = **数据 + 功能缺口**（对方是用户数据里的已存主机，
+  且「本地终端」整功能未移植），不属 SSH 连接建立与管理范围；
+  **defer 到后续「本地终端」功能移植**（含 shell 发现：Git Bash / Cygwin / WSL、
+  shell 选择弹窗、本地主机 CRUD），届时一并对齐。
+
+### 踩坑
+
+131. **debug 构建的控制台窗口在应用树内且是进程主窗口**：`windows_subsystem=
+    "windows"` 仅 release 生效，debug 版带 conhost 控制台，且它是进程
+    MainWindowHandle。CU `get_app_state`/`click` 激活的是控制台而非 GUI 窗口；
+    控制台的 Text Area id 一旦误点会进入「选择」模式霸占前台（ESC 只能临时退出）。
+    解析 UIA dump 提 id 时必须按 `window "termX"` 段切分，排除控制台窗口段。
+132. **CU 前台会被并行桌面会话偷走**：termX 窗口不在前台时 Web 元素显示
+    "(N elements hidden)"；`SetForegroundWindow` 能拉回，但前台在工具调用间隙
+    再次丢失（疑似另一审计会话同时在操作桌面）。结论：多会话共用桌面时 CU
+    逐项复检不可靠，应「一次前台多取证」或退回代码级验证。
+133. **UIA 滚动虚拟化会把滚出视口的区块从树里拿掉**：composer TOTP 区代码
+    存在但 dump 不可见，最初误判「缺失」；读代码确认无条件渲染后纠正。
+    凡「dump 里没有」先排除虚拟化再下差异结论。
+
+### 门禁结果（2026-11-02，复检后）
+
+- 复检未改代码，沿用修复轮门禁：`npm run test:run` 78 例、`npm run build`、
+  `cargo check`（含 `--features server`）、`cargo test --lib` 780 例全过；
+  build-debug.bat 产物已启动并存活，CU 取证后正常退出。

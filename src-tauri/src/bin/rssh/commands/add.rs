@@ -58,6 +58,13 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         init_command,
         group_id,
         algorithms: Default::default(),
+        sftp_protocol: None,
+        sftp_sudo: false,
+        sftp_encoding: None,
+        icon_source: None,
+        icon_color: None,
+        totp_auto_submit: true,
+        totp_regex: None,
     };
     rssh_lib::db::profile::insert(conn, &p)?;
     println!("Profile '{}' created.", p.name);

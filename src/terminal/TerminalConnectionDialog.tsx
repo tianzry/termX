@@ -197,7 +197,7 @@ export function TerminalConnectionDialog({
                 <>
                   <div className="conn-title">
                     <span className="conn-title-muted">
-                      {chainProgress.currentHop}/{chainProgress.totalHops}:{" "}
+                      Chain {chainProgress.currentHop} / {chainProgress.totalHops}:{" "}
                     </span>
                     <span>{chainProgress.currentHostLabel}</span>
                   </div>
@@ -234,14 +234,14 @@ export function TerminalConnectionDialog({
                 onClick={progressProps.onCancelConnect}
                 disabled={progressProps.isCancelling}
               >
-                {progressProps.isCancelling ? "取消中…" : "关闭"}
+                {progressProps.isCancelling ? "正在取消..." : "关闭"}
               </button>
             )}
             {canDismissDisconnected && (
               <button
                 type="button"
                 className="conn-btn conn-btn-icon"
-                title="关闭提示"
+                title="关闭断连提示"
                 onClick={onDismissDisconnected}
               >
                 <Icon name="x" size={14} />

@@ -16,6 +16,13 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         init_command: row.get(6)?,
         group_id: row.get(7)?,
         algorithms: parse_algorithms(row.get(8)?),
+        sftp_protocol: row.get(9)?,
+        sftp_sudo: row.get(10)?,
+        sftp_encoding: row.get(11)?,
+        icon_source: row.get(12)?,
+        icon_color: row.get(13)?,
+        totp_auto_submit: row.get(14)?,
+        totp_regex: row.get(15)?,
     })
 }
 
@@ -43,22 +50,21 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
         .map_err(|e| AppError::other("serde_failed", json!({ "err": e.to_string() })))
 }
 
+/// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex";
+
 pub fn list(db: &Db) -> AppResult<Vec<Profile>> {
     let conn = db.lock()?;
-    let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms FROM profiles ORDER BY name ASC",
-    )?;
+    let sql = format!("SELECT {PROFILE_COLUMNS} FROM profiles ORDER BY name ASC");
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| row_to_profile(row))?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 pub fn get(db: &Db, id: &str) -> AppResult<Profile> {
     let conn = db.lock()?;
-    conn.query_row(
-        "SELECT id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms FROM profiles WHERE id = ?1",
-        params![id],
-        |row| row_to_profile(row),
-    ).map_err(|e| match e {
+    let sql = format!("SELECT {PROFILE_COLUMNS} FROM profiles WHERE id = ?1");
+    conn.query_row(&sql, params![id], |row| row_to_profile(row)).map_err(|e| match e {
         rusqlite::Error::QueryReturnedNoRows => {
             AppError::not_found("profile_not_found", serde_json::json!({ "id": id }))
         }
@@ -91,13 +97,34 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
     validate_for_write(p)?;
     let algorithms = algorithms_json(p)?;
     conn.execute(
-        "INSERT INTO profiles (id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+        "INSERT INTO profiles (id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, \
+         sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
-         init_command=excluded.init_command, group_id=excluded.group_id, algorithms=excluded.algorithms",
-        params![p.id, p.name, p.host, p.port as u32, p.credential_id, p.bastion_profile_id, p.init_command, p.group_id, algorithms],
+         init_command=excluded.init_command, group_id=excluded.group_id, algorithms=excluded.algorithms, \
+         sftp_protocol=excluded.sftp_protocol, sftp_sudo=excluded.sftp_sudo, sftp_encoding=excluded.sftp_encoding, \
+         icon_source=excluded.icon_source, icon_color=excluded.icon_color, \
+         totp_auto_submit=excluded.totp_auto_submit, totp_regex=excluded.totp_regex",
+        params![
+            p.id,
+            p.name,
+            p.host,
+            p.port as u32,
+            p.credential_id,
+            p.bastion_profile_id,
+            p.init_command,
+            p.group_id,
+            algorithms,
+            p.sftp_protocol,
+            p.sftp_sudo,
+            p.sftp_encoding,
+            p.icon_source,
+            p.icon_color,
+            p.totp_auto_submit,
+            p.totp_regex
+        ],
     )?;
     Ok(())
 }
@@ -112,8 +139,26 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
     let conn = db.lock()?;
     let algorithms = algorithms_json(p)?;
     conn.execute(
-        "UPDATE profiles SET name=?1, host=?2, port=?3, credential_id=?4, bastion_profile_id=?5, init_command=?6, group_id=?7, algorithms=?8 WHERE id=?9",
-        params![p.name, p.host, p.port as u32, p.credential_id, p.bastion_profile_id, p.init_command, p.group_id, algorithms, p.id],
+        "UPDATE profiles SET name=?1, host=?2, port=?3, credential_id=?4, bastion_profile_id=?5, init_command=?6, group_id=?7, algorithms=?8, \
+         sftp_protocol=?9, sftp_sudo=?10, sftp_encoding=?11, icon_source=?12, icon_color=?13, totp_auto_submit=?14, totp_regex=?15 WHERE id=?16",
+        params![
+            p.name,
+            p.host,
+            p.port as u32,
+            p.credential_id,
+            p.bastion_profile_id,
+            p.init_command,
+            p.group_id,
+            algorithms,
+            p.sftp_protocol,
+            p.sftp_sudo,
+            p.sftp_encoding,
+            p.icon_source,
+            p.icon_color,
+            p.totp_auto_submit,
+            p.totp_regex,
+            p.id
+        ],
     )?;
     Ok(())
 }
@@ -160,6 +205,13 @@ mod tests {
             init_command: None,
             group_id: None,
             algorithms: SshAlgorithms::default(),
+            sftp_protocol: None,
+            sftp_sudo: false,
+            sftp_encoding: None,
+            icon_source: None,
+            icon_color: None,
+            totp_auto_submit: true,
+            totp_regex: None,
         }
     }
 

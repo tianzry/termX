@@ -189,12 +189,14 @@ export default function App() {
 
   function openLocal() {
     setSurface(null);
+    setSideOpen(true);
     setRecentIds((prev) => saveRecent("__local", prev));
     workspaceRef.current?.newTab({ kind: "pty" });
   }
 
   function connect(profile: Profile) {
     setSurface(null);
+    setSideOpen(true);
     setRecentIds((prev) => saveRecent(profile.id, prev));
     workspaceRef.current?.newTab({
       kind: "ssh",
@@ -270,11 +272,9 @@ export default function App() {
               groups={groups}
               credentials={credentials}
               recentIds={recentIds}
-              activeSessionCount={tabs.length}
               onConnect={connect}
               onLocal={openLocal}
               onSerial={openSerial}
-              onOpenManager={openManager}
               onDataChanged={() => void loadData()}
             />
           )}

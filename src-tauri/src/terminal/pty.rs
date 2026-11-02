@@ -295,7 +295,7 @@ fn scan_windows() -> Vec<String> {
     shells
 }
 
-fn default_shell() -> String {
+pub fn default_shell() -> String {
     // SHELL 仅 Unix 上可信：Windows 下 MSYS/Git Bash 常把 SHELL 设为
     // /usr/bin/bash 这种 Unix 路径，portable_pty 拿去 spawn 会直接失败。
     // Windows 走 available_shells() 的扫描结果（System32 / Program Files / PATH）。
@@ -447,7 +447,9 @@ fn spawn_builder(
     Ok((session_id, handle))
 }
 
-#[cfg(test)]
+// 本地 PTY 冒烟测试依赖 Unix 的 /bin/cat 与 /bin/sh（Windows 无等价
+// 回显/shell 二进制可替代），仅在 unix 目标编译运行。
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::sync::mpsc;

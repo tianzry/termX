@@ -672,6 +672,13 @@ mod tests {
             init_command: None,
             group_id: group.map(String::from),
             algorithms: Default::default(),
+            sftp_protocol: None,
+            sftp_sudo: false,
+            sftp_encoding: None,
+            icon_source: None,
+            icon_color: None,
+            totp_auto_submit: true,
+            totp_regex: None,
         }
     }
 

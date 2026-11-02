@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "./backend/client";
+import { userVisibleError } from "./domain/sshErrors";
 import type {
   Credential,
   CredentialType,
@@ -127,7 +128,7 @@ export function ConnectionManager({
       setCreds(cs);
       setGroups(gs);
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     }
   }
 
@@ -214,7 +215,7 @@ export function ConnectionManager({
       setProfDraft(null);
       onChanged();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -228,7 +229,7 @@ export function ConnectionManager({
       await api.deleteProfile(p.id);
       onChanged();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -250,7 +251,7 @@ export function ConnectionManager({
         save_to_remote: full.save_to_remote,
       });
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     }
   }
 
@@ -286,7 +287,7 @@ export function ConnectionManager({
       await reload();
       onChanged();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -301,7 +302,7 @@ export function ConnectionManager({
       await reload();
       onChanged();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -313,7 +314,7 @@ export function ConnectionManager({
       const text = await api.readDefaultKeyFile("id_ed25519");
       setCredDraft((d) => (d ? { ...d, secret: text } : d));
     } catch (e) {
-      setErr(`读取 ~/.ssh/id_ed25519 失败：${String(e)}`);
+      setErr(`读取 ~/.ssh/id_ed25519 失败：${userVisibleError(String(e))}`);
     }
   }
 
@@ -353,7 +354,7 @@ export function ConnectionManager({
       await reload();
       onChanged();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -368,7 +369,7 @@ export function ConnectionManager({
       await reload();
       onChanged();
     } catch (e) {
-      setErr(String(e));
+      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }

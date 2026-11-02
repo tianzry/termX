@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 32;
+const SCHEMA_VERSION: u32 = 33;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -692,6 +692,36 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if version < 33 && table_exists(conn, "profiles")? {
+        // Netcatty 1:1 主机 composer 新字段（对齐 models.rs Profile）。
+        // 全部可空 / 带默认值，旧行直接可读；幂等用 column_exists 兜底
+        // （与 v31/v32 同款写法）。TOTP secret 是密钥材料，不入表——
+        // 走 SecretStore，key 约定 `totp:<profile_id>`（AGENTS.md R6）。
+        // table_exists 守卫：真实库自 v1 起就有 profiles；迁移单测按最小
+        // fixture stamp 旧版本（无 profiles 表），与 v23/v24 同款写法。
+        for (col, decl) in [
+            ("sftp_protocol", "TEXT DEFAULT NULL"),
+            ("sftp_encoding", "TEXT DEFAULT NULL"),
+            ("icon_source", "TEXT DEFAULT NULL"),
+            ("icon_color", "TEXT DEFAULT NULL"),
+            ("totp_regex", "TEXT DEFAULT NULL"),
+        ] {
+            if !column_exists(conn, "profiles", col)? {
+                conn.execute_batch(&format!("ALTER TABLE profiles ADD COLUMN {col} {decl};"))?;
+            }
+        }
+        if !column_exists(conn, "profiles", "sftp_sudo")? {
+            conn.execute_batch(
+                "ALTER TABLE profiles ADD COLUMN sftp_sudo INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+        if !column_exists(conn, "profiles", "totp_auto_submit")? {
+            conn.execute_batch(
+                "ALTER TABLE profiles ADD COLUMN totp_auto_submit INTEGER NOT NULL DEFAULT 1;",
+            )?;
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -723,7 +753,7 @@ mod tests {
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, super::SCHEMA_VERSION);
         assert!(!super::column_exists(&conn, "groups", "terminal_background").unwrap());
     }
 
@@ -790,7 +820,7 @@ mod tests {
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, SCHEMA_VERSION);
     }
 
     #[test]
@@ -833,7 +863,7 @@ mod tests {
             let version: u32 = conn
                 .pragma_query_value(None, "user_version", |row| row.get(0))
                 .unwrap();
-            assert_eq!(version, 32);
+            assert_eq!(version, SCHEMA_VERSION);
         }
     }
     use super::*;

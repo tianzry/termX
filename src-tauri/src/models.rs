@@ -44,6 +44,36 @@ pub struct Profile {
     pub group_id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_ssh_algorithms")]
     pub algorithms: SshAlgorithms,
+    // ── Netcatty 1:1 对齐新增字段（schema v33）──
+    // 全部 serde(default)：旧库 / 旧前端 / 旧配置 JSON 缺字段时落到默认值，
+    // 保证升级不破坏既有数据（见 db/schema.rs version<33 迁移块）。
+    /// SFTP 文件协议：`auto` / `sftp` / `scp`；None = auto。
+    #[serde(default)]
+    pub sftp_protocol: Option<String>,
+    /// SFTP Sudo 提权模式（用保存的密码自动获取 Root 权限）。
+    #[serde(default)]
+    pub sftp_sudo: bool,
+    /// SFTP 文件名编码：`auto` / `utf-8` / `gb18030`；None = auto。
+    #[serde(default)]
+    pub sftp_encoding: Option<String>,
+    /// 主机图标来源：`auto`（自动探测）/ `custom`（自定义）；None = auto。
+    #[serde(default)]
+    pub icon_source: Option<String>,
+    /// 主机图标颜色：`auto` 或 `#RRGGBB`；None = auto。
+    #[serde(default)]
+    pub icon_color: Option<String>,
+    /// TOTP 在已知提示上自动提交（默认 true）。
+    /// TOTP secret 本身是密钥材料，走 SecretStore（key `totp:<profile_id>`），不入表。
+    #[serde(default = "default_totp_auto_submit")]
+    pub totp_auto_submit: bool,
+    /// TOTP 自定义提示正则（RE2）；None = 用内置 JumpServer / Google Authenticator PAM 模式。
+    #[serde(default)]
+    pub totp_regex: Option<String>,
+}
+
+/// `totp_auto_submit` 的 serde 默认值：Netcatty 行为是默认开启自动提交。
+fn default_totp_auto_submit() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

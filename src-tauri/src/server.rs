@@ -443,6 +443,12 @@ fn dispatch(
 
         // ---- local PTY ----
         "list_shells" => Ok(json!(pty::available_shells())),
+        "default_shell" => {
+            let configured = crate::db::settings::get(&state.db, "local_shell")
+                .map_err(err_value)?
+                .filter(|s| !s.is_empty());
+            Ok(json!(configured.unwrap_or_else(pty::default_shell)))
+        }
         "pty_spawn" => {
             let cols = checked_u16_arg(&args, "cols", 80)?;
             let rows = checked_u16_arg(&args, "rows", 24)?;
@@ -708,6 +714,43 @@ fn dispatch(
         "read_default_key_file" => ok(crate::commands::profile::read_default_key_file(arg(
             &args, "name",
         )?)),
+        // vault：SSH 主机连接收尾新增的三个 command 同步注册（AGENTS.md R4）
+        "list_ssh_key_files" => ok(crate::commands::profile::list_ssh_key_files()),
+        "known_hosts_list" => ok(crate::commands::profile::known_hosts_list_impl(state)),
+        "known_hosts_remove" => ok(crate::commands::profile::known_hosts_remove_impl(
+            state,
+            &arg::<String>(&args, "host")?,
+            arg::<u16>(&args, "port")?,
+        )),
+        "known_hosts_scan_system" => ok(crate::commands::profile::known_hosts_scan_system_impl(
+            state,
+        )),
+        "known_hosts_import_file" => ok(crate::commands::profile::known_hosts_import_file_impl(
+            state,
+            &arg::<String>(&args, "path")?,
+        )),
+        "profile_totp_get" => ok(crate::commands::profile::profile_totp_get_impl(
+            state,
+            &arg::<String>(&args, "profileId")?,
+        )),
+        "profile_totp_set" => ok(crate::commands::profile::profile_totp_set_impl(
+            state,
+            &arg::<String>(&args, "profileId")?,
+            args.get("secret").and_then(|v| v.as_str()),
+        )),
+        "keychain_generate_key" => ok(crate::commands::keychain::keychain_generate_key_impl(
+            state,
+            &arg::<String>(&args, "label")?,
+            &arg::<String>(&args, "algorithm")?,
+            args.get("bits").and_then(|v| v.as_u64()).map(|v| v as u32),
+            args.get("passphrase").and_then(|v| v.as_str()),
+        )),
+        "keychain_import_key" => ok(crate::commands::keychain::keychain_import_key_impl(
+            state,
+            &arg::<String>(&args, "label")?,
+            &arg::<String>(&args, "privateKey")?,
+            args.get("publicKey").and_then(|v| v.as_str()),
+        )),
 
         // ---- config import/export (JSON-string core; the *_to_file / *_from_file
         //      dialog variants are handled browser-side by the IPC shim) ----

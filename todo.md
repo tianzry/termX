@@ -13,10 +13,10 @@
 
 | 分组 | 完成 / 总数 | 说明 |
 |---|---|---|
-| P0 日常可用性 | 4 / 12 | 不补齐难以日常使用 |
-| P1 差异化能力 | 0 / 14 | 拉开与普通 SSH 客户端差距 |
-| P2 大工程 | 0 / 5 | 需单独立项 |
-| **合计** | **4 / 31** | |
+| P0 日常可用性 | 6 / 14 | 不补齐难以日常使用 |
+| P1 差异化能力 | 0 / 19 | 拉开与普通 SSH 客户端差距（含 1 项 ⏸ 不移植；#39 为范围修正新增） |
+| P2 大工程 | 0 / 6 | 需单独立项（含 4 项 ⏸ 暂缓移植，见 plan.md） |
+| **合计** | **6 / 39** | 2026-11-02：第二轮 1:1 对齐块 D/E 完成，P0 #32 测试连接完成；SSH agent 转发纳入移植（#39） |
 
 ---
 
@@ -39,10 +39,11 @@
 | Vault 首页两批差异（分组层级 / 置顶 / 多选 / 右键菜单 / 快速连接预填 / 右侧新建面板） | ✅ | `src/VaultView.tsx`、`src/ConnectionManager.tsx`、`src/App.tsx` |
 | SSH 连接建立与管理（弹窗进度 / 逐跳日志 / 认证重试 / 主机密钥 / 超时 / 取消 / Enter 重连） | ✅ | `src/TerminalPane.tsx`、`src/terminal/TerminalConnectionDialog.tsx`、`src-tauri/src/ssh/client.rs` |
 | 三平台 CI 构建 + Windows 代码签名 | ✅ | `.github/workflows/release.yml` |
+| Known Hosts 管理页（列表 / 搜索 / 删除 / 转主机档案） | ✅ | `src/VaultView.tsx`、`src-tauri/src/ssh/known_hosts.rs` |
 
 ---
 
-## P0 · 日常可用性（4 / 12）
+## P0 · 日常可用性（6 / 14）
 
 - [x] ✅ **1. 多标签页**
   - 终端区支持多个标签、每个标签独立会话与状态，切换不重建。
@@ -63,10 +64,14 @@
   - 参考：`components/host-browser/`、`domain/hostBrowser.ts`。
 - [ ] ⬜ **5. Keychain 管理**
   - 密钥对生成、ssh-agent 检测、默认密钥（`~/.ssh`）列出与选用。
-  - 后端：`generateKeyPair` / `checkSshAgent` / `getDefaultKeys`（netcatty 侧），termX 需补命令。
+  - 后端：`generateKeyPair` / `checkSshAgent` / `getDefaultKeys`（netcatty 侧），termX 需补命令（ssh-agent 检测随 SSH agent 转发已纳入移植，见 P1 #39）。
   - 参考：`components/keychain/`。
-- [ ] ⬜ **6. Known Hosts 管理页**
+- [x] ✅ **6. Known Hosts 管理页**
   - 已信任主机指纹列表、删除、编辑；连接弹窗之外的管理入口。
+  - 实现：`src/VaultView.tsx` known-hosts 子页（列表/搜索/删除/转换为主机档案；
+    哈希条目 `|1|` 仅展示不可删）；后端 `ssh/known_hosts.rs` 解析 + SHA256 指纹，
+    `commands/profile.rs` 的 `known_hosts_list` / `known_hosts_remove`（lib.rs 与
+    server.rs 双注册）。netcatty 本身也只有删除/转换、无编辑，视为对齐完成。
   - 参考：Vault 子页（`AGENTS.md`）、`electron/capabilities/catalog/vault.cjs`。
 - [ ] ⬜ **7. Snippets（命令片段）**
   - 片段 CRUD、按主机/分组绑定、一键下发到终端。
@@ -87,17 +92,31 @@
 - [ ] ⬜ **12. 设置中心**
   - 主题（浅/深/跟随系统 + 终端主题）、字体与字号、快捷键、语言（i18n）、窗口透明度。
   - 参考：`components/settings/`、`application/state/fontStore.ts`、`customThemeStore.ts`。
+- [x] ✅ **32. 主机「测试连接」**
+  - 已实现：composer 头部「测试连接」(zap) → 先落库 → `ssh_connect`，监听
+    `ssh:progress` 事件驱动状态机（connecting→…→connected/error），
+    展示阶段文案/错误原因，可取消（`stopConnectionTest` 清理监听并断开会话）；
+    「只认证不开 shell」语义以连接成功后立即断开实现（代码注释说明）。
+  - 块 D 对齐：对话框文案/超时与 netcatty 1:1（deadline 25s = TCP 8s +
+    auth 15s + grace 2s）。
+  - 实现：`src/VaultView.tsx`（startConnectionTest / stopConnectionTest /
+    测试对话框）、`src/styles.css`（host-test-* / vault-test-dialog）。
+  - 参考：`components/host-details/HostConnectionTestDialog.tsx`、
+    `domain/hostConnectionTest.ts`。
+- [ ] ⬜ **33. 会话日志 / 录制 UI**
+  - 终端工具栏可开始/停止录制、查看与导出会话日志；点亮当前禁用的「会话日志 / 开始录制」入口。
+  - 依据：netcatty `startManualSessionLog` / `exportSessionLogs`（`netcatty-bridge-session.d.ts` L315-L328）；termX 后端 `session/recorder.rs` 已就绪、前端未接线。
 
 ---
 
-## P1 · 差异化能力（0 / 14）
+## P1 · 差异化能力（0 / 19，含 1 项 ⏸ 不移植）
 
 - [ ] ⬜ **13. 脚本系统**
   - 脚本运行 / 停止 / 暂停 / 恢复、录制回放、屏幕快照、脚本内对话框。
   - 参考：`components/scripts/`、`netcatty-bridge-script.d.ts` L148-L168。
 - [ ] ⬜ **14. 主机监控面板**
   - CPU / 内存 / 磁盘 / 网络历史曲线，采样失败自动重试。
-  - 后端已有 `getServerStats`，缺采集循环与图表。
+  - 审计修正（2026-11-02）：termX 后端并不存在 `getServerStats` 命令（全后端检索确认），需先补后端采集命令，再做前端采集循环与图表。
   - 参考：`components/systemManager/`、`netcatty-bridge-monitor.d.ts`。
 - [ ] ⬜ **15. 云端同步**
   - Gist / WebDAV 双向同步、自动同步、冲突提示、本地快照备份。
@@ -112,9 +131,8 @@
 - [ ] ⬜ **18. Zmodem / Ymodem 传输**
   - 终端内 `rz`/`sz` 自动接管，拖拽上传走 zmodem。
   - 参考：`onZmodemEvent` / `sendSerialYmodem`。
-- [ ] ⬜ **19. Mosh / Eternal Terminal 会话**
-  - 新增会话类型；需要 sidecar（`mosh-client`、`et`）。
-  - 参考：`startMoshSession` / `startEtSession`。
+- [ ] ⏸ **19. Mosh / Eternal Terminal 会话（不移植）**
+  - 按计划跳过，不算差距；详见「不移植」节。`VaultView.tsx` `ADVANCE_PLACEHOLDERS` 已留占位文案。
 - [ ] ⬜ **20. Telnet 自动登录**
   - 按 login/password 提示自动应答，完成/取消事件。
   - 参考：`onTelnetAutoLoginComplete`。
@@ -138,27 +156,75 @@
   - `termx-tool` 命令行（会话/传输/vault/转发/片段），供 Agent 与脚本调用。
   - 后端已有 `cli_status` / `cli_install`，缺命令实现。
   - 参考：`electron/cli/netcatty-tool-cli.cjs`。
+- [ ] ⬜ **34. 主机表单高级字段**
+  - 至少补：环境变量、字符集、启动命令执行模式、主题/字体覆盖、图标；向 netcatty Host 模型字段面对齐。
+  - 依据：netcatty `domain/models/connection.ts` Host 约 30 字段；termX 表单仅 11 个（名称/地址/端口/凭据/分组/标签/登录方式/用户名/密码/密钥文件/启动命令）。
+- [ ] ⬜ **35. 串口参数缺口**
+  - 补 mark/space 校验、1.5 停止位、字符集、串口自动登录（username/password）。
+  - 依据：netcatty `startSerialSession` 参数面（`netcatty-bridge-session.d.ts` L133-L147）；termX `SerialConfig` 仅 none/odd/even 校验与 1/2 停止位，`serial_open` 无登录参数。
+- [ ] ⬜ **36. SFTP 细节交互**
+  - 面包屑导航、覆盖冲突对话框、同主机复制（与 #24 归档解压联动）。
+  - 依据：netcatty `components/sftp/SftpBreadcrumb.tsx` / `SftpConflictDialog.tsx`；termX `SftpPanel.tsx` 为单栏、无面包屑、无冲突提示。
+- [ ] ⬜ **37. Vault 其余子页**
+  - 笔记、会话日志页、代理配置入口（当前导航为禁用占位）。
+  - 依据：netcatty `components/notes/`、会话日志与代理配置入口；termX `VaultView.tsx` navItems 中 monitor/keys/proxies/port/snippets/notes/logs 均禁用。
+- [ ] ⬜ **39. SSH agent 转发（2026-11-02 范围修正纳入移植）**
+  - 按 Netcatty 的代理/agent 转发界面与逻辑 1:1：agent 列表、转发开关、认证走 agent（以 Netcatty 实际行为为准）。
+  - 与「代理」配置（#37 入口）一起排期，建议紧跟端口转发/代理模块，先后按依赖定。
+  - 安全口径：SSH_AUTH_SOCK 路径与密钥信息不进日志、提交与文档；实机验证不明文落盘凭据。
+  - mosh / eternalTerminal / X11 转发仍不移植。
 
 ---
 
-## P2 · 大工程（0 / 5）
+## P2 · 大工程（0 / 6，含 4 项 ⏸ 暂缓移植）
 
-- [ ] ⬜ **27. AI 侧栏（Catty 等价物）**
+- [ ] ⏸ **27. AI 侧栏（Catty 等价物）（暂缓移植，plan.md 口径）**
   - Provider / 模型管理、流式对话、工具调用审批、隐私脱敏、用量统计、上下文压缩。
-  - termX 后端约 36 个命令已就绪，UI 为零。
+  - termX 后端约 36 个命令已就绪，UI 为零；按 `docs/plan.md` 暂缓口径，前端侧栏暂缓移植，待 P0/P1 收敛后再启动。
   - 参考：`components/ai/`、`netcatty-bridge-ai.d.ts`。
-- [ ] ⬜ **28. MCP server + RPC 能力面**
-  - catalog 驱动对外暴露工具，外部 Agent 可调。
+- [ ] ⏸ **28. MCP server + RPC 能力面（暂缓，plan.md 口径）**
+  - catalog 驱动对外暴露工具，外部 Agent 可调。`docs/plan.md` 列为暂缓项，待 P0/P1 收敛后再启动。
   - 参考：`electron/capabilities/catalog/`、`netcatty-mcp-server.cjs`。
-- [ ] ⬜ **29. 插件宿主**
-  - `.ncpkg` 安装 / 启停 / 卸载、沙箱运行时、Node 插件（实验）。
+- [ ] ⏸ **29. 插件宿主（暂缓，plan.md 口径）**
+  - `.ncpkg` 安装 / 启停 / 卸载、沙箱运行时、Node 插件（实验）。`docs/plan.md` 列为暂缓项；后端已有 plugin 命令，前端零 UI。
   - 参考：`components/plugins/`、`electron/plugins/`。
-- [ ] ⬜ **30. Codex App Server 集成**
+- [ ] ⏸ **30. Codex App Server 集成（暂缓移植，plan.md 口径）**
   - 持久 `codex app-server --stdio` 运行时、审批与 thread 路由。
+  - 按 `docs/plan.md` 暂缓口径，属暂缓移植范围，待 P0/P1 收敛后再启动。
   - 参考：`AGENTS.md`「Codex App Server」。
 - [ ] ⬜ **31. 终端细节增强**
   - 命令块脱敏、命令黑名单、光标行高亮、OSC7 目录追踪、压缩包快捷解压、Unicode 宽字符、中文输入法适配。
   - 参考：`commandBlocklist.ts`、`cursorLineHighlight.ts`、`inheritedCwd.ts`。
+- [ ] ⬜ **38. 会话快照迁移**
+  - 跨窗口 / 重启的会话状态交接（序号、回滚缓冲、激活态），配合 #22 多窗口。
+  - 依据：netcatty `requestTerminalSessionSnapshot` / `requestTerminalSnapshotStream` / `applyTerminalSnapshot` 等（`netcatty-bridge-session.d.ts` L301-L310）；termX 仅有布局级恢复，无会话内容快照。
+
+---
+
+## 不移植（按计划跳过，不算差距）
+
+| 项 | 口径 |
+|---|---|
+| Mosh | 按计划跳过（原 #19 已标 ⏸）；`VaultView.tsx` `ADVANCE_PLACEHOLDERS` 已留占位文案 |
+| Eternal Terminal | 按计划跳过（原 #19 已标 ⏸）；同上 |
+| ~~SSH 代理（agent 认证 / 转发）~~ **已纳入移植**（2026-11-02 范围修正） | 见 P1 #39，与「代理」模块一起排期；mosh / eternalTerminal / X11 仍不移植 |
+| X11 转发 | 按计划跳过；占位文案同上 |
+| FIDO / Windows Hello、MCP（#28）、插件宿主（#29）、AI 侧栏（#27）、Codex App Server（#30） | `docs/plan.md` 暂缓项，已标 ⏸ 暂缓移植，不算当前差距 |
+
+---
+
+## 代码质量问题（2026-11-02 只读审计）
+
+> 来源：对照 netcatty 的只读审计（快照时间 2026-11-02 约 18:35）。此处只记录问题与建议动作，不代改代码。
+
+1. **headless dispatcher 注册缺口（违反 R4）**：`src-tauri/src/server.rs` 缺 `ssh_exec`、`known_hosts_list` / `known_hosts_remove`、5 个 discovery 命令、`open_external_url` 的分支 → JetBrains/headless 运行时这些命令会 command not found。建议：补齐 dispatcher 分支（`lib.rs` 侧均已注册）。
+2. **两套主机表单字段不一致**：`VaultView.tsx` 右侧新建面板与 `ConnectionManager.tsx` 弹窗各有一套 profile+credential 表单；后者有跳板机选择，前者建出来 `bastion_profile_id` 恒为 null → 同一操作两个入口两种能力，易产生数据不一致。建议：收敛为单一表单模型/组件。
+3. **大文件职责混杂**：前端 `VaultView.tsx`（86KB：导航+三视图+搜索排序+标签+多选+右键+拖拽+框选+快速连接+已知主机页）、`TerminalPane.tsx`（40KB：状态机+工具栏+菜单+弹窗编排）、`styles.css`（103KB）；后端 `commands/lifecycle.rs`（105KB）、`ai/sanitize.rs`（100KB）、`ai/session.rs`（95KB）、`server.rs`（76KB）、`sync/config.rs`（76KB）、`ssh/client.rs`（68KB）。建议：相关维护时按职责拆分，不专项重写。
+4. **前端无测试 runner（已解决 2026-11-02）**：已引入 Vitest 3 + jsdom（`vitest.config.ts` + `src/test/setup.ts`，9 个测试文件 / 71 用例，`npm run test:run` 全绿），覆盖 domain 纯逻辑 / workspaceModel / backend 桥接 / 工作区持久化 / 认证表单；门禁规则见 AGENTS.md R11，细节见 changelogs.md 同日条目。
+5. **sftp_download 内存版 IPC 膨胀**：返回 `number[]`，大文件约 4 倍膨胀；已有流式版 `sftpDownloadTo`。建议：内存版仅限小文件场景或移除。
+6. **多组后端命令前端零调用**：discovery(5)、plugin(7)、command_block(3)、window(3：`open_tab_in_new_window` / `clipboard_read` / `clipboard_write`)、update（`fetch_latest_release_tag`）、sync(11)、AI（约 36）、`reconcile_sessions`。建议：随对应模块（#15/#26/#27 等）接线，或显式标 ⏸，避免长期死代码。
+7. **cargo check 6 个 dead-code 警告**：`ai/llm.rs` 字段、`sanitize::decode_lossy`、`cli_status_headless`、`forward_rule_start_impl` / `forward_rule_stop_impl`（后两者疑似与 SSH 移植会话的快照时间差所致）。建议：移植收尾后复查清理。
+8. **todo 口径冲突已修正**：P1 #14 原称「后端已有 getServerStats」不实（已改写）；#19 与「不移植」口径冲突（已标 ⏸）；#28/#29 与 plan.md 暂缓口径对齐（已标 ⏸）。
 
 ---
 
@@ -172,3 +238,9 @@
 | 2026-11-01 | 终端工具栏左侧改为 时钟 / 系统监控(仅 SSH) / 断开 / 重连；⋮ 只留 终端外观、开始录制；分屏移入终端右键菜单（复制/粘贴/全选/浏览器/重连/分屏/清屏/关闭）。 |
 | 2026-11-02 | Vault 首页两批差异补齐：导航补已知主机/日志、侧栏拖宽、分组层级与面包屑、置顶、真实在线数、视图/排序持久化、快速连接预填、右键菜单、多选批量删除、右侧新建主机面板；P0 #4 剩拖拽归组。 |
 | 2026-11-02 | Vault 首页继续对齐：7 种排序 + 手动顺序、标签系统与筛选、最近连接规则、单击行为、快速切换器/快速连接向导、分组右键管理、拖拽归组、框选、方向键导航、可拖宽主机面板、toast；P0 #4 完成（4 / 31）。 |
+| 2026-11-02 | SSH 主机连接收尾：composer 重构为 netcatty 四分区（名称/地址/端口与凭据/高级占位，Mosh、永恒终端、SSH 代理、X11、TOTP、certificate 显式禁用）；已知主机管理页（解析列表/搜索/删除/转为主机档案）；新增 list_ssh_key_files、known_hosts_list、known_hosts_remove 三命令双注册；P0 #6 完成（5 / 31）。 |
+| 2026-11-02 | 只读审计结论落档：新增 #32~#33（P0）、#34~#37（P1）、#38（P2），进度总览更新为 5 / 38；修正 P1 #14（termX 后端并无 getServerStats，需先补后端采集）；#19 改 ⏸ 不移植、#28/#29 改 ⏸ 暂缓（plan.md 口径）；新增「不移植」「代码质量问题（8 项）」两节；「已完成」表补 Known Hosts 行。 |
+| 2026-11-02 | P2 #27 AI 侧栏、#30 Codex App Server 改 ⏸ 暂缓移植（plan.md 口径）：AI 后端 36 命令保留、前端侧栏暂缓；P2 节标题与进度总览同步为「含 4 项 ⏸ 暂缓移植」；「不移植」节同步列入两项。 |
+| 2026-11-02 | 代码质量问题 #4（前端无测试 runner）已解决：引入 Vitest 3 + jsdom 单元测试设施（9 文件 / 71 用例全绿），AGENTS.md 新增 R11 门禁（`npm run test:run` → `npm run build` / `cargo check`）。 |
+| 2026-11-02 | 第二轮 1:1 对齐块 D/E 完成：块 D 连接建立对话框文案/字段/超时逐字对齐 netcatty（认证对话框 SSH Key tab + 分体「继续/继续并保存」、主机密钥「尚未确认…/记住并继续」、逐跳日志中英混排、认证重试默认密码 tab + root 预填、测试连接 25s）；块 E 主机卡片右键菜单对齐 netcatty 9 项（删「标签…」与分隔线、删孤儿 tagEditor）、「新建主机」caret 文案（本地终端 (CMD)/导入/导出）；门禁修复块 A 遗留（v33 迁移补 table_exists 守卫、migration_32 断言改 SCHEMA_VERSION、PTY 冒烟测试 cfg(unix)）。门禁全绿（npm build ✓ / cargo check ✓ ×2 / cargo test --lib 780✓）。P0 #32 完成（6 / 38）。 |
+| 2026-11-02 | 范围修正：SSH agent 转发纳入移植（新增 P1 #39，与「代理」一起排期）；「不移植」节 SSH 代理条目改写为已纳入，mosh / eternalTerminal / X11 维持不移植；总数 38 → 39。实机验收（对运行中 Netcatty 1.1.90）差异清单已落 changelogs，修复进行中。 |

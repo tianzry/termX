@@ -86,7 +86,7 @@ interface Props {
   onSplit?: (dir: "horizontal" | "vertical") => void;
 }
 
-const AUTH_RETRY_MESSAGE = "认证失败，请检查凭据后重试。";
+const AUTH_RETRY_MESSAGE = "身份验证失败。请检查凭据后重试。";
 const PROGRESS_ATTEMPT_TIMEOUT_MESSAGE = "连接超时，请重试。";
 
 export function TerminalPane({
@@ -136,9 +136,11 @@ export function TerminalPane({
     port: 22,
     protocol: "SSH",
   });
+  /** 工具栏「复制主机地址」按钮的 tooltip（复制后短暂变为「已复制」）。 */
+  const [copyHostTitle, setCopyHostTitle] = useState("复制主机地址");
   const [keys, setKeys] = useState<AuthKeyOption[]>([]);
   const [authMethod, setAuthMethod] = useState<TerminalAuthMethod>("password");
-  const [authUsername, setAuthUsername] = useState("");
+  const [authUsername, setAuthUsername] = useState("root");
   const [authPassword, setAuthPassword] = useState("");
   const [authKeyId, setAuthKeyId] = useState<string | null>(null);
   const [authPassphrase, setAuthPassphrase] = useState("");
@@ -266,9 +268,9 @@ export function TerminalPane({
         });
         const credential = await api.getCredential(profile.credential_id);
         if (cancelled) return;
-        setAuthMethod(credential.type === "key" ? "key" : "password");
-        setAuthUsername(credential.username);
-        setAuthKeyId(credential.type === "key" ? credential.id : null);
+        // 对齐 netcatty useTerminalAuthState：重试表单默认密码 tab，
+        // 用户名预填 host.username || "root"，不预选密钥。
+        setAuthUsername(credential.username || "root");
       } catch {
         // 档案读取失败不阻塞连接，弹窗使用 tab 标题兜底。
       }
@@ -306,34 +308,51 @@ export function TerminalPane({
     }
 
     const prefix = total > 1 ? `[${hop}/${total}] ` : "";
+    // 逐跳日志行格式逐字对齐 netcatty createTerminalSessionStarters.ts：
+    // zh-CN 下除 connected（已连接）外均为英文原文（i18n 缺省回落）。
     let logLine: string;
     switch (p.status) {
       case "connecting":
-        logLine = `${prefix}正在连接 ${p.label}…`;
+        logLine = `${prefix}Connecting to ${p.label}...`;
         break;
       case "tcp-connected":
-        logLine = `${prefix}${p.label} - TCP 已连接`;
+        logLine = `${prefix}${p.label} - TCP connected`;
         break;
       case "authenticating":
-        logLine = `${prefix}${p.label} - 密钥交换完成`;
+        logLine = `${prefix}${p.label} - Key exchange complete`;
+        break;
+      case "auth-attempt":
+        if (p.error?.endsWith("rejected")) {
+          logLine = `${prefix}${p.label} - ✗ ${p.error}`;
+        } else if (p.error === "all methods exhausted") {
+          logLine = `${prefix}${p.label} - ✗ All authentication methods exhausted`;
+        } else if (p.error === "waiting for user input..." || p.error === "user responded") {
+          logLine = `${prefix}${p.label} - ${p.error}`;
+        } else {
+          logLine = `${prefix}${p.label} - Trying ${p.error}...`;
+        }
         break;
       case "authenticated":
-        logLine = `${prefix}${p.label} - 已认证`;
+        logLine = `${prefix}${p.label} - Authenticated`;
         break;
       case "connected":
         logLine = `${prefix}${p.label} - 已连接`;
         break;
       case "forwarding":
-        logLine = `${prefix}${p.label} - 正在转发…`;
+        logLine = `${prefix}${p.label} - Forwarding...`;
         break;
       case "shell":
-        logLine = `${prefix}正在打开 shell…`;
+        logLine = `${prefix}Opening shell...`;
         break;
       case "error":
-        logLine = `${prefix}${p.label} - 错误${p.error ? `: ${p.error}` : ""}`;
+        logLine = `${prefix}${p.label} - Error${
+          p.error ? `: ${userVisibleError(p.error)}` : ""
+        }`;
         break;
       default:
-        logLine = `${prefix}${p.label} - ${p.status}${p.error ? `: ${p.error}` : ""}`;
+        logLine = `${prefix}${p.label} - ${p.status}${
+          p.error ? `: ${userVisibleError(p.error)}` : ""
+        }`;
     }
 
     if (p.status === "connecting" || p.status === "forwarding") {
@@ -342,7 +361,11 @@ export function TerminalPane({
     if (hasConnectionPassedTcpDial(p.status)) {
       setIsConnectionPastTcpDial(true);
     }
-    if (
+    if (p.status === "auth-attempt" && p.error === "waiting for user input...") {
+      setIsAwaitingUserInput(true);
+    } else if (p.status === "auth-attempt" && p.error === "user responded") {
+      setIsAwaitingUserInput(false);
+    } else if (
       p.status === "authenticated" ||
       p.status === "connected" ||
       p.status === "shell" ||
@@ -506,7 +529,7 @@ export function TerminalPane({
         setNeedsAuth(true);
         setAuthRetryMessage(AUTH_RETRY_MESSAGE);
         setAuthPassword("");
-        setProgressLogs((prev) => [...prev, "认证失败，请重试。"]);
+        setProgressLogs((prev) => [...prev, "身份验证失败，请重试。"]);
         setStatus("connecting");
       } else {
         const message = userVisibleError(raw);
@@ -696,6 +719,43 @@ export function TerminalPane({
     void connect(override);
   }
 
+  /**
+   * 「继续并保存」（netcatty onSubmit → submit({ saveToHost: true })）：
+   * 先按一次性覆盖发起连接，再把用户名 / 密码写回档案凭据。
+   * 密钥方式换选了别的密钥时，档案改指新凭据（对齐 netcatty
+   * buildSavedAuthHostUpdate 的 identityFileId 写回）。落库失败不阻塞连接。
+   */
+  function submitAuthAndSave() {
+    const username = authUsername.trim();
+    const isValid =
+      username.length > 0 &&
+      (authMethod === "password" ? authPassword.length > 0 : Boolean(authKeyId));
+    if (!isValid) return;
+    submitAuth();
+    const profileId = sshProfileId;
+    if (!profileId) return;
+    void (async () => {
+      try {
+        const profile = await api.getProfile(profileId);
+        if (authMethod === "key" && authKeyId && authKeyId !== profile.credential_id) {
+          await api.updateProfile({ ...profile, credential_id: authKeyId });
+          const cred = await api.getCredential(authKeyId);
+          await api.updateCredential({ ...cred, username });
+        } else {
+          const cred = await api.getCredential(profile.credential_id);
+          await api.updateCredential({
+            ...cred,
+            username,
+            type: authMethod === "password" ? "password" : cred.type,
+            secret: authMethod === "password" ? authPassword : cred.secret,
+          });
+        }
+      } catch {
+        // 落库失败不影响本次连接（一次性覆盖已生效）。
+      }
+    })();
+  }
+
   const canDisconnect = status === "connected" || status === "connecting";
   const canReconnect = status !== "connecting";
   // 系统监控只出现在远端 SSH 会话（netcatty isSystemSidebarEligible 排除本地 / 串口 / Telnet）
@@ -767,7 +827,7 @@ export function TerminalPane({
           )}
           <button
             className="term-tool-btn"
-            title="断开当前会话，但保留标签页"
+            title="断开连接"
             disabled={!canDisconnect}
             onClick={() => disconnect()}
           >
@@ -782,6 +842,29 @@ export function TerminalPane({
             }}
           >
             <Icon name="refresh" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            title={copyHostTitle}
+            disabled={!hostInfo.hostname}
+            onClick={() => {
+              void navigator.clipboard.writeText(hostInfo.hostname).then(() => {
+                setCopyHostTitle("已复制主机地址");
+                window.setTimeout(
+                  () => setCopyHostTitle("复制主机地址"),
+                  2000,
+                );
+              });
+            }}
+          >
+            <Icon name="copy" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
+            disabled
+            title="广播模式尚未移植"
+          >
+            <Icon name="radio" size={12} />
           </button>
         </div>
         <div className="term-toolbar-right">
@@ -935,7 +1018,8 @@ export function TerminalPane({
             setShowAuthPassword,
             authRetryMessage,
             keys,
-            onSubmit: submitAuth,
+            onSubmit: submitAuthAndSave,
+            onSubmitWithoutSave: submitAuth,
             onCancel: handleCancelConnect,
             isValid: authValid,
           }}

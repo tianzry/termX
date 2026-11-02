@@ -1,9 +1,9 @@
 /**
  * 主机密钥校验（移植自 netcatty/components/terminal/TerminalHostKeyVerification.tsx）。
  *
- * unknown：首次连接（黄）；
- * changed：指纹变更（红，展示旧指纹）；
- * 操作：关闭 / 仅本次继续 / 加入并继续（changed 时为“更新并继续”）。
+ * unknown：首次连接（黄）「确认主机指纹」；
+ * changed：指纹变更（红）「主机指纹已变化」，展示已保存指纹；
+ * 操作：关闭 / 继续 / 记住并继续（changed 时为「更新并继续」）。
  */
 import { Icon } from "../ui/icons";
 import type { HostKeyInfo } from "../domain/hostKey";
@@ -36,18 +36,18 @@ export function TerminalHostKeyVerification({
         </div>
         <div className="conn-hostkey-copy">
           <div className="conn-hostkey-title">
-            {isChanged ? "主机密钥已变更" : "未知的主机密钥"}
+            {isChanged ? "主机指纹已变化" : "确认主机指纹"}
           </div>
           <p>
             {isChanged
-              ? `主机 ${hostKeyInfo.hostname} 的密钥与已保存记录不一致。`
-              : `首次连接主机 ${hostKeyInfo.hostname}，请确认指纹可信。`}
+              ? `${hostKeyInfo.hostname} 的已保存指纹与当前服务器不一致。`
+              : `尚未确认 ${hostKeyInfo.hostname} 的真实性。`}
           </p>
         </div>
       </div>
 
       <div className="conn-hostkey-details">
-        <div className="conn-hostkey-label">指纹（{hostKeyInfo.keyType}）</div>
+        <div className="conn-hostkey-label">{hostKeyInfo.keyType} 指纹为 SHA256：</div>
         <div className="conn-hostkey-fingerprint">
           <code>{hostKeyInfo.fingerprint}</code>
         </div>
@@ -59,8 +59,8 @@ export function TerminalHostKeyVerification({
         )}
         <p className="conn-hostkey-hint">
           {isChanged
-            ? "仅在确认服务器已被重装或运维变更后，才更新并继续。"
-            : "请与服务器管理员提供的指纹核对后再继续。"}
+            ? "只有在你确认这台主机确实变更过时才继续。"
+            : "如果这个指纹属于你预期连接的服务器，可以记住它。"}
         </p>
       </div>
 
@@ -75,7 +75,7 @@ export function TerminalHostKeyVerification({
             继续
           </button>
           <button type="button" className="conn-btn conn-btn-primary" onClick={onAddAndContinue}>
-            {isChanged ? "更新并继续" : "加入并继续"}
+            {isChanged ? "更新并继续" : "记住并继续"}
           </button>
         </div>
       </div>

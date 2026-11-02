@@ -47,6 +47,17 @@ export interface Profile {
   init_command: string | null;
   group_id: string | null;
   algorithms?: SshAlgorithms;
+  /** SFTP 文件协议：`auto` / `sftp` / `scp`；null/undefined = auto */
+  sftp_protocol?: string | null;
+  sftp_sudo?: boolean;
+  /** 文件名编码：`auto` / `utf-8` / `gb18030` */
+  sftp_encoding?: string | null;
+  /** 图标来源：`auto` / `custom` */
+  icon_source?: string | null;
+  icon_color?: string | null;
+  /** TOTP 自动提交，默认 true */
+  totp_auto_submit?: boolean;
+  totp_regex?: string | null;
 }
 
 export interface RemoteEntry {
@@ -94,7 +105,7 @@ export interface SshProgressEvent {
   hop: number;
   total: number;
   label: string;
-  /** connecting | tcp-connected | authenticating | authenticated | forwarding | shell | connected | error */
+  /** connecting | tcp-connected | authenticating | auth-attempt | authenticated | forwarding | shell | connected | error */
   status: string;
   error: string | null;
 }
@@ -253,6 +264,11 @@ export function ptyResize(
 
 export function ptyClose(sessionId: string): Promise<void> {
   return invoke("pty_close", { sessionId });
+}
+
+/** 本机默认 shell（与 pty_spawn 同一套解析：local_shell 设置优先）。 */
+export function defaultShell(): Promise<string> {
+  return invoke<string>("default_shell");
 }
 
 // ── 事件订阅 ──────────────────────────────────────────────
@@ -823,7 +839,90 @@ export function deleteCredential(id: string): Promise<void> {
   return invoke("delete_credential", { id });
 }
 
-/** 读 `~/.ssh/<name>` 原文（后端白名单，仅 id_rsa / id_ed25519）。 */
-export function readDefaultKeyFile(name: "id_rsa" | "id_ed25519"): Promise<string> {
+/** 读 `~/.ssh/<name>` 私钥原文（后端校验单层文件名 + 私钥内容嗅探）。 */
+export function readDefaultKeyFile(name: string): Promise<string> {
   return invoke<string>("read_default_key_file", { name });
+}
+
+/** 列出 `~/.ssh` 下的私钥文件名（只给名字，不给内容）。 */
+export function listSshKeyFiles(): Promise<string[]> {
+  return invoke<string[]>("list_ssh_key_files");
+}
+
+// ── 已知主机管理 ─────────────────────────────────────────
+
+export interface KnownHostEntry {
+  host: string;
+  port: number;
+  key_type: string;
+  public_key: string;
+  /** `SHA256:...` 指纹。 */
+  fingerprint: string;
+  /** `|1|...` 哈希条目：明文主机名不可恢复。 */
+  hashed: boolean;
+}
+
+/** 解析 `~/.ssh/known_hosts` 为结构化条目（坏行跳过）。 */
+export function knownHostsList(): Promise<KnownHostEntry[]> {
+  return invoke<KnownHostEntry[]>("known_hosts_list");
+}
+
+/** 删除 host:port 的全部 known_hosts 条目，返回删除条数。 */
+export function knownHostsRemove(host: string, port: number): Promise<number> {
+  return invoke<number>("known_hosts_remove", { host, port });
+}
+
+/** 「扫描系统」：重读 `~/.ssh/known_hosts`；null = 文件不存在，否则返回条数。 */
+export function knownHostsScanSystem(): Promise<number | null> {
+  return invoke<number | null>("known_hosts_scan_system");
+}
+
+/** 「导入文件」：外部 known_hosts 去重合并进系统文件，返回新增条数。 */
+export function knownHostsImportFile(path: string): Promise<number> {
+  return invoke<number>("known_hosts_import_file", { path });
+}
+
+// ── 钥匙串（密钥生成 / 导入）─────────────────────────────
+// 钥匙串条目复用 credentials 表（type=key）：secret=OpenSSH 私钥走 SecretStore，
+// username 字段存公钥行（内部约定，见后端 commands/keychain.rs 模块头）。
+
+/** 生成 SSH 密钥对并入库。algorithm：`ED25519` | `ECDSA` | `RSA`。 */
+export function keychainGenerateKey(
+  label: string,
+  algorithm: string,
+  bits?: number,
+  passphrase?: string,
+): Promise<Credential> {
+  return invoke<Credential>("keychain_generate_key", {
+    label,
+    algorithm,
+    bits: bits ?? null,
+    passphrase: passphrase ?? null,
+  });
+}
+
+/** 导入已有私钥（校验 + 落库）；publicKey 缺省时后端从私钥推导。 */
+export function keychainImportKey(
+  label: string,
+  privateKey: string,
+  publicKey?: string,
+): Promise<Credential> {
+  return invoke<Credential>("keychain_import_key", {
+    label,
+    privateKey,
+    publicKey: publicKey ?? null,
+  });
+}
+
+/** 读取主机的 TOTP 密钥（SecretStore，`totp:<profile_id>`）；未设置 → null。 */
+export function getProfileTotp(profileId: string): Promise<string | null> {
+  return invoke<string | null>("profile_totp_get", { profileId });
+}
+
+/** 写入 / 移除主机 TOTP 密钥；secret 传 null = 移除验证器。 */
+export function setProfileTotp(
+  profileId: string,
+  secret: string | null,
+): Promise<void> {
+  return invoke("profile_totp_set", { profileId, secret });
 }

@@ -75,7 +75,7 @@ interface LayoutProps {
   activePaneId: string | null;
   onActivate: (paneId: string) => void;
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
-  onStatus: (text: string) => void;
+  onStatus: (paneId: string, text: string) => void;
   onRatio: (splitId: string, ratio: number) => void;
   onOpenTool?: (tool: "sftp" | "serial" | "telnet" | "forward") => void;
   onClosePane: (paneId: string) => void;
@@ -105,7 +105,7 @@ function LayoutView({
         active={node.id === activePaneId}
         onActivate={() => onActivate(node.id)}
         onRegister={onRegister}
-        onStatus={onStatus}
+        onStatus={(text) => onStatus(node.id, text)}
         onOpenTool={onOpenTool}
         onClosePane={() => onClosePane(node.id)}
         onSplit={onSplit}
@@ -173,6 +173,8 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       Record<string, string>
     >({});
     const [handles, setHandles] = useState<Record<string, PaneHandle>>({});
+    /** 每窗格最近一次状态文案；顶栏只显示活动窗格的，关窗格即清除（F2）。 */
+    const [paneStatus, setPaneStatus] = useState<Record<string, string>>({});
 
     // 启动即读一次；有记录先弹横幅，等用户决定是否恢复。
     const [restore, setRestore] = useState<SavedWorkspace | null>(() =>
@@ -223,9 +225,23 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
           delete rest[paneId];
           return rest;
         });
+        if (!handle) {
+          setPaneStatus((cur) => {
+            if (!(paneId in cur)) return cur;
+            const rest = { ...cur };
+            delete rest[paneId];
+            return rest;
+          });
+        }
       },
       [],
     );
+
+    const reportPaneStatus = useCallback((paneId: string, text: string) => {
+      setPaneStatus((cur) =>
+        cur[paneId] === text ? cur : { ...cur, [paneId]: text },
+      );
+    }, []);
 
     const activatePane = useCallback((tabId: string, paneId: string) => {
       setActivePaneByTab((m) => ({ ...m, [tabId]: paneId }));
@@ -376,6 +392,11 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       onActivePane(activePaneId ? handles[activePaneId] ?? null : null);
     }, [activePaneId, handles, onActivePane]);
 
+    // 顶栏状态只反映活动窗格；窗格关闭 / 切换后自动回落（F2）。
+    useEffect(() => {
+      onStatus(activePaneId ? paneStatus[activePaneId] ?? "就绪" : "就绪");
+    }, [activePaneId, paneStatus, onStatus]);
+
     return (
       <div className="ws">
         <div className="tab-view-holder">
@@ -390,7 +411,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
                 activePaneId={tab.id === activeTabId ? activePaneId : null}
                 onActivate={(paneId) => activatePane(tab.id, paneId)}
                 onRegister={registerPane}
-                onStatus={onStatus}
+                onStatus={reportPaneStatus}
                 onRatio={(splitId, ratio) => setRatio(tab.id, splitId, ratio)}
                 onOpenTool={onOpenTool}
                 onClosePane={(paneId) => closePane(tab.id, paneId)}

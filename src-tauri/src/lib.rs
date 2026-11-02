@@ -151,6 +151,15 @@ pub fn run() {
             commands::profile::update_credential,
             commands::profile::delete_credential,
             commands::profile::read_default_key_file,
+            commands::profile::list_ssh_key_files,
+            commands::profile::known_hosts_list,
+            commands::profile::known_hosts_remove,
+            commands::profile::known_hosts_scan_system,
+            commands::profile::known_hosts_import_file,
+            commands::profile::profile_totp_get,
+            commands::profile::profile_totp_set,
+            commands::keychain::keychain_generate_key,
+            commands::keychain::keychain_import_key,
             // groups
             commands::group::list_groups,
             commands::group::create_group,
@@ -216,6 +225,8 @@ pub fn run() {
             // PTY (desktop only)
             #[cfg(desktop)]
             commands::pty::list_shells,
+            #[cfg(desktop)]
+            commands::pty::default_shell,
             #[cfg(desktop)]
             commands::pty::refresh_shells,
             #[cfg(desktop)]

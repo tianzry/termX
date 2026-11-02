@@ -5369,6 +5369,7 @@ dependencies = [
  "log",
  "mockito",
  "portable-pty",
+ "rand 0.10.1",
  "regex",
  "regex-syntax",
  "reqwest 0.12.28",
