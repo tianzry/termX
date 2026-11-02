@@ -27,6 +27,7 @@ interface Props {
   onOpenVault: () => void;
   onOpenSftp: () => void;
   onToggleHostTree: () => void;
+  onOpenSettings: () => void;
 }
 
 /** 尚未实现的后端能力：入口保留，禁用点击。 */
@@ -39,7 +40,6 @@ const disabledUtilities: Array<{
   { id: "sync", label: "云端同步（尚未实现）", icon: "cloud" },
   { id: "lock", label: "应用锁（尚未实现）", icon: "lock" },
   { id: "quick", label: "外观与窗口（尚未实现）", icon: "sliders" },
-  { id: "settings", label: "设置中心（尚未实现）", icon: "gear" },
 ];
 
 export function TopTabs({
@@ -55,6 +55,7 @@ export function TopTabs({
   onOpenVault,
   onOpenSftp,
   onToggleHostTree,
+  onOpenSettings,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -165,6 +166,13 @@ export function TopTabs({
               <Icon name={u.icon} size={16} />
             </button>
           ))}
+          <button
+            className="nc-icon-btn nc-utility-btn"
+            title="设置中心"
+            onClick={onOpenSettings}
+          >
+            <Icon name="gear" size={16} />
+          </button>
         </div>
       </div>
     </header>

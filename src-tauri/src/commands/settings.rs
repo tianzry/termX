@@ -224,6 +224,118 @@ pub fn recording_path_for(
     Ok(Some(dir.join(name)))
 }
 
+// ── 开机自启动（设置中心 · 系统 tab）──────────────────────
+//
+// Windows：写 HKCU\Software\Microsoft\Windows\CurrentVersion\Run（reg.exe，
+// CREATE_NO_WINDOW，与 shell_discovery 同一做法，不引入新依赖）。
+// 其他平台：supported=false，前端按 Netcatty 文案显示不支持。
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AutoLaunchStatus {
+    pub supported: bool,
+    pub enabled: bool,
+}
+
+const AUTO_LAUNCH_VALUE_NAME: &str = "termX";
+
+#[cfg(windows)]
+mod auto_launch_impl {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    fn reg(args: &[&str]) -> Option<(bool, String)> {
+        let out = Command::new("reg.exe")
+            .args(args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        Some((out.status.success(), stdout))
+    }
+
+    pub fn enabled() -> bool {
+        let exe = match std::env::current_exe() {
+            Ok(p) => p.display().to_string().to_lowercase(),
+            Err(_) => return false,
+        };
+        let Some((_, out)) = reg(&["query", RUN_KEY, "/v", super::AUTO_LAUNCH_VALUE_NAME])
+        else {
+            return false;
+        };
+        let out = out.to_lowercase();
+        // 值存在且指向当前可执行文件才算启用（路径变化时自动失效）。
+        out.contains(super::AUTO_LAUNCH_VALUE_NAME) && out.contains(&exe)
+    }
+
+    pub fn set(enabled: bool) -> bool {
+        if enabled {
+            let exe = match std::env::current_exe() {
+                Ok(p) => format!("\"{}\"", p.display()),
+                Err(_) => return false,
+            };
+            matches!(
+                reg(&[
+                    "add",
+                    RUN_KEY,
+                    "/v",
+                    super::AUTO_LAUNCH_VALUE_NAME,
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &exe,
+                    "/f",
+                ]),
+                Some((true, _))
+            )
+        } else {
+            // 值不存在时 delete 返回非零，也视为达成"关闭"。
+            reg(&["delete", RUN_KEY, "/v", super::AUTO_LAUNCH_VALUE_NAME, "/f"]);
+            true
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_auto_launch() -> AutoLaunchStatus {
+    #[cfg(windows)]
+    {
+        AutoLaunchStatus {
+            supported: true,
+            enabled: auto_launch_impl::enabled(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        AutoLaunchStatus {
+            supported: false,
+            enabled: false,
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_auto_launch(enabled: bool) -> AutoLaunchStatus {
+    #[cfg(windows)]
+    {
+        let ok = auto_launch_impl::set(enabled);
+        AutoLaunchStatus {
+            supported: ok,
+            enabled: ok && auto_launch_impl::enabled(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        AutoLaunchStatus {
+            supported: false,
+            enabled: false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{is_safe_recording_name, safe_recording_stem};

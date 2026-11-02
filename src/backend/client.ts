@@ -330,6 +330,42 @@ export function setSetting(key: string, value: string): Promise<void> {
   return invoke("set_setting", { key, value });
 }
 
+// ── 设置中心支撑命令 ─────────────────────────────────────
+
+/** 系统字体条目（后端 `list_fonts`，fontdb 枚举）。 */
+export interface FontInfo {
+  family: string;
+  monospaced: boolean;
+}
+
+export function listFonts(): Promise<FontInfo[]> {
+  return invoke<FontInfo[]>("list_fonts");
+}
+
+/** 当前 secret 存储后端名（如 windows-credential-manager / db）。 */
+export function secretBackend(): Promise<string> {
+  return invoke<string>("secret_backend");
+}
+
+export interface AutoLaunchStatus {
+  supported: boolean;
+  enabled: boolean;
+}
+
+export function getAutoLaunch(): Promise<AutoLaunchStatus> {
+  return invoke<AutoLaunchStatus>("get_auto_launch");
+}
+
+export function setAutoLaunch(enabled: boolean): Promise<AutoLaunchStatus> {
+  return invoke<AutoLaunchStatus>("set_auto_launch", { enabled });
+}
+
+/** 应用版本号（Tauri app API；权限缺失时由调用方兜底）。 */
+export async function appVersion(): Promise<string> {
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}
+
 // ── 事件订阅 ──────────────────────────────────────────────
 
 export function onTerminalData(

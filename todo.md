@@ -90,7 +90,7 @@
 - [ ] ⬜ **11. 终端搜索 / URL 识别 / 滚动缓冲**
   - 搜索高亮与跳转、Ctrl+点击打开链接、缓冲区上限可配。
   - 依赖：`@xterm/addon-search`、`@xterm/addon-web-links`。
-- [ ] 🟨 **12. 设置中心**（2026-11-03 开工：研究完成，实现中）
+- [ ] 🟨 **12. 设置中心**（2026-11-03：实现 + 门禁完成，待实机比对与 review）
   - 主题（浅/深/跟随系统 + 终端主题）、字体与字号、快捷键、语言（i18n）、窗口透明度。
   - 参考：`components/settings/`、`application/state/fontStore.ts`、`customThemeStore.ts`。
 - [x] ✅ **32. 主机「测试连接」**
@@ -247,3 +247,4 @@
 | 2026-11-02 | 范围修正：SSH agent 转发纳入移植（新增 P1 #39，与「代理」一起排期）；「不移植」节 SSH 代理条目改写为已纳入，mosh / eternalTerminal / X11 维持不移植；总数 38 → 39。实机验收（对运行中 Netcatty 1.1.90）差异清单已落 changelogs，修复进行中。 |
 | 2026-11-02 | 十功能计划①本地终端完成：shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel 1:1（对照运行中 Netcatty）；实机比对差异清零（下拉选中态 / local 实底蓝白头像含卡·树·切换器 / local 标签 chip）；子 agent review 两必须修复项（CM 过滤 local、切换器头像）已修；门禁 97/97 + cargo 全绿。 |
 | 2026-11-03 | 按用户指令顺序调整：下一功能=设置中心（#12 标 🟨），SFTP 延后（研究已落盘 Temp）；设置中心研究完成（Netcatty 源码地图+termX 现状+CU 顶栏/SFTP 取证），实现开工。 |
+| 2026-11-03 | 设置中心实现 + 门禁完成：5 tab（应用/外观/终端/快捷键/系统）1:1 + 3 占位（文件关联/AI/同步），全屏 overlay 承载（Netcatty 独立窗口形态差异记录在案）；新增 get_auto_launch/set_auto_launch（Windows 注册表，lib.rs + server.rs 双注册），复用 list_fonts/secret_backend；新增前端单测 12 例；门禁全绿（109/109 + build ✓ + cargo check ×2 + cargo test --lib 789✓）；实机比对与子 agent review 留下一轮。 |

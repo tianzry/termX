@@ -1877,3 +1877,94 @@ VaultView 各自拉 `discoverShells` 暂不合并（一为启动解析、一为�
   用全屏 overlay/模态承载，内容与交互顺序 1:1，此形态差异记录在案。
 - 运行时界面比对（CU 打开设置对话框逐项截图）留到实机比对阶段
   （踩坑 141：坐标点击顶栏不可靠 + 前台被并行会话抢占）。
+
+## 2026-11-03 · 设置中心实现（5 tab 1:1 + 3 占位 + 自启动命令，门禁全绿）
+
+### 前端实现（新建 7 文件 + 编辑 9 处）
+
+- 新建 `src/settings/` 模块：
+  - `settingsModel.ts`：AppSettings 类型 + 默认值（对照 Netcatty：theme
+    "system"、windowOpacity 1、terminalFontSize 14、scrollback 10000、
+    verifyHostKeys true 等）+ `normalizeSettings` 等纯函数（逐字段合并、
+    嵌套 terminal/networkProxy/sessionLogs、过滤非法绑定与枚举值）；
+    整体 JSON 持久化于 db settings 键 `settings.center.v1`（经
+    getSetting/setSetting，沿用既有约定）。
+  - `keyBindings.ts`：DEFAULT_KEY_BINDINGS 36 条逐条照抄 Netcatty（tabs/
+    terminal/navigation/app/sftp 五分类、mac/pc 双方案）+ `effectiveBinding`
+    （自定义覆盖优先）+ `captureBinding`（keydown 捕获，mac 用 ⌘⌃⌥ 符号、
+    pc 用 Ctrl/Alt/Shift/Win）+ `normalizeKeyName`。
+  - `i18n.ts`：设置中心自身轻量字典，zh-CN 约 180 键（对照 Netcatty zh-CN
+    core.ts / terminal.ts 文案），en 缺键回落 zh-CN 再回落 key。
+  - `settingsStore.ts`：模块级 store + `useSettings`（useSyncExternalStore）；
+    副作用应用：data-theme + dark/light class、`--termx-window-opacity`、
+    `--termx-ui-font`、`--termx-accent`、自定义 CSS 注入
+    `<style id="termx-custom-css">`、system 主题 matchMedia 监听；
+    `resolvedThemeMode` 供终端取明暗。
+  - `SettingsDialog.tsx`：全屏 overlay 外壳（Netcatty 为独立窗口，形态差异
+    已记录在案）；tab 顺序对照 Netcatty：应用 → 外观 → 终端 → 快捷键 →
+    文件关联(禁用) → AI(禁用) → 同步与云(禁用) → 系统（插件等价 Netcatty
+    条件渲染不显示）；搜索控件（目录检索 → tab 级定位）、Esc 关闭。
+  - `SettingsTabs.tsx`（约 640 行）：**应用**（版本 + 检查更新禁用 +
+    4 外链行复制按钮）、**外观**（语言 / UI 字体 / 透明度 50-100 / 背景模糊 /
+    主题三卡片 / 浅深主题选择 / 自定义强调色 / 图标变体 / 主机库 6 开关 /
+    自定义 CSS）、**终端**（字体区 9 项 / 光标区 4 项 / 行为区 13 项 /
+    侧边栏 2 组 / 连接校验主机密钥）、**快捷键**（方案卡片 + 3 全局开关 +
+    重置全部 + 按分类逐项捕获/启用/重置）、**系统**（自启动 / 网络代理 /
+    凭据保护 / 崩溃日志 / 会话日志 / SSH 调试日志 / 临时文件与 AppLock
+    占位）；文件关联、AI、同步与云为 **PlaceholderTab**。
+- 接线：`TopTabs.tsx` nc-chrome 末尾加启用齿轮按钮（disabledUtilities 移除
+  settings）；`App.tsx` settingsOpen 状态 + 启动 `loadSettings()`；
+  `Terminal.tsx` 导出 `buildXtermOptions(s)` 并 subscribeSettings 实时应用
+  设置（光标/字体/回滚/单词分隔/明暗双色板）；`icons.tsx` 新增 keyboard /
+  hard-drive / file-type；`client.ts` 新增 listFonts / secretBackend /
+  getAutoLaunch / setAutoLaunch / appVersion（R1：全部经 client.ts）；
+  `styles.css` 追加 nc-settings-* / nc-set-* 样式与 `html[data-theme="dark"]`
+  shadcn 变量覆盖（midnight 近似暗色）。
+
+### 后端命令
+
+- 新增 `get_auto_launch` / `set_auto_launch`（commands/settings.rs）：
+  Windows 用 reg.exe 读写 `HKCU\...\Run`（CREATE_NO_WINDOW 0x08000000，
+  与 shell_discovery 同做法，不引新依赖）；enabled 判定要求值指向当前
+  exe 路径；非 Windows supported=false。**双注册**（R4）：lib.rs
+  generate_handler! + server.rs dispatcher。
+- 复用既有命令未重复造：`list_fonts`（fontdb 枚举）、`secret_backend`、
+  `get_setting` / `set_setting`（均已双注册）。
+
+### 测试与门禁
+
+- 新增 `src/settings/settings.test.ts` 12 例（R11）：normalizeSettings
+  回落 / clamp / 嵌套合并 / 绑定过滤 / 枚举校验；keyBindings id 唯一 /
+  五分类覆盖 / effectiveBinding 覆盖与方案隔离 / normalizeKeyName /
+  captureBinding；settingsT 回落链。
+- `npm run test:run`：12 文件 **109/109** ✅；`npm run build` ✅；
+  `cargo check` ✅（6 既有警告）；`cargo check --features server` ✅；
+  `cargo test --lib` **789/789** ✅。
+
+### 踩坑
+
+142. **过期视图是本轮最大坑**：编辑前 Read 到的 settings.rs / server.rs /
+     lib.rs / icons.tsx 内容与磁盘实际不符（如记 settings.rs 74 行、实际
+     276 行；server.rs dispatcher 风格记错），首批 6 个 Edit 有 4 个报
+     "String to replace not found"。git status 确认无并行改动后判定为
+     视图过期。教训：**编辑前必须用当轮新 grep 验证锚点**，不信旧 Read。
+143. TS 修复 3 处：TabDef.icon 需 `IconName` 类型（import type）；xterm
+     fontWeight 传 number，不接受 `String(...)`；xterm 无 altIsMeta 选项，
+     改用 `macOptionIsMeta`（Windows 下 Alt 行为由系统决定，注释说明）。
+144. TopTabs 的 props 接口名实际是 `Props` 不是 `TopTabsProps`。
+145. i18n 源键分散：终端文案在 Netcatty zh-CN/terminal.ts
+     （`terminalSettings.font.*`）而非全在 core.ts；部分快捷键标签未收齐，
+     按语义自拟（i18n.ts 注释说明）。
+
+### 未移植项（设置中心内占位/降级，UI 均有说明）
+
+- 窗口透明度原生实现（用 CSS opacity 近似）；主题预设库（仅内置 snow /
+  midnight）；应用图标变体（仅保存不换图标）；外链打开 / 检查更新；
+  崩溃日志；临时目录清理；网络代理仅保存（云同步 / AI 未移植）；搜索仅
+  tab 级（Netcatty 到 section/anchor）；会话日志格式转换（enabled 已同步
+  写既有 `recording_enabled` 键，asciicast 录制）。
+
+### 下一步
+
+- 下一轮：实机比对（build-debug 构建后 CU 对照运行中 Netcatty 逐项比，
+  差异当场修）→ 子 agent 代码 review → push/本地 commit 收尾。

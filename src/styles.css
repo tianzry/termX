@@ -6625,3 +6625,423 @@ button:disabled {
   line-height: 1.5;
   color: hsl(var(--muted-foreground));
 }
+
+/* ── 设置中心（对照 Netcatty SettingsPage 独立窗口；termX 以全屏 overlay 承载）── */
+
+/* 窗口透明度：设置中心 · 外观 · 窗口（原生窗口透明未移植，CSS 近似） */
+.nc-shell {
+  opacity: var(--termx-window-opacity, 1);
+}
+
+/* UI 字体：设置中心 · 外观 · 字体 */
+body {
+  font-family: var(
+    --termx-ui-font,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    system-ui,
+    sans-serif
+  );
+}
+
+.nc-settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.nc-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.nc-settings-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.nc-settings-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* 左侧导航：对照 Netcatty w-56 */
+.nc-settings-nav {
+  width: 224px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 10px;
+  border-right: 1px solid hsl(var(--border));
+  overflow-y: auto;
+}
+
+.nc-settings-search-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius, 8px);
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.nc-settings-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius, 8px);
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-settings-search input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 12px;
+}
+
+.nc-settings-search-results {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius, 8px);
+  overflow: hidden;
+}
+
+.nc-settings-search-results button {
+  text-align: left;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nc-settings-search-results button:hover {
+  background: hsl(var(--accent) / 0.12);
+}
+
+.nc-settings-search-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nc-settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius, 8px);
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.nc-settings-tab:hover:not(:disabled) {
+  background: hsl(var(--accent) / 0.12);
+}
+
+.nc-settings-tab.is-active {
+  background: hsl(var(--accent) / 0.18);
+  color: hsl(var(--primary));
+}
+
+.nc-settings-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nc-settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 18px 22px 40px;
+}
+
+/* 设置行 / 分区 */
+.nc-set-section {
+  max-width: 760px;
+  margin-bottom: 22px;
+}
+
+.nc-set-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.nc-set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+}
+
+.nc-set-row-text {
+  min-width: 0;
+}
+
+.nc-set-row-title {
+  font-size: 13px;
+}
+
+.nc-set-row-desc {
+  font-size: 11.5px;
+  color: hsl(var(--muted-foreground));
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.nc-set-row-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+
+.nc-set-value {
+  font-size: 12.5px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 控件 */
+.nc-set-toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--secondary));
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+}
+
+.nc-set-toggle .nc-set-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: hsl(var(--muted-foreground));
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.nc-set-toggle.is-on {
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+}
+
+.nc-set-toggle.is-on .nc-set-toggle-knob {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+.nc-set-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nc-set-select,
+.nc-set-input {
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-size: 12.5px;
+  padding: 5px 8px;
+  min-width: 160px;
+}
+
+.nc-set-input-num {
+  min-width: 90px;
+}
+
+.nc-set-textarea {
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  padding: 8px;
+  width: 420px;
+  max-width: 100%;
+}
+
+.nc-set-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+
+.nc-set-stepper button {
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+}
+
+.nc-set-stepper button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.nc-set-stepper span {
+  min-width: 34px;
+  text-align: center;
+  font-size: 12.5px;
+}
+
+.nc-set-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nc-set-slider input[type="range"] {
+  width: 180px;
+}
+
+.nc-set-theme-cards {
+  display: flex;
+  gap: 8px;
+}
+
+.nc-set-theme-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-size: 12.5px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.nc-set-theme-card.is-active {
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary));
+}
+
+.nc-set-color {
+  width: 44px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.nc-set-btn {
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-size: 12.5px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.nc-set-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nc-set-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nc-set-keycap {
+  min-width: 180px;
+  text-align: left;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.nc-set-keycap.is-recording {
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary));
+}
+
+.nc-set-keycap:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nc-set-placeholder {
+  max-width: 760px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  padding-top: 12px;
+}
+
+/* ── 深色主题（设置中心 · 外观 · 主题 = 深色 / 跟随系统）──
+   覆盖 shadcn 变量；--nc-* 别名在 :root 已引用这些变量，自动跟随。
+   midnight 配色对照 Netcatty 深色主题近似值。 */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --background: 222 44% 7%;
+  --foreground: 210 40% 95%;
+  --card: 222 38% 10%;
+  --card-foreground: 210 40% 95%;
+  --popover: 222 38% 10%;
+  --popover-foreground: 210 40% 95%;
+  --primary: 208 100% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 26% 14%;
+  --secondary-foreground: 210 40% 95%;
+  --muted: 220 26% 14%;
+  --muted-foreground: 220 12% 62%;
+  --accent: 208 100% 55%;
+  --accent-foreground: 210 40% 95%;
+  --destructive: 0 70% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 22% 20%;
+  --input: 220 22% 20%;
+  --ring: 208 100% 55%;
+  --nc-faint: 220 10% 52%;
+}

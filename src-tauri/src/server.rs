@@ -1395,6 +1395,19 @@ async fn dispatch_async(
             crate::commands::settings::list_fonts().await,
         )),
 
+        // ---- auto launch (settings center · system tab) ----
+        "get_auto_launch" => Ok(serde_json::to_value(
+            crate::commands::settings::get_auto_launch(),
+        )
+        .unwrap_or_default()),
+        "set_auto_launch" => {
+            let enabled: bool = arg(&args, "enabled")?;
+            Ok(serde_json::to_value(
+                crate::commands::settings::set_auto_launch(enabled),
+            )
+            .unwrap_or_default())
+        }
+
         _ => dispatch(state, owner, cmd, args, tx),
     }
 }

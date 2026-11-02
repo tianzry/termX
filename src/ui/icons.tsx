@@ -77,7 +77,10 @@ export type IconName =
   | "upload"
   | "download"
   | "badge-check"
-  | "save";
+  | "save"
+  | "keyboard"
+  | "hard-drive"
+  | "file-type";
 
 const paths: Record<IconName, ReactElement> = {
   terminal: (
@@ -523,6 +526,33 @@ const paths: Record<IconName, ReactElement> = {
     <>
       <path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z" />
       <path d="m9 12 2 2 4-4" />
+    </>
+  ),
+  keyboard: (
+    <>
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <path d="M6 10h.01" />
+      <path d="M10 10h.01" />
+      <path d="M14 10h.01" />
+      <path d="M18 10h.01" />
+      <path d="M7 14h10" />
+    </>
+  ),
+  "hard-drive": (
+    <>
+      <line x1="22" y1="12" x2="2" y2="12" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+      <path d="M6 16h.01" />
+      <path d="M10 16h.01" />
+    </>
+  ),
+  "file-type": (
+    <>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M9 13v-1h6v1" />
+      <path d="M12 12v6" />
+      <path d="M11 18h2" />
     </>
   ),
 };

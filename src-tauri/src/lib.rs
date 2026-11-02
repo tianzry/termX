@@ -197,6 +197,8 @@ pub fn run() {
             commands::settings::read_recording,
             commands::settings::secret_backend,
             commands::settings::list_fonts,
+            commands::settings::get_auto_launch,
+            commands::settings::set_auto_launch,
             // plugins
             commands::plugin::plugins_root,
             commands::plugin::install_plugin,

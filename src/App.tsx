@@ -26,6 +26,8 @@ import { TelnetPanel } from "./TelnetPanel";
 import { ForwardPanel } from "./ForwardPanel";
 import { ConnectionManager } from "./ConnectionManager";
 import * as api from "./backend/client";
+import { SettingsDialog } from "./settings/SettingsDialog";
+import { loadSettings } from "./settings/settingsStore";
 import type {
   Credential,
   DiscoveredShell,
@@ -96,6 +98,11 @@ export default function App() {
   const [activeSshSid, setActiveSshSid] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>(null);
   const [showManager, setShowManager] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  useEffect(() => {
+    void loadSettings();
+  }, []);
+
   const [sideOpen, setSideOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) !== "0";
@@ -300,7 +307,9 @@ export default function App() {
         onOpenVault={() => setSurface("vault")}
         onOpenSftp={() => setSurface("sftp")}
         onToggleHostTree={() => setSideOpen((v) => !v)}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
 
       {restorePending && (
         <div className="nc-restore">
