@@ -2203,3 +2203,72 @@ select_application/open_with_application；⑤ 临时文件注册表
    且保留链接自身大小。
 3. Windows 上指向目录的符号链接不能用 remove_file 删（需 remove_dir）；
    `local_remove` 做了先 file 后 dir 的回落。
+
+## 2026-11-03 · SFTP 实现②：前端骨架（双栏 + 标签栏 + 空态 + 主机选择器 + 连接流）
+
+### 范围
+
+按指令只搭骨架，不做实机比对（留到下一轮）；旧 `SftpPanel.tsx` 保留不删
+（侧栏工具面板 tool==="sftp" 仍在用）。
+
+### 修改点
+
+1. **新建 `src/sftp/` 模块**（对照 Netcatty SftpView / SftpTabBar /
+   SftpHostPicker / SftpPaneEmptyState 逐屏记录后落码，文案取自
+   `termx-sftp-i18n-zhCN.txt`）：
+   - `sftpModel.ts`：纯逻辑模型——远端/本地路径拼接与父目录、连接与标签类型、
+     主机选择器三分区构建（本地恒显 / 已连接按搜索过滤 / 主机排除
+     protocol=local 与已连接同 profile、按名排序、无匹配显示「没有匹配的主机」）、
+     连接流分支（本地 / 复用会话 / 独立连接）与选择器条目→目标映射。零 I/O，全可测。
+   - `SftpView.tsx`：左右 50/50 双栏 + 聚焦栏左上角蓝色三角 + 点击聚焦；
+     每栏标签栏（有 tab 才显示）或空态；连接流三分支落地：本地→`local_home`；
+     复用会话→`sftp_connect_session`+`sftp_home`；独立连接→按
+     `credential_id` 从凭据列表取 username/secret 走 `sftp_connect`；
+     home 获取失败时回收已建 sftp 会话；卸载时关闭全部远端会话。
+   - `SftpTabBar.tsx`：本地=显示器图标 / 远端=服务器图标 + 名称 + ×，
+     活动 tab 底部 accent 2px 下划线，中键关闭，右端 +（tooltip「新建标签页」）。
+   - `SftpPaneEmptyState.tsx`：图标 + 粗体「先选择一个主机」+ 灰字
+     「选择要浏览的本地或远端文件系统」+ 蓝色「+ 选择主机」；连接中/失败有提示。
+   - `SftpHostPicker.tsx`：搜索（placeholder「搜索主机...」）+ 侧位 chip
+     （左侧/右侧）+ 三分区行（本地文件系统/浏览本地文件；已连接绿点+meta；
+     保存主机+host[:port]）+「没有匹配的主机」+ ↑↓ Enter Esc 键盘导航。
+   - `SftpPaneView.tsx`：骨架版已连接面板（标签头 + 当前路径 + 刷新 +
+     基础条目列表 + .. 回退），仅验证连接流；列头/排序/选择/虚拟化/工具栏/
+     面包屑留实现③。本地侧默认过滤隐藏文件（对齐 Netcatty 默认）。
+2. **`client.ts` 封装实现①命令**（R1：不裸 invoke）：`sftpLstat` /
+   `sftpRealpath`；`LocalEntry` 类型 + `localHome` / `localListDrives` /
+   `localListDir` / `localStat(follow?)` / `localRealpath` / `localMkdir` /
+   `localRename` / `localRemove(expectedType?)` / `localReadFile(maxBytes?)` /
+   `localWriteFile`。可选参数统一 `?? null` 传后端 Option。
+3. **App.tsx 挂载切换**：`surface==="sftp"` 由旧单栏 `nc-sftp-page`（标题页）
+   换成新 `SftpView`（全幅双栏，无页头，对齐 Netcatty）；「已连接」分区数据
+   = 当前活动 SSH 终端会话（App 仅跟踪 activeSshSid）。
+4. **styles.css**：新增 nc-sftp-view/side/focus-tri/tabbar/tab/empty/
+   picker/pane 一整套（~450 行），沿用现有 HSL 变量。
+5. **单测 +14**（R11）：`sftpModel.test.ts`——路径拼接（远端根/尾斜杠、
+   本地盘符根）、父目录、选择器分区（本地恒显/去重/排序/搜索大小写/
+   noMatch/flatten）、连接流分支与条目映射。
+
+### 验证（门禁）
+
+- `npm run test:run`：126/126 ✅（112 → 126，+14）。
+- `npm run build` ✅（仅既有 chunk 大小警告）。
+- `cargo check` ✅（仅既有 6 条 warning；本轮未动 Rust）。
+
+### 踩坑
+
+1. **TS 判别联合收窄不认"分支变量"**：`const branch = connectBranch(target)`
+   后 `if (branch === "local") return;` 无法收窄 `target`，后续解构
+   `target.entry` / `target.profile` 报 TS2339。收窄必须直接走
+   `target.kind` 判别式（`connectBranch` 仍保留为可测的分支映射）。
+2. 「已连接」分区受限于 App 只跟踪**活动** SSH 会话（activeSshSid），
+   多会话全量列表需 Workspace 会话注册表，后续阶段补。
+3. 已知差异（留后续）：切换 surface 会卸载 SftpView 并关闭全部远端会话
+   （Netcatty 用 visibility 保活）；独立连接对 agent/interactive/none
+   凭据（无 secret）会在后端报错，错误展示在空态。
+4. PowerShell 里 `Measure-Object -Line` 对 changelogs.md 报 1856 行，
+   实际 2200+ 行（编码/换行差异）；定位文件尾部以 Grep/Read 为准。
+
+### 提交状态
+
+- 按指令本轮不 push：实现②完成、下一轮实机比对通过后再推。

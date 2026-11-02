@@ -16,7 +16,7 @@
 | P0 日常可用性 | 7 / 14 | 不补齐难以日常使用 |
 | P1 差异化能力 | 0 / 19 | 拉开与普通 SSH 客户端差距（含 1 项 ⏸ 不移植；#39 为范围修正新增） |
 | P2 大工程 | 0 / 6 | 需单独立项（含 4 项 ⏸ 暂缓移植，见 plan.md） |
-| **合计** | **7 / 39** | 2026-11-03：设置中心（#12）完成——实机比对差异清零 + review 问题修复；本地 commit 未 push（按指令等 SSH 推送） |
+| **合计** | **7 / 39** | 2026-11-03：SFTP 实现②前端骨架完成（双栏/标签栏/空态/主机选择器/连接流 + client.ts 封装 + 单测 126✓），实机比对留下一轮，按指令未 push |
 
 ---
 
@@ -254,3 +254,4 @@
 | 2026-11-03 | 设置中心实机比对 + review 收尾，P0 #12 完成（7 / 39）：CU 对照运行中 Netcatty 逐 tab 比对，差异当场修并复检一致（SFTP 标签/外观/终端主题/快捷键文案与中文绑定标签/系统软件更新节/侧栏残留按钮）；实时生效与 SSH 129 连接验证通过（钥匙串凭据，密码不落盘）；子 agent review（高=无）中危 4 项已修（--termx-accent 只写不读→映射 --primary/--accent、set_auto_launch 失败语义改 Result、headless 守卫、server.rs spawn_blocking），低危记录待后续；门禁 112/112 + build ✓ + cargo check ✓ + cargo test --lib 789✓；按指令本地 commit 未 push（另一会话清理历史中，后续改 SSH 推送）。 |
 | 2026-11-03 | 推送完成：`3724ff1` + `f3f9dd3` 经 SSH 推送，远端 main = `f3f9dd3`（ls-remote 核对）。SFTP·研究阶段收尾：对照 Netcatty 界面观察与源码核实缺口清单（双栏/标签栏/面包屑/列头虚拟列表/传输队列底部面板/冲突对话框/编辑器+监视回写/拖放/编码等，前端 14 组全缺 + 后端 8 组需补），落盘 changelogs 2026-11-03 SFTP 研究节；下一轮按依赖顺序实现（先本地 FS 后端 + 双栏骨架）。 |
 | 2026-11-03 | 研究文档单独提交 `078b35a`（docs）。SFTP 实现①（后端）完成：新建 commands/localfs.rs 10 个本地 FS 命令（LocalEntry 含 hidden/link_target；Win 盘符探测；realpath 去 \\?\ 前缀；remove 类型守卫 local_type_stale；read_file 超限读尾）+ sftp_lstat/sftp_realpath（FileStat 增量加 is_symlink）；lib.rs + server.rs 双注册；单测 +3（792✓）；cargo check ×2 ✓；client.ts 封装与前端留②。 |
+| 2026-11-03 | SFTP 实现②（前端骨架）完成：新建 src/sftp/（sftpModel 纯逻辑 + SftpView 双栏/聚焦三角 + SftpTabBar + SftpPaneEmptyState + SftpHostPicker 三分区/键盘导航 + SftpPaneView 骨架列表）；连接流三分支（本地/复用 SSH 会话/独立连接）；client.ts 封装实现①全部命令（不裸 invoke）；App.tsx surface==="sftp" 挂载切换为全幅双栏；单测 +14（126✓）；门禁 test/build/cargo check 全绿；实机比对与推送留下一轮。 |

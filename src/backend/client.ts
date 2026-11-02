@@ -501,6 +501,93 @@ export function sftpClose(sftpId: string): Promise<void> {
   return invoke("sftp_close", { sftpId });
 }
 
+/** 远端 lstat：不跟随符号链接（`is_symlink` 可信）。 */
+export function sftpLstat(sftpId: string, path: string): Promise<FileStat> {
+  return invoke<FileStat>("sftp_lstat", { sftpId, path });
+}
+
+/** 远端 realpath：把 "." / 相对路径 / 符号链接解析为绝对路径。 */
+export function sftpRealpath(sftpId: string, path: string): Promise<string> {
+  return invoke<string>("sftp_realpath", { sftpId, path });
+}
+
+// ── 本地文件系统（SFTP 双栏本地侧）─────────────────────────
+
+/** 本地目录条目（对齐后端 `LocalEntry`）。 */
+export interface LocalEntry {
+  name: string;
+  /** "file" | "directory" | "symlink" */
+  kind: "file" | "directory" | "symlink";
+  size: number;
+  /** unix epoch 秒；0 = 不可用 */
+  mtime: number;
+  /** 符号链接目标的类型；断链为 undefined。 */
+  link_target?: "file" | "directory";
+  hidden: boolean;
+}
+
+export function localHome(): Promise<string> {
+  return invoke<string>("local_home");
+}
+
+/** Windows 盘符列表（A:-Z: 探测）；非 Windows 返回空数组。 */
+export function localListDrives(): Promise<string[]> {
+  return invoke<string[]>("local_list_drives");
+}
+
+export function localListDir(path: string): Promise<LocalEntry[]> {
+  return invoke<LocalEntry[]>("local_list_dir", { path });
+}
+
+/** `follow` 缺省 true（跟随符号链接）；false = lstat 语义。 */
+export function localStat(
+  path: string,
+  follow?: boolean,
+): Promise<LocalEntry> {
+  return invoke<LocalEntry>("local_stat", { path, follow: follow ?? null });
+}
+
+export function localRealpath(path: string): Promise<string> {
+  return invoke<string>("local_realpath", { path });
+}
+
+export function localMkdir(path: string): Promise<void> {
+  return invoke("local_mkdir", { path });
+}
+
+export function localRename(oldPath: string, newPath: string): Promise<void> {
+  return invoke("local_rename", { oldPath, newPath });
+}
+
+/**
+ * 删除文件 / 目录树。`expectedType` 传前端列表里的类型，与后端 lstat 不符
+ * 时报 `local_type_stale`（列表过期，刷新后重试），避免误删。
+ */
+export function localRemove(
+  path: string,
+  expectedType?: "file" | "directory" | "symlink",
+): Promise<void> {
+  return invoke("local_remove", { path, expectedType: expectedType ?? null });
+}
+
+/** 读本地文件；`maxBytes` 缺省读全文，给值时读文件尾部（大文件预览）。 */
+export function localReadFile(
+  path: string,
+  maxBytes?: number,
+): Promise<number[]> {
+  return invoke<number[]>("local_read_file", {
+    path,
+    maxBytes: maxBytes ?? null,
+  });
+}
+
+export function localWriteFile(
+  path: string,
+  data: Uint8Array,
+): Promise<void> {
+  return invoke("local_write_file", { path, data: Array.from(data) });
+}
+
 // ── 远程命令执行 / chmod ───────────────────────────────────
 
 /**

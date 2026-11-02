@@ -25,6 +25,8 @@ import { SerialPanel } from "./SerialPanel";
 import { TelnetPanel } from "./TelnetPanel";
 import { ForwardPanel } from "./ForwardPanel";
 import { ConnectionManager } from "./ConnectionManager";
+import { SftpView } from "./sftp/SftpView";
+import type { ConnectedHostEntry } from "./sftp/sftpModel";
 import * as api from "./backend/client";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import { loadSettings } from "./settings/settingsStore";
@@ -289,6 +291,17 @@ export default function App() {
 
   const terminalActive = surface === null;
 
+  // SFTP 主机选择器「已连接」分区：当前活动的 SSH 终端会话可复用建 SFTP。
+  const sftpConnectedHosts: ConnectedHostEntry[] = activeSshSid
+    ? [
+        {
+          sessionId: activeSshSid,
+          label: tabs.find((t) => t.id === activeTabId)?.title ?? "终端会话",
+          meta: "复用当前终端会话",
+        },
+      ]
+    : [];
+
   return (
     <div className="nc-shell">
       <TopTabs
@@ -347,17 +360,11 @@ export default function App() {
           )}
 
           {surface === "sftp" && (
-            <section className="nc-sftp-page">
-              <header className="nc-sftp-page-header">
-                <div>
-                  <h1>SFTP</h1>
-                  <p>独立连接或复用当前 SSH 会话传输文件</p>
-                </div>
-              </header>
-              <div className="nc-sftp-page-body">
-                <SftpPanel sshSessionId={activeSshSid} />
-              </div>
-            </section>
+            <SftpView
+              profiles={profiles}
+              credentials={credentials}
+              connectedHosts={sftpConnectedHosts}
+            />
           )}
 
           <div className={`nc-workspace${terminalActive ? "" : " hidden"}`}>
