@@ -90,7 +90,7 @@
 - [ ] ⬜ **11. 终端搜索 / URL 识别 / 滚动缓冲**
   - 搜索高亮与跳转、Ctrl+点击打开链接、缓冲区上限可配。
   - 依赖：`@xterm/addon-search`、`@xterm/addon-web-links`。
-- [ ] ⬜ **12. 设置中心**
+- [ ] 🟨 **12. 设置中心**（2026-11-03 开工：研究完成，实现中）
   - 主题（浅/深/跟随系统 + 终端主题）、字体与字号、快捷键、语言（i18n）、窗口透明度。
   - 参考：`components/settings/`、`application/state/fontStore.ts`、`customThemeStore.ts`。
 - [x] ✅ **32. 主机「测试连接」**
@@ -246,3 +246,4 @@
 | 2026-11-02 | 第二轮 1:1 对齐块 D/E 完成：块 D 连接建立对话框文案/字段/超时逐字对齐 netcatty（认证对话框 SSH Key tab + 分体「继续/继续并保存」、主机密钥「尚未确认…/记住并继续」、逐跳日志中英混排、认证重试默认密码 tab + root 预填、测试连接 25s）；块 E 主机卡片右键菜单对齐 netcatty 9 项（删「标签…」与分隔线、删孤儿 tagEditor）、「新建主机」caret 文案（本地终端 (CMD)/导入/导出）；门禁修复块 A 遗留（v33 迁移补 table_exists 守卫、migration_32 断言改 SCHEMA_VERSION、PTY 冒烟测试 cfg(unix)）。门禁全绿（npm build ✓ / cargo check ✓ ×2 / cargo test --lib 780✓）。P0 #32 完成（6 / 38）。 |
 | 2026-11-02 | 范围修正：SSH agent 转发纳入移植（新增 P1 #39，与「代理」一起排期）；「不移植」节 SSH 代理条目改写为已纳入，mosh / eternalTerminal / X11 维持不移植；总数 38 → 39。实机验收（对运行中 Netcatty 1.1.90）差异清单已落 changelogs，修复进行中。 |
 | 2026-11-02 | 十功能计划①本地终端完成：shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel 1:1（对照运行中 Netcatty）；实机比对差异清零（下拉选中态 / local 实底蓝白头像含卡·树·切换器 / local 标签 chip）；子 agent review 两必须修复项（CM 过滤 local、切换器头像）已修；门禁 97/97 + cargo 全绿。 |
+| 2026-11-03 | 按用户指令顺序调整：下一功能=设置中心（#12 标 🟨），SFTP 延后（研究已落盘 Temp）；设置中心研究完成（Netcatty 源码地图+termX 现状+CU 顶栏/SFTP 取证），实现开工。 |

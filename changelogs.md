@@ -1796,3 +1796,84 @@ VaultView 各自拉 `discoverShells` 暂不合并（一为启动解析、一为�
 - 本地提交完成：`28c9dc6 feat(local-terminal): 移植本地终端，对应 Netcatty
   LocalShellHostDetailsPanel / useDiscoveredShells / createLocalShellHost`
   （32 files, +2459/-59）。
+
+## 2026-11-03 · 功能顺序调整（设置中心提前）
+
+### 顺序调整
+
+- 按用户最新指令（2026-11-03）：下一个功能由 SFTP 改为**设置中心**
+  （todo.md P0 #12），按既定流程（对照→实现→门禁→实机比对→子 agent
+  review→提交）推进。
+- SFTP 研究成果不丢，全部落盘于临时目录，设置中心闭环后从 sftp-3
+  后端实现继续：`C:\Users\tianzry\AppData\Local\Temp\termx-sftp-gap-plan.md`
+  （第八节=后端实现蓝图 B1–B8）、`termx-sftp-ui-details.md`、
+  `termx-sftp-electron-bridges.md`、`termx-sftp-rssh-ref.md`、
+  `termx-sftp-observations.md`。
+
+### 设置中心研究（2026-11-03，开工前）
+
+- 研究简报落盘：`C:\Users\tianzry\AppData\Local\Temp\termx-settings-research.md`
+  （Netcatty 源码地图：SettingsPage 容器 / 各 tab / stores / keyBindings / i18n；
+  termX 现状：settings 后端已就绪、前端零 UI；范围决策与实施计划）。
+- CU 取证：Netcatty（pid 7900，zh-CN）顶栏与 SFTP 双栏截图；web 内容 UIA 树需先
+  set_focus 才可见。
+- 踩坑 141：**顶栏图标坐标点击不可靠**——按截图坐标点齿轮 (1261,22) 未打开设置
+  窗口，前台反被并行桌面会话的 msedge 抢走（坑 132 复现）且疑似误触外部链接；
+  设置对话框的运行时证据改到实机复检阶段补，本轮对照以源码为准。
+
+## 2026-11-03 · 设置中心缺口清单（阶段 B 侦察）
+
+### Netcatty 设置页结构（源码核对：components/SettingsPage.tsx L434-530）
+
+- 独立窗口：标题「设置」+ 右上 X 关闭（仅 Windows，mac 留拖拽区）；左侧 w-56
+  导航 = 搜索控件（SettingsSearchControl：目录检索 → 定位 tab/section/anchor）
+  + 纵向 TabsList。
+- Tab 顺序（9 个）：应用(application) → 插件(plugins，条件显示) → 外观
+  (appearance) → 终端(terminal) → 快捷键(shortcuts) → 文件关联
+  (file-associations) → AI(ai) → 同步与云(sync) → 系统(system)。
+- zh-CN 文案：application/i18n/locales/zh-CN/core.ts L124-134（settings.title
+  =「设置」等）。
+
+### 各 tab 内容要点（侦察结论）
+
+- **应用**：检查更新 / 报告问题 / 社区 / GitHub / 更新日志（外链 + 更新流程，
+  props checkNow/installUpdate/startDownload）。
+- **外观**：语言、UI 字体、窗口透明度、主题（浅/深/跟随系统 + 浅/深主题 id）、
+  强调色（模式 + 自定义色）、图标变体、Vault 行为开关（最近主机 / 主机点击行为 /
+  根节点只显示未分组 / 显示 SFTP tab / 主机树侧栏等）、自定义 CSS。
+- **终端**：字体区（字体 / CJK 字体 / 字号加减 / 粗细 / 平滑 / 连字 / 行距 /
+  仿真类型）、光标区（样式 / 宽度 / 闪烁 / 高亮当前行）、键盘与行为（退出自动
+  关闭 / 断开提示 / 右键 / 选中复制 / 复制规范化 / 中键 / 单词分隔符 / 粘贴 /
+  Shift+Enter / 清空缓冲）、侧边栏（打开终端时展开 / 默认面板）、连接（校验
+  SSH 主机密钥开关）。
+- **快捷键**：方案（默认 'mac'）、按键捕获（window keydown/keyup/click）、
+  分类 tab/terminal/navigation、单项禁用 / 重置、重置全部、全局开关（禁用终端
+  字体缩放 / 仅 shell 数字 tab / tab 数字 badge）。source of truth：
+  domain/models/keyBindings.ts DEFAULT_KEY_BINDINGS。
+- **文件关联**：SFTP 文件协议关联；若需写 Windows 注册表 → 实现时定夺，
+  可能降级占位并说明。
+- **系统**：自启动、网络代理（system/direct/custom + URL + bypass）、凭据存储
+  状态（keychain 可用性检测 + 刷新）、崩溃日志列表、会话日志（格式
+  txt/raw/html、清理确认）、临时目录错误提示。
+- **占位 tab**（未移植能力，禁用 + 说明）：同步与云（#15）、插件（#29 暂缓）、
+  AI（#27 暂缓）、AppLock 分区（#23）。
+
+### termX 现状缺口
+
+1. 无设置入口与设置 UI（TopTabs 无齿轮）；
+2. 无 i18n 框架（文案硬编码）——本轮只建设置中心自身轻量 zh-CN/en 字典，
+   全应用文案 retrofit 记遗留差距；
+3. 无主题 / 强调色切换（styles.css 仅浅色 snow）；
+4. xterm 字体 / 字号 / 光标 / 行为全部硬编码，无终端设置页；
+5. 无快捷键自定义（无 keyBindings 模型与捕获）；
+6. 无窗口透明度 / 自启动 / 网络代理设置；
+7. 后端已有 get_setting / set_setting（db settings 表，敏感 key 走
+   secret_store）；缺：系统字体枚举（list_fonts）、自启动开关、窗口透明度
+   应用等命令（实现时按 R4 双注册 lib.rs + server.rs）。
+
+### 形态差异决策
+
+- Netcatty 设置为独立窗口（bridge.openSettingsWindow）；termX 单窗口 →
+  用全屏 overlay/模态承载，内容与交互顺序 1:1，此形态差异记录在案。
+- 运行时界面比对（CU 打开设置对话框逐项截图）留到实机比对阶段
+  （踩坑 141：坐标点击顶栏不可靠 + 前台被并行会话抢占）。
