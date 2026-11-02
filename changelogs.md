@@ -1790,3 +1790,9 @@ VaultView 各自拉 `discoverShells` 暂不合并（一为启动解析、一为�
 
 - `npm run test:run`：11 文件 97 例全过 ✅（新增 1 例）。
 - `npm run build` ✅；debug 重建 40s ✅（仅既有 6 条 warning）。
+
+### 提交状态
+
+- 本地提交完成：`28c9dc6 feat(local-terminal): 移植本地终端，对应 Netcatty
+  LocalShellHostDetailsPanel / useDiscoveredShells / createLocalShellHost`
+  （32 files, +2459/-59）。
