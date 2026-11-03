@@ -3003,5 +3003,5 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 
 ### 提交状态
 
-- 本轮改动本地 commit（未推送），随后 push `HEAD:main`（fast-forward 自 `a41ca88`）。
+- 本地 commit `d90c7cd`；核对远端 `a41ca88` 为 HEAD 祖先（快进）后 push `HEAD:main`，`ls-remote` 复核远端 main=`d90c7cd`。
 
