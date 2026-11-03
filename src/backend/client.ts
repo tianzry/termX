@@ -967,6 +967,119 @@ export function onSftpProgress(
   );
 }
 
+// ── SFTP 传输队列（transfer_center，阶段 A 后端 / 阶段 B 前端） ──
+
+export type TransferDirection = "upload" | "download";
+export type TransferStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "conflict"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+export type TransferPriority = "low" | "normal" | "high";
+export type TransferConflictAction = "replace" | "skip" | "rename";
+
+/** 队列项（后端 `TransferItem`，字段 snake_case 原样）。 */
+export interface TransferItem {
+  id: string;
+  sftp_id: string;
+  /** 一次 enqueue 一个批次；冲突"应用到全部"按批次生效。 */
+  batch_id: string;
+  direction: TransferDirection;
+  local_path: string;
+  remote_path: string;
+  /** 0 = 未知（进度条不定长）。 */
+  size: number;
+  status: TransferStatus;
+  priority: TransferPriority;
+  seq: number;
+  overwrite: boolean;
+  /** 失败时的 i18n code（R5，前端经 sshErrors 映射中文）。 */
+  error: string | null;
+  created_at: number;
+}
+
+/** 入队请求。嵌套 struct 字段走 serde 原样 snake_case（R3）。 */
+export interface NewTransferRequest {
+  sftp_id: string;
+  direction: TransferDirection;
+  local_path: string;
+  remote_path: string;
+  size?: number;
+  priority?: TransferPriority;
+}
+
+export function sftpTransferEnqueue(
+  items: NewTransferRequest[],
+): Promise<TransferItem[]> {
+  return invoke<TransferItem[]>("sftp_transfer_enqueue", { items });
+}
+
+export function sftpTransferList(): Promise<TransferItem[]> {
+  return invoke<TransferItem[]>("sftp_transfer_list");
+}
+
+export function sftpTransferPause(transferId: string): Promise<void> {
+  return invoke("sftp_transfer_pause", { transferId });
+}
+
+export function sftpTransferResume(transferId: string): Promise<void> {
+  return invoke("sftp_transfer_resume", { transferId });
+}
+
+export function sftpTransferCancel(transferId: string): Promise<void> {
+  return invoke("sftp_transfer_cancel", { transferId });
+}
+
+export function sftpTransferSetPriority(
+  transferId: string,
+  priority: TransferPriority,
+): Promise<void> {
+  return invoke("sftp_transfer_set_priority", { transferId, priority });
+}
+
+/** 全局并发（后端 clamp 到 [1, 8] 并持久化到 settings）。 */
+export function sftpTransferSetConcurrency(concurrency: number): Promise<void> {
+  return invoke("sftp_transfer_set_concurrency", { concurrency });
+}
+
+/** 冲突答复；`applyToAll` 时策略按批次记忆（阶段 C 对话框调用）。 */
+export function sftpResolveConflict(
+  transferId: string,
+  action: TransferConflictAction,
+  applyToAll: boolean,
+): Promise<void> {
+  return invoke("sftp_transfer_resolve_conflict", {
+    transferId,
+    action,
+    applyToAll,
+  });
+}
+
+export function sftpTransferClearFinished(): Promise<void> {
+  return invoke("sftp_transfer_clear_finished");
+}
+
+/** 单条传输状态变化事件（payload = 最新 TransferItem）。 */
+export function onSftpTransferUpdated(
+  transferId: string,
+  cb: (item: TransferItem) => void,
+): Promise<UnlistenFn> {
+  return listen<TransferItem>(`sftp:transfer_updated:${transferId}`, (ev) =>
+    cb(ev.payload),
+  );
+}
+
+/** 队列全量快照事件（入队 / 优先级变更 / 清空已结束）。 */
+export function onSftpQueueChanged(
+  cb: (items: TransferItem[]) => void,
+): Promise<UnlistenFn> {
+  return listen<TransferItem[]>("sftp:queue_changed", (ev) => cb(ev.payload));
+}
+
 // ── 连接管理器：档案 / 凭据 / 分组 CRUD ────────────────────
 
 export interface Group {

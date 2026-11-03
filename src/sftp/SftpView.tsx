@@ -14,6 +14,7 @@ import { newId } from "../workspaceModel";
 import { SftpHostPicker } from "./SftpHostPicker";
 import { SftpPaneEmptyState } from "./SftpPaneEmptyState";
 import { SftpPaneView } from "./SftpPaneView";
+import { SftpQueuePanel } from "./SftpQueuePanel";
 import { SftpTabBar } from "./SftpTabBar";
 import {
   buildPickerSections,
@@ -298,18 +299,22 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
   };
 
   return (
-    <section className="nc-sftp-view">
-      {renderSide("left")}
-      {renderSide("right")}
-      <SftpHostPicker
-        open={pickerSide !== null}
-        side={pickerSide ?? focusedSide}
-        term={pickerTerm}
-        onTermChange={setPickerTerm}
-        sections={pickerSections}
-        onClose={() => setPickerSide(null)}
-        onPick={handlePick}
-      />
-    </section>
+    <div className="nc-sftp-area">
+      <section className="nc-sftp-view">
+        {renderSide("left")}
+        {renderSide("right")}
+        <SftpHostPicker
+          open={pickerSide !== null}
+          side={pickerSide ?? focusedSide}
+          term={pickerTerm}
+          onTermChange={setPickerTerm}
+          sections={pickerSections}
+          onClose={() => setPickerSide(null)}
+          onPick={handlePick}
+        />
+      </section>
+      {/* 全局传输队列：上传/下载统一入队，进度只在此展示（阶段 B） */}
+      <SftpQueuePanel />
+    </div>
   );
 }

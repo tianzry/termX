@@ -88,7 +88,8 @@
 - [ ] 🟨 **10. 传输队列持久化**
   - 队列落盘、重启续传；暂停 / 恢复 / 优先级 / 全局并发上限。
   - 阶段 A（后端，2026-11-03）✅：队列中心 `sftp/transfer_center.rs` + 持久化 `db/sftp_transfer.rs`（schema v35 `sftp_transfer_queue`，重启恢复 Running→Queued）；冲突检测后端（启动前 stat 目标，`resolve_conflict` replace/skip/rename + 应用到全部，批次作用域）；事件契约（新增 `sftp:transfer_updated:<id>` / `sftp:queue_changed`，进度复用 `sftp:progress:<id>`）；9 命令 lib.rs + server.rs 双注册；11 单测（cargo test --lib 805✓）。
-  - 剩余待办：阶段 B 前端队列面板（底部停靠面板 + 队列状态 UI）；阶段 C 冲突对话框前端 + 129 live 验证（含 2 个新 i18n code 进 sshErrors）。
+  - 阶段 B（前端，2026-11-03）✅：全局队列面板 `src/sftp/SftpQueuePanel.tsx`（列表：文件名/方向/大小/进度/状态图标；暂停/恢复/取消；并发数 1-8 设置；清空已结束）挂于双栏下方；上传/下载统一入队（`sftp_transfer_enqueue`），SftpPaneView 旧传输条移除、上传完成自动刷新；纯逻辑 `src/domain/transferQueue.ts`（排序/计数/按钮规则/格式化）+ 14 单测；事件全走 client.ts 封装（`sftp:transfer_updated:*` / `sftp:queue_changed` / `sftp:progress:*`）；`sftp_transfer_not_found` / `sftp_transfer_state_invalid` 中文映射补齐（R5）。
+  - 剩余待办：阶段 C 冲突对话框前端（替换/跳过/重命名 + 应用到全部）+ 129 live 验证 + review/push（本地待推：e0e83c1 文档 + 1cf1bcc 阶段 A + 阶段 B）。
   - 参考：`netcatty-bridge-sftp.d.ts` L33-L36、`components/sftp/`。
 - [ ] ⬜ **11. 终端搜索 / URL 识别 / 滚动缓冲**
   - 搜索高亮与跳转、Ctrl+点击打开链接、缓冲区上限可配。

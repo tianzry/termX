@@ -21,10 +21,16 @@ import {
   localStat,
   localWriteFile,
   onAuthPrompt,
+  onSftpQueueChanged,
+  onSftpTransferUpdated,
   onTerminalData,
   ptySpawn,
   sftpLstat,
   sftpRealpath,
+  sftpResolveConflict,
+  sftpTransferEnqueue,
+  sftpTransferPause,
+  sftpTransferSetConcurrency,
   sshConnect,
   sshDisconnect,
   sshWrite,
@@ -250,5 +256,70 @@ describe("本地文件系统 / SFTP 新封装的参数形状", () => {
       sftpId: "s1",
       path: ".",
     });
+  });
+});
+
+describe("SFTP 传输队列命令与事件", () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset();
+    mockedInvoke.mockResolvedValue(undefined);
+    mockedListen.mockReset();
+    mockedListen.mockResolvedValue(() => {});
+  });
+
+  it("sftpTransferEnqueue 以 { items } 传入，嵌套字段保持 snake_case（R3）", async () => {
+    mockedInvoke.mockResolvedValue([]);
+    await sftpTransferEnqueue([
+      {
+        sftp_id: "s1",
+        direction: "upload",
+        local_path: "C:\\a.txt",
+        remote_path: "/a.txt",
+        size: 10,
+        priority: "high",
+      },
+    ]);
+    expect(mockedInvoke).toHaveBeenCalledWith("sftp_transfer_enqueue", {
+      items: [
+        {
+          sftp_id: "s1",
+          direction: "upload",
+          local_path: "C:\\a.txt",
+          remote_path: "/a.txt",
+          size: 10,
+          priority: "high",
+        },
+      ],
+    });
+  });
+
+  it("pause / set_concurrency / resolve_conflict 顶层参数走 camelCase", async () => {
+    await sftpTransferPause("t1");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("sftp_transfer_pause", {
+      transferId: "t1",
+    });
+    await sftpTransferSetConcurrency(4);
+    expect(mockedInvoke).toHaveBeenLastCalledWith("sftp_transfer_set_concurrency", {
+      concurrency: 4,
+    });
+    await sftpResolveConflict("t1", "rename", true);
+    expect(mockedInvoke).toHaveBeenLastCalledWith("sftp_transfer_resolve_conflict", {
+      transferId: "t1",
+      action: "rename",
+      applyToAll: true,
+    });
+  });
+
+  it("事件订阅键与约定一致（queue_changed / transfer_updated:<id>）", async () => {
+    await onSftpQueueChanged(() => {});
+    expect(mockedListen).toHaveBeenLastCalledWith(
+      "sftp:queue_changed",
+      expect.any(Function),
+    );
+    await onSftpTransferUpdated("t9", () => {});
+    expect(mockedListen).toHaveBeenLastCalledWith(
+      "sftp:transfer_updated:t9",
+      expect.any(Function),
+    );
   });
 });

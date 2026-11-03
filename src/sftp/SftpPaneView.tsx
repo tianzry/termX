@@ -4,12 +4,13 @@
  * - 远端行：下载（仅文件）/ 重命名 / 修改权限 / 删除；
  * - 本地行：重命名 / 删除；
  * - 空白处：新建文件夹（远端另有「上传文件」）。
- * 上传 / 下载走流式命令（sftp_upload_from / sftp_download_to），
- * 每传输一条订阅 `sftp:progress:<transferId>`，底部传输条展示进度、可取消。
+ * 上传 / 下载统一入队传输队列（sftp_transfer_enqueue，阶段 B），
+ * 进度 / 暂停 / 取消在 SftpQueuePanel 展示（不再有面板内传输条）；
+ * 上传完成后自动刷新本面板列表。
  * 列头 / 排序 / 选择模型 / 虚拟化 / 面包屑留后续阶段；本地侧默认过滤隐藏文件。
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import * as api from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
@@ -36,13 +37,6 @@ interface Row {
   kind?: "file" | "directory" | "symlink";
 }
 
-interface Transfer {
-  id: string;
-  name: string;
-  transferred: number;
-  total: number;
-}
-
 type DialogState =
   | { type: "rename"; row: Row }
   | { type: "delete"; row: Row }
@@ -54,12 +48,6 @@ interface MenuState {
   x: number;
   y: number;
   row: Row | null;
-}
-
-let transferSeq = 0;
-function nextTransferId(): string {
-  transferSeq += 1;
-  return `tx-${Date.now()}-${transferSeq}`;
 }
 
 /** 本地路径取文件名（兼容正反斜杠）。 */
@@ -84,10 +72,21 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
-  const [transfers, setTransfers] = useState<Transfer[]>([]);
 
   const isRemote = connection.kind === "remote";
   const join = isRemote ? joinRemotePath : joinLocalPath;
+
+  // 上传完成自动刷新：订阅本面板入队项的状态事件（经 client.ts，R1）。
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  const uploadSubs = useRef(new Map<string, () => void>());
+  useEffect(() => {
+    const subs = uploadSubs.current;
+    return () => {
+      for (const u of subs.values()) u();
+      subs.clear();
+    };
+  }, []);
 
   const load = useCallback(
     async (target: string) => {
@@ -126,16 +125,28 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── 传输条 ─────────────────────────────────────────────
+  // ── 传输（入队到全局队列，进度在 SftpQueuePanel 展示） ──
 
-  const patchTransfer = useCallback((id: string, patch: Partial<Transfer>) => {
-    setTransfers((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-    );
-  }, []);
-  const dropTransfer = useCallback((id: string) => {
-    setTransfers((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  /** 订阅本面板入队的上传项，完成时刷新列表（终态即退订）。 */
+  const watchUploads = (created: api.TransferItem[]) => {
+    for (const item of created) {
+      if (item.direction !== "upload") continue;
+      void api.onSftpTransferUpdated(item.id, (it) => {
+        if (it.status === "completed") {
+          uploadSubs.current.get(it.id)?.();
+          uploadSubs.current.delete(it.id);
+          void load(pathRef.current);
+        } else if (
+          it.status === "failed" ||
+          it.status === "cancelled" ||
+          it.status === "skipped"
+        ) {
+          uploadSubs.current.get(it.id)?.();
+          uploadSubs.current.delete(it.id);
+        }
+      }).then((u) => uploadSubs.current.set(item.id, u));
+    }
+  };
 
   const runDownload = async (row: Row) => {
     if (connection.kind !== "remote") return;
@@ -147,26 +158,17 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
       return;
     }
     if (!local) return;
-    const tid = nextTransferId();
-    setTransfers((p) => [
-      ...p,
-      { id: tid, name: row.name, transferred: 0, total: 0 },
-    ]);
-    const unlisten = await api.onSftpProgress(tid, (pr) =>
-      patchTransfer(tid, { transferred: pr.transferred, total: pr.total }),
-    );
     try {
-      await api.sftpDownloadTo(
-        connection.sftpId,
-        join(path, row.name),
-        local,
-        tid,
-      );
+      await api.sftpTransferEnqueue([
+        {
+          sftp_id: connection.sftpId,
+          direction: "download",
+          local_path: local,
+          remote_path: join(path, row.name),
+        },
+      ]);
     } catch (e) {
       setError(userVisibleError(String(e)));
-    } finally {
-      unlisten();
-      dropTransfer(tid);
     }
   };
 
@@ -180,31 +182,19 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
       return;
     }
     if (!picked || picked.length === 0) return;
-    for (const local of picked) {
-      const name = baseName(local);
-      const tid = nextTransferId();
-      setTransfers((p) => [
-        ...p,
-        { id: tid, name, transferred: 0, total: 0 },
-      ]);
-      const unlisten = await api.onSftpProgress(tid, (pr) =>
-        patchTransfer(tid, { transferred: pr.transferred, total: pr.total }),
-      );
-      try {
-        await api.sftpUploadFrom(
-          connection.sftpId,
-          local,
-          join(path, name),
-          tid,
-        );
-      } catch (e) {
-        setError(userVisibleError(String(e)));
-      } finally {
-        unlisten();
-        dropTransfer(tid);
-      }
+    const items = picked.map((local) => ({
+      sftp_id: connection.sftpId,
+      direction: "upload" as const,
+      local_path: local,
+      remote_path: join(path, baseName(local)),
+    }));
+    try {
+      // 单次入队 = 单批次：阶段 C 冲突「应用到全部」按批次生效。
+      const created = await api.sftpTransferEnqueue(items);
+      watchUploads(created);
+    } catch (e) {
+      setError(userVisibleError(String(e)));
     }
-    void load(path);
   };
 
   // ── 文件操作 ───────────────────────────────────────────
@@ -418,36 +408,6 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
             </div>
           ))}
       </div>
-
-      {transfers.length > 0 && (
-        <div className="nc-sftp-transfers">
-          {transfers.map((t) => (
-            <div key={t.id} className="nc-sftp-transfer">
-              <span className="nc-sftp-transfer-name" title={t.name}>
-                {t.name}
-              </span>
-              <div className="nc-sftp-transfer-bar">
-                <div
-                  className="nc-sftp-transfer-fill"
-                  style={{
-                    width:
-                      t.total > 0
-                        ? `${Math.min(100, (t.transferred / t.total) * 100)}%`
-                        : "0%",
-                  }}
-                />
-              </div>
-              <button
-                className="nc-sftp-transfer-cancel"
-                title="取消传输"
-                onClick={() => void api.sftpCancelTransfer(t.id)}
-              >
-                取消
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
 
       {menu && (
         <SftpContextMenu

@@ -113,6 +113,8 @@ const ERROR_MESSAGES: Record<
     `“${str(p, "path")}”的类型已变化，请刷新列表后重试。`,
   // ── SFTP ──
   sftp_session_not_found: () => "SFTP 会话不存在或已关闭。",
+  sftp_transfer_not_found: (p) => `未找到传输任务：${str(p, "id")}`,
+  sftp_transfer_state_invalid: () => "传输任务当前状态不允许该操作。",
   sftp_io_failed: (p) => `SFTP 操作失败（${str(p, "op")}）：${str(p, "err")}`,
   sftp_tree_too_deep: (p) =>
     `“${str(p, "path")}”目录层级过深（上限 ${str(p, "limit")} 层）。`,
@@ -136,6 +138,20 @@ const ERROR_MESSAGES: Record<
 };
 
 /**
+ * 裸错误码 → 中文文案（队列项 `TransferItem.error` 存的是 code 而非信封）。
+ * 未知 code 回退 params.err / 泛化文案。
+ */
+export function errorMessageFor(
+  code: string,
+  params?: Record<string, unknown>,
+): string {
+  const render = ERROR_MESSAGES[code];
+  if (render) return render(params);
+  const detail = str(params, "err") || str(params, "error");
+  return detail ? `操作失败：${detail}` : "操作失败，请重试。";
+}
+
+/**
  * 取给用户看的错误文本（R5）：
  * - 信封 → 按 code 映射中文；未知 code 回退 params.err/泛化文案；
  * - 非信封 → 原样返回（前端本地文案或服务器原文）。
@@ -143,8 +159,5 @@ const ERROR_MESSAGES: Record<
 export function userVisibleError(raw: string): string {
   const { code, params, message } = decodeAppError(raw);
   if (!code) return message;
-  const render = ERROR_MESSAGES[code];
-  if (render) return render(params);
-  const detail = str(params, "err") || str(params, "error");
-  return detail ? `操作失败：${detail}` : "操作失败，请重试。";
+  return errorMessageFor(code, params);
 }

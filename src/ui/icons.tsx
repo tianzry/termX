@@ -69,6 +69,7 @@ export type IconName =
   | "eye"
   | "eye-off"
   | "play"
+  | "pause"
   | "user"
   | "check"
   | "arrow-right"
@@ -498,6 +499,12 @@ const paths: Record<IconName, ReactElement> = {
     </>
   ),
   play: <polygon points="6 3 20 12 6 21 6 3" />,
+  pause: (
+    <>
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+    </>
+  ),
   save: (
     <>
       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />

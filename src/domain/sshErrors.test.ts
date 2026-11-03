@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { decodeAppError, isAuthFailureMessage, userVisibleError } from "./sshErrors";
+import {
+  decodeAppError,
+  errorMessageFor,
+  isAuthFailureMessage,
+  userVisibleError,
+} from "./sshErrors";
 
 describe("decodeAppError", () => {
   it("解析 __rssh_err__| 前缀里的 code 与 params", () => {
@@ -64,6 +69,15 @@ describe("userVisibleError", () => {
     );
   });
 
+  it("传输队列错误码映射为中文（R5）", () => {
+    expect(
+      userVisibleError('__rssh_err__|{"code":"sftp_transfer_not_found","params":{"id":"t1"}}'),
+    ).toBe("未找到传输任务：t1");
+    expect(
+      userVisibleError('__rssh_err__|{"code":"sftp_transfer_state_invalid","params":{"id":"t1"}}'),
+    ).toBe("传输任务当前状态不允许该操作。");
+  });
+
   it("未知 code 回退 params.err，再回退泛化文案", () => {
     expect(
       userVisibleError('__rssh_err__|{"code":"not_a_real_code","params":{"err":"boom"}}'),
@@ -75,5 +89,21 @@ describe("userVisibleError", () => {
 
   it("非信封文本原样返回", () => {
     expect(userVisibleError("connection reset")).toBe("connection reset");
+  });
+});
+
+describe("errorMessageFor", () => {
+  it("裸 code（队列项 error 字段）映射为中文", () => {
+    expect(errorMessageFor("sftp_transfer_not_found", { id: "t2" })).toBe(
+      "未找到传输任务：t2",
+    );
+    expect(errorMessageFor("sftp_transfer_state_invalid")).toBe(
+      "传输任务当前状态不允许该操作。",
+    );
+  });
+
+  it("未知 code 回退泛化文案", () => {
+    expect(errorMessageFor("not_a_code")).toBe("操作失败，请重试。");
+    expect(errorMessageFor("not_a_code", { err: "x" })).toBe("操作失败：x");
   });
 });

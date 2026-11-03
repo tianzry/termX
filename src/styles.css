@@ -3646,27 +3646,118 @@ button:disabled {
   color: hsl(var(--muted-foreground));
 }
 
-.nc-sftp-transfers {
-  border-top: 1px solid hsl(var(--border));
+.nc-sftp-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.nc-sftp-transfer {
+/* ── SFTP 传输队列面板（阶段 B，全局，双栏下方） ───────── */
+
+.nc-sftp-queue {
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  max-height: 220px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.nc-sftp-queue-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 12px;
   font-size: 11px;
   color: hsl(var(--muted-foreground));
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
 }
 
-.nc-sftp-transfer-name {
-  max-width: 140px;
+.nc-sftp-queue-title {
+  font-weight: 600;
+}
+
+.nc-sftp-queue-active {
+  color: hsl(var(--primary));
+}
+
+.nc-sftp-queue-error {
+  color: hsl(var(--destructive));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 30%;
+}
+
+.nc-sftp-queue-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nc-sftp-queue-concurrency {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nc-sftp-queue-concurrency select {
+  background: hsl(var(--input));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 3px;
+  font-size: 11px;
+  height: 18px;
+  padding: 0 2px;
+}
+
+.nc-sftp-queue-clear {
+  background: none;
+  border: none;
+  padding: 0;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.nc-sftp-queue-clear:hover {
+  color: hsl(var(--foreground));
+}
+
+.nc-sftp-queue-list {
+  overflow-y: auto;
+}
+
+.nc-sftp-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 11px;
+  color: hsl(var(--foreground));
+}
+
+.nc-sftp-queue-dir {
+  color: hsl(var(--muted-foreground));
+  display: flex;
+}
+
+.nc-sftp-queue-name {
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.nc-sftp-transfer-bar {
+.nc-sftp-queue-size {
+  color: hsl(var(--muted-foreground));
+  min-width: 52px;
+  text-align: right;
+}
+
+.nc-sftp-queue-bar {
   flex: 1;
   height: 4px;
   background: hsl(var(--muted));
@@ -3674,18 +3765,100 @@ button:disabled {
   overflow: hidden;
 }
 
-.nc-sftp-transfer-fill {
+.nc-sftp-queue-fill {
   height: 100%;
   background: hsl(var(--primary));
+  transition: width 0.2s linear;
 }
 
-.nc-sftp-transfer-cancel {
+.nc-sftp-queue-fill.indeterminate {
+  width: 100%;
+  animation: nc-sftp-queue-pulse 1.2s ease-in-out infinite;
+}
+
+.nc-sftp-queue-pct {
+  min-width: 40px;
+  text-align: right;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-queue-note {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-queue-note.err {
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-queue-note.warn {
+  color: hsl(var(--primary));
+}
+
+.nc-sftp-queue-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.nc-sftp-queue-btn {
   background: none;
   border: none;
-  padding: 0;
+  padding: 2px;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+}
+
+.nc-sftp-queue-btn:hover {
+  color: hsl(var(--foreground));
+}
+
+.nc-sftp-queue-btn.danger:hover {
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-queue-status-active {
+  color: hsl(var(--primary));
+}
+
+.nc-sftp-queue-status-muted {
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-queue-status-ok {
+  color: #22c55e;
+}
+
+.nc-sftp-queue-status-err {
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-queue-status-warn {
+  color: #d97706;
+}
+
+.nc-sftp-queue-spin {
+  animation: nc-sftp-queue-rotate 1s linear infinite;
+}
+
+@keyframes nc-sftp-queue-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes nc-sftp-queue-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* ── 终端右侧工具面板：36px 工具条 ───────────────────────── */

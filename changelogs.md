@@ -2560,3 +2560,27 @@ select_application/open_with_application；⑤ 临时文件注册表
 
 ### 门禁
 - cargo check + --features server 通过（仅既有警告）；cargo test --lib 805 通过（+11）；npm run build 通过（仅既有 chunk>500kB 提示）。本轮未动前端。
+
+---
+
+## 2026-11-03 SFTP 传输队列与冲突对话框 · 阶段 B（前端队列面板）
+
+### 修改点
+1. **client.ts 队列封装**（R1，不裸 invoke/listen）：`TransferItem` / `NewTransferRequest`（嵌套字段保持 snake_case，R3）+ 9 命令封装（enqueue/list/pause/resume/cancel/setPriority/setConcurrency/resolveConflict/clearFinished）+ 2 事件封装 `onSftpTransferUpdated(id)`（`sftp:transfer_updated:<id>`）/ `onSftpQueueChanged`（`sftp:queue_changed`）。
+2. **新增 `src/sftp/SftpQueuePanel.tsx`**（全局，挂于双栏下方 `.nc-sftp-area` 列容器）：对齐 Netcatty SftpTransferQueue 同名区域子集——队列列表（文件名/方向图标/大小/进度条/状态图标）、行内暂停/恢复/取消按钮、头部并发数设置（1-8，初值读 settings key `sftp_transfer_concurrency`，变更走 `sftp_transfer_set_concurrency`）、「清空已结束」按钮；空队列不渲染。事件模型：`queue_changed` 只覆盖结构性变化（入队/优先级/清空），状态迁移按 id 订阅 `transfer_updated:<id>` 逐条 patch；运行中项另订阅 `sftp:progress:<id>` 取字节进度，离开 running 即退订清残留；孤儿订阅随快照差集回收。
+3. **与旧传输条整合**：`SftpPaneView` 上传/下载改走 `sftpTransferEnqueue`（多选上传 = 单批次，为阶段 C「应用到全部」铺垫），删除面板内 `nc-sftp-transfers` 传输条与 `Transfer` 状态（进度只在队列面板展示，避免两套重复）；上传项完成时经 `transfer_updated` 自动刷新本面板列表（终态退订）。旧样式 `.nc-sftp-transfer*` 删除，新增 `.nc-sftp-queue*`（~210 行）。
+4. **纯逻辑 `src/domain/transferQueue.ts`**：展示排序（活跃组 running>conflict>paused>queued 内优先级降序 + seq 升序，终态组 seq 升序）、活跃/结束计数、暂停/恢复/取消按钮可用性、`formatBytes`（0=未知→空串，上限 TB）、`progressPercent`（不定长→null）+ 14 单测。
+5. **i18n 补码（R5）**：`sftp_transfer_not_found` / `sftp_transfer_state_invalid` 进 sshErrors 字典；新增导出 `errorMessageFor(code, params)`（队列项 `error` 存裸 code 非信封），`userVisibleError` 复用之；+4 测试。
+6. icons.tsx 补 `pause` 图标（lucide 风格）。
+
+### 踩坑
+1. **后端事件时序**：`queue_changed` 不在状态迁移时发（仅入队/优先级/清空），面板必须双订阅（全量快照 + 逐条 `transfer_updated:<id>`）；进度事件与状态事件分离，订阅集合分别按「在列」与「running」维护。
+2. `formatBytes` 单位上限 TB：1PB 显示为 "1024 TB"（测试首版期望写错，修正为上限语义）。
+3. SftpPaneView 的 `watchUploads` 不能用 `useCallback([])` 提前定义——会捕获声明前的 `load`（TDZ 虽运行期无碍但语义脏），改为 `load` 定义后的普通函数。
+4. 恢复的 SftpView 上下文快照已过期（实现③后结构变化：picker props / EMPTY_SIDE 等），编辑前先重读实际文件，避免按旧快照盲改。
+
+### 门禁
+- npm run test:run **160/160** ✓（140 → 160：transferQueue 14 + sshErrors 4 + client 队列 3，其中 1 例为既有 describe 内新增）；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check --features server ✓（仅既有 3 条警告，本轮未改 Rust）；cargo test --lib **805✓**。
+
+### 提交状态
+- 按指令本轮不 push、不 review；阶段 C（冲突对话框 + 129 live + review/push）一并处理，届时随推 e0e83c1 + 1cf1bcc + 本轮。
