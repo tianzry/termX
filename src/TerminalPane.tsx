@@ -534,11 +534,19 @@ export function TerminalPane({
       });
       try {
         // 先注册监听再 open：串口 data 事件在 open 返回后即可能到达。
-        unsubRef.current = [
+        // 逐条入栈（而不是数组字面量整体赋值）：第二个监听注册失败时，
+        // 第一个也不会漏退订。
+        const unsubs: UnlistenFn[] = [];
+        unsubRef.current = unsubs;
+        unsubs.push(
           await api.onSerialData(sid, (bytes) =>
             controllerRef.current?.term.write(bytes),
           ),
+        );
+        unsubs.push(
           await api.onSerialClose(sid, () => {
+            // 旧连接关闭事件可能在重连 / 换端口之后才到，别污染新会话状态。
+            if (!aliveRef.current || attempt !== attemptRef.current) return;
             transportRef.current = null;
             notifySession(null);
             setStatus("disconnected");
@@ -546,7 +554,7 @@ export function TerminalPane({
             setDisconnectedDismissed(false);
             onStatus(`${tab.title} 串口已断开`);
           }),
-        ];
+        );
         const actual = await api.serialOpen(conn.session.port, conn.session.config, sid);
         if (!aliveRef.current || attempt !== attemptRef.current) {
           void api.serialClose(actual);

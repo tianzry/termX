@@ -2500,6 +2500,13 @@ select_application/open_with_application；⑤ 临时文件注册表
 - `npm run test:run` 296✓（新增 workspaceModel 串口标题 2 例、workspaceStore 串口持久化 1 例）；`npm run build` ✓；`cargo check --features server` ✓；`cargo test --lib` 836✓（本轮无 Rust 改动）。
 - 本地 commit，未 push；调试实例保持运行（PID 23056，停留在串口弹窗）供继续手测。
 
+### 推送前自审（2026-11-03）
+
+- 修复串口监听注册的退订缺口：改为逐条入栈，第二个 `onSerialClose` 注册失败时第一个 `onSerialData` 也会退订。
+- 修复重连竞态：旧会话的 `serial:close` 事件可能在新一次 `connect()` 之后到达，回调加 `attempt` 守卫，避免把新会话显示成「串口已断开」。
+- 复核：`openSerial` 不再调用 `ensureTab()`；旧 `SerialPanel` 无残留引用/CSS；`Connector.kind="serial"` 打开、输入、teardown `serialClose`、workspace 恢复链路闭合；串口错误码 `serial_not_found` / `serial_open_failed` 已在 `sshErrors.ts` 映射。
+- 门禁：`test:run` 296✓、`build` ✓、`cargo check --features server` ✓（仅原有 3 条 warning）、`cargo test --lib` 836✓。
+
 ---
 
 ## 2026-11-03 SFTP 实现③推送前 review + push
