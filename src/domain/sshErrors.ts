@@ -106,6 +106,11 @@ const ERROR_MESSAGES: Record<
   fwd_not_found: () => "端口转发会话不存在。",
   fwd_profile_not_found: () => "未找到端口转发档案。",
   fwd_cred_not_found: () => "未找到端口转发凭据。",
+  // ── 本地文件系统 ──
+  local_home_unavailable: () => "无法获取主目录。",
+  local_io_failed: (p) => `本地文件操作失败：${str(p, "err")}`,
+  local_type_stale: (p) =>
+    `“${str(p, "path")}”的类型已变化，请刷新列表后重试。`,
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,

@@ -179,7 +179,17 @@ pub async fn local_remove(path: String, expected_type: Option<String>) -> AppRes
     res.map_err(|e| io_err("remove", &path, e))
 }
 
-/// 读本地文件。`max_bytes` 小于文件大小时读**尾部**（编辑器预览大文件）。
+/// `max_bytes` 缺省时的读取上限：防止巨型文件整体读入内存并经 IPC 序列化
+/// 打爆前端（JSON 数字数组约 4× 膨胀）。
+const DEFAULT_READ_CAP: u64 = 16 << 20; // 16 MiB
+
+/// 计算读取前跳过的字节数：文件大于上限时读**尾部**。
+fn read_skip(len: u64, max_bytes: Option<u64>) -> u64 {
+    len.saturating_sub(max_bytes.unwrap_or(DEFAULT_READ_CAP))
+}
+
+/// 读本地文件。`max_bytes` 小于文件大小时读**尾部**（编辑器预览大文件）；
+/// 缺省按 16 MiB 上限同样读尾部，避免大文件打爆内存/IPC。
 #[tauri::command]
 pub async fn local_read_file(path: String, max_bytes: Option<u64>) -> AppResult<Vec<u8>> {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -192,10 +202,7 @@ pub async fn local_read_file(path: String, max_bytes: Option<u64>) -> AppResult<
         .await
         .map_err(|e| io_err("read", &path, e))?
         .len();
-    let skip = match max_bytes {
-        Some(mb) if len > mb => len - mb,
-        _ => 0,
-    };
+    let skip = read_skip(len, max_bytes);
     if skip > 0 {
         f.seek(std::io::SeekFrom::Start(skip))
             .await
@@ -308,6 +315,14 @@ mod tests {
             strip_extended_prefix(Path::new(r"\\?\UNC\server\share")),
             r"\\server\share"
         );
+    }
+
+    #[test]
+    fn read_skip_tail_and_default_cap() {
+        assert_eq!(read_skip(5, None), 0);
+        assert_eq!(read_skip(DEFAULT_READ_CAP + 10, None), 10);
+        assert_eq!(read_skip(100, Some(30)), 70);
+        assert_eq!(read_skip(10, Some(30)), 0);
     }
 
     #[tokio::test]

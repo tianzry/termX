@@ -2356,3 +2356,42 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本轮本地 commit（SftpView secret 修复 + 文档）；按指令不 push、不 review，下一轮子 agent review 通过后与实现①②一并推送。
+
+---
+
+## 2026-11-03 SFTP 实现①②推送前 review + push
+
+### Review 方式与范围
+
+- 子 agent 代码 review（只读）。范围 = 实现①后端（1f5af63：localfs.rs 命令组 + sftp_lstat/realpath）+ 实现② 3 个未推送提交（dba8c5c / 6edc7a9 / 3ac6eac）。
+- 说明：子 agent 曾读到过期的 origin/main 引用误判远端基线，以本会话两次 `git ls-remote`（均为 1f5af63）为准；1f5af63 为本地 HEAD 祖先（rev-list 领先 3），可快进推送。
+
+### Review 结论（八大重点）
+
+- **无高危**。
+- 路径处理与权限边界（localfs）：无真实漏洞。任意路径访问属文件管理器设计内；canonicalize 的 `\\?\` / `\\?\UNC\` 前缀由 strip_extended_prefix 正确还原且有单测；列表用 symlink_metadata 不跟链；local_remove 对符号链接只删链接本体不追目标。
+- sftp lstat/realpath 错误映射与既有命令一致，无 unwrap/panic；get_sftp 走 locked() 处理锁中毒。
+- 凭据安全：SftpView 独立连接经 getCredential 取全量凭据，secret 仅作瞬态局部变量传入 sftpConnect；src/sftp 全程无 console.*、无状态持久化、无日志记录；meta 仅含 username@host。
+- 双注册：12 个新命令（10 个 local_* + sftp_lstat/sftp_realpath）在 lib.rs generate_handler! 与 server.rs dispatcher 均注册，无遗漏。
+- 前端无裸 invoke：invoke/listen 仅存在于 client.ts。
+- 测试可信度：sftpModel.test.ts（14 例）与 localfs roundtrip 均断言真实行为（排序/目录优先/尾部读/类型守卫报错），无恒真测试。
+
+### 中危修复（推送前已修）
+
+1. **local_read_file 无读取上限**：`max_bytes` 缺省时读全文件（原 1MiB 封顶仅限预分配），巨型文件会吃满内存并经 IPC 序列化再膨胀（number[] 约 4×）。修复：新增 `DEFAULT_READ_CAP = 16 MiB`，缺省同样按上限读**尾部**（与「超限读尾」语义一致）；抽出纯函数 `read_skip` 并补 4 断言单测（read_skip_tail_and_default_cap）。
+2. **3 个新错误码缺中文映射**：`local_io_failed` / `local_type_stale` / `local_home_unavailable` 在 sshErrors.ts ERROR_MESSAGES 无条目，回退会把英文 OS 原文直接给用户。修复：新增「本地文件系统」分区三条中文文案。
+
+### 低危记录（待后续）
+
+1. TS `FileStat` 接口（client.ts）缺 `is_symlink` 字段声明（Rust 侧已有该字段，sftpLstat 注释声称「is_symlink 可信」）。
+2. local_remove 的 `expected_type` 为 Option：传 None 可删任意目录树（文件管理器设计内；实现③接线时前端必须恒传 expectedType）。
+3. 12 个新 invoke 封装未补 client.test.ts 覆盖（R11）。
+4. 孤儿 CSS：App.tsx 已移除 `.nc-sftp-page` 标记，styles.css 对应旧样式可清理。
+
+### 门禁
+
+- npm run test:run 126/126 ✓；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check ✓（仅既有 6 条 dead_code 警告）；cargo check --features server ✓；cargo test --lib 793✓ / 0✗（含新增 read_skip 用例）。
+
+### 推送
+
+- 推送前核对远端 main=1f5af63 且为本地 HEAD 祖先（快进）；3 个未推送提交 + 本轮修复提交经 `git push git@github.com:tianzry/termX.git HEAD:main` 推送，ls-remote 核对结果见汇报与下一轮记录。
