@@ -94,3 +94,20 @@ export function assertEditorSize(size: number): void {
     );
   }
 }
+
+/** 文件监视 stat 快照（mtime 为 unix 秒；0 = 不可用）。 */
+export interface EditorStat {
+  mtime: number;
+  size: number;
+}
+
+/**
+ * 外部修改检测的纯比较（阶段 B 监视回写）：
+ * size 变化必判变；mtime 双方可用时不同即判变
+ * （部分文件系统 mtime 粒度粗，size 作兜底判据）。
+ */
+export function statChanged(base: EditorStat, cur: EditorStat): boolean {
+  if (base.size !== cur.size) return true;
+  if (base.mtime > 0 && cur.mtime > 0 && base.mtime !== cur.mtime) return true;
+  return false;
+}

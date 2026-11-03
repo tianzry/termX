@@ -2656,3 +2656,33 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本地 commit 未推送（阶段 B 一起 review + push）。
+
+---
+
+## 2026-11-03 · 编辑器与监视回写（P0 #8）阶段 B：文件监视回写 + 外部编辑器打开 + 129 live 收官
+
+### 修改点
+
+- 文件监视回写（`EditorDialog`，对齐 Netcatty startFileWatch 语义的 termX 子集）：加载/保存/另存成功后刷新基准 stat 快照；本地 1.5s 轮询 `localStat`、远端 3s 轮询 `sftpStat`（mtime/size）；纯比较 `statChanged`（editorFile.ts，size 必比、mtime 双方可用才比，+4 单测）；自身写入期间 `writingRef` 抑制比对 + 保存后立即刷新基准，防自写回环；检出外部修改弹「文件已在磁盘/远端被修改，是否重新加载」（重新加载 / 忽略=以当前 stat 为新基准）；定时器随目标/状态重建、卸载即清理，无句柄泄漏。
+- 外部编辑器打开：`local_open_path`（系统默认程序：Windows `cmd /C start`、macOS `open`、Linux `xdg-open`）+ `sftp_open_external`（下载到 `%TEMP%/termX-external/<毫秒戳>-<净化名>` 后系统打开，返回临时路径；100 MiB `EXTERNAL_OPEN_CAP` stat 预检 + 下载后兜底）；`SftpPaneView` 右键「外部打开」（本地/远端文件），`externalTemps` ref 记录远端路径→临时路径并显示提示（编辑后手动上传覆盖，回传自动化留后续）。lib.rs + server.rs 双注册（camelCase：sftpId/path）。
+- client.ts：`localOpenPath` / `sftpOpenExternal` 封装（R1）。
+
+### 高危缺陷：129 live 揪出 upload 不截断（已修复）
+
+- `SftpHandle::upload` 原用 russh-sftp `SftpSession::write`（仅 `OpenFlags::WRITE` 打开）：文件不存在报 No such file；**收缩内容时旧尾部残留**——live 实测 50 字节覆盖 8 字节后再读为 50 字节混合内容（编辑器保存即损坏文件）。改用 `create`（CREATE|TRUNCATE|WRITE）+ `write_all`，整体覆盖与本地写一致；顺带修复 `sftp_upload` 新建文件报错问题。
+
+### 129 live（TERMX_SFTP_LIVE=1，profile 129；凭据走 ~/.rssh DB + SecretStore，密码不落明文）
+
+- 新增 `live_sftp_editor_read_write_guards` 通过：种已有文件 → stat 预检 + 全文读一致且不判二进制 → 回写更短内容 → 再读完全一致（含截断语义）→ 超限拒绝（真实尺寸触发 guard，错误码 `sftp_file_too_large`）→ 含 NUL 文件采样判二进制（编辑器入口拒绝）；测后清理远端临时目录。
+
+### review 自审
+
+- 无遗留高/中危：hostId 校验（get_sftp → sftp_session_not_found，保存只用本面板会话）；路径穿越无新增面（临时文件名净化 `/\:*?"<>|`）；大文件双守卫（编辑 10 MiB / 外部打开 100 MiB）；未保存关闭三按钮确认；监视器卸载清理；命令双注册一致；i18n 复用 `local_io_failed` / `sftp_file_too_large` 既有映射。低危记录：卸载后 in-flight 轮询回调 setState 为无害空操作；`externalTemps` 仅记录供提示，自动回传留后续。
+
+### 门禁
+
+- npm run test:run **183/183** ✓（179 → 183：statChanged 4 例）；npm run build ✓（仅既有 chunk 提示）；cargo check --features server ✓（仅既有 3 警告）；cargo test --lib **813✓**（809 + looks_binary 3 + live 1）；129 live ✓。
+
+### 提交状态
+
+- 随推 d4b0886（阶段 A）+ 本轮阶段 B；远端 main 以 ls-remote 复核。

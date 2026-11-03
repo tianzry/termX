@@ -638,6 +638,23 @@ export function sftpWriteFile(
   return invoke("sftp_write_file", { sftpId, path, data: Array.from(data) });
 }
 
+/** 用系统默认程序打开本地文件（外部编辑器入口，Netcatty openPath 等价）。 */
+export function localOpenPath(path: string): Promise<void> {
+  return invoke("local_open_path", { path });
+}
+
+/**
+ * 用外部编辑器打开远端文件：下载到临时目录后以系统默认程序打开
+ * （Netcatty downloadToTempAndOpen 等价）。返回临时文件路径，
+ * 调用方记录供后续「保存后回传」或提示。
+ */
+export function sftpOpenExternal(
+  sftpId: string,
+  path: string,
+): Promise<string> {
+  return invoke<string>("sftp_open_external", { sftpId, path });
+}
+
 // ── 阶段 2：串口 / Telnet / 端口转发 ────────────────────────
 
 /** 连接类型全集（比 TerminalDomain 多了 serial / telnet，无域名事件）。 */

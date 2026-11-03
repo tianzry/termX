@@ -318,7 +318,21 @@ impl SftpHandle {
     }
 
     pub async fn upload(&self, remote_path: &str, data: &[u8]) -> AppResult<()> {
-        self.sftp.write(remote_path, data).await.map_err(|e| {
+        // 不用 `SftpSession::write`：它只以 OpenFlags::WRITE 打开——文件不存在
+        // 报 No such file，收缩内容时旧尾部残留（编辑器保存损坏）。改用
+        // create（CREATE | TRUNCATE | WRITE）+ write_all，整体覆盖与本地写一致。
+        use tokio::io::AsyncWriteExt;
+        let mut file = self
+            .sftp
+            .create(remote_path)
+            .await
+            .map_err(|e| {
+                AppError::sftp(
+                    "sftp_io_failed",
+                    json!({ "op": "write", "err": e.to_string() }),
+                )
+            })?;
+        file.write_all(data).await.map_err(|e| {
             AppError::sftp(
                 "sftp_io_failed",
                 json!({ "op": "write", "err": e.to_string() }),

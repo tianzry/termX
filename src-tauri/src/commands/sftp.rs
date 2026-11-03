@@ -713,6 +713,74 @@ pub fn sftp_cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> 
     Ok(())
 }
 
+/// 编辑器二进制采样判定（镜像前端 editorFile.looksBinary 语义）：
+/// 头部 8 KiB 内出现 NUL 即判二进制。仅测试链路使用（生产判定在前端），
+/// 故 cfg(test) 避免 dead_code 告警。
+#[cfg(test)]
+pub fn looks_binary(data: &[u8]) -> bool {
+    const SAMPLE: usize = 8 * 1024;
+    data[..data.len().min(SAMPLE)].contains(&0)
+}
+
+#[cfg(test)]
+mod looks_binary_tests {
+    use super::*;
+
+    #[test]
+    fn text_is_not_binary() {
+        assert!(!looks_binary(b"hello world\n"));
+        assert!(!looks_binary(&[]));
+    }
+
+    #[test]
+    fn nul_within_sample_is_binary() {
+        assert!(looks_binary(&[b'a', 0, b'b']));
+    }
+
+    #[test]
+    fn nul_beyond_sample_window_is_ignored() {
+        let mut v = vec![b'a'; 8 * 1024 + 16];
+        *v.last_mut().unwrap() = 0;
+        assert!(!looks_binary(&v));
+    }
+}
+
+/// 「下载到临时目录并外部打开」的上限：100 MiB（整体进内存后落盘，
+/// 防超大文件打爆内存）。超限复用 `sftp_file_too_large` 文案。
+pub const EXTERNAL_OPEN_CAP: u64 = 100 << 20;
+
+/// 用外部（系统默认）编辑器打开远端文件：下载到临时目录后用系统默认程序
+/// 打开（Netcatty downloadToTempAndOpen 等价物）。返回临时文件路径，
+/// 前端记录供后续「保存后回传」或提示。
+#[tauri::command]
+pub async fn sftp_open_external(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+) -> AppResult<String> {
+    let h = get_sftp(&state, &sftp_id)?;
+    let st = h.stat(&path).await?;
+    editor_size_guard(st.size, EXTERNAL_OPEN_CAP, &path)?;
+    let data = h.download(&path).await?;
+    editor_size_guard(data.len() as u64, EXTERNAL_OPEN_CAP, &path)?;
+    let name = Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "remote_file".into());
+    let temp = crate::commands::localfs::external_temp_path(&name);
+    if let Some(parent) = temp.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&temp, &data).await?;
+    crate::commands::localfs::open_with_system(&temp).map_err(|e| {
+        AppError::other(
+            "local_io_failed",
+            json!({ "op": "open", "path": temp.display().to_string(), "err": e.to_string() }),
+        )
+    })?;
+    Ok(temp.display().to_string())
+}
+
 #[cfg(test)]
 mod live_tests {
     use super::*;
@@ -1079,5 +1147,78 @@ mod live_tests {
         }
         let _ = handle.remove(&dir).await;
         let _ = std::fs::remove_dir_all(&local_dir);
+    }
+
+    // ── 编辑器读写与守卫全链路（P0 #8 阶段 B） ────────────────
+
+    /// 真实远端主机（默认档案 "129"）编辑器链路：
+    /// 读 → 回写（覆盖已有文件，含收缩场景验证截断语义）→ 再读一致；
+    /// 超限拒绝（真实 stat 尺寸 + guard）；二进制拒绝（NUL 采样）。
+    /// 凭据同走 ~/.rssh DB + SecretStore，密码不落明文；测后清理远端临时目录。
+    #[tokio::test]
+    async fn live_sftp_editor_read_write_guards() {
+        if std::env::var("TERMX_SFTP_LIVE").as_deref() != Ok("1") {
+            return;
+        }
+        let name = std::env::var("TERMX_SFTP_LIVE_PROFILE").unwrap_or_else(|_| "129".into());
+        let data_dir = dirs::home_dir().expect("home dir").join(".rssh");
+        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.rssh db"));
+        let secrets = crate::secret::open(db.clone(), &data_dir).expect("open secret store");
+        let profile = crate::db::profile::list(&db)
+            .expect("list profiles")
+            .into_iter()
+            .find(|p| p.name == name)
+            .unwrap_or_else(|| panic!("profile {name} not found"));
+        let cred_row =
+            crate::db::credential::get(&db, &profile.credential_id).expect("get credential");
+        let secret = secrets
+            .store
+            .get(&crate::secret::cred_secret_key(&cred_row.id))
+            .expect("decrypt credential secret");
+        let cred = Credential { secret, ..cred_row };
+        let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
+        let handle = SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15)
+            .await
+            .expect("sftp connect");
+
+        let (host, _rx) = crate::ssh::test_support::headless_host();
+        let dir = format!("/tmp/termx-live-editor-{}", std::process::id());
+        let f = format!("{dir}/edit.txt");
+        handle.mkdir(&dir).await.expect("mkdir");
+
+        // 1) 种一个已存在文件：编辑器只打开已有文件，保存 = 覆盖已有文件。
+        let long = b"termx editor live seed -- long initial content v1";
+        seed_remote(&handle, &host, &f, long).await;
+
+        // 2) 读：stat 预检 + 全文读（sftp_read_file 同款路径），且不判二进制。
+        let st = handle.stat(&f).await.expect("stat");
+        editor_size_guard(st.size, DEFAULT_EDITOR_READ_CAP, &f).expect("size guard ok");
+        let data = handle.download(&f).await.expect("read");
+        assert_eq!(data, long, "读取应与种入内容一致");
+        assert!(!looks_binary(&data), "文本文件不得判二进制");
+
+        // 3) 回写：h.upload（sftp_write_file 同款路径）覆盖，刻意写入更短内容
+        //    验证截断语义；再读必须完全一致（读→写→再读一致）。
+        let short = b"v2 short";
+        handle.upload(&f, short).await.expect("write back");
+        let again = handle.download(&f).await.expect("re-read");
+        assert_eq!(again, short, "读→写→再读一致（含收缩截断）");
+
+        // 4) 超限拒绝：用真实远端尺寸触发 guard，错误码须一致。
+        let st2 = handle.stat(&f).await.expect("stat after write");
+        let err = editor_size_guard(st2.size, st2.size.saturating_sub(1), &f).unwrap_err();
+        assert_eq!(err.code(), "sftp_file_too_large");
+
+        // 5) 二进制拒绝：含 NUL 文件读回后采样判二进制（编辑器入口拒绝）。
+        let bin = format!("{dir}/bin.dat");
+        seed_remote(&handle, &host, &bin, &[b'T', b'X', 0, 1, 2, 0, b'\n']).await;
+        let bdata = handle.download(&bin).await.expect("read binary");
+        assert!(looks_binary(&bdata), "含 NUL 文件应判二进制");
+
+        // 清理。
+        for p in [&f, &bin] {
+            let _ = handle.remove(p).await;
+        }
+        let _ = handle.remove(&dir).await;
     }
 }

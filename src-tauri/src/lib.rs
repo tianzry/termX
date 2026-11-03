@@ -292,6 +292,7 @@ pub fn run() {
             commands::sftp::sftp_upload,
             commands::sftp::sftp_read_file,
             commands::sftp::sftp_write_file,
+            commands::sftp::sftp_open_external,
             commands::sftp::sftp_mkdir,
             commands::sftp::sftp_close,
             // Stream transfer to/from a path (desktop) or content:// URI (mobile).
@@ -338,6 +339,7 @@ pub fn run() {
             commands::localfs::local_remove,
             commands::localfs::local_read_file,
             commands::localfs::local_write_file,
+            commands::localfs::local_open_path,
             // CLI install
             #[cfg(desktop)]
             commands::cli::cli_status,

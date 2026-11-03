@@ -1081,6 +1081,9 @@ async fn dispatch_async(
             )
             .await)
         }
+        "local_open_path" => {
+            ok(crate::commands::localfs::local_open_path(arg::<String>(&args, "path")?).await)
+        }
         "sftp_download" => {
             let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
             ok(h.download(&arg::<String>(&args, "path")?).await)
@@ -1112,6 +1115,44 @@ async fn dispatch_async(
                 &arg::<Vec<u8>>(&args, "data")?,
             )
             .await)
+        }
+        "sftp_open_external" => {
+            let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
+            let path: String = arg(&args, "path")?;
+            let st = h.stat(&path).await.map_err(err_value)?;
+            crate::commands::sftp::editor_size_guard(
+                st.size,
+                crate::commands::sftp::EXTERNAL_OPEN_CAP,
+                &path,
+            )
+            .map_err(err_value)?;
+            let data = h.download(&path).await.map_err(err_value)?;
+            crate::commands::sftp::editor_size_guard(
+                data.len() as u64,
+                crate::commands::sftp::EXTERNAL_OPEN_CAP,
+                &path,
+            )
+            .map_err(err_value)?;
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "remote_file".into());
+            let temp = crate::commands::localfs::external_temp_path(&name);
+            if let Some(parent) = temp.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| err_value(AppError::from(e)))?;
+            }
+            tokio::fs::write(&temp, &data)
+                .await
+                .map_err(|e| err_value(AppError::from(e)))?;
+            crate::commands::localfs::open_with_system(&temp).map_err(|e| {
+                err_value(AppError::other(
+                    "local_io_failed",
+                    json!({ "op": "open", "path": temp.display().to_string(), "err": e.to_string() }),
+                ))
+            })?;
+            ok(Ok(temp.display().to_string()))
         }
         "sftp_mkdir" => {
             let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;

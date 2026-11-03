@@ -223,6 +223,61 @@ pub async fn local_write_file(path: String, data: Vec<u8>) -> AppResult<()> {
         .map_err(|e| io_err("write", &path, e))
 }
 
+/// 用系统默认程序打开文件（Netcatty openPath 等价物，外部编辑器入口）。
+/// 本地直接打开；远端先经 `sftp_open_external` 落到临时目录再复用本逻辑。
+#[tauri::command]
+pub async fn local_open_path(path: String) -> AppResult<()> {
+    let p = PathBuf::from(&path);
+    if !tokio::fs::try_exists(&p).await.unwrap_or(false) {
+        return Err(io_err(
+            "open",
+            &path,
+            std::io::Error::new(std::io::ErrorKind::NotFound, "路径不存在"),
+        ));
+    }
+    open_with_system(&p).map_err(|e| io_err("open", &path, e))
+}
+
+/// 以系统默认程序启动：Windows `cmd /C start`、macOS `open`、其他 Unix `xdg-open`。
+/// spawn 只拉起调度器，不等待子进程。
+pub fn open_with_system(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        // `start` 的第一个带引号参数会被当作窗口标题，先传空标题占位。
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path.to_string_lossy()])
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(path).spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open").arg(path).spawn()?;
+    }
+    Ok(())
+}
+
+/// 系统临时目录下生成唯一临时文件路径（termX-external 子目录）：
+/// 远端文件下载后外部打开使用；前端记录该路径供后续「保存后回传」或提示。
+pub fn external_temp_path(name: &str) -> PathBuf {
+    let safe: String = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c => c,
+        })
+        .collect();
+    let uniq = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    std::env::temp_dir()
+        .join("termX-external")
+        .join(format!("{uniq}-{safe}"))
+}
+
 // ── 内部辅助 ─────────────────────────────────────────────
 
 /// 由 lstat/stat 元数据构建条目。`follow=false` 且条目是链接时，跟随一次

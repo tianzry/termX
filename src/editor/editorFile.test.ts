@@ -7,6 +7,7 @@ import {
   fileExtension,
   isKnownBinaryFile,
   looksBinary,
+  statChanged,
 } from "./editorFile";
 
 describe("fileExtension", () => {
@@ -88,5 +89,22 @@ describe("assertEditorSize", () => {
   it("NaN / Infinity 不拦（尺寸未知交给读取兜底）", () => {
     expect(() => assertEditorSize(NaN)).not.toThrow();
     expect(() => assertEditorSize(Infinity)).not.toThrow();
+  });
+});
+
+describe("statChanged", () => {
+  it("size 变化判变", () => {
+    expect(statChanged({ mtime: 100, size: 10 }, { mtime: 100, size: 11 })).toBe(true);
+  });
+  it("mtime 变化判变（size 相同）", () => {
+    expect(statChanged({ mtime: 100, size: 10 }, { mtime: 101, size: 10 })).toBe(true);
+  });
+  it("两者皆同判未变", () => {
+    expect(statChanged({ mtime: 100, size: 10 }, { mtime: 100, size: 10 })).toBe(false);
+  });
+  it("mtime 不可用（0）时仅比 size", () => {
+    expect(statChanged({ mtime: 0, size: 10 }, { mtime: 101, size: 10 })).toBe(false);
+    expect(statChanged({ mtime: 100, size: 10 }, { mtime: 0, size: 10 })).toBe(false);
+    expect(statChanged({ mtime: 0, size: 10 }, { mtime: 0, size: 11 })).toBe(true);
   });
 });

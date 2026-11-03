@@ -76,6 +76,10 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   const [dialogError, setDialogError] = useState("");
   /** 内置编辑器目标行（非目录且非已知二进制扩展名才可打开）。 */
   const [editorRow, setEditorRow] = useState<Row | null>(null);
+  /** 外部打开等操作的提示文本（远端临时路径等）。 */
+  const [notice, setNotice] = useState("");
+  /** 远端外部打开后的临时文件路径记录（key=远端路径），供后续「保存后回传」。 */
+  const externalTemps = useRef(new Map<string, string>());
 
   const isRemote = connection.kind === "remote";
   const join = isRemote ? joinRemotePath : joinLocalPath;
@@ -96,6 +100,7 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
     async (target: string) => {
       setBusy(true);
       setError("");
+      setNotice("");
       try {
         if (connection.kind === "local") {
           const entries = await api.localListDir(target);
@@ -196,6 +201,27 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
       // 单次入队 = 单批次：阶段 C 冲突「应用到全部」按批次生效。
       const created = await api.sftpTransferEnqueue(items);
       watchUploads(created);
+    } catch (e) {
+      setError(userVisibleError(String(e)));
+    }
+  };
+
+  // ── 外部打开（Netcatty downloadToTempAndOpen / openPath 等价） ──
+
+  /** 外部打开：本地直接系统默认程序；远端先下载到临时目录再打开，
+   *  并记录临时路径供后续「保存后回传」。 */
+  const openExternal = async (row: Row) => {
+    const full = join(path, row.name);
+    try {
+      if (connection.kind === "remote") {
+        const temp = await api.sftpOpenExternal(connection.sftpId, full);
+        externalTemps.current.set(full, temp);
+        setNotice(
+          `已下载到临时文件 ${temp} 并打开；编辑后请手动上传覆盖远端文件。`,
+        );
+      } else {
+        await api.localOpenPath(full);
+      }
     } catch (e) {
       setError(userVisibleError(String(e)));
     }
@@ -308,6 +334,12 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
       if (!row.isDir && !isKnownBinaryFile(row.name)) {
         menuItems.push({ label: "编辑", onClick: () => setEditorRow(row) });
       }
+      if (!row.isDir) {
+        menuItems.push({
+          label: "外部打开",
+          onClick: () => void openExternal(row),
+        });
+      }
       if (isRemote && !row.isDir) {
         menuItems.push({ label: "下载", onClick: () => void runDownload(row) });
       }
@@ -376,6 +408,9 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
 
       <div className="nc-sftp-pane-list" onContextMenu={openBlankMenu}>
         {error && <div className="nc-sftp-pane-error">{error}</div>}
+        {!error && notice && (
+          <div className="nc-sftp-pane-hint">{notice}</div>
+        )}
         {!error && busy && rows.length === 0 && (
           <div className="nc-sftp-pane-hint">加载中...</div>
         )}
