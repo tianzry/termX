@@ -3345,3 +3345,22 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 
 - `test:run` 28 文件 349✓、`build`✓、`cargo check --features server`✓、`cargo test --lib` 856✓、debug 构建✓。
 - 自审：路径穿越（手动路径复用 safe stem）、坏 cast（跳过/报读失败）、索引与文件（停止即 upsert，扫描幂等）、删除确认、导出路径（系统对话框）、i18n、双注册均通过；同秒覆盖中危已修，无高危。
+
+## 2026-11-03 — 代理 / 端口转发移植暂停（决策记录）
+
+**决策**：按用户指令立即停止「代理」与「端口转发」两项移植，不再继续开发；已在途的代理阶段 A 后端改动保留为本地 WIP 草稿，**不推送远端**。端口转发阶段从未开始。
+
+**已完成（可直接沿用，`d633866`）**：
+- 后端 `ssh/proxy.rs`：HTTP CONNECT 与 SOCKS5（含用户名/密码子协商）握手、Basic 认证、IPv6 authority / ATYP、全流程超时、`no_proxy`（通配、后缀、端口、CIDR、`<local>`）+ 6 个单测（含本地 mock 代理）。
+- 主机档案 5 个代理字段 + schema v39（`proxy_type/host/port/username/no_proxy`）；密码不入库，走 SecretStore `proxy:<profile_id>`；删除档案时清理 TOTP/代理密文。
+- 连接链路：`DialCtx` / `ConnectParams` / `ConnTarget` 按 `profile_id` 查代理表，终端、堡垒逐跳、端口转发、headless `server.rs`、CLI 均已接线；设置中心系统代理 `custom` 作为「无主机级代理」时的兜底（`settings.center.v1.networkProxy`）。
+- `profile_proxy_password_get/set` lib.rs + server.rs 双注册；前端 `client.ts` 封装、`sshErrors.ts` 中文错误码。
+
+**半成品 / 未完成**：
+- 主机档案与连接弹窗的代理表单**未接线**（`VaultView.tsx` / `ConnectionManager.tsx` 未改），用户目前无法在 UI 里填写代理；系统代理设置页文案也未更新。
+- 129 经本地代理的实连验证、与 Netcatty 代理界面的截图比对均未做。
+- SFTP 后台独立连接仍显式 `proxy: None`（原计划阶段 B 补齐）。
+
+**门禁**：`test:run` 28 文件 349✓、`build`✓、`cargo check --features server`✓、`cargo test --lib` 863✓；debug 实例已停止。远端 main 仍为 `b1db6cb`（未推送）。
+
+**恢复方式**：在 `d633866` 基础上继续只改前端表单即可接通；若彻底不做，`git revert d633866` 可整块移除（无其它轮次依赖）。
