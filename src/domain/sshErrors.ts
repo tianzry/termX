@@ -111,6 +111,13 @@ const ERROR_MESSAGES: Record<
   local_io_failed: (p) => `本地文件操作失败：${str(p, "err")}`,
   local_type_stale: (p) =>
     `“${str(p, "path")}”的类型已变化，请刷新列表后重试。`,
+  // ── SFTP ──
+  sftp_session_not_found: () => "SFTP 会话不存在或已关闭。",
+  sftp_io_failed: (p) => `SFTP 操作失败（${str(p, "op")}）：${str(p, "err")}`,
+  sftp_tree_too_deep: (p) =>
+    `“${str(p, "path")}”目录层级过深（上限 ${str(p, "limit")} 层）。`,
+  sftp_invalid_filename: () => "文件名非法。",
+  sftp_file_too_large: () => "文件过大。",
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,

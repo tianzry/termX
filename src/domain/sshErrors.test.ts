@@ -52,6 +52,18 @@ describe("userVisibleError", () => {
     expect(userVisibleError(raw)).toContain("120");
   });
 
+  it("sftp 错误码映射为中文（文件操作五链路）", () => {
+    expect(
+      userVisibleError('__rssh_err__|{"code":"sftp_io_failed","params":{"op":"rename","err":"No such file"}}'),
+    ).toBe("SFTP 操作失败（rename）：No such file");
+    expect(
+      userVisibleError('__rssh_err__|{"code":"sftp_tree_too_deep","params":{"path":"/a","depth":64,"limit":64}}'),
+    ).toContain("目录层级过深");
+    expect(userVisibleError('__rssh_err__|{"code":"sftp_session_not_found"}')).toBe(
+      "SFTP 会话不存在或已关闭。",
+    );
+  });
+
   it("未知 code 回退 params.err，再回退泛化文案", () => {
     expect(
       userVisibleError('__rssh_err__|{"code":"not_a_real_code","params":{"err":"boom"}}'),
