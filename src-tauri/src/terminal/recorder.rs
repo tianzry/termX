@@ -116,6 +116,247 @@ impl Recorder {
     }
 }
 
+// ── 手动会话日志（文本）──────────────────────────────────────────
+//
+// 与 asciicast 录制器完全独立：这里产出用户可读的文本日志（raw / txt / html），
+// 由用户在开始前通过系统保存对话框选择目标路径。之所以不复用 `Recorder`：
+// asciicast 是「日志库」的自动录制产物（.cast），手动会话日志是 Netcatty
+// `sessionLog` 的对应能力（纯文本文件），两者必须能同时开启、互不抢占。
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextLogFormat {
+    /// 保留 ANSI 控制序列原样。
+    Raw,
+    /// 去掉 ANSI 控制序列的纯文本。
+    Text,
+    /// 去掉 ANSI 后转义的 HTML，外层包 `<pre>`。
+    Html,
+}
+
+impl TextLogFormat {
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "raw" => Some(Self::Raw),
+            "txt" => Some(Self::Text),
+            "html" => Some(Self::Html),
+            _ => None,
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Raw => "log",
+            Self::Text => "txt",
+            Self::Html => "html",
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Text => "txt",
+            Self::Html => "html",
+        }
+    }
+}
+
+/// 会话日志状态：路径 + 开始时间，供工具栏显示「录制中」。
+pub struct ActiveTextLog {
+    pub recorder: TextLogRecorder,
+    pub path: PathBuf,
+    pub started_at_ms: i64,
+    pub format: TextLogFormat,
+}
+
+impl ActiveTextLog {
+    pub fn new(
+        path: PathBuf,
+        format: TextLogFormat,
+        timestamps: bool,
+    ) -> AppResult<Self> {
+        let recorder = TextLogRecorder::new(path.clone(), format, timestamps)?;
+        Ok(Self {
+            recorder,
+            path,
+            started_at_ms: chrono::Utc::now().timestamp_millis(),
+            format,
+        })
+    }
+}
+
+pub struct TextLogRecorder {
+    writer: BufWriter<File>,
+    format: TextLogFormat,
+    timestamps: bool,
+    start: Instant,
+    pending: Vec<u8>,
+    at_line_start: bool,
+}
+
+impl TextLogRecorder {
+    pub fn new(path: PathBuf, format: TextLogFormat, timestamps: bool) -> AppResult<Self> {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let file = opts.open(&path)?;
+        let mut writer = BufWriter::new(file);
+        if format == TextLogFormat::Html {
+            writeln!(
+                writer,
+                "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>session log</title></head><body><pre>"
+            )?;
+        }
+        Ok(Self {
+            writer,
+            format,
+            timestamps,
+            start: Instant::now(),
+            pending: Vec::new(),
+            at_line_start: true,
+        })
+    }
+
+    /// 与 asciicast 录制器相同的 UTF-8 跨 chunk 处理，但写文本而不是 JSON 事件。
+    pub fn record(&mut self, data: &[u8]) -> AppResult<()> {
+        self.pending.extend_from_slice(data);
+        let split = match std::str::from_utf8(&self.pending) {
+            Ok(_) => self.pending.len(),
+            Err(e) => match e.error_len() {
+                None => e.valid_up_to(),
+                Some(_) => self.pending.len(),
+            },
+        };
+        if split == 0 {
+            return Ok(());
+        }
+        let chunk = String::from_utf8_lossy(&self.pending[..split]).into_owned();
+        self.write_chunk(&chunk)?;
+        self.pending.drain(..split);
+        Ok(())
+    }
+
+    fn write_chunk(&mut self, chunk: &str) -> AppResult<()> {
+        let cleaned = match self.format {
+            TextLogFormat::Raw => chunk.to_string(),
+            TextLogFormat::Text | TextLogFormat::Html => strip_ansi(chunk),
+        };
+        let body = if self.format == TextLogFormat::Html {
+            escape_html(&cleaned)
+        } else {
+            cleaned
+        };
+        if self.timestamps {
+            for piece in split_keep_newlines(&body) {
+                if piece.is_empty() {
+                    continue;
+                }
+                if self.at_line_start && !piece.starts_with('\n') {
+                    let elapsed = self.start.elapsed();
+                    write!(
+                        self.writer,
+                        "[{:02}:{:02}:{:02}.{:03}] ",
+                        elapsed.as_secs() / 3600,
+                        (elapsed.as_secs() / 60) % 60,
+                        elapsed.as_secs() % 60,
+                        elapsed.subsec_millis(),
+                    )?;
+                }
+                self.writer.write_all(piece.as_bytes())?;
+                self.at_line_start = piece.ends_with('\n');
+            }
+        } else {
+            self.writer.write_all(body.as_bytes())?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> AppResult<()> {
+        if !self.pending.is_empty() {
+            let chunk = String::from_utf8_lossy(&self.pending).into_owned();
+            self.write_chunk(&chunk)?;
+            self.pending.clear();
+        }
+        if self.format == TextLogFormat::Html {
+            writeln!(self.writer, "</pre></body></html>")?;
+        }
+        self.writer.flush()?;
+        Ok(())
+    }
+
+    pub fn extension(format: TextLogFormat) -> &'static str {
+        format.extension()
+    }
+}
+
+/// 按换行切分但保留 `\n`，让时间戳能逐行加前缀。
+fn split_keep_newlines(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            out.push(&text[start..=idx]);
+            start = idx + 1;
+        }
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    out
+}
+
+/// 去掉 CSI / OSC / 其它 ANSI 转义序列，保留可见字符与换行。
+pub fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            out.push(ch);
+            continue;
+        }
+        match chars.peek() {
+            // CSI: ESC [ ... final byte 0x40..=0x7e
+            Some('[') => {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            // OSC: ESC ] ... BEL 或 ST（ESC \）结束
+            Some(']') => {
+                chars.next();
+                while let Some(next) = chars.next() {
+                    if next == '\u{7}' {
+                        break;
+                    }
+                    if next == '\u{1b}' {
+                        if matches!(chars.peek(), Some('\\')) {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            // 其它双字节转义（ESC ( X 之类）直接吞两个字符。
+            _ => {
+                chars.next();
+            }
+        }
+    }
+    out
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +512,81 @@ mod tests {
         // 不断言具体 sleep 时长——CI sleep 精度受 OS 调度影响易 flaky，
         // 单调 + 非负就够了（thread::sleep 5ms 只是保证两个事件时间不同）。
         assert!(stamps[0] >= 0.0);
+    }
+
+    // ── 文本会话日志 ──────────────────────────────────────────────
+
+    #[test]
+    fn strip_ansi_removes_csi_and_osc_keeps_text() {
+        let input = "\u{1b}[31mred\u{1b}[0m \u{1b}]0;title\u{7}ok\n";
+        assert_eq!(strip_ansi(input), "red ok\n");
+    }
+
+    #[test]
+    fn strip_ansi_handles_osc_terminated_by_st() {
+        // OSC 以 ST（ESC \）结束时不能吞掉其后的全部输出。
+        let input = "\u{1b}]0;title\u{1b}\\visible\n";
+        assert_eq!(strip_ansi(input), "visible\n");
+    }
+
+    #[test]
+    fn text_log_strips_ansi_for_txt_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.txt");
+        let mut r = TextLogRecorder::new(p.clone(), TextLogFormat::Text, false).unwrap();
+        r.record(b"\x1b[32mhello\x1b[0m").unwrap();
+        r.finish().unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "hello");
+    }
+
+    #[test]
+    fn text_log_raw_keeps_ansi() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.log");
+        let mut r = TextLogRecorder::new(p.clone(), TextLogFormat::Raw, false).unwrap();
+        r.record(b"\x1b[32mhello").unwrap();
+        r.finish().unwrap();
+        assert!(std::fs::read_to_string(&p).unwrap().contains("\x1b[32m"));
+    }
+
+    #[test]
+    fn text_log_html_escapes_and_wraps_pre() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.html");
+        let mut r = TextLogRecorder::new(p.clone(), TextLogFormat::Html, false).unwrap();
+        r.record(b"<b>x</b>").unwrap();
+        r.finish().unwrap();
+        let body = std::fs::read_to_string(&p).unwrap();
+        assert!(body.starts_with("<!doctype html>"));
+        assert!(body.contains("&lt;b&gt;x&lt;/b&gt;"));
+        assert!(body.ends_with("</pre></body></html>\n"));
+    }
+
+    #[test]
+    fn text_log_timestamps_prefix_each_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.log");
+        let mut r = TextLogRecorder::new(p.clone(), TextLogFormat::Raw, true).unwrap();
+        r.record(b"a\nb\nc").unwrap();
+        r.finish().unwrap();
+        let body = std::fs::read_to_string(&p).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 3);
+        for line in &lines {
+            assert!(line.starts_with('['), "line missing timestamp: {line}");
+        }
+        assert!(lines[0].ends_with("a"));
+        assert!(lines[1].ends_with("b"));
+    }
+
+    #[test]
+    fn text_log_split_utf8_recovered() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("u.txt");
+        let mut r = TextLogRecorder::new(p.clone(), TextLogFormat::Text, false).unwrap();
+        r.record(&[0xE4, 0xB8]).unwrap();
+        r.record(&[0xAD]).unwrap();
+        r.finish().unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "中");
     }
 }

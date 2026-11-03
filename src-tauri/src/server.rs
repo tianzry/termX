@@ -760,6 +760,27 @@ fn dispatch(
                 state, &sid,
             ))
         }
+        "start_manual_session_log" => {
+            let sid: String = arg(&args, "sessionId")?;
+            let path: String = arg(&args, "path")?;
+            let format: String = arg(&args, "format")?;
+            let timestamps: bool = arg(&args, "timestamps")?;
+            ok(crate::commands::session_logs::start_manual_session_log_impl(
+                state, &sid, &path, &format, timestamps,
+            ))
+        }
+        "stop_manual_session_log" => {
+            let sid: String = arg(&args, "sessionId")?;
+            ok(crate::commands::session_logs::stop_manual_session_log_impl(
+                state, &sid,
+            ))
+        }
+        "manual_session_log_status" => {
+            let sid: String = arg(&args, "sessionId")?;
+            ok(crate::commands::session_logs::manual_session_log_status_impl(
+                state, &sid,
+            ))
+        }
 
         // ---- serial profiles (CRUD; peer of forwards) ----
         "list_serial_profiles" => ok(crate::db::serial_profile::list(&state.db)),

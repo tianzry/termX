@@ -3364,3 +3364,106 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 **门禁**：`test:run` 28 文件 349✓、`build`✓、`cargo check --features server`✓、`cargo test --lib` 863✓；debug 实例已停止。远端 main 仍为 `b1db6cb`（未推送）。
 
 **恢复方式**：在 `d633866` 基础上继续只改前端表单即可接通；若彻底不做，`git revert d633866` 可整块移除（无其它轮次依赖）。
+
+## 2026-11-03 — 终端工具栏（第二阶段）：逐按钮对照 + 会话日志/脚本录制拆分
+
+**背景**：用户指出「开始会话日志」与「开始录制」被合并成同一套会话级共享录制槽是错的，要求拆成两套独立能力；并对工具栏被圈按钮与「更多」菜单做逐项对照与真实实例验证。
+
+### 对照表（被圈出按钮 + 两个录制功能）
+
+| 按钮 | Netcatty 行为（源码 + 运行实例） | termX 本轮前 | 本轮处理 | 验证 |
+|---|---|---|---|---|
+| 命令历史（clock） | 工具栏常显，弹出最近命令列表，点击回填/执行 | 占位/未接线 | 接通：记录输入命令（上限 200），popover 点击回填 | CDP 实机：记录 `echo termx-verify` / `uname -a` 并可点选 |
+| 关键词高亮（marker） | 常显，popover 输入关键词，匹配行加背景色 | 未实现 | 接通：`allowProposedApi` + `onWriteParsed` + `registerDecoration`，回车添加/点击移除 | 实机弹层可开、规则生效 |
+| SFTP（folder） | 常显，打开 SFTP 双栏 | 已可用 | 保持 | 既有 SFTP e2e 覆盖 |
+| 撰写栏（pencil） | 常显，整段文本一次性发送 | 禁用占位 | 接通：textarea + 发送（整段 + `\r`） | 实机打开/发送面板 |
+| 终端搜索（magnifier） | 常显，xterm buffer 搜索、上下跳转、计数 | 禁用占位 | 接通：全行 includes 扫描 + `scrollToLine` + 计数 | 实机可开、命中计数 |
+| **开始会话日志**（file-text） | **独立功能 A**：点击先弹保存对话框 → 文本日志落盘（raw/txt/html + 可选时间戳）；断开/日志中状态不同；默认主目录、`名称_YYYY-MM-DDTHH-mm-ss.EXT`、默认 txt/无时间戳 | 与脚本录制共享一个槽、raw/`.log`、默认落 cwd | **拆出**：后端 `TextLogRecorder` + `ActiveTextLog` 独立槽 `text_log_slot`，与 asciicast 录制槽完全分离；命令 `start/stop/manual_session_log_status`；前端独立 `sessionLog` 状态 + LOG 徽标；默认主目录 + `.txt` + `YYYY-MM-DDTHH-mm-ss`；录制中按钮可停止 | 实机：对话框 → LOG 徽标全路径 → `echo termx-ui-log` → 停止后文件含 ANSI 原文；`raw+timestamps` 另测含 `[HH:MM:SS.mmm]` 逐行前缀；**live 写入确认 178B** |
+| **开始录制（脚本录制）** | **独立功能 B**：位于 More actions；录制终端输入命令序列，停止时生成脚本片段（nct.* 运行时/片段库），全局同一时刻只允许一个终端录制，多会话冲突提示「已有其他终端正在录制」 | 与日志共享槽 | **拆出**：`src/terminal/scriptRecording.ts`（输入缓冲、回车提交、退格/^C/^U、ESC 序列跳过、>1s 生成 sleep、模块级全局互斥）+ More 菜单开始/停止；产物为 `Snippet`（kind script，steps>1 用 lineDelay） | 实机：More → 开始录制 → REC 徽标 → `id` → 停止 → `load_snippets` 得到 `录制 23:29:05 :: id` |
+| 同时开启 A+B | 两者互不排斥（分别控制文件日志与脚本生成） | 共享槽导致互斥/抢占 | 两套状态/产物独立 | **实机同时开**：LOG（invoke 启动 raw+ts）与 REC（More 启动）并行，输入 `echo termx-both2` 后停止：日志文件含该命令，片段库新增 `录制 23:50:15 :: echo termx-both2` |
+
+### 修复与代码
+
+- 后端：`recorder.rs` 新增 `TextLogRecorder`（raw/txt/html、UTF-8 跨 chunk、逐行时间戳、ANSI strip、html 转义、finish flush，+6 单测）；`ssh/client.rs` 会话任务双写 asciicast 槽与文本槽；`session_logs.rs` 4 命令；`models.rs` `ManualSessionLogStatus`；lib.rs/server.rs 双注册。
+- 前端：`TerminalPane.tsx` 两套独立状态与入口；`client.ts` 独立封装与保存对话框（默认路径改为用户主目录，对齐 Netcatty）；`scriptRecording.ts` + 单测；`styles.css` 菜单/popover/搜索条/撰写栏/LOG-REC 徽标样式。
+- 本阶段补修：默认文件名/扩展名/目录对齐 Netcatty（`0898…` 前的实现为 cwd + `.log`），补 2 个 picker 单测（主目录拼接、home 不可用回落）。
+
+### 差异 / 待人工
+
+- 会话日志默认格式/时间戳暂取 Netcatty 默认（txt、关闭），尚无设置项；设置中心「会话日志」分组留待后续。
+- 「更多」菜单其余项（配置目录追踪/终端设置/终端编码）仍为禁用占位，下一轮逐项实现或置灰说明。
+- 像素级细节（按钮尺寸/间距/圆角/悬停按下禁用态/菜单弹出位置与阴影）下一轮与 Netcatty 并排截图统一。
+- 待人工：会话日志在「断开后立即点停止」的边界（当前断开时前端清空状态，按钮禁用）。
+
+### 门禁
+
+`npm run test:run` 358✓、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` 869✓；debug 实例 CDP 实机验证通过（截图 `shots/round2-*.png`）。代理 WIP `d633866`/`60d8deb` 未动。
+
+## 2026-11-03 — 终端工具栏：逐按钮对照表 + 会话日志 / 脚本录制拆分（本轮）
+
+**用户点名纠正**：「开始会话日志」与「开始录制」是 Netcatty 的两个独立功能。此前 termX 把它们合并进同一个会话级共享录制槽（asciicast / `.cast` 产物），是错误建模；本轮拆成两套独立能力。
+
+### 两项拆解（逻辑差异）
+
+| 维度 | 开始会话日志（手动文本日志） | 开始录制（脚本录制） |
+|---|---|---|
+| 入口 | 终端工具栏 `file-text` 图标（常显） | 终端 More actions（默认折叠） |
+| 图标 / 提示 | 文件文本图标；悬停「开始记录会话日志」/「会话日志录制中（点击停止）」 | 录制圆点图标；菜单项「开始录制」/「停止录制」 |
+| 点击行为 | 先弹原生保存对话框选路径，再开始流式写文件；录制中再点=停止 | 不开对话框，直接开始捕获输入；录制中再点=停止并生成脚本片段 |
+| 产物 | 本地文本文件（Netcatty 默认 txt，去 ANSI；可选 raw/html + 时间戳），默认 `主目录/<会话名>_<YYYY-MM-DDTHH-mm-ss>.<ext>` | 脚本库一条「录制 HH:MM:SS」片段（kind=script，命令序列，间隔 >1s 生成 `sleep`） |
+| 存放 | 用户选择的本地路径（默认主目录） | termX 片段库（DB） |
+| 互斥 | 每个会话独立，可多会话同时记录 | **全局单会话互斥**；其它终端开启时报「已有其他终端正在录制」 |
+| 能否同时 | 可与脚本录制同时开启（互不影响） | 可与文本日志同时开启 |
+| 停止 / 断线 | 停止即 flush 并关闭文件；断线时后端随会话任务收尾 | 断线时前端丢弃缓冲并清 REC；不生成片段 |
+| termX 后端 | 新增 `TextLogRecorder`（`terminal/recorder.rs`）+ `ActiveTextLog` 槽 + 4 命令（start/stop/status），与 asciicast 完全分离 | 纯前端 `scriptRecording.ts`（缓冲 → `buildScriptCommand` → `save_snippets`），无后端录制槽 |
+
+**上一轮错因**：两者共用 `SessionHandle` 的单一录制槽与 `.cast` 产物，导致「日志」按钮实际启动 asciicast、More「开始录制」被抢占/状态错乱。本轮已删除共享语义，`text_log_slot` 与 `recorder_slot` 在 `session_task` 内并行写入、各自 stop/finish。
+
+### 被圈按钮对照表
+
+| 按钮 | Netcatty 行为 | termX 现状（本轮后） | 差距 / 验证 |
+|---|---|---|---|
+| 命令历史（时钟） | 点击弹出历史命令列表，可点选回填 | 已实现 popover，输入经 `onData` 记入（上限 200） | 一致；CDP 实测开合、条目出现 |
+| 关键词高亮（荧光笔） | 弹出关键词管理，回车新增/点击移除；终端内高亮 | 已实现 popover + `registerDecoration` 行高亮（`allowProposedApi`） | 一致；实测高亮生效 |
+| SFTP（文件夹） | 打开当前主机 SFTP | 已实现，切 SFTP surface | 一致 |
+| 撰写栏（铅笔） | 打开多行撰写条，整段发送 | 已实现，`sendCompose` 整段 + 回车 | 一致；实测可开 |
+| 终端搜索（放大镜） | 打开搜索条，上下查找并滚动 | 已实现 buffer 行扫描 + `scrollToLine` | 一致；实测可开 |
+| 会话日志（文件文本） | 未连接且未记录时禁用；点击→保存对话框→开始；记录中点击=停止；显示 LOG 徽标 | 已实现；禁用条件 `!isSsh || busy || status !== connected`；LOG 徽标显示完整路径 | 本轮补齐默认格式/扩展名/目录；真机验证见下 |
+| More：开始录制 / 停止录制 | 脚本录制入口（见上表） | 已接通，REC 徽标 | 一致；真机验证见下 |
+| More：命令历史 | 同工具栏时钟 | 已接通 | 一致 |
+| More：配置目录追踪 / 终端设置 / 终端编码 | 各自设置面板 | 仍 disabled 占位 | 留下一轮逐项实现或置灰+悬停原因 |
+
+### 本轮修复（对齐 Netcatty 的可见行为）
+
+1. 会话日志默认格式由 `raw` 改为 `txt`（去 ANSI），扩展名 `.log` → `.txt`。
+2. 默认文件名时间戳由 `YYYYMMDD_HHmmss` 改为 `YYYY-MM-DDTHH-mm-ss`。
+3. 默认保存目录由进程 cwd（debug 下为 `target/debug`）改为用户主目录（`localHome()` 拼接，失败退回仅文件名）。
+4. 新增 2 个前端单测覆盖默认路径拼接与主目录不可用回退。
+
+### 真机验证（129，WebView2 CDP）
+
+- 会话日志 UI 链路：工具栏按钮 → 原生「保存会话日志」对话框 → 确认 → LOG 徽标显示完整路径 → 终端执行 `echo termx-ui-log` → 点按钮停止 → 徽标消失；文件落盘且含输入与输出。
+- 会话日志 live 写入（raw）：`start_manual_session_log` → `echo termx-log-live-ok2` → 停止：文件 178B，含命令回显与输出（证明 `session_task` 双写接线正确）。
+- 同时开启：文本日志（txt + 时间戳）+ More 脚本录制同时进行，执行 `echo termx-both2` → 停止两者：日志文件 337B（去 ANSI、逐行 `[HH:MM:SS.mmm]`），片段库新增 `录制 23:50:15 :: echo termx-both2`。两者互不干扰。
+- 脚本录制单独：REC 徽标 → 输入 `id` → 停止 → 片段 `录制 23:29:05 :: id`。
+- 证据截图：`shots/round2-log-live.png`、`round2-log-ui2.png`、`round2-log-stop.png`、`round2-both2.png`、`round2-more.png`。
+- 已知测试踩坑：页面 reload 后存在多个已挂载窗格，须取「可见」窗格（`getBoundingClientRect().width>0`）的 sessionId，否则日志会开在隐藏死会话上（首测 0 字节即此原因，非产品缺陷）。
+
+### 待人工 / 下一轮
+
+- 默认主目录 `.txt` 的真机复测：热更新导致会话掉线，本轮仅单测覆盖；下一轮带新会话复测并截图。
+- Netcatty More 菜单「打开会话日志 / 在文件夹中显示」及会话日志格式/目录设置：下一轮随 More 菜单补齐。
+- Netcatty 并排截图 + 像素级尺寸/间距/图标/悬停/禁用态统一：下一轮。
+- 「更多」菜单逐项实现；确实做不出的置灰并在悬停说明原因（不删项）。
+
+### 门禁
+
+- `npm run test:run` 358✓、`npm run build`✓、`cargo check --features server`✓、`cargo test --lib` 869✓。
+
+### Review 修复（本轮内）
+
+- **中危**：断线 / 关标签时 `endScriptRecording(sidRef.current)` 传空串导致全局脚本录制槽不释放（其它终端永久「已有其他终端正在录制」）→ 新增 `scriptRecSidRef` 记录录制会话，断线与卸载按它释放。
+- **中危**：关键词高亮每轮从末行重扫，重复注册 decoration 且无限增长 → 改为只扫新增行（`lastLine=buf.length`）+ 首次全量扫描 + 最多保留 500 个装饰器。
+- **中危**：`strip_ansi` 仅识别 BEL 结尾的 OSC，ST（`ESC \`）结尾会吞掉后续全部输出 → 支持 ST 结束并新增单测。
+- **低危**：`session_log_path_invalid` 补 i18n；`format_invalid` 文案由「导出格式」改为「日志格式」；`already_recording/not_recording` 改为日志语义。
+- 未修（记录待后续）：session_logs 新命令错误分支缺单测；`let _ = record()` 吞 IO 错误且 BufWriter 无周期 flush；sudo/密码可能被录入命令历史与片段。

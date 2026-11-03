@@ -1643,6 +1643,9 @@ pub struct SessionHandle {
     /// 命令层（开始 / 停止 / 状态查询）通过同一个 Arc 读写，
     /// 因此不会出现"session_task 独占 recorder、命令拿不到"的分叉。
     recorder_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveRecording>>>,
+    /// 手动文本会话日志槽（Netcatty `sessionLog`）。与 `recorder_slot` 独立，
+    /// 因此 asciicast 自动录制与手动文本日志可同时进行、互不抢占。
+    text_log_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveTextLog>>>,
 }
 
 impl SessionHandle {
@@ -1667,6 +1670,13 @@ impl SessionHandle {
         &self,
     ) -> Arc<StdMutex<Option<crate::terminal::recorder::ActiveRecording>>> {
         self.recorder_slot.clone()
+    }
+
+    /// 手动文本日志槽的共享句柄。
+    pub fn text_log_slot(
+        &self,
+    ) -> Arc<StdMutex<Option<crate::terminal::recorder::ActiveTextLog>>> {
+        self.text_log_slot.clone()
     }
 
     /// 强制断开整条 SSH 连接 —— 不只是 shell channel，连 TCP 一起切。
@@ -1918,8 +1928,20 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
     let data_event = format!("ssh:data:{session_id}");
     let close_event = format!("ssh:close:{session_id}");
     let task_slot = recorder_slot.clone();
+    let text_log_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveTextLog>>> =
+        Arc::new(StdMutex::new(None));
+    let task_text_log_slot = text_log_slot.clone();
     tauri::async_runtime::spawn(async move {
-        session_task(data_event, close_event, channel, rx, app, task_slot).await;
+        session_task(
+            data_event,
+            close_event,
+            channel,
+            rx,
+            app,
+            task_slot,
+            task_text_log_slot,
+        )
+        .await;
     });
 
     Ok(ConnectResult {
@@ -1929,6 +1951,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
             ssh_handle,
             profile_id: profile.id.clone(),
             recorder_slot,
+            text_log_slot,
         },
     })
 }
@@ -1988,11 +2011,24 @@ async fn session_task(
     mut rx: mpsc::UnboundedReceiver<SessionCmd>,
     app: crate::emitter::Host,
     recorder_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveRecording>>>,
+    text_log_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveTextLog>>>,
 ) {
     /// 写一帧到当前录制槽；持锁范围只覆盖 `record`（同步 IO 缓冲写），
     /// 绝不跨 await，避免与命令层的 start/stop 互锁。
     fn record_output(
         slot: &StdMutex<Option<crate::terminal::recorder::ActiveRecording>>,
+        data: &[u8],
+    ) {
+        if let Ok(mut guard) = slot.lock() {
+            if let Some(active) = guard.as_mut() {
+                let _ = active.recorder.record(data);
+            }
+        }
+    }
+
+    /// 手动文本日志与 asciicast 录制并行写，互不影响。
+    fn record_text_log(
+        slot: &StdMutex<Option<crate::terminal::recorder::ActiveTextLog>>,
         data: &[u8],
     ) {
         if let Ok(mut guard) = slot.lock() {
@@ -2013,10 +2049,12 @@ async fn session_task(
         match event {
             Event::Ssh(Some(ChannelMsg::Data { data })) => {
                 record_output(&recorder_slot, &data);
+                record_text_log(&text_log_slot, &data);
                 let _ = app.emit_bytes(&data_event, &data);
             }
             Event::Ssh(Some(ChannelMsg::ExtendedData { data, .. })) => {
                 record_output(&recorder_slot, &data);
+                record_text_log(&text_log_slot, &data);
                 let _ = app.emit_bytes(&data_event, &data);
             }
             Event::Ssh(Some(ChannelMsg::ExitStatus { exit_status })) => {
@@ -2047,6 +2085,11 @@ async fn session_task(
     // 会话结束：取走并关闭录制器（无论是自动录制还是手动录制），
     // 之后命令层的 status 查询自然会看到 None。
     if let Ok(mut guard) = recorder_slot.lock() {
+        if let Some(active) = guard.take() {
+            let _ = active.recorder.finish();
+        }
+    }
+    if let Ok(mut guard) = text_log_slot.lock() {
         if let Some(active) = guard.take() {
             let _ = active.recorder.finish();
         }

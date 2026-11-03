@@ -53,6 +53,14 @@ import { isAuthFailureMessage, userVisibleError } from "./domain/sshErrors";
 import { createSerialInput } from "./domain/serialInput";
 import { formatTelnetLocalEcho } from "./domain/telnetEcho";
 import {
+  appendKeystrokes,
+  beginScriptRecording,
+  buildScriptCommand,
+  createScriptRecordingBuffer,
+  endScriptRecording,
+  type ScriptRecordingBuffer,
+} from "./terminal/scriptRecording";
+import {
   TerminalConnectionDialog,
   type ChainProgress,
   type HostConnectionInfo,
@@ -93,6 +101,26 @@ interface Props {
 const AUTH_RETRY_MESSAGE = "身份验证失败。请检查凭据后重试。";
 const PROGRESS_ATTEMPT_TIMEOUT_MESSAGE = "连接超时，请重试。";
 
+/** 会话日志默认文件名时间戳：对齐 Netcatty `YYYY-MM-DDTHH-mm-ss`。 */
+function safeFileStem(title: string): string {
+  const stem = title.replace(/[\\/:*?"<>|\s]+/g, "_").replace(/^_+|_+$/g, "");
+  return stem || "session";
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function timestampSuffix(now: Date): string {
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}T${pad2(
+    now.getHours(),
+  )}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`;
+}
+
+function clockLabel(now: Date): string {
+  return `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+}
+
 export function TerminalPane({
   tab,
   paneId,
@@ -126,11 +154,31 @@ export function TerminalPane({
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  /** 会话级录制状态（阶段 B）：null = 未录制，区别于"还没查到"。 */
-  const [sessionLog, setSessionLog] = useState<api.SessionLogRecording | null>(
+  /**
+   * 手动文本会话日志（Netcatty `sessionLog`）：后端把输出写进用户选的文本文件。
+   * 与「开始录制」（脚本录制）是两套独立能力，互不共享状态与产物。
+   */
+  const [sessionLog, setSessionLog] = useState<api.ManualSessionLogStatus | null>(
     null,
   );
   const [logBusy, setLogBusy] = useState(false);
+  /** 脚本录制（Netcatty `recording`）：记录输入命令，停止后生成脚本片段。 */
+  const [scriptRec, setScriptRec] = useState(false);
+  const [scriptRecBusy, setScriptRecBusy] = useState(false);
+  /** 本会话已提交的命令（命令历史 popover）。 */
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  /** 撰写栏 / 终端搜索 / 主机关键词高亮。 */
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeText, setComposeText] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCount, setSearchCount] = useState(0);
+  const [highlightOpen, setHighlightOpen] = useState(false);
+  const [highlightDraft, setHighlightDraft] = useState("");
+  const [highlightRules, setHighlightRules] = useState<
+    { id: string; keyword: string; color: string }[]
+  >([]);
   /** 片段 / 脚本列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
   const [snippets, setSnippets] = useState<api.Snippet[]>([]);
   useEffect(() => {
@@ -152,18 +200,27 @@ export function TerminalPane({
   }, []);
 
   /**
-   * 连接建立后拉取一次录制状态：自动录制（settings.recording_enabled）也走
-   * 同一个 slot，所以工具栏能显示"正在录制"并允许用户停止。断开即清空。
+   * 连接建立后拉取一次「手动文本会话日志」状态。它与 asciicast 自动录制
+   * （settings.recording_enabled）无关：自动录制仍写 .cast 进「日志」页，
+   * 手动会话日志写用户选择的文本文件。断开即清空，并结束脚本录制。
    */
   useEffect(() => {
     const sid = status === "connected" && isSsh ? sidRef.current : null;
     if (!sid) {
       setSessionLog(null);
+      // 断线时 sidRef 已被 notifySession(null) 清空，必须用录制时记下的
+      // 会话 id 释放全局槽，否则其它终端会一直报「已有其他终端正在录制」。
+      const recSid = scriptRecSidRef.current;
+      if (recSid) {
+        endScriptRecording(recSid);
+        scriptRecSidRef.current = null;
+      }
+      setScriptRec(false);
       return;
     }
     let alive = true;
     api
-      .sessionLogStatus(sid)
+      .manualSessionLogStatus(sid)
       .then((rec) => {
         if (alive) setSessionLog(rec);
       })
@@ -214,27 +271,34 @@ export function TerminalPane({
     });
   };
 
-  /** 工具栏「会话日志」开关：开始 / 停止会话级录制（阶段 B）。 */
-  async function toggleSessionLog() {
+  /** 输入缓冲：命令历史与脚本录制共用；开始录制时清空步数。 */
+  const inputBufferRef = useRef<ScriptRecordingBuffer>(createScriptRecordingBuffer());
+
+  /**
+   * 工具栏「会话日志」（file-text）：Netcatty 语义 = 手动文本日志。
+   * 未录制时先弹保存对话框选目标路径，再开始写；录制中点击则停止。
+   * 与「开始录制」（脚本录制）完全独立，不再共享录制槽。
+   */
+  async function toggleManualSessionLog() {
     const sid = sidRef.current;
     if (logBusy || !sid) return;
     setLogBusy(true);
     try {
-      if (sessionLog) {
-        await api.stopSessionLog(sid);
+      // 每次点击都查后端真实状态，避免自动录制 / 其它入口造成的状态过期。
+      const current = await api.manualSessionLogStatus(sid);
+      if (current) {
+        const stopped = await api.stopManualSessionLog(sid);
         setSessionLog(null);
-        onStatus("会话日志已停止并保存到「日志」页");
-      } else {
-        const term = controllerRef.current?.term;
-        const rec = await api.startSessionLog(
-          sid,
-          tab.title,
-          term?.cols,
-          term?.rows,
-        );
-        setSessionLog(rec);
-        onStatus("开始录制会话日志");
+        onStatus(`会话日志已保存：${stopped.path}`);
+        return;
       }
+      // Netcatty 默认：格式 txt（去 ANSI）、时间戳关闭、扩展名 .txt。
+      const defaultName = `${safeFileStem(tab.title)}_${timestampSuffix(new Date())}.txt`;
+      const path = await api.pickManualSessionLogPath(defaultName, "txt");
+      if (!path) return;
+      const rec = await api.startManualSessionLog(sid, path, "txt", false);
+      setSessionLog(rec);
+      onStatus(`开始记录会话日志：${rec.path}`);
     } catch (e) {
       // 与终端其它错误一致：走用户可见文案（error code → 中文）。
       onStatus(userVisibleError(String(e)));
@@ -242,6 +306,154 @@ export function TerminalPane({
       setLogBusy(false);
     }
   }
+
+  /**
+   * 「开始录制」（Netcatty `recording`）：脚本录制，记录用户输入的命令。
+   * 全局互斥：其它会话在录时提示「已有其他终端正在录制」；停止后把命令序列
+   * 保存成脚本片段（termX 没有 nct.* JS 运行时，产物是 shell 命令序列）。
+   */
+  async function toggleScriptRecording() {
+    const sid = sidRef.current;
+    if (scriptRecBusy || !sid || status !== "connected") return;
+    setScriptRecBusy(true);
+    try {
+      if (scriptRec) {
+        const steps = [...inputBufferRef.current.steps];
+        endScriptRecording(sid);
+        scriptRecSidRef.current = null;
+        setScriptRec(false);
+        if (steps.length === 0) {
+          onStatus("没有录到任何命令，本次录制已丢弃");
+          return;
+        }
+        const name = `录制 ${clockLabel(new Date())}`;
+        const snippet: api.Snippet = {
+          id: `rec-${Date.now().toString(36)}`,
+          name,
+          command: buildScriptCommand(steps),
+          description: "由终端输入录制生成",
+          package: "",
+          tags: [],
+          shortkey: "",
+          no_auto_run: false,
+          kind: "script",
+          multi_line_run_mode: steps.length > 1 ? "lineDelay" : "paste",
+        };
+        const next = [...snippets, snippet];
+        await api.saveSnippets(next);
+        setSnippets(next);
+        onStatus(`脚本录制已停止，已保存到「脚本」：${name}`);
+        return;
+      }
+      if (!beginScriptRecording(sid)) {
+        onStatus("已有其他终端正在录制");
+        return;
+      }
+      scriptRecSidRef.current = sid;
+      inputBufferRef.current = createScriptRecordingBuffer(Date.now());
+      setScriptRec(true);
+      onStatus("开始录制脚本：在终端里执行的命令会被记录");
+    } catch (e) {
+      endScriptRecording(sid);
+      scriptRecSidRef.current = null;
+      setScriptRec(false);
+      onStatus(userVisibleError(String(e)));
+    } finally {
+      setScriptRecBusy(false);
+    }
+  }
+
+  /** 终端输入：命令历史 + 脚本录制缓冲。 */
+  function handleTerminalInput(data: string) {
+    const submitted = appendKeystrokes(inputBufferRef.current, data, Date.now());
+    if (submitted) {
+      setCommandHistory((prev) => [...prev, submitted.command].slice(-200));
+    }
+    // 未录制时只保留最近 200 条，避免长时间使用会累积到内存。
+    if (!scriptRec && inputBufferRef.current.steps.length > 200) {
+      inputBufferRef.current.steps = inputBufferRef.current.steps.slice(-200);
+    }
+  }
+
+  /** 撰写栏发送：整段写入当前会话，末尾补回车。 */
+  function sendCompose() {
+    if (status !== "connected") return;
+    const text = composeText.replace(/\r\n/g, "\n");
+    if (!text.trim()) return;
+    writeToPane(`${text}\r`);
+    setComposeText("");
+  }
+
+  /** 终端搜索：按 query 扫描 buffer，上一个 / 下一个并滚动定位。 */
+  function runSearch(direction: 1 | -1) {
+    const term = controllerRef.current?.term;
+    const query = searchQuery.trim().toLowerCase();
+    if (!term || !query) {
+      setSearchCount(0);
+      return;
+    }
+    const buffer = term.buffer.active;
+    const hits: number[] = [];
+    for (let i = 0; i < buffer.length; i += 1) {
+      const text = buffer.getLine(i)?.translateToString(true) ?? "";
+      if (text.toLowerCase().includes(query)) hits.push(i);
+    }
+    setSearchCount(hits.length);
+    if (hits.length === 0) return;
+    const anchor = buffer.viewportY;
+    const target =
+      direction === 1
+        ? hits.find((i) => i > anchor + 1) ?? hits[0]
+        : [...hits].reverse().find((i) => i < anchor) ?? hits[hits.length - 1];
+    term.scrollToLine(Math.max(0, target - 2));
+  }
+
+  /** 关键词高亮：在写入解析后扫描新增行，用 xterm decoration 铺底色。 */
+  useEffect(() => {
+    const term = controllerRef.current?.term;
+    if (!term || highlightRules.length === 0) return;
+    // registerDecoration 属于 proposed API。
+    term.options.allowProposedApi = true;
+    // 首次扫描当前缓冲区全部行；之后只扫新增行（lastLine 始终是未扫描的
+    // 起点），避免每轮重扫末行造成同一行重复注册 decoration。
+    let lastLine = 0;
+    const decorations: { dispose: () => void }[] = [];
+    const scan = () => {
+      const buf = term.buffer.active;
+      const cursorLine = buf.baseY + buf.cursorY;
+      for (let y = lastLine; y < buf.length; y += 1) {
+        const text = buf.getLine(y)?.translateToString(true) ?? "";
+        const rule = highlightRules.find((r) =>
+          text.toLowerCase().includes(r.keyword.toLowerCase()),
+        );
+        if (!rule) continue;
+        const marker = term.registerMarker(y - cursorLine);
+        if (!marker) continue;
+        const decoration = term.registerDecoration({
+          marker,
+          width: term.cols,
+          backgroundColor: rule.color,
+        });
+        decorations.push({
+          dispose: () => {
+            decoration?.dispose();
+            marker.dispose();
+          },
+        });
+      }
+      lastLine = buf.length;
+      // 长会话里行数无限增长，限定保留最近 500 个装饰器，超出即释放最旧的。
+      while (decorations.length > 500) {
+        decorations.shift()?.dispose();
+      }
+    };
+    const sub = term.onWriteParsed(scan);
+    scan();
+    return () => {
+      sub.dispose();
+      decorations.forEach((d) => d.dispose());
+    };
+  }, [highlightRules]);
 
   /** 脚本下拉菜单（终端工具栏「脚本」按钮）。 */
   const [scriptMenuOpen, setScriptMenuOpen] = useState(false);
@@ -278,6 +490,8 @@ export function TerminalPane({
   const unsubRef = useRef<UnlistenFn[]>([]);
   const promptUnsubRef = useRef<UnlistenFn[]>([]);
   const sidRef = useRef<string | null>(null);
+  /** 正在脚本录制的会话 id（断线 / 卸载时按它释放全局录制槽）。 */
+  const scriptRecSidRef = useRef<string | null>(null);
   /** 正在连接（尚未返回）时预生成的 sessionId，用于取消 / 超时。 */
   const connectSidRef = useRef<string | null>(null);
   /** 主机密钥 prompt 对应的 sessionId（响应时用）。 */
@@ -321,6 +535,12 @@ export function TerminalPane({
       aliveRef.current = false;
       attemptRef.current += 1;
       clearPendingWrites();
+      const recSid = scriptRecSidRef.current;
+      if (recSid) {
+        // 关标签时释放全局脚本录制槽，避免其它终端被永久互斥。
+        endScriptRecording(recSid);
+        scriptRecSidRef.current = null;
+      }
       if (pendingPromptRef.current) cancelPromptApi(pendingPromptRef.current);
       pendingPromptRef.current = null;
       if (hostKeySessionRef.current) void api.sshHostKeyCancel(hostKeySessionRef.current);
@@ -1099,17 +1319,57 @@ export function TerminalPane({
             {tab.title}
           </span>
           {sessionLog && (
-            <span className="term-recording-badge" title={sessionLog.path}>
+            <span
+              className="term-recording-badge is-log"
+              title={`会话日志录制中：${sessionLog.path}`}
+            >
+              LOG
+            </span>
+          )}
+          {scriptRec && (
+            <span
+              className="term-recording-badge is-rec"
+              title="脚本录制中：命令会被记录为脚本"
+            >
               REC
             </span>
           )}
-          <button
-            className="term-tool-btn"
-            disabled
-            title="行时间戳（尚未实现）"
-          >
-            <Icon name="clock" size={12} />
-          </button>
+          <div className="term-tool-more">
+            <button
+              className={`term-tool-btn${historyOpen ? " active" : ""}`}
+              title="命令历史"
+              disabled={status !== "connected"}
+              onClick={() => setHistoryOpen((v) => !v)}
+            >
+              <Icon name="clock" size={12} />
+            </button>
+            {historyOpen && (
+              <div className="term-tool-menu term-history-menu">
+                <div className="term-menu-label">命令历史</div>
+                {commandHistory.length === 0 ? (
+                  <div className="term-menu-empty">本会话还没有命令</div>
+                ) : (
+                  [...commandHistory]
+                    .reverse()
+                    .slice(0, 30)
+                    .map((cmd, index) => (
+                      <button
+                        key={`${cmd}-${index}`}
+                        title={cmd}
+                        onClick={() => {
+                          writeToPane(cmd);
+                          setHistoryOpen(false);
+                          controllerRef.current?.term.focus();
+                        }}
+                      >
+                        <Icon name="terminal" size={12} />
+                        <span className="term-history-cmd">{cmd}</span>
+                      </button>
+                    ))
+                )}
+              </div>
+            )}
+          </div>
           {systemEligible && (
             <button
               className="term-tool-btn"
@@ -1162,13 +1422,63 @@ export function TerminalPane({
           </button>
         </div>
         <div className="term-toolbar-right">
-          <button
-            className="term-tool-btn"
-            disabled
-            title="主机关键词高亮（尚未实现）"
-          >
-            <Icon name="highlighter" size={12} />
-          </button>
+          <div className="term-tool-more">
+            <button
+              className={`term-tool-btn${highlightOpen || highlightRules.length > 0 ? " active" : ""}`}
+              title="主机关键词高亮"
+              onClick={() => setHighlightOpen((v) => !v)}
+            >
+              <Icon name="highlighter" size={12} />
+            </button>
+            {highlightOpen && (
+              <div className="term-tool-menu term-highlight-menu">
+                <div className="term-menu-label">关键词高亮</div>
+                <div className="term-highlight-form">
+                  <input
+                    autoFocus
+                    value={highlightDraft}
+                    placeholder="输入关键词后回车"
+                    onChange={(e) => setHighlightDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && highlightDraft.trim()) {
+                        setHighlightRules((prev) => [
+                          ...prev,
+                          {
+                            id: `${Date.now().toString(36)}-${prev.length}`,
+                            keyword: highlightDraft.trim(),
+                            color: "#f6e05e",
+                          },
+                        ]);
+                        setHighlightDraft("");
+                      }
+                    }}
+                  />
+                </div>
+                {highlightRules.length === 0 ? (
+                  <div className="term-menu-empty">尚无高亮规则</div>
+                ) : (
+                  highlightRules.map((rule) => (
+                    <button
+                      key={rule.id}
+                      title="点击移除该规则"
+                      onClick={() =>
+                        setHighlightRules((prev) =>
+                          prev.filter((r) => r.id !== rule.id),
+                        )
+                      }
+                    >
+                      <span
+                        className="term-highlight-dot"
+                        style={{ background: rule.color }}
+                      />
+                      <span className="term-history-cmd">{rule.keyword}</span>
+                      <Icon name="x" size={12} className="term-menu-caret" />
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           <button
             className="term-tool-btn"
             title={
@@ -1187,16 +1497,18 @@ export function TerminalPane({
             <Icon name="globe" size={12} />
           </button>
           <button
-            className="term-tool-btn"
-            disabled
-            title="输入框（尚未实现）"
+            className={`term-tool-btn${composeOpen ? " active" : ""}`}
+            title="撰写栏"
+            disabled={status !== "connected"}
+            onClick={() => setComposeOpen((v) => !v)}
           >
             <Icon name="text-cursor" size={12} />
           </button>
           <button
-            className="term-tool-btn"
-            disabled
-            title="终端搜索（尚未实现）"
+            className={`term-tool-btn${searchOpen ? " active" : ""}`}
+            title="终端搜索"
+            disabled={status !== "connected"}
+            onClick={() => setSearchOpen((v) => !v)}
           >
             <Icon name="search" size={12} />
           </button>
@@ -1206,9 +1518,9 @@ export function TerminalPane({
             title={
               sessionLog
                 ? `会话日志录制中：${sessionLog.path}（点击停止）`
-                : "开始录制会话日志"
+                : "开始记录会话日志（先选择保存路径）"
             }
-            onClick={() => void toggleSessionLog()}
+            onClick={() => void toggleManualSessionLog()}
           >
             <Icon name="file-text" size={12} />
           </button>
@@ -1257,7 +1569,14 @@ export function TerminalPane({
               <div className="term-tool-menu">
                 {systemEligible && (
                   <>
-                    <button disabled title="命令历史（尚未实现）">
+                    <button
+                      title="命令历史"
+                      disabled={status !== "connected"}
+                      onClick={() => {
+                        setMoreOpen(false);
+                        setHistoryOpen(true);
+                      }}
+                    >
                       <Icon name="history" size={12} />
                       命令历史
                     </button>
@@ -1273,18 +1592,17 @@ export function TerminalPane({
                 </button>
                 <button
                   title={
-                    sessionLog
-                      ? "停止录制会话日志"
-                      : "开始录制会话日志"
+                    scriptRec ? "停止脚本录制并保存到脚本库" : "开始录制脚本"
                   }
-                  disabled={!isSsh || status !== "connected" || logBusy}
+                  disabled={!isSsh || status !== "connected" || scriptRecBusy}
+                  className={scriptRec ? "is-recording" : undefined}
                   onClick={() => {
                     setMoreOpen(false);
-                    void toggleSessionLog();
+                    void toggleScriptRecording();
                   }}
                 >
                   <Icon name="circle" size={12} className="term-record-dot" />
-                  {sessionLog ? "停止录制" : "开始录制"}
+                  {scriptRec ? "停止录制" : "开始录制"}
                 </button>
                 {systemEligible && (
                   <button disabled title="终端编码（尚未实现）">
@@ -1311,6 +1629,79 @@ export function TerminalPane({
         </div>
       </div>
 
+      {searchOpen && (
+        <div className="term-search-bar">
+          <Icon name="search" size={12} />
+          <input
+            autoFocus
+            value={searchQuery}
+            placeholder="在终端中查找"
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") runSearch(e.shiftKey ? -1 : 1);
+              if (e.key === "Escape") setSearchOpen(false);
+            }}
+          />
+          <span className="term-search-count">
+            {searchQuery ? (searchCount === 0 ? "无结果" : `${searchCount} 处`) : ""}
+          </span>
+          <button
+            className="term-search-btn"
+            title="上一个"
+            onClick={() => runSearch(-1)}
+          >
+            上一个
+          </button>
+          <button
+            className="term-search-btn"
+            title="下一个"
+            onClick={() => runSearch(1)}
+          >
+            下一个
+          </button>
+          <button
+            className="term-search-btn"
+            title="关闭搜索"
+            onClick={() => setSearchOpen(false)}
+          >
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+      )}
+
+      {composeOpen && (
+        <div className="term-compose-bar">
+          <textarea
+            autoFocus
+            value={composeText}
+            placeholder="撰写多行内容，Ctrl+Enter 发送"
+            onChange={(e) => setComposeText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                sendCompose();
+              }
+              if (e.key === "Escape") setComposeOpen(false);
+            }}
+          />
+          <div className="term-compose-actions">
+            <button
+              className="term-search-btn"
+              disabled={status !== "connected" || !composeText.trim()}
+              onClick={sendCompose}
+            >
+              发送
+            </button>
+            <button
+              className="term-search-btn"
+              onClick={() => setComposeOpen(false)}
+            >
+              <Icon name="x" size={12} />
+            </button>
+          </div>
+        </div>
+      )}
+
       <TerminalView
         onReady={(c) => {
           controllerRef.current = c;
@@ -1319,7 +1710,10 @@ export function TerminalPane({
             void connect();
           }
         }}
-        onData={(data) => transportRef.current?.write(data)}
+        onData={(data) => {
+          handleTerminalInput(data);
+          transportRef.current?.write(data);
+        }}
         onResize={(cols, rows) => transportRef.current?.resize(cols, rows)}
       />
 

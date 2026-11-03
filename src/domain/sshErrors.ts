@@ -160,10 +160,11 @@ const ERROR_MESSAGES: Record<
   // ── 会话日志（阶段 A）──
   session_log_not_found: () => "会话日志不存在或已被删除。",
   session_log_read_failed: (p) => `读取会话日志失败：${str(p, "err")}`,
-  session_log_format_invalid: (p) => `不支持的导出格式：${str(p, "format")}`,
+  session_log_format_invalid: (p) => `不支持的日志格式：${str(p, "format")}`,
   session_log_delete_failed: (p) => `删除会话日志失败：${str(p, "err")}`,
-  session_log_already_recording: () => "当前会话已在录制中。",
-  session_log_not_recording: () => "当前会话没有进行中的录制。",
+  session_log_path_invalid: () => "保存路径无效或目录不存在，请重新选择。",
+  session_log_already_recording: () => "当前会话已在记录日志。",
+  session_log_not_recording: () => "当前会话没有进行中的日志记录。",
   // ── 主机连接代理（阶段 A）──
   proxy_type_invalid: (p) => `不支持的代理类型：${str(p, "value")}`,
   proxy_url_invalid: (p) => `代理地址格式不正确：${str(p, "url")}（示例 http://127.0.0.1:7890）`,

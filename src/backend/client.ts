@@ -513,6 +513,74 @@ export function sessionLogStatus(
   return invoke<SessionLogRecording | null>("session_log_status", { sessionId });
 }
 
+/** 手动文本会话日志（Netcatty sessionLog）。path 是用户选择的绝对路径。 */
+export interface ManualSessionLogStatus {
+  path: string;
+  /** Unix 毫秒。 */
+  started_at: number;
+  /** "raw" | "txt" | "html"。 */
+  format: string;
+}
+
+/** 手动文本会话日志：先选路径再开始写。 */
+export function startManualSessionLog(
+  sessionId: string,
+  path: string,
+  format: "raw" | "txt" | "html",
+  timestamps: boolean,
+): Promise<ManualSessionLogStatus> {
+  return invoke<ManualSessionLogStatus>("start_manual_session_log", {
+    sessionId,
+    path,
+    format,
+    timestamps,
+  });
+}
+
+export function stopManualSessionLog(
+  sessionId: string,
+): Promise<ManualSessionLogStatus> {
+  return invoke<ManualSessionLogStatus>("stop_manual_session_log", { sessionId });
+}
+
+export function manualSessionLogStatus(
+  sessionId: string,
+): Promise<ManualSessionLogStatus | null> {
+  return invoke<ManualSessionLogStatus | null>("manual_session_log_status", {
+    sessionId,
+  });
+}
+
+/** 会话日志（文本）保存路径：对齐 Netcatty 的 chooseManualSessionLogPath。 */
+export async function pickManualSessionLogPath(
+  defaultName: string,
+  format: "raw" | "txt" | "html",
+): Promise<string | null> {
+  const filters =
+    format === "html"
+      ? [{ name: "HTML", extensions: ["html"] }]
+      : format === "txt"
+        ? [{ name: "Text", extensions: ["txt"] }]
+        : [{ name: "Log", extensions: ["log", "txt"] }];
+  // Netcatty 默认落在用户主目录（无首选目录时）；只给文件名会让对话框
+  // 停在进程 cwd（debug 构建下是 target/debug），与 Netcatty 明显不同。
+  let defaultPath = defaultName;
+  try {
+    const home = await localHome();
+    if (home) {
+      const sep = home.includes("\\") ? "\\" : "/";
+      defaultPath = `${home.replace(/[\\/]+$/, "")}${sep}${defaultName}`;
+    }
+  } catch {
+    // 主目录不可用时退回仅文件名，由对话框按系统默认目录处理。
+  }
+  return saveFileDialog({
+    title: "保存会话日志",
+    defaultPath,
+    filters,
+  }).then((path) => path ?? null);
+}
+
 /** 导出会话日志：选目标文件；取消返回 null。 */
 export function pickSessionLogExportFile(
   defaultName: string,

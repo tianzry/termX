@@ -5,7 +5,7 @@ use std::time::UNIX_EPOCH;
 use tauri::State;
 
 use crate::error::{locked, AppError, AppResult};
-use crate::models::{SessionLog, SessionLogDetail, SessionLogRecording};
+use crate::models::{ManualSessionLogStatus, SessionLog, SessionLogDetail, SessionLogRecording};
 use crate::state::AppState;
 
 // ── 会话日志索引（阶段 A）────────────────────────────────────────
@@ -360,6 +360,94 @@ pub fn session_log_status_impl(
     Ok(guard.as_ref().map(recording_view))
 }
 
+// ── 手动文本会话日志（Netcatty `sessionLog`，独立于 asciicast 录制）──────
+//
+// 入口是终端工具栏的 file-text 按钮：点击后先弹系统保存对话框选路径，
+// 再把终端输出实时写进该文本文件（raw 保留 ANSI；txt/html 去掉 ANSI）。
+// 这条链路和「开始录制」（脚本录制）完全独立：没有共享槽位、没有互斥关系。
+
+fn manual_status_view(
+    active: &crate::terminal::recorder::ActiveTextLog,
+) -> ManualSessionLogStatus {
+    ManualSessionLogStatus {
+        path: active.path.to_string_lossy().into_owned(),
+        started_at: active.started_at_ms,
+        format: active.format.as_str().to_string(),
+    }
+}
+
+pub fn start_manual_session_log_impl(
+    state: &AppState,
+    session_id: &str,
+    path: &str,
+    format: &str,
+    timestamps: bool,
+) -> AppResult<ManualSessionLogStatus> {
+    let handle = crate::commands::session::session_handle(state, session_id)?;
+    let slot = handle.text_log_slot();
+    let mut guard = locked(&slot)?;
+    if guard.is_some() {
+        return Err(AppError::config(
+            "session_log_already_recording",
+            serde_json::json!({ "session_id": session_id }),
+        ));
+    }
+    let fmt = crate::terminal::recorder::TextLogFormat::from_str(format).ok_or_else(|| {
+        AppError::config(
+            "session_log_format_invalid",
+            serde_json::json!({ "format": format }),
+        )
+    })?;
+    let target = std::path::PathBuf::from(path);
+    if path.trim().is_empty() {
+        return Err(AppError::config(
+            "session_log_path_invalid",
+            serde_json::json!({ "path": path }),
+        ));
+    }
+    if let Some(parent) = target.parent() {
+        if !parent.exists() {
+            return Err(AppError::config(
+                "session_log_path_invalid",
+                serde_json::json!({ "path": path }),
+            ));
+        }
+    }
+    let active = crate::terminal::recorder::ActiveTextLog::new(target, fmt, timestamps)?;
+    let view = manual_status_view(&active);
+    *guard = Some(active);
+    Ok(view)
+}
+
+pub fn stop_manual_session_log_impl(
+    state: &AppState,
+    session_id: &str,
+) -> AppResult<ManualSessionLogStatus> {
+    let handle = crate::commands::session::session_handle(state, session_id)?;
+    let slot = handle.text_log_slot();
+    let active = locked(&slot)?.take().ok_or_else(|| {
+        AppError::config(
+            "session_log_not_recording",
+            serde_json::json!({ "session_id": session_id }),
+        )
+    })?;
+    let view = manual_status_view(&active);
+    active.recorder.finish()?;
+    Ok(view)
+}
+
+pub fn manual_session_log_status_impl(
+    state: &AppState,
+    session_id: &str,
+) -> AppResult<Option<ManualSessionLogStatus>> {
+    let Ok(handle) = crate::commands::session::session_handle(state, session_id) else {
+        return Ok(None);
+    };
+    let slot = handle.text_log_slot();
+    let guard = locked(&slot)?;
+    Ok(guard.as_ref().map(manual_status_view))
+}
+
 // ── Tauri commands（薄包装，headless 直接调上面的 `*_impl`）─────────
 
 #[tauri::command]
@@ -408,6 +496,33 @@ pub fn session_log_status(
     session_id: String,
 ) -> AppResult<Option<SessionLogRecording>> {
     session_log_status_impl(&state, &session_id)
+}
+
+#[tauri::command]
+pub fn start_manual_session_log(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    format: String,
+    timestamps: bool,
+) -> AppResult<ManualSessionLogStatus> {
+    start_manual_session_log_impl(&state, &session_id, &path, &format, timestamps)
+}
+
+#[tauri::command]
+pub fn stop_manual_session_log(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<ManualSessionLogStatus> {
+    stop_manual_session_log_impl(&state, &session_id)
+}
+
+#[tauri::command]
+pub fn manual_session_log_status(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<Option<ManualSessionLogStatus>> {
+    manual_session_log_status_impl(&state, &session_id)
 }
 
 #[cfg(test)]

@@ -723,6 +723,18 @@ pub struct SessionLogRecording {
     pub title: String,
 }
 
+/// 手动文本会话日志（Netcatty `sessionLog` 的对应能力）：用户选择目标路径，
+/// 后端把终端输出写进该文件。与 `SessionLogRecording`（asciicast 录制）无关。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ManualSessionLogStatus {
+    /// 用户选择的绝对路径。
+    pub path: String,
+    /// Unix 毫秒。
+    pub started_at: i64,
+    /// "raw" | "txt" | "html"。
+    pub format: String,
+}
+
 // --- Plugin ---
 
 /// A third-party plugin package installed on this machine. `id` doubles as the

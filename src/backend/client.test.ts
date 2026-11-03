@@ -4,9 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // 只验证桥接层的参数形状与编解码（R1 的唯一 IO 边界）。
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(),
+  save: vi.fn(),
+}));
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   bytesToText,
   decodeBase64,
@@ -25,6 +30,7 @@ import {
   onSftpTransferUpdated,
   onTerminalData,
   ptySpawn,
+  pickManualSessionLogPath,
   sftpLstat,
   sftpRealpath,
   sftpResolveConflict,
@@ -370,5 +376,33 @@ describe("会话日志录制命令", () => {
     expect(mockedInvoke).toHaveBeenLastCalledWith("session_log_status", {
       sessionId: "s1",
     });
+  });
+});
+
+describe("手动会话日志保存路径", () => {
+  const mockedSave = saveFileDialog as unknown as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockedInvoke.mockReset();
+    mockedSave.mockReset();
+    mockedSave.mockResolvedValue("C:\\Users\\x\\a.txt");
+  });
+
+  it("默认路径落在用户主目录（对齐 Netcatty，而非进程 cwd）", async () => {
+    mockedInvoke.mockResolvedValue("C:\\Users\\x");
+    await pickManualSessionLogPath("129_2026-11-03T23-43-06.txt", "txt");
+    expect(mockedSave).toHaveBeenLastCalledWith({
+      title: "保存会话日志",
+      defaultPath: "C:\\Users\\x\\129_2026-11-03T23-43-06.txt",
+      filters: [{ name: "Text", extensions: ["txt"] }],
+    });
+  });
+
+  it("主目录不可用时退回仅文件名", async () => {
+    mockedInvoke.mockRejectedValue("home_dir_unavailable");
+    await pickManualSessionLogPath("a.txt", "txt");
+    expect(mockedSave).toHaveBeenLastCalledWith(
+      expect.objectContaining({ defaultPath: "a.txt" }),
+    );
   });
 });
