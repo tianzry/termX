@@ -5,6 +5,7 @@ import {
   canPause,
   canResume,
   formatBytes,
+  pickActiveConflict,
   progressPercent,
   queueCounts,
   sortQueueForDisplay,
@@ -169,5 +170,30 @@ describe("progressPercent", () => {
     expect(progressPercent(512, 1024)).toBe(50);
     expect(progressPercent(2048, 1024)).toBe(100);
     expect(progressPercent(-3, 100)).toBe(0);
+  });
+});
+
+describe("pickActiveConflict", () => {
+  it("无冲突返回 null", () => {
+    expect(pickActiveConflict([])).toBeNull();
+    expect(
+      pickActiveConflict([item({ status: "running" }), item({ status: "completed" })]),
+    ).toBeNull();
+  });
+
+  it("取展示序第一个冲突项（优先级降序、seq 升序）", () => {
+    const a = item({ id: "a", status: "conflict", seq: 2, priority: "normal" });
+    const b = item({ id: "b", status: "conflict", seq: 0, priority: "normal" });
+    const c = item({ id: "c", status: "conflict", seq: 1, priority: "high" });
+    expect(pickActiveConflict([a, b, c])?.conflict.id).toBe("c");
+  });
+
+  it("sameBatchCount = 同批 conflict 总数（含当前项）", () => {
+    const a = item({ id: "a", status: "conflict", batch_id: "b1", seq: 0 });
+    const b = item({ id: "b", status: "conflict", batch_id: "b1", seq: 1 });
+    const c = item({ id: "c", status: "conflict", batch_id: "b2", seq: 2 });
+    const picked = pickActiveConflict([c, b, a]);
+    expect(picked?.conflict.id).toBe("a");
+    expect(picked?.sameBatchCount).toBe(2);
   });
 });

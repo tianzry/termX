@@ -105,3 +105,21 @@ export function progressPercent(
   const pct = (Math.max(0, transferred) / total) * 100;
   return Math.min(100, pct);
 }
+
+/**
+ * 当前应弹框处理的冲突：取展示序第一个 conflict 项（阶段 C 对话框）。
+ * `sameBatchCount` = 同批 conflict 总数（含当前项），供「应用到全部」计数，
+ * 对位 Netcatty sameTypeConflictCount。
+ */
+export function pickActiveConflict(items: TransferItem[]): {
+  conflict: TransferItem;
+  sameBatchCount: number;
+} | null {
+  const conflicts = items.filter((i) => i.status === "conflict");
+  if (conflicts.length === 0) return null;
+  const conflict = sortQueueForDisplay(conflicts)[0];
+  const sameBatchCount = conflicts.filter(
+    (i) => i.batch_id === conflict.batch_id,
+  ).length;
+  return { conflict, sameBatchCount };
+}

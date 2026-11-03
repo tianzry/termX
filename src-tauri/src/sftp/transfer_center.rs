@@ -424,7 +424,9 @@ pub async fn set_concurrency(state: &AppState, host: &Host, concurrency: u32) ->
     Ok(())
 }
 
-/// 冲突答复。`apply_to_all` 时策略按批次记忆，同批后续冲突自动套用。
+/// 冲突答复。`apply_to_all` 时策略按批次记忆：
+/// - 同批**尚未启动**的项后续命中冲突时自动套用（[`execute`] 内查 `conflict_policy`）；
+/// - 同批**已处于 Conflict** 的项立即回溯套用（并发 > 1 时常见多冲突并存）。
 pub async fn resolve_conflict(
     state: &AppState,
     host: &Host,
@@ -434,7 +436,7 @@ pub async fn resolve_conflict(
 ) -> AppResult<()> {
     let center = &state.transfer_center;
     // 阶段 1：校验 + 快照（锁内不 await）。
-    let snapshot = {
+    let (item, others, handle) = {
         let mut g = locked(&center.inner)?;
         let item = {
             let Some(it) = g.items.iter().find(|i| i.id == transfer_id) else {
@@ -448,43 +450,83 @@ pub async fn resolve_conflict(
         if apply_to_all {
             g.conflict_policy.insert(item.batch_id.clone(), action);
         }
+        // "应用到全部"：快照同批已冲突项（含各自会话 handle），随后回溯同策略。
+        let others: Vec<(TransferItem, Option<Arc<SftpHandle>>)> = if apply_to_all {
+            g.items
+                .iter()
+                .filter(|i| {
+                    i.batch_id == item.batch_id && i.id != item.id && i.status == Status::Conflict
+                })
+                .map(|i| (i.clone(), g.handles.get(&i.sftp_id).cloned()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let handle = g.handles.get(&item.sftp_id).cloned();
-        (item, handle)
+        (item, others, handle)
     };
-    let (item, handle) = snapshot;
-    // 阶段 2：rename 需要存在性探测（异步）。
-    let mut new_local = item.local_path.clone();
-    let mut new_remote = item.remote_path.clone();
-    if action == ConflictAction::Rename {
-        let Some(handle) = handle else {
-            return Err(AppError::not_found(
-                "sftp_session_not_found",
-                json!({ "id": item.sftp_id }),
-            ));
-        };
-        let (l, r) = find_renamed_target(&item, &handle).await?;
-        new_local = l;
-        new_remote = r;
+    // 阶段 2：逐项应用决策（rename 需存在性探测，异步；任一失败则整批不落状态）。
+    let mut resolutions = Vec::with_capacity(others.len() + 1);
+    resolutions.push(apply_conflict_action(&item, action, handle.as_ref()).await?);
+    for (other, other_handle) in &others {
+        resolutions.push(apply_conflict_action(other, action, other_handle.as_ref()).await?);
     }
-    // 阶段 3：落状态。
-    let item = {
+    // 阶段 3：锁内落状态（复检仍为 Conflict，防止探测期间被取消/已处理）。
+    let mut committed = Vec::with_capacity(resolutions.len());
+    {
         let mut g = locked(&center.inner)?;
-        let Some(slot) = g.items.iter_mut().find(|i| i.id == transfer_id) else {
-            return Err(not_found(&transfer_id));
-        };
-        slot.local_path = new_local;
-        slot.remote_path = new_remote;
-        slot.overwrite = true;
-        slot.status = match action {
-            ConflictAction::Skip => Status::Skipped,
-            _ => Status::Queued,
-        };
-        slot.clone()
-    };
-    persist::update(&center.db, &row_from_item(&item))?;
-    let _ = host.emit(&format!("sftp:transfer_updated:{transfer_id}"), item);
+        let sources = std::iter::once(item).chain(others.into_iter().map(|(it, _)| it));
+        for (src, (new_local, new_remote, new_status)) in sources.zip(resolutions) {
+            let Some(slot) = g.items.iter_mut().find(|i| i.id == src.id) else {
+                continue;
+            };
+            if slot.status != Status::Conflict {
+                continue;
+            }
+            slot.local_path = new_local;
+            slot.remote_path = new_remote;
+            slot.overwrite = true;
+            slot.status = new_status;
+            committed.push(slot.clone());
+        }
+    }
+    for it in &committed {
+        persist::update(&center.db, &row_from_item(it))?;
+        let _ = host.emit(&format!("sftp:transfer_updated:{}", it.id), it.clone());
+    }
     pump(state, host)?;
     Ok(())
+}
+
+/// 对单项应用冲突决策，返回（新本地路径, 新远端路径, 新状态）。
+/// replace/skip 不改路径；rename 探测 `file (copy)` 系可用名（需要会话 handle）。
+async fn apply_conflict_action(
+    item: &TransferItem,
+    action: ConflictAction,
+    handle: Option<&Arc<SftpHandle>>,
+) -> AppResult<(String, String, Status)> {
+    match action {
+        ConflictAction::Skip => Ok((
+            item.local_path.clone(),
+            item.remote_path.clone(),
+            Status::Skipped,
+        )),
+        ConflictAction::Replace => Ok((
+            item.local_path.clone(),
+            item.remote_path.clone(),
+            Status::Queued,
+        )),
+        ConflictAction::Rename => {
+            let Some(handle) = handle else {
+                return Err(AppError::not_found(
+                    "sftp_session_not_found",
+                    json!({ "id": item.sftp_id }),
+                ));
+            };
+            let (l, r) = find_renamed_target(item, handle).await?;
+            Ok((l, r, Status::Queued))
+        }
+    }
 }
 
 pub async fn clear_finished(state: &AppState, host: &Host) -> AppResult<()> {

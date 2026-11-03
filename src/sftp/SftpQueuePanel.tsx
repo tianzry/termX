@@ -9,13 +9,14 @@
  * - `sftp:transfer_updated:<id>`（单条状态迁移；后端不随状态发全量快照）；
  * - `sftp:progress:<id>`（运行中项的字节进度）。
  *
- * 冲突决策对话框（替换/跳过/重命名 + 应用到全部）在阶段 C；本阶段
- * conflict 状态仅展示提示。
+ * 冲突决策对话框（阶段 C）：出现 conflict 项即弹 SftpConflictDialog
+ * （跳过/创建副本/替换 + 应用到全部，按批次生效）。
  */
 
 import { useEffect, useRef, useState } from "react";
 import * as api from "../backend/client";
 import type {
+  TransferConflictAction,
   TransferItem,
   TransferProgress,
   TransferStatus,
@@ -26,12 +27,14 @@ import {
   canPause,
   canResume,
   formatBytes,
+  pickActiveConflict,
   progressPercent,
   queueCounts,
   sortQueueForDisplay,
   transferDisplayName,
 } from "../domain/transferQueue";
 import { Icon } from "../ui/icons";
+import { SftpConflictDialog } from "./SftpConflictDialog";
 
 const CONCURRENCY_KEY = "sftp_transfer_concurrency";
 const MIN_CONCURRENCY = 1;
@@ -78,6 +81,8 @@ export function SftpQueuePanel() {
   const [progress, setProgress] = useState<Record<string, TransferProgress>>({});
   const [concurrency, setConcurrency] = useState(2);
   const [error, setError] = useState("");
+  const [conflictBusy, setConflictBusy] = useState(false);
+  const [conflictError, setConflictError] = useState("");
 
   // 挂载：初始快照 + 并发设置 + 队列全量快照事件。
   useEffect(() => {
@@ -193,10 +198,24 @@ export function SftpQueuePanel() {
     run(api.sftpTransferSetConcurrency(next));
   };
 
+  const resolveConflict = (
+    transferId: string,
+    action: TransferConflictAction,
+    applyToAll: boolean,
+  ) => {
+    setConflictBusy(true);
+    setConflictError("");
+    api
+      .sftpResolveConflict(transferId, action, applyToAll)
+      .catch((e) => setConflictError(userVisibleError(String(e))))
+      .finally(() => setConflictBusy(false));
+  };
+
   if (items.length === 0) return null;
 
   const counts = queueCounts(items);
   const sorted = sortQueueForDisplay(items);
+  const activeConflict = pickActiveConflict(items);
 
   return (
     <div className="nc-sftp-queue" data-section="sftp-transfer-queue">
@@ -336,6 +355,18 @@ export function SftpQueuePanel() {
           );
         })}
       </div>
+
+      {activeConflict && (
+        <SftpConflictDialog
+          conflict={activeConflict.conflict}
+          sameBatchCount={activeConflict.sameBatchCount}
+          busy={conflictBusy}
+          error={conflictError}
+          onResolve={(action, applyToAll) =>
+            resolveConflict(activeConflict.conflict.id, action, applyToAll)
+          }
+        />
+      )}
     </div>
   );
 }

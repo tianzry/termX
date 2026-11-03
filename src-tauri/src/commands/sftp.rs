@@ -644,6 +644,8 @@ pub fn sftp_cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> 
 #[cfg(test)]
 mod live_tests {
     use super::*;
+    use crate::sftp::transfer_center as tc;
+    use crate::sftp::transfer_center::{ConflictAction, Direction, NewTransfer, Status};
 
     /// 真实远端主机的文件操作全链路（默认档案 "129"）：
     /// 连接 → mkdir → upload → list/stat → rename → chmod → download 比对 → remove → rmdir。
@@ -715,5 +717,295 @@ mod live_tests {
 
         handle.remove(&b).await.expect("remove file");
         handle.remove(&dir).await.expect("remove dir");
+    }
+
+    // ── 传输冲突全链路（阶段 C） ────────────────────────────
+
+    /// 用生产流式上传在远端种一个文件（冲突检测的"已存在"前提）。
+    async fn seed_remote(handle: &SftpHandle, host: &crate::emitter::Host, path: &str, content: &[u8]) {
+        let mut reader: &[u8] = content;
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        handle
+            .upload_streaming(&mut reader, content.len() as u64, path, host, "seed", cancel)
+            .await
+            .unwrap_or_else(|e| panic!("seed {path}: {e}"));
+    }
+
+    /// 下载远端文件内容用于断言比对。
+    async fn remote_content(handle: &SftpHandle, host: &crate::emitter::Host, path: &str) -> Vec<u8> {
+        let tmp = std::env::temp_dir().join(format!(
+            "termx-live-conflict-dl-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        handle
+            .download_streaming(path, &tmp, host, "verify", cancel)
+            .await
+            .unwrap_or_else(|e| panic!("download {path}: {e}"));
+        let data = std::fs::read(&tmp).expect("read verify file");
+        let _ = std::fs::remove_file(&tmp);
+        data
+    }
+
+    /// 轮询单项至目标状态；Failed/Cancelled 提前 panic（错误终态即失败）。
+    async fn wait_status(state: &AppState, id: &str, expected: Status) -> tc::TransferItem {
+        for _ in 0..200 {
+            let items = tc::list(state).await.expect("transfer list");
+            if let Some(it) = items.iter().find(|i| i.id == id) {
+                if it.status == expected {
+                    return it.clone();
+                }
+                if matches!(it.status, Status::Failed | Status::Cancelled) {
+                    panic!(
+                        "transfer {id} 进入 {:?}（error: {:?}）",
+                        it.status, it.error
+                    );
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("等待 transfer {id} → {expected:?} 超时");
+    }
+
+    /// 轮询一批项全部到达目标状态。
+    async fn wait_status_many(state: &AppState, ids: &[String], expected: Status) {
+        for _ in 0..200 {
+            let items = tc::list(state).await.expect("transfer list");
+            let picked: Vec<_> = items
+                .iter()
+                .filter(|i| ids.contains(&i.id))
+                .cloned()
+                .collect();
+            if picked.len() == ids.len() && picked.iter().all(|i| i.status == expected) {
+                return;
+            }
+            if let Some(bad) = picked
+                .iter()
+                .find(|i| matches!(i.status, Status::Failed | Status::Cancelled))
+            {
+                panic!(
+                    "transfer {} 进入 {:?}（error: {:?}）",
+                    bad.id, bad.status, bad.error
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("等待批量传输 → {expected:?} 超时");
+    }
+
+    /// 真实远端主机的传输冲突全链路（默认档案 "129"）：
+    /// (a) 无同名直接完成（证 remote_exists 假分支在真实服务器不误判）；
+    /// (b) skip 保留远端原内容；(c) rename 生成 `file (copy)` 副本；
+    /// (d) replace 覆盖；(e) apply-to-all 对同批已冲突项回溯生效。
+    /// 与 roundtrip 相同门禁：仅 TERMX_SFTP_LIVE=1，凭据取自 ~/.rssh DB +
+    /// SecretStore（与应用同路径），密码不落明文、不进日志。
+    #[tokio::test]
+    async fn live_sftp_transfer_conflict() {
+        if std::env::var("TERMX_SFTP_LIVE").as_deref() != Ok("1") {
+            return;
+        }
+        let name = std::env::var("TERMX_SFTP_LIVE_PROFILE").unwrap_or_else(|_| "129".into());
+        let data_dir = dirs::home_dir().expect("home dir").join(".rssh");
+        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.rssh db"));
+        let secrets = crate::secret::open(db.clone(), &data_dir).expect("open secret store");
+
+        let profile = crate::db::profile::list(&db)
+            .expect("list profiles")
+            .into_iter()
+            .find(|p| p.name == name)
+            .unwrap_or_else(|| panic!("profile {name} not found"));
+        let cred_row =
+            crate::db::credential::get(&db, &profile.credential_id).expect("get credential");
+        let secret = secrets
+            .store
+            .get(&crate::secret::cred_secret_key(&cred_row.id))
+            .expect("decrypt credential secret");
+        let cred = Credential { secret, ..cred_row };
+
+        let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
+        let handle = Arc::new(
+            SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15)
+                .await
+                .expect("sftp connect"),
+        );
+
+        // headless AppState（同 lifecycle::tests::empty_state 结构）：内存 DB +
+        // 空会话表，真实 handle 挂到 sftp_sessions["live"]。
+        let mem_db = Arc::new(crate::db::Db::open_in_memory().expect("in-memory db"));
+        let secret_store: Arc<dyn crate::secret::SecretStore> =
+            Arc::new(crate::secret::DbStore::new(mem_db.clone()));
+        let mut sftp_sessions = std::collections::HashMap::new();
+        sftp_sessions.insert("live".to_string(), handle.clone());
+        let state = AppState {
+            transfer_center: Arc::new(tc::TransferCenter::new(mem_db.clone())),
+            db: mem_db,
+            secret_store,
+            lifecycle_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+            sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+            #[cfg(desktop)]
+            pty_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+            #[cfg(desktop)]
+            serial_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+            telnet_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+            sftp_sessions: std::sync::Mutex::new(sftp_sessions),
+            transfer_cancels: std::sync::Mutex::new(std::collections::HashMap::new()),
+            active_forwards: std::sync::Mutex::new(std::collections::HashMap::new()),
+            auth_waiters: std::sync::Mutex::new(std::collections::HashMap::new()),
+            passphrase_waiters: std::sync::Mutex::new(std::collections::HashMap::new()),
+            host_key_waiters: std::sync::Mutex::new(std::collections::HashMap::new()),
+            passphrase_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            ai_sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+            ai_session_owners: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            ai_remote_shell_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            data_dir: PathBuf::new(),
+        };
+
+        let (host, _rx) = crate::ssh::test_support::headless_host();
+        let dir = format!("/tmp/termx-live-conflict-{}", std::process::id());
+        handle.mkdir(&dir).await.expect("mkdir remote temp dir");
+        let local_dir = std::env::temp_dir().join(format!(
+            "termx-live-conflict-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&local_dir).expect("create local temp dir");
+        let write_local = |fname: &str, content: &[u8]| -> String {
+            let p = local_dir.join(fname);
+            std::fs::write(&p, content).expect("write local file");
+            p.display().to_string()
+        };
+        let enqueue_upload = |local: String, remote: String| NewTransfer {
+            sftp_id: "live".into(),
+            direction: Direction::Upload,
+            local_path: local,
+            remote_path: remote,
+            size: 0,
+            priority: Default::default(),
+        };
+
+        // (a) 无同名 → 直接完成：证实 remote_exists 对"不存在"的错误文案判定
+        // 在真实服务器上返回 false（而非误报冲突或抛错）。
+        let fresh_remote = format!("{dir}/fresh.txt");
+        let created = tc::enqueue(
+            &state,
+            &host,
+            vec![enqueue_upload(
+                write_local("fresh.txt", b"no conflict"),
+                fresh_remote.clone(),
+            )],
+        )
+        .await
+        .expect("enqueue fresh");
+        wait_status(&state, &created[0].id, Status::Completed).await;
+        assert_eq!(
+            remote_content(&handle, &host, &fresh_remote).await,
+            b"no conflict"
+        );
+
+        // (b) skip：冲突后跳过，远端内容保持原样。
+        let conflict_remote = format!("{dir}/conflict.txt");
+        seed_remote(&handle, &host, &conflict_remote, b"remote-v1").await;
+        let created = tc::enqueue(
+            &state,
+            &host,
+            vec![enqueue_upload(
+                write_local("conflict.txt", b"local-v1"),
+                conflict_remote.clone(),
+            )],
+        )
+        .await
+        .expect("enqueue conflict");
+        let id = created[0].id.clone();
+        wait_status(&state, &id, Status::Conflict).await;
+        tc::resolve_conflict(&state, &host, id.clone(), ConflictAction::Skip, false)
+            .await
+            .expect("resolve skip");
+        wait_status(&state, &id, Status::Skipped).await;
+        assert_eq!(
+            remote_content(&handle, &host, &conflict_remote).await,
+            b"remote-v1",
+            "skip 不得改动远端"
+        );
+
+        // (c) rename：生成 `conflict (copy).txt` 副本，原文件保留。
+        let created = tc::enqueue(
+            &state,
+            &host,
+            vec![enqueue_upload(
+                write_local("conflict.txt", b"local-v1"),
+                conflict_remote.clone(),
+            )],
+        )
+        .await
+        .expect("enqueue conflict 2");
+        let id = created[0].id.clone();
+        wait_status(&state, &id, Status::Conflict).await;
+        tc::resolve_conflict(&state, &host, id.clone(), ConflictAction::Rename, false)
+            .await
+            .expect("resolve rename");
+        let done = wait_status(&state, &id, Status::Completed).await;
+        let copy_remote = format!("{dir}/conflict (copy).txt");
+        assert_eq!(done.remote_path, copy_remote, "rename 目标路径应回写");
+        assert_eq!(remote_content(&handle, &host, &copy_remote).await, b"local-v1");
+        assert_eq!(
+            remote_content(&handle, &host, &conflict_remote).await,
+            b"remote-v1",
+            "rename 不得改动原文件"
+        );
+
+        // (d) replace：覆盖远端。
+        let created = tc::enqueue(
+            &state,
+            &host,
+            vec![enqueue_upload(
+                write_local("conflict.txt", b"local-v1"),
+                conflict_remote.clone(),
+            )],
+        )
+        .await
+        .expect("enqueue conflict 3");
+        let id = created[0].id.clone();
+        wait_status(&state, &id, Status::Conflict).await;
+        tc::resolve_conflict(&state, &host, id.clone(), ConflictAction::Replace, false)
+            .await
+            .expect("resolve replace");
+        wait_status(&state, &id, Status::Completed).await;
+        assert_eq!(
+            remote_content(&handle, &host, &conflict_remote).await,
+            b"local-v1",
+            "replace 应覆盖远端"
+        );
+
+        // (e) apply-to-all：批量入队 2 项 → 双双 Conflict → 解首个
+        // replace+applyToAll → 同批已冲突项回溯套用，双双完成。
+        tc::set_concurrency(&state, &host, 8).await.expect("set concurrency");
+        let b1_remote = format!("{dir}/bulk1.txt");
+        let b2_remote = format!("{dir}/bulk2.txt");
+        seed_remote(&handle, &host, &b1_remote, b"r1").await;
+        seed_remote(&handle, &host, &b2_remote, b"r2").await;
+        let created = tc::enqueue(
+            &state,
+            &host,
+            vec![
+                enqueue_upload(write_local("bulk1.txt", b"l1"), b1_remote.clone()),
+                enqueue_upload(write_local("bulk2.txt", b"l2"), b2_remote.clone()),
+            ],
+        )
+        .await
+        .expect("enqueue bulk");
+        let ids: Vec<String> = created.iter().map(|i| i.id.clone()).collect();
+        wait_status_many(&state, &ids, Status::Conflict).await;
+        tc::resolve_conflict(&state, &host, ids[0].clone(), ConflictAction::Replace, true)
+            .await
+            .expect("resolve replace apply-to-all");
+        wait_status_many(&state, &ids, Status::Completed).await;
+        assert_eq!(remote_content(&handle, &host, &b1_remote).await, b"l1");
+        assert_eq!(remote_content(&handle, &host, &b2_remote).await, b"l2");
+
+        // 清理：远端临时文件/目录 + 本地临时目录（单项失败不阻塞其余）。
+        for p in [&fresh_remote, &conflict_remote, &copy_remote, &b1_remote, &b2_remote] {
+            let _ = handle.remove(p).await;
+        }
+        let _ = handle.remove(&dir).await;
+        let _ = std::fs::remove_dir_all(&local_dir);
     }
 }

@@ -2584,3 +2584,39 @@ select_application/open_with_application；⑤ 临时文件注册表
 
 ### 提交状态
 - 按指令本轮不 push、不 review；阶段 C（冲突对话框 + 129 live + review/push）一并处理，届时随推 e0e83c1 + 1cf1bcc + 本轮。
+
+## 2026-11-03 SFTP 传输队列与冲突对话框 · 阶段 C（冲突对话框 + apply-to-all 回溯 + 129 live + review）
+
+### 修改点
+
+后端（`sftp/transfer_center.rs`）：
+
+1. **`resolve_conflict` 支持同批已冲突项回溯**：`apply_to_all` 时除策略按批次记忆（`conflict_policy`）外，快照同批已处 Conflict 的项逐项套用 `apply_conflict_action`（skip→Skipped；replace→Queued+overwrite；rename→`find_renamed_target` 探测 `file (copy)` 系可用名后 Queued）；阶段 3 锁内复检仍为 Conflict 才落状态（防探测期间被取消/已处理的竞态），逐项发 `transfer_updated`，末尾 pump；任一项探测失败则整批不落状态。
+
+前端：
+
+2. **新增 `src/sftp/SftpConflictDialog.tsx`**（对齐 Netcatty SftpConflictDialog 的文件冲突子集）：标题「{文件名} 已存在」；说明区分方向（上传=远端目标已存在同名文件 / 下载=本地目标，本地/远端双向都覆盖）；按钮顺序 跳过 | 创建副本 | 替换（Netcatty 右组顺序），替换恒为 danger-outline 危险样式（termX 无 merge，替换总是覆盖）；同批冲突 >1 显示「将此操作应用到剩余的 N 个冲突」；Esc / 点击遮罩 = 跳过；切换新冲突项重置勾选并聚焦替换。
+3. **`SftpQueuePanel.tsx` 接线**：`pickActiveConflict`（展示序首个冲突项 + 同批计数，`domain/transferQueue.ts` +3 单测）挑出当前应弹框项；决议走 `api.sftpResolveConflict`，busy/error 局部态；错误经 `userVisibleError` 中文化（R5）。
+4. **styles.css**：`.nc-sftp-conflict-*` 与 `button.danger-outline`。
+
+### 129 live 验证（TERMX_SFTP_LIVE=1 门禁）
+
+新增 `live_sftp_transfer_conflict`（commands/sftp.rs live_tests）：headless AppState（内存 DB + 空会话表，真实 handle 挂 `sftp_sessions["live"]`）走队列中心全链路。五场景全绿：(a) 无同名直接完成——证实 `remote_exists` 对「不存在」的错误文案判定在真实服务器上返回 false 不误判；(b) skip 远端内容不变；(c) rename 生成 `conflict (copy).txt` 且路径回写、原文件保留；(d) replace 覆盖；(e) 并发 8 批量入队 2 项双双 Conflict，解首个 replace+applyToAll 回溯套用双双完成。凭据取自 ~/.rssh DB + SecretStore（与应用同路径），密码不落明文；测试后清理远端与本地临时文件。对照组：未设门禁同用例 0.00s 早退 vs 门禁组 1.26s 真实执行。
+
+### 自审 review 结论
+
+- **状态机 ↔ UI 一致性**：canPause/canResume/canCancel 与后端 pause/resume/cancel 合法状态一一对应；对话框挑展示序首个冲突项。无问题。
+- **事件泄漏**：对话框 window keydown 有 cleanup；队列面板 transfer_updated/progress 订阅按 id 回收（快照差集 + running 退出退订 + 卸载全释放）。无问题。
+- **批量决策边界**：回溯套用锁内复检 Conflict 才落状态；rename 探测失败整批不落状态（策略已记录，重试自动套用，符合用户意图，记低危）。
+- **并发上限与恢复语义**：pump 检查 running>=concurrency，finish 递减后 pump_cached 续跑；重启恢复 Running→Queued、Conflict/Paused 保持。无问题。
+- **命令双注册**：本轮无新命令；`sftp_transfer_resolve_conflict` 确认 lib.rs generate_handler 与 server.rs dispatcher 均在。
+- **i18n**：`sftp_session_not_found` / `sftp_transfer_not_found` / `sftp_transfer_state_invalid` 均已有中文映射；对话框与面板错误全走 sshErrors。无问题。
+- **结论**：无高危/中危；低危 2 记录（rename 探测失败时策略已先记，语义可接受；对话框无文件大小/时间对比，为对 Netcatty 的简化，组件注释已注明）。live 覆盖上传方向（下载冲突 = 本地 fs try_exists，由纯逻辑单测覆盖）；视觉比对留人工/新 CU。
+
+### 门禁
+
+- npm run test:run **163/163** ✓（160 → 163：pickActiveConflict 3 例）；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check --features server ✓（仅既有 3 警告）；cargo test --lib **806✓**（805 + live 用例门禁外空跑）；129 live ✓。
+
+### 提交状态
+
+- 本轮随推 e0e83c1（docs）+ 1cf1bcc（阶段 A）+ e9b2917（阶段 B）+ 本轮；P0 #10 三阶段全部完成。

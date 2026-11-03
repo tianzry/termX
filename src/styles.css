@@ -3626,6 +3626,34 @@ button:disabled {
   color: hsl(var(--destructive));
 }
 
+/* 传输冲突对话框（阶段 C，对齐 Netcatty SftpConflictDialog 子集） */
+.nc-sftp-conflict-suffix {
+  font-weight: 400;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-conflict-apply-all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.nc-sftp-dialog-actions button.danger-outline {
+  border-color: hsl(var(--destructive) / 0.5);
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-dialog-actions button.danger-outline:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.1);
+}
+
 .nc-sftp-perm-grid {
   display: grid;
   grid-template-columns: auto repeat(3, 1fr);
