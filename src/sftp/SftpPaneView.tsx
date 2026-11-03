@@ -14,6 +14,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import * as api from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
+import { SftpEditorDialog } from "../editor/EditorDialog";
+import { isKnownBinaryFile } from "../editor/editorFile";
 import { Icon } from "../ui/icons";
 import {
   joinLocalPath,
@@ -72,6 +74,8 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
+  /** 内置编辑器目标行（非目录且非已知二进制扩展名才可打开）。 */
+  const [editorRow, setEditorRow] = useState<Row | null>(null);
 
   const isRemote = connection.kind === "remote";
   const join = isRemote ? joinRemotePath : joinLocalPath;
@@ -301,6 +305,9 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   if (menu) {
     const row = menu.row;
     if (row) {
+      if (!row.isDir && !isKnownBinaryFile(row.name)) {
+        menuItems.push({ label: "编辑", onClick: () => setEditorRow(row) });
+      }
       if (isRemote && !row.isDir) {
         menuItems.push({ label: "下载", onClick: () => void runDownload(row) });
       }
@@ -397,6 +404,12 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
                 setSelected(row.name);
                 if (row.isDir) void load(join(path, row.name));
               }}
+              onDoubleClick={() => {
+                // 双击文件 → 内置编辑器（对齐 Netcatty 打开动作；目录已由单击导航）。
+                if (!row.isDir && !isKnownBinaryFile(row.name)) {
+                  setEditorRow(row);
+                }
+              }}
               onContextMenu={(e) => openRowMenu(e, row)}
             >
               {row.isDir ? (
@@ -457,6 +470,18 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
           error={dialogError}
           onClose={() => setDialog(null)}
           onApply={(m) => void runChmod(dialog.row, m)}
+        />
+      )}
+
+      {editorRow && (
+        <SftpEditorDialog
+          target={{
+            kind: isRemote ? "remote" : "local",
+            sftpId: isRemote ? connection.sftpId : undefined,
+            path: join(path, editorRow.name),
+            name: editorRow.name,
+          }}
+          onClose={() => setEditorRow(null)}
         />
       )}
     </div>

@@ -2620,3 +2620,39 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本轮随推 e0e83c1（docs）+ 1cf1bcc（阶段 A）+ e9b2917（阶段 B）+ 本轮；P0 #10 三阶段全部完成。
+
+---
+
+## 2026-11-03 · 编辑器与监视回写（P0 #8）阶段 A：内置编辑器（本地/远端打开编辑 + 保存回写）
+
+### 调研结论（Netcatty 基准）
+
+- 入口：右键「编辑」（仅非目录且非已知二进制扩展名，`SftpPaneFileList.tsx` L344）+ 双击打开（opener=builtin-editor 时进内置编辑器）。
+- 组件：Netcatty 用 Monaco（`@monaco-editor/react` + 语言映射）；termX 阶段 A 按约定用低依赖 textarea，语法高亮留后续。
+- 阈值：`MAX_BUILTIN_SFTP_EDITOR_BYTES = 10 MiB`（`sftpEditorFileLimits.ts`），超限拒绝而非截断；二进制判定为前端扩展名清单（无字节采样）。
+- 保存：`writeTextFile(side, fullPath, content)` 整体覆盖，保存前校验 hostId 未变（防写错主机）；Netcatty 无另存为，termX 按需求新增。
+- 编码：`lib/readTextFile.ts` BOM 探测（UTF-8/UTF-16LE/BE）→ 无 BOM 时 UTF-8 严格解码失败回退 gb18030。
+- 外部编辑器（downloadToTempAndOpen / openPath）与文件监视（startFileWatch）→ 阶段 B。
+
+### 修改点
+
+- 后端：`commands/sftp.rs` 新增 `sftp_read_file`（stat 预检 + 读后兜底双检 10 MiB，`DEFAULT_EDITOR_READ_CAP`；全文读而非 `local_read_file` 的尾部读）与 `sftp_write_file`（整体覆盖）；`editor_size_guard` 纯函数（pub，server dispatcher 复用）。lib.rs + server.rs 双注册（camelCase：sftpId/path/maxBytes/data）。
+- 前端：`src/editor/editorFile.ts` 纯逻辑（10 MiB 断言、二进制扩展名清单、头部 8KiB NUL 采样、BOM/UTF-8/gb18030 解码、UTF-8 编码）；`src/editor/EditorDialog.tsx` 编辑器视图（加载/错误条/脏标记 ●/保存/Ctrl+S/另存为=路径输入弹窗/关闭前三按钮未保存确认：保存并关闭|不保存|取消）；`SftpPaneView` 右键「编辑」+ 双击文件打开，本地/远端双向（本地先 `localStat` 尺寸断言再 `localReadFile`，≤10 MiB 必然全文）。
+- client.ts：`sftpReadFile` / `sftpWriteFile` 封装（R1）。
+- i18n：`sftp_file_too_large` 文案升级为带 size/limit（新增 `num`/`fmtBytes` 辅助，缺参回退原文案）。
+- 样式：`styles.css` 追加 `.nc-editor-*`（全屏遮罩 + 等宽 textarea，沿用既有 HSL token）。
+
+### 踩坑
+
+- `local_read_file` 缺省读**尾部** 16 MiB（预览语义），编辑器要全文：故本地侧先 `localStat` 断言 ≤10 MiB 再读（此时必全文）；远端新命令直接全文 + 尺寸预检，不复用无上限的 `sftp_download`。
+- server.rs dispatcher 的 `ok()` 收 `AppResult<T>`，裸值要 `ok(Ok(data))`。
+- `AppError` 无 params 访问器，单测只断言 `code()`。
+- 测试用例笔误：`/etc/nginx/Conf` 本无扩展名（期望写错），改 `nginx.Conf`。
+
+### 门禁
+
+- npm run test:run **179/179** ✓（163 → 179：editorFile 16 例）；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check --features server ✓（仅既有 3 警告）；cargo test --lib **809✓**（806 + editor_size_guard 3 例）。
+
+### 提交状态
+
+- 本地 commit 未推送（阶段 B 一起 review + push）。

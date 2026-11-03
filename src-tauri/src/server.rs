@@ -1093,6 +1093,26 @@ async fn dispatch_async(
             )
             .await)
         }
+        "sftp_read_file" => {
+            let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
+            let path: String = arg(&args, "path")?;
+            let cap = arg::<Option<u64>>(&args, "maxBytes")?
+                .unwrap_or(crate::commands::sftp::DEFAULT_EDITOR_READ_CAP);
+            let st = h.stat(&path).await.map_err(err_value)?;
+            crate::commands::sftp::editor_size_guard(st.size, cap, &path).map_err(err_value)?;
+            let data = h.download(&path).await.map_err(err_value)?;
+            crate::commands::sftp::editor_size_guard(data.len() as u64, cap, &path)
+                .map_err(err_value)?;
+            ok(Ok(data))
+        }
+        "sftp_write_file" => {
+            let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
+            ok(h.upload(
+                &arg::<String>(&args, "path")?,
+                &arg::<Vec<u8>>(&args, "data")?,
+            )
+            .await)
+        }
         "sftp_mkdir" => {
             let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
             ok(h.mkdir(&arg::<String>(&args, "path")?).await)

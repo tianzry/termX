@@ -7825,3 +7825,111 @@ html[data-theme="dark"] {
   --ring: 208 100% 55%;
   --nc-faint: 220 10% 52%;
 }
+
+/* ── 内置编辑器（P0 #8 阶段 A） ─────────────────────────── */
+.nc-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: hsl(var(--background) / 0.72);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 28px 36px;
+}
+.nc-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px hsl(0 0% 0% / 0.45);
+}
+.nc-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.4);
+}
+.nc-editor-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  white-space: nowrap;
+}
+.nc-editor-dirty {
+  margin-left: 6px;
+  color: hsl(var(--accent));
+  font-size: 11px;
+}
+.nc-editor-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: hsl(var(--nc-faint));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nc-editor-actions {
+  display: flex;
+  gap: 6px;
+}
+.nc-editor-actions button {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 5px;
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+.nc-editor-actions button.primary {
+  background: hsl(var(--accent));
+  border-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+.nc-editor-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.nc-editor-error {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: hsl(var(--destructive));
+  border-bottom: 1px solid hsl(var(--border));
+}
+.nc-editor-hint {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--nc-faint));
+  font-size: 13px;
+}
+.nc-editor-textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 12px 14px;
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+.nc-editor-unsaved-text {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  margin: 4px 0 10px;
+}

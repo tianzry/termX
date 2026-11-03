@@ -290,6 +290,8 @@ pub fn run() {
             commands::sftp::walk_local_dir,
             commands::sftp::sftp_download,
             commands::sftp::sftp_upload,
+            commands::sftp::sftp_read_file,
+            commands::sftp::sftp_write_file,
             commands::sftp::sftp_mkdir,
             commands::sftp::sftp_close,
             // Stream transfer to/from a path (desktop) or content:// URI (mobile).

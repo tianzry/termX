@@ -48,6 +48,18 @@ function str(params: Record<string, unknown> | undefined, key: string): string {
   return v === undefined || v === null ? "" : String(v);
 }
 
+function num(params: Record<string, unknown> | undefined, key: string): number {
+  const v = params?.[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/** 字节数 → 人类可读（KiB/MiB），仅错误文案用。 */
+function fmtBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KiB`;
+  return `${n} B`;
+}
+
 /** code → 中文文案（params 插值）。与 src-tauri/src/error.rs 的 code 对齐。 */
 const ERROR_MESSAGES: Record<
   string,
@@ -119,7 +131,10 @@ const ERROR_MESSAGES: Record<
   sftp_tree_too_deep: (p) =>
     `“${str(p, "path")}”目录层级过深（上限 ${str(p, "limit")} 层）。`,
   sftp_invalid_filename: () => "文件名非法。",
-  sftp_file_too_large: () => "文件过大。",
+  sftp_file_too_large: (p) =>
+    str(p, "limit")
+      ? `文件过大（${fmtBytes(num(p, "size"))}），超出编辑器上限 ${fmtBytes(num(p, "limit"))}，请下载后用其他应用打开。`
+      : "文件过大。",
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,

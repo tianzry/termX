@@ -16,7 +16,7 @@
 | P0 日常可用性 | 8 / 14 | 不补齐难以日常使用 |
 | P1 差异化能力 | 0 / 19 | 拉开与普通 SSH 客户端差距（含 1 项 ⏸ 不移植；#39 为范围修正新增） |
 | P2 大工程 | 0 / 6 | 需单独立项（含 4 项 ⏸ 暂缓移植，见 plan.md） |
-| **合计** | **8 / 39** | 2026-11-03：SFTP 实现③（状态保活 + OS 图标 + 低危收尾）：SftpView 改首次激活后常驻挂载 + `.nc-sftp-mount.hidden` 隐藏（对齐 Netcatty SftpViewMount sticky 保活，切 surface 不丢 pane tab/双栏状态）；新增 HostOs 判定（本地 userAgent / 复用会话 uname -s best-effort）与 os-* 原创图标（Netcatty GPL 资产与 host.os 字段判定不可复用，通用映射并说明）；低危 4 项闭环（FileStat.is_symlink、localRemove 守卫恒传、12 封装测试覆盖、孤儿 CSS）；门禁全绿（136✓/build✓/cargo check×2✓/test --lib 793✓），本地 commit 未推送；实现③实机比对受 CU 坐标 artifact 阻塞延后（构建/启动/空态渲染已确认，未见代码缺陷）；review+push 完成（无高/中危，门禁全绿，远端 main=3d9c143）；SFTP 文件操作（上传/下载/删除/重命名/chmod）实现完成：server.rs 补 sftp_chmod 双注册、SftpPaneView 右键菜单/对话框/传输条接线、129 真实连接 live 测试全链路绿；review+push 完成（中危 1 修复= sftp 错误码 i18n 映射，低危 5 记录，门禁 140✓/794✓，远端 main=87e197e）；下一起点=传输队列与冲突对话框（Netcatty 队列面板：暂停/恢复/优先级/并发 + 冲突提示），视觉比对留人工/新 CU；传输队列阶段 A（后端队列中心）完成：队列中心+冲突检测后端+事件契约+schema v35+9 命令双注册+11 单测（805✓），本地 commit 未推送，阶段 B 前端队列面板 / 阶段 C 冲突对话框+129 live 待办；阶段 B 完成（e9b2917）；阶段 C（冲突对话框 + apply-to-all 回溯 + 129 live 五场景全绿 + 自审无高/中危）完成，P0 #10 三阶段全部完成；门禁 163✓/build✓/cargo check✓/806✓/live✓，随推 e0e83c1+1cf1bcc+e9b2917+阶段 C；下一起点=编辑器与监视回写（#8） |
+| **合计** | **8 / 39** | 2026-11-03：编辑器与监视回写（#8）阶段 A 完成：远端读写命令（10 MiB 预检）+ src/editor 低依赖编辑器（保存/另存/未保存确认）+ 双注册 + 19 新单测（179✓/809✓），本地 commit 未推送；阶段 B 文件监视回写/外部编辑器/129 live/review+push 待办。2026-11-03：SFTP 实现③（状态保活 + OS 图标 + 低危收尾）：SftpView 改首次激活后常驻挂载 + `.nc-sftp-mount.hidden` 隐藏（对齐 Netcatty SftpViewMount sticky 保活，切 surface 不丢 pane tab/双栏状态）；新增 HostOs 判定（本地 userAgent / 复用会话 uname -s best-effort）与 os-* 原创图标（Netcatty GPL 资产与 host.os 字段判定不可复用，通用映射并说明）；低危 4 项闭环（FileStat.is_symlink、localRemove 守卫恒传、12 封装测试覆盖、孤儿 CSS）；门禁全绿（136✓/build✓/cargo check×2✓/test --lib 793✓），本地 commit 未推送；实现③实机比对受 CU 坐标 artifact 阻塞延后（构建/启动/空态渲染已确认，未见代码缺陷）；review+push 完成（无高/中危，门禁全绿，远端 main=3d9c143）；SFTP 文件操作（上传/下载/删除/重命名/chmod）实现完成：server.rs 补 sftp_chmod 双注册、SftpPaneView 右键菜单/对话框/传输条接线、129 真实连接 live 测试全链路绿；review+push 完成（中危 1 修复= sftp 错误码 i18n 映射，低危 5 记录，门禁 140✓/794✓，远端 main=87e197e）；下一起点=传输队列与冲突对话框（Netcatty 队列面板：暂停/恢复/优先级/并发 + 冲突提示），视觉比对留人工/新 CU；传输队列阶段 A（后端队列中心）完成：队列中心+冲突检测后端+事件契约+schema v35+9 命令双注册+11 单测（805✓），本地 commit 未推送，阶段 B 前端队列面板 / 阶段 C 冲突对话框+129 live 待办；阶段 B 完成（e9b2917）；阶段 C（冲突对话框 + apply-to-all 回溯 + 129 live 五场景全绿 + 自审无高/中危）完成，P0 #10 三阶段全部完成；门禁 163✓/build✓/cargo check✓/806✓/live✓，随推 e0e83c1+1cf1bcc+e9b2917+阶段 C；下一起点=编辑器与监视回写（#8） |
 
 ---
 
@@ -79,8 +79,10 @@
   - 片段 CRUD、按主机/分组绑定、一键下发到终端。
   - 后端已就绪：`load_snippets` / `save_snippets`。
   - 参考：`components/snippets/`。
-- [ ] ⬜ **8. SFTP 内置编辑器 + 文件监视回写**
+- [ ] 🟨 **8. SFTP 内置编辑器 + 文件监视回写**
   - 双击远端文件在编辑器打开、保存即回写；本地改动监视后自动同步远端。
+  - 阶段 A（编辑器，2026-11-03）✅：远端 `sftp_read_file`（10 MiB 预检，对齐 Netcatty MAX_BUILTIN_SFTP_EDITOR_BYTES，stat+读后双检）/ `sftp_write_file` 双注册；`src/editor/`（editorFile.ts 纯逻辑：二进制扩展名 + NUL 采样、BOM/UTF-8/gb18030 解码、尺寸断言；EditorDialog 低依赖 textarea 视图：保存/Ctrl+S/另存为/未保存三按钮确认）；SftpPaneView 右键「编辑」+ 双击文件打开（本地/远端双向）；`sftp_file_too_large` 文案带 size/limit；16 前端单测 + 3 Rust 单测。
+  - 阶段 B（待办）：文件监视回写（startFileWatch 等价物）、外部编辑器打开、129 live、review + push。
   - 参考：`components/editor/`、`startFileWatch` / `onFileWatchSynced`（`netcatty-bridge-files.d.ts`）。
 - [ ] ⬜ **9. SFTP 双栏 + 拖放**
   - 本地/远端双栏并排，拖拽上传下载，支持拖到系统桌面。

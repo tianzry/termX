@@ -238,6 +238,78 @@ pub async fn sftp_upload(
     h.upload(&path, &data).await
 }
 
+/// 内置编辑器整体读取的缺省上限：10 MiB（对齐 Netcatty
+/// `MAX_BUILTIN_SFTP_EDITOR_BYTES`）。与 `local_read_file` 的 16 MiB 尾部读
+/// 不同：编辑器要的是**全文**而非预览尾部，超限直接拒绝而不是截断。
+pub const DEFAULT_EDITOR_READ_CAP: u64 = 10 << 20;
+
+/// 编辑器读取尺寸预检（纯逻辑，可单测）：声明大小超过上限即拒绝。
+/// `pub` 供 headless server dispatcher 复用同一预检（双注册一致语义）。
+pub fn editor_size_guard(size: u64, cap: u64, path: &str) -> AppResult<()> {
+    if size > cap {
+        return Err(AppError::sftp(
+            "sftp_file_too_large",
+            json!({ "path": path, "size": size, "limit": cap }),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod editor_size_guard_tests {
+    use super::*;
+
+    #[test]
+    fn allows_size_at_or_below_cap() {
+        assert!(editor_size_guard(0, DEFAULT_EDITOR_READ_CAP, "/a").is_ok());
+        assert!(editor_size_guard(DEFAULT_EDITOR_READ_CAP, DEFAULT_EDITOR_READ_CAP, "/a").is_ok());
+    }
+
+    #[test]
+    fn rejects_size_above_cap_with_params() {
+        let err = editor_size_guard(DEFAULT_EDITOR_READ_CAP + 1, DEFAULT_EDITOR_READ_CAP, "/big")
+            .unwrap_err();
+        assert_eq!(err.code(), "sftp_file_too_large");
+    }
+
+    #[test]
+    fn custom_cap_is_honored() {
+        assert!(editor_size_guard(10, 8, "/a").is_err());
+        assert!(editor_size_guard(8, 8, "/a").is_ok());
+    }
+}
+
+/// 为内置编辑器整体读取远端文件（全文，非尾部截断）。先 stat 预检大小，
+/// 读后再兜底校验一次（防 stat 与实际读取之间的竞态增长）。
+/// `max_bytes` 缺省 `DEFAULT_EDITOR_READ_CAP`。
+#[tauri::command]
+pub async fn sftp_read_file(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+    max_bytes: Option<u64>,
+) -> AppResult<Vec<u8>> {
+    let h = get_sftp(&state, &sftp_id)?;
+    let cap = max_bytes.unwrap_or(DEFAULT_EDITOR_READ_CAP);
+    let st = h.stat(&path).await?;
+    editor_size_guard(st.size, cap, &path)?;
+    let data = h.download(&path).await?;
+    editor_size_guard(data.len() as u64, cap, &path)?;
+    Ok(data)
+}
+
+/// 内置编辑器保存回写：整体覆盖远端文件（对应 Netcatty `writeTextFile`）。
+#[tauri::command]
+pub async fn sftp_write_file(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+    data: Vec<u8>,
+) -> AppResult<()> {
+    let h = get_sftp(&state, &sftp_id)?;
+    h.upload(&path, &data).await
+}
+
 #[tauri::command]
 pub async fn sftp_mkdir(
     state: State<'_, AppState>,

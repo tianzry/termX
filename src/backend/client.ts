@@ -612,6 +612,32 @@ export function sftpChmod(
   return invoke("sftp_chmod", { sftpId, path, mode });
 }
 
+/**
+ * 内置编辑器整体读取远端文件（全文，非尾部截断）。
+ * `maxBytes` 缺省 10 MiB（后端 DEFAULT_EDITOR_READ_CAP），超限报
+ * `sftp_file_too_large`。
+ */
+export function sftpReadFile(
+  sftpId: string,
+  path: string,
+  maxBytes?: number,
+): Promise<number[]> {
+  return invoke<number[]>("sftp_read_file", {
+    sftpId,
+    path,
+    maxBytes: maxBytes ?? null,
+  });
+}
+
+/** 内置编辑器保存回写：整体覆盖远端文件。 */
+export function sftpWriteFile(
+  sftpId: string,
+  path: string,
+  data: Uint8Array,
+): Promise<void> {
+  return invoke("sftp_write_file", { sftpId, path, data: Array.from(data) });
+}
+
 // ── 阶段 2：串口 / Telnet / 端口转发 ────────────────────────
 
 /** 连接类型全集（比 TerminalDomain 多了 serial / telnet，无域名事件）。 */
