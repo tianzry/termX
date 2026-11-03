@@ -8,7 +8,20 @@
  * 全部是纯函数，便于持久化（localStorage）与单元验证。
  */
 
+import type { SerialConfig } from "./backend/client";
+import type { SerialBackspaceBehavior } from "./domain/serialFormConfig";
+
 export type SplitDir = "horizontal" | "vertical";
+
+/** 串口标签的连接参数（对齐 Netcatty SerialConfig；不含任何凭据）。 */
+export interface SerialSessionConfig {
+  port: string;
+  config: SerialConfig;
+  lineMode: boolean;
+  localEcho: boolean;
+  backspaceBehavior: SerialBackspaceBehavior;
+  byteOrientedBackspace: boolean;
+}
 
 export type Connector =
   | {
@@ -22,7 +35,8 @@ export type Connector =
       /** 本地 shell 主机：显示名（标签标题）。 */
       name?: string;
     }
-  | { kind: "ssh"; profileId: string; name: string };
+  | { kind: "ssh"; profileId: string; name: string }
+  | { kind: "serial"; session: SerialSessionConfig; name?: string };
 
 export interface LeafNode {
   type: "leaf";
@@ -139,5 +153,8 @@ export function defaultTitle(
   ptySeq: number,
 ): string {
   if (connector.kind === "ssh") return connector.name;
+  if (connector.kind === "serial") {
+    return connector.name || `串口 ${connector.session.port || ""}`.trim();
+  }
   return connector.name || `本地终端 ${ptySeq}`;
 }

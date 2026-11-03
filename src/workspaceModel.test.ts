@@ -113,4 +113,24 @@ describe("makeLeaf / defaultTitle", () => {
   it("PTY 带显示名（本地 shell 主机）时优先用显示名", () => {
     expect(defaultTitle({ kind: "pty", name: "Git Bash" }, 3)).toBe("Git Bash");
   });
+
+  it("串口标签默认标题为端口名", () => {
+    const session = {
+      port: "COM3",
+      config: {
+        baud_rate: 115200,
+        data_bits: 8 as const,
+        parity: "none" as const,
+        stop_bits: 1 as const,
+        flow_control: "none" as const,
+        charset: "UTF-8",
+      },
+      lineMode: false,
+      localEcho: false,
+      backspaceBehavior: "default" as const,
+      byteOrientedBackspace: false,
+    };
+    expect(defaultTitle({ kind: "serial", session }, 3)).toBe("串口 COM3");
+    expect(defaultTitle({ kind: "serial", session, name: "开发板" }, 3)).toBe("开发板");
+  });
 });

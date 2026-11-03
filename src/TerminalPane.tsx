@@ -50,6 +50,7 @@ import {
 } from "./domain/sshConnectionTimeouts";
 import { toHostKeyInfo, type HostKeyInfo } from "./domain/hostKey";
 import { isAuthFailureMessage, userVisibleError } from "./domain/sshErrors";
+import { createSerialInput } from "./domain/serialInput";
 import {
   TerminalConnectionDialog,
   type ChainProgress,
@@ -86,8 +87,8 @@ interface Props {
   onActivate: () => void;
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
   onStatus: (text: string) => void;
-  /** 打开右侧工具面板（SFTP / 串口 / Telnet / 端口转发）。 */
-  onOpenTool?: (tool: "sftp" | "serial" | "telnet" | "forward") => void;
+  /** 打开右侧工具面板（SFTP / Telnet / 端口转发）。 */
+  onOpenTool?: (tool: "sftp" | "telnet" | "forward") => void;
   /** 关闭当前窗格。 */
   onClosePane?: () => void;
   /** 分屏（在当前标签内）。 */
@@ -521,6 +522,69 @@ export function TerminalPane({
     setPromptBoth(null);
     teardown();
     notifySession(null);
+
+    if (tab.connector.kind === "serial") {
+      const conn = tab.connector;
+      const sid = api.newSessionId();
+      const input = createSerialInput({
+        lineMode: conn.session.lineMode,
+        localEcho: conn.session.localEcho,
+        backspaceBehavior: conn.session.backspaceBehavior,
+        byteOrientedBackspace: conn.session.byteOrientedBackspace,
+      });
+      try {
+        // 先注册监听再 open：串口 data 事件在 open 返回后即可能到达。
+        unsubRef.current = [
+          await api.onSerialData(sid, (bytes) =>
+            controllerRef.current?.term.write(bytes),
+          ),
+          await api.onSerialClose(sid, () => {
+            transportRef.current = null;
+            notifySession(null);
+            setStatus("disconnected");
+            setError("串口已断开");
+            setDisconnectedDismissed(false);
+            onStatus(`${tab.title} 串口已断开`);
+          }),
+        ];
+        const actual = await api.serialOpen(conn.session.port, conn.session.config, sid);
+        if (!aliveRef.current || attempt !== attemptRef.current) {
+          void api.serialClose(actual);
+          return;
+        }
+        transportRef.current = {
+          kind: "serial",
+          write: (text) => {
+            const chunk = input.feed(text);
+            if (chunk.echo) {
+              controllerRef.current?.term.write(new TextEncoder().encode(chunk.echo));
+            }
+            if (chunk.wire) void api.serialWrite(actual, chunk.wire);
+          },
+          resize: () => {},
+          close: () => {
+            void api.serialClose(actual);
+          },
+        };
+        setStatus("connected");
+        setError(null);
+        setChainProgress(null);
+        setDisconnectedDismissed(false);
+        notifySession(actual);
+        onStatus(`${tab.title} 已连接串口 ${conn.session.port}`);
+        controllerRef.current?.fit.fit();
+        controllerRef.current?.term.focus();
+      } catch (e) {
+        if (!aliveRef.current || attempt !== attemptRef.current) return;
+        const message = userVisibleError(String(e));
+        unsubRef.current.forEach((u) => u());
+        unsubRef.current = [];
+        setStatus("disconnected");
+        setError(message);
+        onStatus(`${tab.title} 串口连接失败：${message}`);
+      }
+      return;
+    }
 
     if (!isSsh) {
       try {

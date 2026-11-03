@@ -21,7 +21,7 @@ import { HostSidebar } from "./HostSidebar";
 import { VaultView } from "./VaultView";
 import { AsidePanel } from "./AsidePanel";
 import { SftpPanel } from "./SftpPanel";
-import { SerialPanel } from "./SerialPanel";
+import { SerialConnectModal } from "./serial/SerialConnectModal";
 import { TelnetPanel } from "./TelnetPanel";
 import { ForwardPanel } from "./ForwardPanel";
 import { ConnectionManager } from "./ConnectionManager";
@@ -43,11 +43,10 @@ import {
   resolveShellSetting,
 } from "./domain/localShellHost";
 
-type Tool = "sftp" | "serial" | "telnet" | "forward" | null;
+type Tool = "sftp" | "telnet" | "forward" | null;
 
 const TOOL_TITLE: Record<Exclude<Tool, null>, string> = {
   sftp: "文件传输",
-  serial: "串口",
   telnet: "Telnet",
   forward: "端口转发",
 };
@@ -278,10 +277,12 @@ export default function App() {
     });
   }
 
+  const [showSerialModal, setShowSerialModal] = useState(false);
+
+  // 串口入口与 Netcatty 一致：先弹连接参数弹窗，确认后才新建串口标签；
+  // 不再借 ensureTab() 兜底开本地终端（那是 P0 反馈里的错误分支）。
   function openSerial() {
-    setSurface(null);
-    workspaceRef.current?.ensureTab();
-    setTool("serial");
+    setShowSerialModal(true);
   }
 
   function toggleTool(next: Exclude<Tool, null>) {
@@ -289,7 +290,7 @@ export default function App() {
       setTool(null);
       return;
     }
-    if (next === "serial" || next === "telnet") {
+    if (next === "telnet") {
       workspaceRef.current?.ensureTab();
     }
     setTool(next);
@@ -395,12 +396,27 @@ export default function App() {
             onClose={() => setTool(null)}
           >
             {tool === "sftp" && <SftpPanel sshSessionId={activeSshSid} />}
-            {tool === "serial" && <SerialPanel bridge={bridge} />}
             {tool === "telnet" && <TelnetPanel bridge={bridge} />}
             {tool === "forward" && <ForwardPanel />}
           </AsidePanel>
         )}
       </div>
+
+      {showSerialModal && (
+        <SerialConnectModal
+          open={showSerialModal}
+          onClose={() => setShowSerialModal(false)}
+          onConnect={(session) => {
+            setShowSerialModal(false);
+            setSurface(null);
+            workspaceRef.current?.newTab({
+              kind: "serial",
+              session,
+              name: `串口 ${session.port}`,
+            });
+          }}
+        />
+      )}
 
       {showManager && (
         <ConnectionManager

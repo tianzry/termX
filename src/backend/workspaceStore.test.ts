@@ -36,6 +36,35 @@ describe("workspaceStore", () => {
     expect(loadWorkspace()).toEqual(ws);
   });
 
+  it("串口标签可持久化并恢复", () => {
+    const ws = validWorkspace();
+    ws.tabs.push({
+      id: "t3",
+      title: "串口 COM1",
+      layout: { type: "leaf", id: "l4" },
+      connector: {
+        kind: "serial",
+        session: {
+          port: "COM1",
+          config: {
+            baud_rate: 115200,
+            data_bits: 8,
+            parity: "none",
+            stop_bits: 1,
+            flow_control: "none",
+            charset: "UTF-8",
+          },
+          lineMode: true,
+          localEcho: true,
+          backspaceBehavior: "ctrl-h",
+          byteOrientedBackspace: true,
+        },
+      },
+    });
+    saveWorkspace(ws);
+    expect(loadWorkspace()).toEqual(ws);
+  });
+
   it("无记录时返回 null", () => {
     expect(loadWorkspace()).toBeNull();
   });

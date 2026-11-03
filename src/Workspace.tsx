@@ -57,7 +57,7 @@ interface Props {
   /** 向上发布标签快照，供顶部 TopTabs 渲染（标签状态仍由本组件持有）。 */
   onSnapshot?: (tabs: Tab[], activeTabId: string | null, restorePending: boolean) => void;
   /** 终端工具栏里打开右侧工具面板。 */
-  onOpenTool?: (tool: "sftp" | "serial" | "telnet" | "forward") => void;
+  onOpenTool?: (tool: "sftp" | "telnet" | "forward") => void;
 }
 
 function resolveActivePane(
@@ -77,7 +77,7 @@ interface LayoutProps {
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
   onStatus: (paneId: string, text: string) => void;
   onRatio: (splitId: string, ratio: number) => void;
-  onOpenTool?: (tool: "sftp" | "serial" | "telnet" | "forward") => void;
+  onOpenTool?: (tool: "sftp" | "telnet" | "forward") => void;
   onClosePane: (paneId: string) => void;
   onSplit: (dir: SplitDir) => void;
 }

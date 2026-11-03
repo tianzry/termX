@@ -28,6 +28,18 @@ function isConnector(v: unknown): v is Connector {
   if (!v || typeof v !== "object") return false;
   const c = v as Record<string, unknown>;
   if (c.kind === "pty") return true;
+  if (c.kind === "serial") {
+    const s = c.session as Record<string, unknown> | undefined;
+    return (
+      !!s &&
+      typeof s.port === "string" &&
+      !!s.config &&
+      typeof s.config === "object" &&
+      typeof s.lineMode === "boolean" &&
+      typeof s.localEcho === "boolean" &&
+      typeof s.byteOrientedBackspace === "boolean"
+    );
+  }
   return (
     c.kind === "ssh" &&
     typeof c.profileId === "string" &&

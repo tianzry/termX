@@ -1,4 +1,4 @@
-# termX 开发日志（changelogs）
+﻿# termX 开发日志（changelogs）
 
 > 约定：每次开发修改后，先把「修改点 + 踩坑经验」记录到这里，再由用户确认后才 push 到 termX 仓库。
 
@@ -2458,7 +2458,46 @@ select_application/open_with_application；⑤ 临时文件注册表
 
 - 本轮未发现代码缺陷、无修复；实机比对（建标签 / OS 图标目检 / 保活实证 / 无残留 / Netcatty 对照）延后，留待后续轮重试（更换 CU 会话或改人工操作）。
 - 门禁沿用 35e988a 全绿：136/136 + build✓ + cargo check×2✓ + cargo test --lib 793✓（本轮无代码改动，未重跑）。
-- 本轮仅文档提交（changelogs/todo）；轮末结束 rssh.exe，防止下轮构建锁（上轮遗留实例曾致 os error 5）。
+
+---
+
+## 2026-11-03 串口热修：入口落错分支 + 按 Netcatty 真实形态重做弹窗
+
+> 来源：用户实测反馈（优先级最高）。笔记阶段临时暂停，未提交的 Notes 后端脚手架已 `git stash` 保存。
+
+### Bug 复现（用户实例，PID 19668，exe LastWriteTime 19:23:21 = 串口阶段 B 最新包）
+
+- 路径：Vaults 首页右上角「串口」→ 期望打开串口连接入口。
+- 现象：直接新增一个 `本地终端 1` 标签（cmd 提示符），右侧再挂上「串口」工具面板。
+- 证据：[serial-after-click.png](g:\AiCode\termX\evidence\serial-after-click.png)（修复前点击结果）；同轮 [netcatty-serial-modal.png](g:\AiCode\termX\evidence\netcatty-serial-modal.png) 为 Netcatty 真实弹窗。
+
+### 根因
+
+- `App.openSerial()` 先 `setSurface(null)`，再 `workspaceRef.ensureTab()`，最后 `setTool("serial")`。
+- `ensureTab()` 在无标签时会新建 `{ kind: "pty" }`，即**每次点串口都先起一个本地 shell**；串口本身只是右侧面板，于是形成「本地终端 + 串口面板」的错误组合。
+- 同类入口复核：Telnet 仍走 `ensureTab()` + 工具面板（需要承载窗格，形态与 Netcatty 的 Telnet 弹窗仍不一致，留待后续专项）；SFTP / 端口转发不调用 `ensureTab()`，不会误开终端。
+
+### 修复方式
+
+1. 串口入口改为 Netcatty 形态：点击只打开 `SerialConnectModal`，不再 `ensureTab()` / `setSurface()`。
+2. 弹窗确认后才创建标签，新增 `Connector.kind = "serial"`（携带端口 + `SerialConfig` + 终端选项，无凭据）：
+   - `workspaceModel.defaultTitle` → `串口 COM1`；
+   - `TerminalPane.connect()` 串口分支：先订阅 `serial:data/close`，再 `serialOpen`，输入经 `serialInput`（行模式 / 本地回显 / DEL 语义）后 `serialWrite`；关闭 / 切换标签时 `serialClose`。
+   - `workspaceStore` 允许 serial 连接器持久化与恢复（不含密码）。
+3. 删除旧的右侧 `SerialPanel.tsx`，避免保留两套串口 UI。
+
+### UI 对照（Netcatty vs termX 修复后）
+
+- 对照图：[serial-ui-compare.png](g:\AiCode\termX\evidence\serial-ui-compare.png)；termX 修复后弹窗：[serial-fixed-modal-final.png](g:\AiCode\termX\evidence\serial-fixed-modal-final.png)；连接结果：[serial-fixed-connected-final.png](g:\AiCode\termX\evidence\serial-fixed-connected-final.png)。
+- 已一致：模态弹窗形态（居中、遮罩、Esc / 点遮罩关闭）、标题「连接串口」+ USB 图标 + 描述「配置串口连接参数」、右上关闭；「串口 + 刷新」→ 可输入/可清空的端口下拉（默认 COM1）、命名管道提示；波特率（默认 115200，自定义提示）；「高级」默认折叠（数据位/停止位/校验位/流控制/终端选项/字符编码）；底部「取消 / 连接」，端口未选或参数非法时连接禁用。
+- 已修：端口输入框自动聚焦（蓝色焦点环与 Netcatty 一致）；标题 18px / 字段 14px / 提示 12px 字号对齐。
+- 待人工 / 有意差异：Netcatty 的「保存配置（将此串口配置保存到主机列表以便快速访问）」未复刻——termX 无 Netcatty host 模型，做了只会是一个查不到的假入口；自动登录属于 Netcatty 主机编辑面板，不在连接弹窗内，termX 同样不放。COM1 实测已确认串口句柄由 rssh 持有（外部尝试打开被拒），但真实收发字节未做回环手测。
+
+### 验证与门禁
+
+- 复现证据 + 修复后点击：`串口` → 弹窗；`连接` → 仅新增 `串口 COM1` 标签，不再出现 `本地终端 1`。
+- `npm run test:run` 296✓（新增 workspaceModel 串口标题 2 例、workspaceStore 串口持久化 1 例）；`npm run build` ✓；`cargo check --features server` ✓；`cargo test --lib` 836✓（本轮无 Rust 改动）。
+- 本地 commit，未 push；调试实例保持运行（PID 23056，停留在串口弹窗）供继续手测。
 
 ---
 
