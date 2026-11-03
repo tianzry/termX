@@ -106,12 +106,14 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
         // 独立连接：保存主机 + 凭据（local 已在上面返回，此处收窄为 profile）
         if (target.kind !== "profile") return;
         const profile = target.profile;
-        const credential = credentials.find(
+        const listed = credentials.find(
           (c) => c.id === profile.credential_id,
         );
-        if (!credential) {
+        if (!listed) {
           throw new Error("该主机未配置凭据，无法独立连接");
         }
+        // list_credentials 不返回 secret（见 client.ts 注释），独立连接必须取全量凭据
+        const credential = await api.getCredential(listed.id);
         const sftpId = await api.sftpConnect(
           profile.host,
           profile.port,

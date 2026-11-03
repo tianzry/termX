@@ -2310,3 +2310,49 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本轮本地 commit（styles.css 修复 + 文档）；按指令不 push、不 review，下一轮子 agent review 通过后与实现①②一并推送；视觉复检/连接流端到端实测为下一轮首项。
+
+---
+
+## 2026-11-03 SFTP 骨架·复检 + 端到端（实现②复验第二轮）
+
+### 启动自退定性结论
+
+- 干净进程态下 8 次启动（4 次前台持 stdout 管道 + 4 次 detached）**全部存活**，上轮「detached 3/4 自退」未复现；无单实例逻辑（rg single-instance 无命中）、无 stderr 崩溃输出。
+- 真因查明：**Shell 工具的子进程在命令结束时被统一 kill**（沙箱内/外一致）。上轮「前台持 stdout 管道存活」恰因父命令仍在运行。定性 = 启动方式/环境 artifact，**非应用崩溃，无需代码修复**。
+- 可靠持活启动法：后台 shell 命令内 `Start-Process rssh.exe -PassThru` + `$p.WaitForExit()`，实例可跨命令存活（本轮 pid 21100 全程可用）。
+
+### 视觉复检（选择器）
+
+- 遮罩 transparent ✓（背后双栏空态清晰可见）、选中行浅蓝 hsl(var(--accent)/0.16) ✓、三分区/左侧 chip/分区标签/聚焦三角 ✓ —— 上轮修复保持，与 Netcatty 一致。
+
+### 行点击 onPick 裁定
+
+- 窗口坐标点击**可触发 onPick**（选择器关闭并进入连接流）⇒ 上轮「元素点击/Enter 不触发」确为 **CU artifacts**（CU 对 WebView2 子窗口内非 button 元素的元素路由不可靠）。
+- 新坑：CU 坐标点击原点 = **webview viewport**（窗口标题栏 + TopTabs 之下，y 偏移 ≈ −72），非窗口原点；且选择器行 y 随分区数变化（dialog 垂直居中）。坐标必须按当次截图现测现用。
+- 坐标点击（element_id="0"）要求最近一次 get_app_state 带截图，disableScreenshot 的快照下报 invalid element_id。
+
+### 连接流三路径端到端
+
+1. **本地**：PASS。左栏「本地」tab、路径 `C:\Users\tianzry`、目录列表正常（Windows 下点目录无 hidden 属性，不过滤，语义正确）。
+2. **复用已连接会话**：PASS。Vaults 连接 129 SSH 终端（状态槽「129 已连接 (c004b3a0…)」）→ 选择器「已连接」行 → sftpConnectSession → 左栏「129」tab、`/home/tianzry` 列表完整。
+3. **独立连接 129**：先 FAIL 后修复复测 PASS。失败原文：左栏空态红字「认证被服务器拒绝。」+ 控制台 `WARN rssh_lib::ssh::client SSH session error: Disconnect`。根因：`list_credentials` 设计不返回 secret（[profile.rs](src-tauri/src/commands/profile.rs) 注释），SftpView 独立连接分支误用列表凭据的空 secret 调 sftpConnect → 空密码认证被拒。修复：列表判存在后改 `api.getCredential(id)` 取全量凭据（[SftpView.tsx](src/sftp/SftpView.tsx)）。该项系上轮留档复认项，本轮关闭。
+- 密码不入库不入日志：汇报与日志仅含错误文案与 session id。
+
+### 留档 / 后续项
+
+- SftpView 随根标签（surface）切换卸载，pane tab 状态丢失（切回后本地 tab 消失）；Netcatty 为 visibility 保活。留实现③（状态上提或保活）。
+- 已连接行/远端标签 OS 图标留实现③（上轮已留档）。
+
+### 踩坑
+
+5. Shell 工具（沙箱内外）命令结束即 kill 子进程 ⇒ GUI 实机验证必须用后台持活命令；「启动自退」先怀疑此 artifact 再怀疑应用。
+6. CU 坐标点击原点 = webview viewport（窗口 y −72）；选择器行坐标随分区数漂移，按当次截图现测。
+7. `list_credentials` 不含 secret；凡连接路径需要 secret 必须走 `get_credential`（SftpView 独立连接踩坑，空密码表现为「认证被服务器拒绝。」）。
+
+### 门禁
+
+- npm run test:run 126/126 ✓；tauri debug 重编 ✓（含前端 vite build 与 cargo 编译，覆盖 npm run build / cargo check 门禁，详见构建输出）。
+
+### 提交状态
+
+- 本轮本地 commit（SftpView secret 修复 + 文档）；按指令不 push、不 review，下一轮子 agent review 通过后与实现①②一并推送。
