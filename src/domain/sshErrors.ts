@@ -135,6 +135,20 @@ const ERROR_MESSAGES: Record<
     str(p, "limit")
       ? `文件过大（${fmtBytes(num(p, "size"))}），超出编辑器上限 ${fmtBytes(num(p, "limit"))}，请下载后用其他应用打开。`
       : "文件过大。",
+  // ── 串口 ──
+  serial_open_failed: (p) => `打开串口 ${str(p, "port")} 失败：${str(p, "err")}`,
+  serial_op_failed: (p) => `串口操作失败：${str(p, "err")}`,
+  serial_feature_unsupported: (p) => {
+    const feature = str(p, "feature");
+    const name =
+      feature === "stop_bits_1_5"
+        ? "1.5 停止位（仅 Windows 支持）"
+        : feature === "mark_space_parity"
+          ? "mark/space 校验位（当前平台不支持）"
+          : feature;
+    return `当前平台不支持该串口特性：${name}`;
+  },
+  serial_charset_unsupported: (p) => `不支持的串口字符集：${str(p, "charset")}`,
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,

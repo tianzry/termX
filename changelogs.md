@@ -2746,3 +2746,43 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 随阶段 A（ca0afe0）一并推送（远端基线 b92b94e，快进），P0 #9 收官；下一起点 = 串口（端口列表 / 参数 / 连接 / 数据收发对齐 Netcatty，含 mark/space、1.5 停止位、自动登录、字符集等已知缺口）。
+
+---
+
+## 2026-11-03 · 串口对齐 Netcatty（P1 #35）：mark/space、1.5 停止位、字符集、自动登录、富端口列表
+
+### 修改点
+
+- 后端 `terminal/serial.rs`：校验位补 mark/space（crate 无对应项——Windows 走原生 DCB 位域、Linux 走 termios CMSPAR、macOS 打开前拒绝）；停止位补 1.5（仅 Windows 原生 DCB，其余平台打开前报错）；字符集（encoding_rs：空标签 = 字节透传，未知标签打开前报错不静默降级，不可映射字符统一 `?` 替代）；`SerialConfig` 新增 charset/username/password（自动登录凭据仅会话级，不落库）。
+- 后端新增 `terminal/serial_auto_login.rs`：提示词状态机（无定时器，读循环 100ms tick 驱动；`login:`/`Password:` 等提示识别 → 发凭据；超时/完成/取消三态上报 `serial:auto_login:<id>`）。
+- Windows 原生 DCB 路径 `open_native_dcb`：CreateFile + DCB 位域镜像（fBinary/fParity/fOutxCtsFlow/fDtrControl/fOutX/fInX/fRtsControl，XonChar=17/XoffChar=19）+ COMMTIMEOUTS 镜像 crate 行为；硬件流控 RTS 用 Enable（与 serialport 4.9.0 dcb.rs L278-283 逐行核对一致）；IXANY 在 Windows 文档化 no-op。
+- 富端口列表：`PortInfo{port_name, port_type, manufacturer, product, vid, pid}`（serialport crate 的 `UsbPort(UsbPortInfo)` 元组变体解构），`serial_list_ports` 返回结构化列表。
+- 命令双注册：`serial_list_ports` 等在 lib.rs 与 server.rs 同步注册；`db/serial_profile.rs` / `models.rs` / `sync/config.rs` / `commands/sync.rs` 同步扩展配置形状（parity/stop_bits f64/flow_control/charset，DB 数值亲和）。
+- 前端 `SerialPanel.tsx`：端口下拉（富信息展示 + 刷新）、12 档波特率 + 自定义、数据位 5-8、停止位 1/1.5/2（1.5 平台与数据位约束提示）、校验位 none/even/odd/mark/space、流控 none/software/hardware、字符集下拉（含 GBK/UTF-8 等）、自动登录用户名/密码输入、发送/DTR 控制；`src/domain/serialValidate.ts` 纯校验逻辑（+6 单测）；`client.ts` 封装 serial 命令与事件。
+
+### 实机比对（新流程：build-debug 启动 + 对照本机 Netcatty）
+
+- **一致项（截图/实开确认）**：串口面板渲染与 Netcatty 串口弹窗控件集逐项对齐（端口列表/波特率/数据位/停止位/校验位含 mark+space/流控/字符集）；本机 COM1 自动列出；COM1 真开双路径均成功（mark 校验位 + 1 停止位走原生 DCB、8N1 走 crate 路径）；发送、DTR 切换、关闭均无错；1.5 停止位与命名管道拒绝提示文案渲染正确。
+- **已修项**：① 实测 8 数据位 + 1.5 停止位开 COM1 报 os error 87（ERROR_INVALID_PARAMETER）——定性为 UART/OS 约束（1.5 仅与 5 数据位组合有效），Netcatty 经 node-serialport 直传同样被拒，非代码 bug；1.5 提示文案补「通常仅与 5 数据位组合有效」并重编复检渲染。② 3 个新单测首跑失败修复：encoding_rs 对不可映射字符输出 NCR（`&#128512;`）且置 had_errors → truncate NCR 再补 `?`（原实现双重替代）；`last_prompt_line` 尾换行后取空串漏掉提示 → trim_end 后取最后非空行；timeout=0 时首个 feed 即过期凭据从未发出 → `expired()` 改 `>=` 使 0 确定性立即过期 + cfg(test) `force_expire()` 钩子。③ 2 条新 cargo 警告清理（xany 显式消费、feature_unsupported 加 cfg 门），复检回仅既有 3 警告。
+- **不可对齐或留档项**：① 8+1.5 组合两侧同被 OS 拒（硬件约束，文案已对齐说明）；② 命名管道（`\\.\pipe\`）：Netcatty 经 serialNamedPipe 桥支持，termX 明确拒绝并提示——留档后续候选，不强造；③ 自动登录：Netcatty 按已存主机持久化，termX 会话级不落库（有意差异，凭据不落明文）；④ localEcho/lineMode/backspaceBehavior/存为主机复选框留后续阶段；⑤ Netcatty 串口弹窗 CU 无法打开（新建主机抽屉遮挡工具栏且关不掉），转源码级核对，弹窗逐屏对照列入人工点测。
+
+### review 自审
+
+- 无高/中危：unsafe 句柄单所有权（Guard/forget 路径全错误分支关闭句柄）；读线程与 write() 锁序一致（detector→释放→writer），毒锁走 `locked()`；编码边界单测守护（透传/GBK/不可映射）；stop_bits f64 DB 数值亲和；事件按会话 id 退订；命令双注册一致；RTS Enable 与 crate 源码逐行核对。
+
+### 门禁
+
+- npm run test:run **215/215** ✓（209 → 215：serialValidate +6）；npm run build ✓；cargo check --features server ✓（仅既有 3 警告）；cargo test --lib **830✓**（813 → 830：serial 模块 21 例含自动登录/编码/映射）；tauri debug 重编 ×2 启动实开 COM1 验证。
+
+### 踩坑
+
+- encoding_rs 编码器对不可映射字符**输出 NCR 并置 had_errors=true**（不是静默丢弃），整块编码只能得知「块内有错」，替代符位置漂到块尾 → 逐字符编码 + `truncate(before)` 才能精确 `?` 替代。
+- Windows UART：1.5 停止位仅与 5 数据位组合有效，其余组合 SetCommState 报 os error 87；Netcatty 同被拒（node-serialport 直传），属 OS/硬件约束不是实现 bug。
+- serialport crate `SerialPortInfo` 仅 port_name+port_type，USB 元数据在 `SerialPortType::UsbPort(UsbPortInfo)` 元组变体里，需解构取 manufacturer/product/vid/pid。
+- `COMPort::from_raw_handle` 不设 COMMTIMEOUTS，原生路径必须自设（镜像 crate 的 {MAX,MAX,100,0,100}），否则读行为不可预期。
+- 状态机测试确定性：`expired()` 用 `>=` 让 timeout=0 立即过期，避免测试依赖真实时间流逝。
+- PowerShell `Measure-Object -Line` 对 changelogs.md 少报行数（报 2223 实际 2700+），定位文件尾部以 Grep/Read 递进为准。
+
+### 提交状态
+
+- 本地 commit，推送远端基线 c1a4604（快进），P1 #35 收官。

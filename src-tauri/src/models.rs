@@ -338,7 +338,9 @@ pub struct SerialProfile {
     pub baud_rate: u32,
     pub data_bits: u8,
     pub parity: String,
-    pub stop_bits: u8,
+    /// 1 | 1.5 | 2。SQLite 数值亲和：1.0/2.0 存为 INTEGER、1.5 存为 REAL，
+    /// 旧行（INTEGER 1/2）按 f64 读回无需迁移。
+    pub stop_bits: f64,
     pub flow_control: String,
     // ── Tabby-style extras. All frontend-applied (TerminalPane transforms)
     //    EXCEPT `xany`, which is a termios wire flag set in `serial::open`.

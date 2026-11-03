@@ -89,7 +89,7 @@
 **目标**：扩展串口、Telnet 与端口转发。
 
 工作项：
-- 串口：借用 rssh `terminal/serial.rs`，对齐 rescan/open/波特率/流控。
+- 串口（P1 #35 已完成）：基于 rssh `terminal/serial.rs` 对齐 Netcatty——富端口列表 / 12 档波特率+自定义 / 数据位 5-8 / 停止位 1,1.5,2 / 校验位含 mark/space（Windows 原生 DCB、Linux CMSPAR）/ 流控 / 字符集转码（encoding_rs）/ 会话级自动登录；1.5 停止位与 mark/space 的平台闸门经实机（COM1）验证。
 - Telnet：复用 rssh `terminal/telnet.rs`，对齐登录脚本。
 - 端口转发：本地/远程/动态（SOCKS5），复用并扩展 rssh `ssh/forward.rs`（动态转发需补齐）。
 

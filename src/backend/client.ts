@@ -686,14 +686,28 @@ export interface TermBridge {
 export interface SerialConfig {
   baud_rate: number;
   data_bits?: number; // 默认 8
-  parity?: string; // none | odd | even
-  stop_bits?: number; // 1 | 2
+  parity?: string; // none | odd | even | mark | space（mark/space：Win 原生 / Linux CMSPAR / macOS 不支持）
+  stop_bits?: number; // 1 | 1.5 | 2，默认 1（1.5 仅 Windows）
   flow_control?: string; // none | software | hardware
   xany?: boolean;
+  charset?: string; // WHATWG 字符集标签（如 GBK）；空/缺省 = 字节透传
+  username?: string; // 自动登录用户名（与 password 任一非空即启用；仅会话级，不落库）
+  password?: string; // 自动登录密码（可为空串 = 空密码设备）
 }
 
-export function serialListPorts(): Promise<string[]> {
-  return invoke<string[]>("serial_list_ports");
+/** 串口枚举信息（对齐 serialport::SerialPortInfo）。 */
+export interface SerialPortInfo {
+  path: string;
+  manufacturer: string | null;
+  serial_number: string | null;
+  vendor_id: number | null;
+  product_id: number | null;
+  /** usb | pci | bluetooth | ""（未知） */
+  port_type: string;
+}
+
+export function serialListPorts(): Promise<SerialPortInfo[]> {
+  return invoke<SerialPortInfo[]>("serial_list_ports");
 }
 
 /**
@@ -751,6 +765,16 @@ export function onSerialClose(
   cb: () => void,
 ): Promise<UnlistenFn> {
   return listen<null>(`serial:close:${sessionId}`, () => cb());
+}
+
+/** 自动登录状态：complete | cancelled | incomplete。 */
+export function onSerialAutoLogin(
+  sessionId: string,
+  cb: (status: string) => void,
+): Promise<UnlistenFn> {
+  return listen<{ status: string }>(`serial:auto_login:${sessionId}`, (ev) =>
+    cb(ev.payload.status),
+  );
 }
 
 // ── Telnet ────────────────────────────────────────────────

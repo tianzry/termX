@@ -64,6 +64,8 @@ sha2 = "0.10"
 # 进程内 passphrase 缓存的内存清零保护（drop 时擦写底层字节）
 zeroize = { version = "1", features = ["derive"] }
 regex = "1"
+# 串口字符集转码（GBK/Big5/Latin-1… ↔ UTF-8），WHATWG 标签集。
+encoding_rs = "0.8"
 # regex 的伴生 crate（已在依赖树里）。用于 save 时拒绝零宽匹配的脱敏规则
 # （minimum_len()==0 → 会在每个位置 replace → 灾难性 over-replacement）。
 regex-syntax = "0.8"
@@ -108,6 +110,9 @@ arboard = "3"
 keyring = { version = "3", features = ["apple-native"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# 原生 DCB：mark/space 校验位与 1.5 停止位，serialport crate 均不暴露。
+# 版本与 feature 对齐 serialport 自身的 pin，锁文件保持单一 windows-sys 副本。
+windows-sys = { version = "0.52", features = ["Win32_Devices_Communication", "Win32_Foundation", "Win32_Storage_FileSystem"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 

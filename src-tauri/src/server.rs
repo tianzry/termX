@@ -555,6 +555,9 @@ fn dispatch(
                     SerialOut::Close => {
                         json!({ "type": "event", "event": format!("serial:close:{id}"), "payload": Value::Null })
                     }
+                    SerialOut::AutoLogin(status) => {
+                        json!({ "type": "event", "event": format!("serial:auto_login:{id}"), "payload": { "status": status } })
+                    }
                 };
                 let _ = tx.send(Message::Text(msg.to_string()));
             });

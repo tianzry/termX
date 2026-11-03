@@ -13,10 +13,11 @@ fn from_row(row: &rusqlite::Row) -> rusqlite::Result<SerialProfile> {
         name: row.get(1)?,
         port: row.get(2)?,
         baud_rate: row.get(3)?,
-        // data_bits / stop_bits are small ints; stored as INTEGER, narrowed here.
+        // data_bits is a small int; stored as INTEGER, narrowed here.
         data_bits: row.get::<_, u32>(4)? as u8,
         parity: row.get(5)?,
-        stop_bits: row.get::<_, u32>(6)? as u8,
+        // stop_bits 为 f64（1 | 1.5 | 2）；旧行 INTEGER 1/2 按 f64 读回。
+        stop_bits: row.get::<_, f64>(6)?,
         flow_control: row.get(7)?,
         xany: row.get(8)?,
         input_newline: row.get(9)?,
@@ -68,7 +69,7 @@ pub fn insert_tx(conn: &rusqlite::Connection, s: &SerialProfile) -> AppResult<()
           local_echo=excluded.local_echo, backspace=excluded.backspace, slow_send=excluded.slow_send, \
           input_mode=excluded.input_mode, output_mode=excluded.output_mode, login_script=excluded.login_script, group_id=excluded.group_id",
         params![
-            s.id, s.name, s.port, s.baud_rate, s.data_bits as u32, s.parity, s.stop_bits as u32, s.flow_control,
+            s.id, s.name, s.port, s.baud_rate, s.data_bits as u32, s.parity, s.stop_bits, s.flow_control,
             s.xany, s.input_newline, s.output_newline, s.local_echo, s.backspace, s.slow_send, s.input_mode, s.output_mode, s.login_script, s.group_id,
         ],
     )?;
@@ -88,7 +89,7 @@ pub fn update(db: &Db, s: &SerialProfile) -> AppResult<()> {
          xany=?8, input_newline=?9, output_newline=?10, local_echo=?11, backspace=?12, slow_send=?13, input_mode=?14, output_mode=?15, login_script=?16, group_id=?17 \
          WHERE id=?18",
         params![
-            s.name, s.port, s.baud_rate, s.data_bits as u32, s.parity, s.stop_bits as u32, s.flow_control,
+            s.name, s.port, s.baud_rate, s.data_bits as u32, s.parity, s.stop_bits, s.flow_control,
             s.xany, s.input_newline, s.output_newline, s.local_echo, s.backspace, s.slow_send, s.input_mode, s.output_mode, s.login_script, s.group_id,
             s.id,
         ],
@@ -119,7 +120,7 @@ mod tests {
             baud_rate: 115200,
             data_bits: 8,
             parity: "none".into(),
-            stop_bits: 1,
+            stop_bits: 1.0,
             flow_control: "none".into(),
             xany: false,
             input_newline: "cr".into(),

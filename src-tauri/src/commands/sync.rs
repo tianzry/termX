@@ -711,7 +711,7 @@ mod tests {
             baud_rate: 115200,
             data_bits: 8,
             parity: "none".into(),
-            stop_bits: 1,
+            stop_bits: 1.0,
             flow_control: "none".into(),
             xany: false,
             input_newline: "cr".into(),

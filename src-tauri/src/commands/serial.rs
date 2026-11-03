@@ -6,7 +6,7 @@ use crate::state::{AppState, SessionKind, SessionOwner};
 use crate::terminal::serial;
 
 #[tauri::command]
-pub fn serial_list_ports() -> AppResult<Vec<String>> {
+pub fn serial_list_ports() -> AppResult<Vec<serial::PortInfo>> {
     Ok(serial::available_ports())
 }
 
@@ -38,6 +38,12 @@ pub fn serial_open(
             }
             serial::SerialOut::Close => {
                 let _ = app.emit(&format!("serial:close:{id}"), ());
+            }
+            serial::SerialOut::AutoLogin(status) => {
+                let _ = app.emit(
+                    &format!("serial:auto_login:{id}"),
+                    serde_json::json!({ "status": status }),
+                );
             }
         });
     let (id, handle) = serial::open(session_id, &port, config, sink)?;
