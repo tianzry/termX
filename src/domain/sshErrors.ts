@@ -159,6 +159,12 @@ const ERROR_MESSAGES: Record<
   label_required: () => "标签不能为空。",
   private_key_required: () => "私钥内容不能为空。",
   invalid_private_key: (p) => `无效的私钥：${str(p, "error")}`,
+  // ── 钥匙串（~/.ssh 文件密钥，阶段 A）──
+  invalid_key_name: (p) => `密钥名「${str(p, "name")}」非法：只能是单层文件名。`,
+  key_file_exists: (p) => `~/.ssh/${str(p, "name")} 已存在，拒绝覆盖，请更换密钥名。`,
+  key_write_failed: (p) => `写入密钥文件 ~/.ssh/${str(p, "name")} 失败。`,
+  key_file_not_found: (p) => `未找到密钥 ~/.ssh/${str(p, "name")}。`,
+  home_dir_unavailable: () => "无法获取主目录。",
   crypto_password_or_corrupted: () => "口令错误或数据已损坏。",
   secret_decrypt_failed_or_wrong_key: () => "解密失败：口令错误或数据已损坏。",
   serde_failed: (p) => `数据解析失败：${str(p, "err")}`,

@@ -768,6 +768,37 @@ fn dispatch(
             &arg::<String>(&args, "privateKey")?,
             args.get("publicKey").and_then(|v| v.as_str()),
         )),
+        "keychain_list_file_keys" => ok(crate::commands::keychain::keychain_list_file_keys_impl(
+            state,
+        )),
+        "keychain_generate_file_key" => ok(
+            crate::commands::keychain::keychain_generate_file_key_impl(
+                state,
+                &arg::<String>(&args, "name")?,
+                &arg::<String>(&args, "algorithm")?,
+                args.get("bits").and_then(|v| v.as_u64()).map(|v| v as u32),
+                args.get("passphrase").and_then(|v| v.as_str()),
+            ),
+        ),
+        "keychain_import_file_key" => ok(
+            crate::commands::keychain::keychain_import_file_key_impl(
+                state,
+                &arg::<String>(&args, "name")?,
+                &arg::<String>(&args, "privateKey")?,
+                args.get("publicKey").and_then(|v| v.as_str()),
+            ),
+        ),
+        "keychain_delete_file_key" => ok(crate::commands::keychain::keychain_delete_file_key_impl(
+            state,
+            &arg::<String>(&args, "name")?,
+        )),
+        "keychain_set_default_key" => ok(crate::commands::keychain::keychain_set_default_key_impl(
+            state,
+            &arg::<String>(&args, "name")?,
+        )),
+        "keychain_get_default_key" => ok(
+            crate::commands::keychain::keychain_get_default_key_impl(state),
+        ),
 
         // ---- config import/export (JSON-string core; the *_to_file / *_from_file
         //      dialog variants are handled browser-side by the IPC shim) ----

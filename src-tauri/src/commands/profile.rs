@@ -85,11 +85,11 @@ fn save_credential_secrets(state: &State<AppState>, c: &Credential) -> Result<()
 /// A real private key is a few KB; anything past 1 MiB is not a key. Matches the
 /// webview pick-file path's cap so both key-import routes reject oversized files
 /// identically (see `pickTextFile({ maxBytes })` in the frontend).
-const MAX_KEY_FILE_BYTES: u64 = 1024 * 1024;
+pub(crate) const MAX_KEY_FILE_BYTES: u64 = 1024 * 1024;
 
 /// webview 是不可信边界：name 只允许 `~/.ssh` 下的单层普通文件名，
 /// 任何路径分隔符 / `..` / 空名一律拒绝（join 后不可能逃逸出 `~/.ssh`）。
-fn is_plain_file_name(name: &str) -> bool {
+pub(crate) fn is_plain_file_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
@@ -101,7 +101,7 @@ fn is_plain_file_name(name: &str) -> bool {
 
 /// 私钥内容嗅探：PEM（`-----BEGIN … PRIVATE KEY-----`）或 OpenSSH v1 格式。
 /// 用它把 config / known_hosts 之类的非私钥文件挡在读取接口之外。
-fn looks_like_private_key(content: &str) -> bool {
+pub(crate) fn looks_like_private_key(content: &str) -> bool {
     content.starts_with("openssh-key-v1") || content.contains("PRIVATE KEY-----")
 }
 

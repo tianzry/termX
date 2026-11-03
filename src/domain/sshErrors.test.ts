@@ -78,6 +78,18 @@ describe("userVisibleError", () => {
     ).toBe("传输任务当前状态不允许该操作。");
   });
 
+  it("钥匙串错误码映射为中文（阶段 A）", () => {
+    expect(
+      userVisibleError('__rssh_err__|{"code":"key_file_exists","params":{"name":"id_ed25519"}}'),
+    ).toBe("~/.ssh/id_ed25519 已存在，拒绝覆盖，请更换密钥名。");
+    expect(
+      userVisibleError('__rssh_err__|{"code":"key_file_not_found","params":{"name":"gone"}}'),
+    ).toBe("未找到密钥 ~/.ssh/gone。");
+    expect(
+      userVisibleError('__rssh_err__|{"code":"invalid_key_name","params":{"name":"a/b"}}'),
+    ).toContain("单层文件名");
+  });
+
   it("未知 code 回退 params.err，再回退泛化文案", () => {
     expect(
       userVisibleError('__rssh_err__|{"code":"not_a_real_code","params":{"err":"boom"}}'),

@@ -68,6 +68,8 @@
   - 密钥对生成、ssh-agent 检测、默认密钥（`~/.ssh`）列出与选用。
   - 后端：`generateKeyPair` / `checkSshAgent` / `getDefaultKeys`（netcatty 侧），termX 需补命令（ssh-agent 检测随 SSH agent 转发已纳入移植，见 P1 #39）。
   - 参考：`components/keychain/`。
+  - 阶段 A（2026-11-03）✅：~/.ssh 文件密钥管理——后端六件套 `keychain_list_file_keys` / `keychain_generate_file_key`（ED25519/ECDSA/RSA + passphrase，同名拒绝覆盖、.pub 写失败回滚）/ `keychain_import_file_key` / `keychain_delete_file_key` / `keychain_set_default_key` / `keychain_get_default_key`（默认密钥 settings KV `ssh_default_key`，缺省回落 id_ed25519 并与 ConnectionManager 单一事实来源；私钥不出后端不落日志；is_plain_file_name 防穿越；双注册）；前端 `src/keychain/` KeychainView 挂 Vault「钥匙串」双子标签（系统密钥/已存密钥保留旧 keysPanel）+ keychainModel 纯逻辑 4 测 + sshErrors 5 码映射；门禁 220✓/build✓/cargo check✓/835✓；实机截图对照 Netcatty（设默认系 termX 新增、agent 状态属阶段 B）。
+  - 阶段 B（下一轮）：SSH agent 状态与转发配置接线 UI 收尾、129 验证（现有 ed25519 或新生成密钥）、review + push。
 - [x] ✅ **6. Known Hosts 管理页**
   - 已信任主机指纹列表、删除、编辑；连接弹窗之外的管理入口。
   - 实现：`src/VaultView.tsx` known-hosts 子页（列表/搜索/删除/转换为主机档案；

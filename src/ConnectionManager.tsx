@@ -315,10 +315,12 @@ export function ConnectionManager({
   async function fillDefaultKey() {
     setErr("");
     try {
-      const text = await api.readDefaultKeyFile("id_ed25519");
+      // 默认密钥名来自钥匙串设置（后端缺省回落 id_ed25519，历史行为）。
+      const name = await api.keychainGetDefaultKey();
+      const text = await api.readDefaultKeyFile(name);
       setCredDraft((d) => (d ? { ...d, secret: text } : d));
     } catch (e) {
-      setErr(`读取 ~/.ssh/id_ed25519 失败：${userVisibleError(String(e))}`);
+      setErr(`读取默认密钥失败：${userVisibleError(String(e))}`);
     }
   }
 

@@ -1212,6 +1212,68 @@ export function listSshKeyFiles(): Promise<string[]> {
   return invoke<string[]>("list_ssh_key_files");
 }
 
+// ── 钥匙串：~/.ssh 文件密钥管理（阶段 A） ─────────────────────────
+// 后端保证：私钥内容不出后端——列表只回元数据与公钥行，
+// 生成/导入只回写入条目的元数据。字段为 Rust serde 原样 snake_case（R3）。
+export interface SshFileKeyEntry {
+  name: string;
+  /** 展示路径 `~/.ssh/<name>`。 */
+  path: string;
+  /** `ssh-ed25519` / `ssh-rsa` / …；无法判定（如传统 PEM 且无 .pub）为空串。 */
+  key_type: string;
+  /** `SHA256:...` 指纹；无法判定为空串。 */
+  fingerprint: string;
+  /** 公钥行；无法判定为 null。 */
+  public_key: string | null;
+  /** 私钥是否 passphrase 加密。 */
+  encrypted: boolean;
+  /** 是否当前默认密钥。 */
+  is_default: boolean;
+}
+
+export function keychainListFileKeys(): Promise<SshFileKeyEntry[]> {
+  return invoke<SshFileKeyEntry[]>("keychain_list_file_keys");
+}
+
+export function keychainGenerateFileKey(
+  name: string,
+  algorithm: string,
+  bits?: number | null,
+  passphrase?: string | null,
+): Promise<SshFileKeyEntry> {
+  return invoke<SshFileKeyEntry>("keychain_generate_file_key", {
+    name,
+    algorithm,
+    bits: bits ?? null,
+    passphrase: passphrase ?? null,
+  });
+}
+
+export function keychainImportFileKey(
+  name: string,
+  privateKey: string,
+  publicKey?: string | null,
+): Promise<SshFileKeyEntry> {
+  return invoke<SshFileKeyEntry>("keychain_import_file_key", {
+    name,
+    privateKey,
+    publicKey: publicKey ?? null,
+  });
+}
+
+export function keychainDeleteFileKey(name: string): Promise<void> {
+  return invoke<void>("keychain_delete_file_key", { name });
+}
+
+export function keychainSetDefaultKey(name: string): Promise<void> {
+  return invoke<void>("keychain_set_default_key", { name });
+}
+
+/** 当前默认密钥名（后端缺省回落 id_ed25519）。 */
+export function keychainGetDefaultKey(): Promise<string> {
+  return invoke<string>("keychain_get_default_key");
+}
+
 // ── 已知主机管理 ─────────────────────────────────────────
 
 export interface KnownHostEntry {

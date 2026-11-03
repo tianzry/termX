@@ -2786,3 +2786,43 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本地 commit，推送远端基线 c1a4604（快进），P1 #35 收官。
+
+---
+
+## 2026-11-03 钥匙串阶段 A：~/.ssh 系统密钥管理（生成/导入/列表/设默认/复制公钥/删除）
+
+### 背景与范围
+
+- 用户流程清单「钥匙串」拆两轮：本轮阶段 A = 后端密钥管理命令 + 前端 `src/keychain/` 页挂 Vault 导航「钥匙串」；阶段 B（下一轮）= SSH agent 状态与转发配置接线 UI 收尾、129 实机验证、review + push。
+- 调研结论（Netcatty `components/keychain/` + 实机截图 pid=7900）：Netcatty 钥匙串页 = 新建密钥/导入证书/新建身份工具条 + 密钥列表区 + 空态「设置密钥：导入或生成」引导；**该页无「设为默认」入口、无 SSH agent 状态展示**（agent 在 代理/端口转发 页）。termX 缺口 = ~/.ssh 文件密钥管理命令与页面（此前仅有凭据式「已存密钥」keysPanel）。
+- 落地形态：钥匙串页新增「系统密钥」子标签（新 KeychainView），旧 keysPanel 保留在「已存密钥」子标签（tsconfig `noUnusedLocals` 约束 + 保留既有凭据流程不回归）。
+
+### 修改点
+
+- 后端 [keychain.rs](src-tauri/src/commands/keychain.rs) 新增文件密钥段：`SshFileKeyEntry`（name/path/key_type/fingerprint/public_key/encrypted/is_default，**无私钥字段**）；六件套 impl + `#[tauri::command]`：`keychain_list_file_keys` / `keychain_generate_file_key` / `keychain_import_file_key` / `keychain_delete_file_key` / `keychain_set_default_key` / `keychain_get_default_key`。生成支持 ED25519 / ECDSA(P-256/384/521) / RSA(4096/2048) + 可选 passphrase；同名拒绝覆盖、.pub 写失败回滚私钥；删除默认密钥同步清 settings。
+- 默认密钥存 settings KV `ssh_default_key`（`crate::db::settings`），缺省回落 `id_ed25519`（FALLBACK_DEFAULT_KEY）；[ConnectionManager.tsx](src/ConnectionManager.tsx) fillDefaultKey 改为经 `keychainGetDefaultKey` 取名再读文件，与钥匙串「设为默认」单一事实来源。
+- 路径安全：复用 [profile.rs](src-tauri/src/commands/profile.rs) `is_plain_file_name`（改 `pub(crate)`，单一事实来源），拒绝 `/ \ ..` 与控制字符；私钥 0600 / 公钥 0644（unix cfg；Windows 无 chmod，留档）。私钥内容绝不返回前端、keychain.rs 无任何日志语句（grep 验证）。
+- 双注册（R4）：lib.rs `generate_handler!` 8 个 keychain 命令 + server.rs dispatcher 全臂同名直调 impl（INV-4）。
+- 前端：`src/keychain/KeychainView.tsx` + `keychain.css`（列表 + 生成对话框 + 导入对话框 + 设为默认 + 复制公钥 + 删除 confirm）；`src/domain/keychainModel.ts` 纯逻辑（算法/位宽/曲线选项、密钥名校验镜像后端、类型标签）+ 4 单测；client.ts 6 封装；VaultView 双子标签接线。
+- sshErrors.ts 补 5 个钥匙串错误码中文映射（invalid_key_name / key_file_exists / key_write_failed / key_file_not_found / home_dir_unavailable）+ 单测（R5/R11）。
+
+### 门禁
+
+- `npm run test:run` 220✓（215 → +4 keychainModel → +1 sshErrors）；`npm run build` ✓；`cargo check --features server` ✓；`cargo test --lib` 835✓（+5 文件密钥测试）。
+- debug 构建 ✓（rssh.exe / msi / nsis），实机启动 pid=12352 稳定运行。
+
+### 比对结论（对照 Netcatty，三类）
+
+- **一致项（截图确认）**：钥匙串导航入口与页面渲染；真实密钥枚举（id_ed25519：Ed25519 · SHA256:DfQnAs9… · ~/.ssh/id_ed25519 · 默认 badge）；生成对话框（密钥名/算法 combo/位宽·曲线/passphrase/取消/生成并保存）；导入对话框；复制公钥/删除/设为默认入口；Netcatty 钥匙串主视图（新建密钥/导入证书/新建身份 + 空态导入/生成引导）与 termX「列表 + 生成 + 导入」主流程结构一致。
+- **已修项**：① ssh-key 0.7.0-rc.11 API 三处适配（`from_openssh` 对加密密钥返回 Ok → 用 `is_encrypted()` 判定；`to_openssh` 返回 `Zeroizing<String>` → `.to_string()`；`fingerprint()` 返回 Fingerprint 枚举非 Result → `.to_string()`）；② 测试断言修正：加密私钥无 .pub 仍可解析类型/指纹/公钥（OpenSSH v1 公钥部分明文存放），测试更名 `..._still_resolves_metadata` 并同步三处注释；③ review 自审修复：生成对话框密钥名不再预填缺省名（本机已存在 id_ed25519，预填会让「生成并保存」直接撞 key_file_exists），改留空 + placeholder 引导；④ 5 个新错误码补前端中文映射（此前回退泛化「操作失败，请重试。」）。
+- **待人工/不可对齐项**：① Netcatty 无「设为默认」UI，系 termX 新增（接线 ConnectionManager 默认密钥读取），无对照对象；② SSH agent 状态展示在 Netcatty 代理/端口转发页，属阶段 B；③ Windows 平台无 chmod，私钥文件权限仅 unix 生效（留档）；④ Netcatty 窗口观察树疑似混入 termX 窗口节点（get_app_state 跨窗口污染），子标签对齐以截图为准；⑤ debug 实例经 `Start-Process -PassThru` 启动数秒即退、前台直跑稳定（原因未定性，留档）；⑥ review 修复项（预填/错误码映射）为代码级修复，在跑 debug 包为修复前前端，对话框空名与新错误文案待人工点测确认。
+
+### 踩坑经验
+
+- ssh-key 0.7：`Error::KeyIsEncrypted` 仅存在于 russh::keys `decode_secret_key` 路径；`ssh_key::PrivateKey::from_openssh` 对加密密钥保持加密态返回 Ok；fingerprint 的 Display 自带 `SHA256:` 前缀。
+- CU：`list_apps` 输出为文本 `Name.exe [pid=N, app_id=…]` 非 JSON（按 JSON 正则解析会 NOT_FOUND）；元素 ID 跨观察即失效，必须同一 Exec 内先 `disableDiff:true` 全量观察再动作；button 走 perform_action Invoke 可靠。
+- PowerShell `Select-Object -First N` 截断管道致 cargo exit -1，改用 `-Last`。
+
+### 提交状态
+
+- 本地 commit，**本轮不 push**（阶段 B 一起推）。
