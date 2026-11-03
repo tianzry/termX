@@ -46,6 +46,7 @@ function localProfile(overrides: Partial<Profile> = {}): Profile {
     bastion_profile_id: null,
     init_command: null,
     group_id: null,
+    agent_forwarding: false,
     protocol: "local",
     local_shell: null,
     local_shell_args: null,

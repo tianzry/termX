@@ -659,6 +659,26 @@ body {
   color: #d93025;
 }
 
+/* 「转发 Agent」开关行（钥匙串阶段 B）：开关复用 host-switch。 */
+.cm-agent-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cm-agent-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #5a6470;
+}
+
+.cm-agent-warn {
+  font-size: 12px;
+  color: #d97706;
+}
+
 /* ── SFTP 传输队列 ───────────────────────────────────────── */
 
 .xfer-list {

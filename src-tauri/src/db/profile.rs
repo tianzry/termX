@@ -29,6 +29,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         local_shell_name: row.get(19)?,
         local_shell_icon: row.get(20)?,
         local_start_dir: row.get(21)?,
+        agent_forwarding: row.get(22)?,
     })
 }
 
@@ -77,7 +78,7 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding";
 
 pub fn list(db: &Db) -> AppResult<Vec<Profile>> {
     let conn = db.lock()?;
@@ -128,8 +129,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
     conn.execute(
         "INSERT INTO profiles (id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, \
          sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, \
-         protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22) \
+         protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -139,7 +140,7 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          totp_auto_submit=excluded.totp_auto_submit, totp_regex=excluded.totp_regex, \
          protocol=excluded.protocol, local_shell=excluded.local_shell, local_shell_args=excluded.local_shell_args, \
          local_shell_name=excluded.local_shell_name, local_shell_icon=excluded.local_shell_icon, \
-         local_start_dir=excluded.local_start_dir",
+         local_start_dir=excluded.local_start_dir, agent_forwarding=excluded.agent_forwarding",
         params![
             p.id,
             p.name,
@@ -162,7 +163,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             local_shell_args,
             p.local_shell_name,
             p.local_shell_icon,
-            p.local_start_dir
+            p.local_start_dir,
+            p.agent_forwarding
         ],
     )?;
     Ok(())
@@ -181,7 +183,8 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
     conn.execute(
         "UPDATE profiles SET name=?1, host=?2, port=?3, credential_id=?4, bastion_profile_id=?5, init_command=?6, group_id=?7, algorithms=?8, \
          sftp_protocol=?9, sftp_sudo=?10, sftp_encoding=?11, icon_source=?12, icon_color=?13, totp_auto_submit=?14, totp_regex=?15, \
-         protocol=?16, local_shell=?17, local_shell_args=?18, local_shell_name=?19, local_shell_icon=?20, local_start_dir=?21 WHERE id=?22",
+         protocol=?16, local_shell=?17, local_shell_args=?18, local_shell_name=?19, local_shell_icon=?20, local_start_dir=?21, \
+         agent_forwarding=?22 WHERE id=?23",
         params![
             p.name,
             p.host,
@@ -204,6 +207,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.local_shell_name,
             p.local_shell_icon,
             p.local_start_dir,
+            p.agent_forwarding,
             p.id
         ],
     )?;
@@ -265,6 +269,7 @@ mod tests {
             local_shell_name: None,
             local_shell_icon: None,
             local_start_dir: None,
+            agent_forwarding: false,
         }
     }
 

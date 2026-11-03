@@ -3,8 +3,9 @@
 // 私钥内容不进前端：后端只回元数据与公钥行（commands/keychain.rs 文件段）。
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../backend/client";
-import type { SshFileKeyEntry } from "../backend/client";
+import type { SshAgentStatus, SshFileKeyEntry } from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
+import { describeAgentStatus } from "../domain/sshAgentStatus";
 import {
   SSH_KEY_ALGORITHMS,
   type SshKeyAlgorithm,
@@ -27,6 +28,8 @@ export function KeychainView() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<DialogState>(null);
+  // null = 尚未取到（契约上后端不抛错，仅极端情况如命令未注册兜底）。
+  const [agent, setAgent] = useState<SshAgentStatus | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -37,9 +40,18 @@ export function KeychainView() {
     }
   }, []);
 
+  const refreshAgent = useCallback(async () => {
+    try {
+      setAgent(await api.sshAgentStatus());
+    } catch {
+      setAgent(null);
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void refreshAgent();
+  }, [refresh, refreshAgent]);
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -112,8 +124,33 @@ export function KeychainView() {
       flash(`已将 ${e.name} 设为默认密钥`);
     });
 
+  const agentText = agent ? describeAgentStatus(agent) : null;
+
   return (
     <div className="kc-file-pane">
+      <div className="kc-agent-card">
+        <span className={`kc-agent-dot${agent?.running ? " on" : ""}`} />
+        <div className="kc-agent-main">
+          <span className="kc-agent-title">
+            SSH Agent
+            {agentText && (
+              <span className={`kc-agent-state${agent?.running ? " on" : ""}`}>
+                {agentText.title}
+              </span>
+            )}
+          </span>
+          <span className="kc-agent-detail">
+            {agentText ? agentText.detail : "无法获取 SSH Agent 状态"}
+          </span>
+        </div>
+        {agent?.running && (
+          <span className="kc-agent-count">
+            已加载身份 {agent.identity_count}
+          </span>
+        )}
+        <button onClick={() => void refreshAgent()}>刷新</button>
+      </div>
+
       <div className="kc-file-toolbar">
         <div className="kc-file-title">
           系统密钥<span className="kc-file-sub">~/.ssh</span>

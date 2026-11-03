@@ -215,6 +215,7 @@ mod tests {
             local_shell_name: None,
             local_shell_icon: None,
             local_start_dir: None,
+            agent_forwarding: false,
         }
     }
 

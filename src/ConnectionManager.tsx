@@ -32,6 +32,8 @@ type ProfDraft = {
   group_id: string;
   init_command: string;
   bastion_profile_id: string;
+  /** 转发本机 SSH Agent 到远端。 */
+  agent_forwarding: boolean;
   /** 编辑时原样带回，避免 update 把自定义算法重置为默认。 */
   algorithms?: api.SshAlgorithms;
 };
@@ -79,6 +81,7 @@ function emptyProfile(): ProfDraft {
     group_id: "",
     init_command: "",
     bastion_profile_id: "",
+    agent_forwarding: false,
   };
 }
 
@@ -125,6 +128,18 @@ export function ConnectionManager({
   const [profDraft, setProfDraft] = useState<ProfDraft | null>(null);
   const [credDraft, setCredDraft] = useState<CredDraft | null>(null);
   const [groupDraft, setGroupDraft] = useState<GroupDraft | null>(null);
+  // 「转发 Agent」开关打开时的探测结果；null = 未探测（开关关闭 / 未打开表单）。
+  const [agentRunning, setAgentRunning] = useState<boolean | null>(null);
+
+  async function checkAgent() {
+    try {
+      const st = await api.sshAgentStatus();
+      setAgentRunning(st.running);
+    } catch {
+      // 契约上此命令不抛错；取不到就按未运行提示，避免静默放行。
+      setAgentRunning(false);
+    }
+  }
 
   async function reload() {
     try {
@@ -155,6 +170,7 @@ export function ConnectionManager({
     }
     if (prefill) {
       setTab("profiles");
+      setAgentRunning(null);
       setProfDraft({
         id: newId(),
         name: prefill.name,
@@ -164,6 +180,7 @@ export function ConnectionManager({
         group_id: "",
         init_command: "",
         bastion_profile_id: "",
+        agent_forwarding: false,
       });
       opened.current = true;
     }
@@ -189,8 +206,12 @@ export function ConnectionManager({
       group_id: p.group_id ?? "",
       init_command: p.init_command ?? "",
       bastion_profile_id: p.bastion_profile_id ?? "",
+      agent_forwarding: p.agent_forwarding,
       algorithms: p.algorithms,
     });
+    // 开关已开着的档案打开表单就探测一次，警告态不依赖用户再拨一下。
+    setAgentRunning(null);
+    if (p.agent_forwarding) void checkAgent();
   }
 
   async function saveProfile() {
@@ -212,6 +233,7 @@ export function ConnectionManager({
         bastion_profile_id: d.bastion_profile_id || null,
         init_command: d.init_command.trim() || null,
         group_id: d.group_id || null,
+        agent_forwarding: d.agent_forwarding,
         algorithms: d.algorithms,
       };
       if (profiles.some((p) => p.id === d.id)) await api.updateProfile(profile);
@@ -511,6 +533,30 @@ export function ConnectionManager({
                       }
                     />
                   </label>
+                  <div className="cm-wide cm-agent-row">
+                    <div className="cm-agent-line">
+                      <span>转发 Agent</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={profDraft.agent_forwarding}
+                        className={`host-switch${profDraft.agent_forwarding ? " on" : ""}`}
+                        onClick={() => {
+                          const next = !profDraft.agent_forwarding;
+                          setProfDraft({ ...profDraft, agent_forwarding: next });
+                          if (next) void checkAgent();
+                          else setAgentRunning(null);
+                        }}
+                      >
+                        <span className="host-switch-knob" />
+                      </button>
+                    </div>
+                    {profDraft.agent_forwarding && agentRunning === false && (
+                      <div className="cm-agent-warn">
+                        未检测到运行中的 SSH Agent，转发将不可用
+                      </div>
+                    )}
+                  </div>
                   <div className="cm-actions-bar">
                     <button onClick={saveProfile} disabled={busy}>
                       保存
@@ -521,7 +567,13 @@ export function ConnectionManager({
                   </div>
                 </div>
               ) : (
-                <button className="cm-new" onClick={() => setProfDraft(emptyProfile())}>
+                <button
+                  className="cm-new"
+                  onClick={() => {
+                    setAgentRunning(null);
+                    setProfDraft(emptyProfile());
+                  }}
+                >
                   新建连接
                 </button>
               )}

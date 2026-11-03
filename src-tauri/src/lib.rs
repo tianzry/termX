@@ -162,6 +162,7 @@ pub fn run() {
             commands::profile::profile_totp_set,
             commands::keychain::keychain_generate_key,
             commands::keychain::keychain_list_file_keys,
+            commands::keychain::ssh_agent_status,
             commands::keychain::keychain_generate_file_key,
             commands::keychain::keychain_import_file_key,
             commands::keychain::keychain_delete_file_key,

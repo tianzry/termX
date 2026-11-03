@@ -556,6 +556,97 @@ pub fn keychain_get_default_key(state: State<AppState>) -> Result<String, AppErr
     keychain_get_default_key_impl(&state)
 }
 
+// ---------------------------------------------------------------------------
+// SSH Agent 状态（钥匙串阶段 B）：钥匙串页展示 + 主机档案「转发 Agent」
+// 开关的可用性提示。探测逻辑与 ssh/auth.rs 的 agent 认证路径同款
+// （Unix: $SSH_AUTH_SOCK；Windows: OpenSSH named pipe → Pageant）。
+// ---------------------------------------------------------------------------
+
+/// 本机 SSH agent 的运行状态。只回元数据与计数——agent 协议本身也只会
+/// 返回身份的公钥部分，无私钥内容可泄露。
+#[derive(serde::Serialize)]
+pub struct SshAgentStatus {
+    pub running: bool,
+    /// `unix-socket` / `named-pipe` / `pageant` / `none`。
+    pub kind: String,
+    /// socket 路径或 named pipe 名；Pageant 为 `pageant`；未运行为空。
+    pub path: String,
+    /// agent 已加载的身份数量。
+    pub identity_count: usize,
+    /// 连接失败时的错误信息（仅展示用；running=false 本身不视为错误）。
+    pub error: Option<String>,
+}
+
+pub async fn ssh_agent_status_impl() -> Result<SshAgentStatus, AppError> {
+    use russh::keys::agent::client::AgentClient;
+
+    // 连上 ≠ 可用：pageant 传输是懒连接（duplex 先建、窗口后找），
+    // connect 成功但 list 失败必须判未运行，否则状态卡假阳性。
+    async fn status_via<S>(
+        mut agent: AgentClient<S>,
+        kind: &str,
+        path: String,
+    ) -> SshAgentStatus
+    where
+        S: russh::keys::agent::client::AgentStream + Send + Unpin + 'static,
+    {
+        match agent.request_identities().await {
+            Ok(ids) => SshAgentStatus {
+                running: true,
+                kind: kind.to_string(),
+                path,
+                identity_count: ids.len(),
+                error: None,
+            },
+            Err(e) => SshAgentStatus {
+                running: false,
+                kind: "none".to_string(),
+                path,
+                identity_count: 0,
+                error: Some(format!("Agent 无响应：{e}")),
+            },
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let path = std::env::var("SSH_AUTH_SOCK").unwrap_or_default();
+        match AgentClient::connect_env().await {
+            Ok(agent) => Ok(status_via(agent, "unix-socket", path).await),
+            Err(e) => Ok(SshAgentStatus {
+                running: false,
+                kind: "none".to_string(),
+                path,
+                identity_count: 0,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let pipe = r"\\.\pipe\openssh-ssh-agent";
+        if let Ok(agent) = AgentClient::connect_named_pipe(pipe).await {
+            return Ok(status_via(agent, "named-pipe", pipe.to_string()).await);
+        }
+        match AgentClient::connect_pageant().await {
+            Ok(agent) => Ok(status_via(agent, "pageant", "pageant".to_string()).await),
+            Err(e) => Ok(SshAgentStatus {
+                running: false,
+                kind: "none".to_string(),
+                path: String::new(),
+                identity_count: 0,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn ssh_agent_status() -> Result<SshAgentStatus, AppError> {
+    ssh_agent_status_impl().await
+}
+
 #[cfg(test)]
 mod tests {
     //! 钥匙串生成 / 导入：内存 Db + DbStore，走 test_support::headless_host()。

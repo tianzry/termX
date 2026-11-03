@@ -44,6 +44,7 @@ function profile(partial: Partial<Profile> & { id: string }): Profile {
     bastion_profile_id: null,
     init_command: null,
     group_id: null,
+    agent_forwarding: false,
     ...partial,
   };
 }

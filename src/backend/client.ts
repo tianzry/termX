@@ -58,6 +58,8 @@ export interface Profile {
   /** TOTP 自动提交，默认 true */
   totp_auto_submit?: boolean;
   totp_regex?: string | null;
+  /** 连接时把本机 SSH Agent 转发给远端（serde 默认 false） */
+  agent_forwarding: boolean;
   /** 协议类型：`ssh`（默认）/ `local`（本地 shell 主机，走 PTY） */
   protocol?: string;
   /** 本地主机：选中的 shell 命令；空 = 跟随 设置 → 终端 的默认本地 Shell */
@@ -1305,6 +1307,28 @@ export function knownHostsScanSystem(): Promise<number | null> {
 /** 「导入文件」：外部 known_hosts 去重合并进系统文件，返回新增条数。 */
 export function knownHostsImportFile(path: string): Promise<number> {
   return invoke<number>("known_hosts_import_file", { path });
+}
+
+// ── SSH Agent 状态（钥匙串阶段 B）────────────────────────
+// 后端 `ssh_agent_status` 不抛错，永远返回状态对象：
+// 不可达时 running=false，error 给原因（无 error = 未发现任何 agent）。
+// 字段为 serde 原样 snake_case（R3）。
+
+export type SshAgentKind = "unix-socket" | "named-pipe" | "pageant" | "none";
+
+export interface SshAgentStatus {
+  /** 本机 SSH agent 是否可达。 */
+  running: boolean;
+  kind: SshAgentKind;
+  /** socket 路径 / `\\.\pipe\openssh-ssh-agent` / "pageant"；none 时为空。 */
+  path: string;
+  /** 已加载身份数。 */
+  identity_count: number;
+  error: string | null;
+}
+
+export function sshAgentStatus(): Promise<SshAgentStatus> {
+  return invoke<SshAgentStatus>("ssh_agent_status");
 }
 
 // ── 钥匙串（密钥生成 / 导入）─────────────────────────────

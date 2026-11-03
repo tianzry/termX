@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 35;
+const SCHEMA_VERSION: u32 = 36;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -764,6 +764,16 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    if version < 36 && table_exists(conn, "profiles")? {
+        // 钥匙串阶段 B：主机档案「转发 Agent」开关（对齐 Netcatty
+        // agentForwarding）。写法与 v33/v34 同款：可空默认 + column_exists 幂等。
+        if !column_exists(conn, "profiles", "agent_forwarding")? {
+            conn.execute_batch(
+                "ALTER TABLE profiles ADD COLUMN agent_forwarding INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -859,6 +869,36 @@ mod tests {
             )
             .unwrap();
         assert!(!enabled);
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_36_adds_profile_agent_forwarding() {
+        // v35 老库（钥匙串阶段 B 之前）迁移后应带 agent_forwarding 列，
+        // 旧行默认 false（0），且幂等（再跑一次不炸）。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+             INSERT INTO profiles VALUES ('h', 'legacy');
+             PRAGMA user_version = 35;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        assert!(column_exists(&conn, "profiles", "agent_forwarding").unwrap());
+        let flag: bool = conn
+            .query_row(
+                "SELECT agent_forwarding FROM profiles WHERE id = 'h'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!flag);
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();

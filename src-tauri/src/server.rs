@@ -899,6 +899,8 @@ async fn dispatch_async(
 ) -> Result<Value, Value> {
     match cmd {
         "ssh_connect" => ssh_connect(state, owner, args, tx).await,
+        // agent 探测是异步的（named pipe / unix socket 连接），与 Tauri 侧同款。
+        "ssh_agent_status" => ok(crate::commands::keychain::ssh_agent_status_impl().await),
         // Async like the Tauri command, for the same reason: DNS + TCP connect
         // can block up to 10s per address and must not stall the ws event loop.
         "telnet_open" => {

@@ -71,6 +71,7 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         local_shell_name: None,
         local_shell_icon: None,
         local_start_dir: None,
+        agent_forwarding: false,
     };
     rssh_lib::db::profile::insert(conn, &p)?;
     println!("Profile '{}' created.", p.name);

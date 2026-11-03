@@ -173,6 +173,8 @@ impl SftpHandle {
             log: crate::ssh::client::null_logger(),
             prompt_ctx: None,
             progress: None,
+            // SFTP 后台连接不参与 agent 转发（转发只由终端会话按档案开关发起）。
+            agent_forwarding: false,
         };
         let mut handle = client::ssh_connect(dial, host, port).await?;
 

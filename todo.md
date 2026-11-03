@@ -64,12 +64,12 @@
     标签筛选、置顶、最近连接、多选批量（连接 / 移动 / 删除）、右键菜单、拖拽归组、框选、方向键导航。
   - 受限：分组单层（无多级路径）；标签 / 顺序 / 单击行为 / 面板宽度仅存前端 localStorage。
   - 参考：`components/host-browser/`、`domain/hostBrowser.ts`。
-- [ ] ⬜ **5. Keychain 管理**
+- [x] ✅ **5. Keychain 管理**
   - 密钥对生成、ssh-agent 检测、默认密钥（`~/.ssh`）列出与选用。
   - 后端：`generateKeyPair` / `checkSshAgent` / `getDefaultKeys`（netcatty 侧），termX 需补命令（ssh-agent 检测随 SSH agent 转发已纳入移植，见 P1 #39）。
   - 参考：`components/keychain/`。
   - 阶段 A（2026-11-03）✅：~/.ssh 文件密钥管理——后端六件套 `keychain_list_file_keys` / `keychain_generate_file_key`（ED25519/ECDSA/RSA + passphrase，同名拒绝覆盖、.pub 写失败回滚）/ `keychain_import_file_key` / `keychain_delete_file_key` / `keychain_set_default_key` / `keychain_get_default_key`（默认密钥 settings KV `ssh_default_key`，缺省回落 id_ed25519 并与 ConnectionManager 单一事实来源；私钥不出后端不落日志；is_plain_file_name 防穿越；双注册）；前端 `src/keychain/` KeychainView 挂 Vault「钥匙串」双子标签（系统密钥/已存密钥保留旧 keysPanel）+ keychainModel 纯逻辑 4 测 + sshErrors 5 码映射；门禁 220✓/build✓/cargo check✓/835✓；实机截图对照 Netcatty（设默认系 termX 新增、agent 状态属阶段 B）。
-  - 阶段 B（下一轮）：SSH agent 状态与转发配置接线 UI 收尾、129 验证（现有 ed25519 或新生成密钥）、review + push。
+  - 阶段 B（2026-11-03）✅：SSH agent 状态与转发接线收尾——后端 `ssh_agent_status` 双注册（running 以 request_identities 成功为准，修 pageant 懒连接假阳性）；Profile `agent_forwarding`（schema v36 幂等迁移，默认关）；client.rs 在 pty/shell 前发 `auth-agent-req@openssh.com` + Handler `server_channel_open_agent_forward` 安全边界（未开启 reject AdministrativelyProhibited / 本机 agent 不可达 reject ConnectFailed / 可达 accept + copy_bidirectional 泵字节，逐跳独立判定）；前端钥匙串页状态卡 + ConnectionManager 表单与 VaultView 抽屉「转发 Agent」开关（开启且未运行告警）+ sshAgentStatus 纯逻辑 7 测；门禁 227✓/build✓/cargo check✓/836✓；129 实机：开启转发连接成功，但远端 `SOCK=[]` + `/tmp/ssh-*` 空 → sshd 静默未建监听（服务端问题，转人工 `sudo sshd -T`）；本机 ssh-agent 服务需管理员 → 正向身份（ssh-add 含 passphrase）转人工点测；review 两中危已修（pageant 假阳性、抽屉缺开关）；随阶段 A fc5e93e 一起快进推送 7c53f39→新 HEAD。
 - [x] ✅ **6. Known Hosts 管理页**
   - 已信任主机指纹列表、删除、编辑；连接弹窗之外的管理入口。
   - 实现：`src/VaultView.tsx` known-hosts 子页（列表/搜索/删除/转换为主机档案；

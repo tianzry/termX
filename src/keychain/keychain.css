@@ -63,7 +63,8 @@
 
 .kc-file-actions button,
 .kc-file-row-actions button,
-.kc-file-dialog-actions button {
+.kc-file-dialog-actions button,
+.kc-agent-card button {
   padding: 4px 12px;
   border-radius: 6px;
   border: 1px solid rgba(148, 163, 184, 0.35);
@@ -75,8 +76,81 @@
 
 .kc-file-actions button:hover,
 .kc-file-row-actions button:hover,
-.kc-file-dialog-actions button:hover {
+.kc-file-dialog-actions button:hover,
+.kc-agent-card button:hover {
   background: rgba(148, 163, 184, 0.12);
+}
+
+/* SSH Agent 状态卡（钥匙串阶段 B）：风格对齐 kc-file-row。 */
+.kc-agent-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+}
+
+.kc-agent-card button {
+  flex-shrink: 0;
+}
+
+.kc-agent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.6);
+  flex-shrink: 0;
+}
+
+.kc-agent-dot.on {
+  background: #4ade80;
+}
+
+.kc-agent-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.kc-agent-title {
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kc-agent-state {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  opacity: 0.85;
+}
+
+.kc-agent-state.on {
+  background: rgba(74, 222, 128, 0.18);
+  color: #4ade80;
+  opacity: 1;
+}
+
+.kc-agent-detail {
+  font-size: 11px;
+  opacity: 0.65;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kc-agent-count {
+  font-size: 12px;
+  opacity: 0.75;
+  flex-shrink: 0;
 }
 
 .kc-file-actions button:disabled,

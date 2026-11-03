@@ -31,6 +31,7 @@ import {
   sftpTransferEnqueue,
   sftpTransferPause,
   sftpTransferSetConcurrency,
+  sshAgentStatus,
   sshConnect,
   sshDisconnect,
   sshWrite,
@@ -119,6 +120,19 @@ describe("invoke 参数形状", () => {
       sessionId: "sid-1",
       tabId: null,
     });
+  });
+
+  it("sshAgentStatus 无参调用，返回形状原样透传（后端不抛错）", async () => {
+    const payload = {
+      running: true,
+      kind: "named-pipe",
+      path: "\\\\.\\pipe\\openssh-ssh-agent",
+      identity_count: 3,
+      error: null,
+    };
+    mockedInvoke.mockResolvedValue(payload);
+    await expect(sshAgentStatus()).resolves.toEqual(payload);
+    expect(mockedInvoke).toHaveBeenCalledWith("ssh_agent_status");
   });
 
   it("invoke 拒绝时原样抛出后端错误（供上层 decodeAppError 解析）", async () => {

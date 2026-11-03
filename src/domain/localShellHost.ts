@@ -35,6 +35,7 @@ export const createLocalShellHost = (input: LocalShellHostInput): Profile => ({
   bastion_profile_id: null,
   init_command: null,
   group_id: input.groupId?.trim() || null,
+  agent_forwarding: false,
   protocol: "local",
   local_shell: input.shell?.trim() || undefined,
   local_shell_args: input.shellArgs?.length ? input.shellArgs : undefined,

@@ -215,6 +215,9 @@ pub struct SshHandler {
     /// 终端可达性上下文：有则未知主机走 xterm 内 yes/no/指纹确认；
     /// 无（SFTP / Forward 后台连接）则未知主机直接拒绝。
     prompt_ctx: Option<AuthCtx>,
+    /// 本连接是否允许服务端打开 agent 转发通道（取自档案 agent_forwarding）。
+    /// 安全边界：false 时一律 reject，服务端即便请求也拿不到本机 agent。
+    agent_forwarding: bool,
 }
 
 impl client::Handler for SshHandler {
@@ -250,6 +253,49 @@ impl client::Handler for SshHandler {
                 reply
                     .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
                     .await;
+            }
+            Ok(())
+        }
+    }
+
+    fn server_channel_open_agent_forward(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        // 安全边界：档案未开启 agent_forwarding 的连接一律拒绝——服务端
+        // （或被打穿的远端进程）不能反向借用本机身份。开启时先连本机
+        // agent，连得上才 accept；连不上直接 reject，避免挂起通道。
+        let allowed = self.agent_forwarding;
+        let log = self.log.clone();
+        async move {
+            if !allowed {
+                log("Agent forwarding channel rejected (disabled for this profile).".to_owned());
+                reply
+                    .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                    .await;
+                return Ok(());
+            }
+            match connect_local_agent().await {
+                Some(mut agent) => {
+                    reply.accept().await;
+                    log("Agent forwarding channel accepted; bridging to local SSH agent.".to_owned());
+                    tauri::async_runtime::spawn(async move {
+                        let mut stream = channel.into_stream();
+                        if let Err(e) =
+                            tokio::io::copy_bidirectional(&mut stream, &mut agent).await
+                        {
+                            log::warn!("agent forward bridge ended: {e}");
+                        }
+                    });
+                }
+                None => {
+                    log("Agent forwarding channel rejected (no local SSH agent reachable).".to_owned());
+                    reply
+                        .reject(russh::ChannelOpenFailure::ConnectFailed)
+                        .await;
+                }
             }
             Ok(())
         }
@@ -520,6 +566,8 @@ pub struct DialCtx {
     pub prompt_ctx: Option<AuthCtx>,
     /// 连接弹窗进度（后台连接为 None）。
     pub progress: Option<ProgressEmitter>,
+    /// 该端点是否接受 agent 转发通道（按档案逐跳设置；堡垒跳默认各自档案决定）。
+    pub agent_forwarding: bool,
 }
 
 fn new_handler(
@@ -528,6 +576,7 @@ fn new_handler(
     known_hosts_path: PathBuf,
     log: LogFn,
     prompt_ctx: Option<AuthCtx>,
+    agent_forwarding: bool,
 ) -> (SshHandler, Arc<StdMutex<bool>>, ForwardedChannelRouter) {
     let mismatch = Arc::new(StdMutex::new(false));
     let fwd_channels: ForwardedChannelRouter = Arc::new(StdMutex::new(Default::default()));
@@ -539,8 +588,29 @@ fn new_handler(
         forwarded_channels: fwd_channels.clone(),
         log,
         prompt_ctx,
+        agent_forwarding,
     };
     (handler, mismatch, fwd_channels)
+}
+
+/// 本机 SSH agent 的原始字节流（agent 转发泵用）。
+/// - Windows：OpenSSH Authentication Agent 的 named pipe；Pageant 走
+///   WM_COPYDATA 请求/应答，不是字节流，无法透明桥接（留档，与 auth.rs
+///   的认证路径差异：认证可经 AgentClient 抽象用 Pageant，转发不行）。
+/// - Unix：$SSH_AUTH_SOCK 的 unix socket。
+#[cfg(windows)]
+async fn connect_local_agent(
+) -> Option<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> {
+    tokio::net::windows::named_pipe::ClientOptions::new()
+        .open(r"\\.\pipe\openssh-ssh-agent")
+        .ok()
+}
+
+#[cfg(not(windows))]
+async fn connect_local_agent(
+) -> Option<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin> {
+    let path = std::env::var("SSH_AUTH_SOCK").ok()?;
+    tokio::net::UnixStream::connect(&path).await.ok()
 }
 
 fn map_connect_error(
@@ -577,12 +647,13 @@ pub async fn ssh_connect(
         log,
         prompt_ctx,
         progress,
+        agent_forwarding,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
         p.emit("connecting", None);
     }
-    let (handler, mismatch, _fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx);
+    let (handler, mismatch, _fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
     let result = match timeout(
         connect_timeout,
         client::connect(config, (host.as_str(), port), handler),
@@ -623,12 +694,13 @@ pub async fn ssh_connect_with_forward(
         log,
         prompt_ctx,
         progress,
+        agent_forwarding,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
         p.emit("connecting", None);
     }
-    let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx);
+    let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
     let handle = match timeout(
         connect_timeout,
         client::connect(config, (host.as_str(), port), handler),
@@ -680,12 +752,13 @@ where
         log,
         prompt_ctx,
         progress,
+        agent_forwarding,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
         p.emit("connecting", None);
     }
-    let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx);
+    let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
     let handle = match timeout(
         connect_timeout,
         client::connect_stream(config, stream, handler),
@@ -900,6 +973,7 @@ fn dial_ctx_for_profile(
         log: log.clone(),
         prompt_ctx: ctx.cloned(),
         progress,
+        agent_forwarding: profile.agent_forwarding,
     }
 }
 
@@ -984,6 +1058,7 @@ mod tests {
                 local_shell_name: None,
                 local_shell_icon: None,
                 local_start_dir: None,
+                agent_forwarding: false,
             },
             credential: Credential {
                 id: "credential".into(),
@@ -1125,6 +1200,7 @@ mod tests {
                 local_shell_name: None,
                 local_shell_icon: None,
                 local_start_dir: None,
+                agent_forwarding: false,
             },
             credential: Credential {
                 id: "smoke-credential".into(),
@@ -1255,6 +1331,7 @@ mod tests {
                 local_shell_name: None,
                 local_shell_icon: None,
                 local_start_dir: None,
+                agent_forwarding: false,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1348,6 +1425,7 @@ mod tests {
                 local_shell_name: None,
                 local_shell_icon: None,
                 local_start_dir: None,
+                agent_forwarding: false,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1739,6 +1817,16 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         .channel_open_session()
         .await
         .map_err(|e| AppError::ssh("ssh_open_channel_failed", json!({ "err": e.to_string() })))?;
+
+    // 档案开启「转发 Agent」→ 向服务端请求 auth-agent-req@openssh.com。
+    // want_reply=false（与 OpenSSH -A 一致）；服务端随后开 agent 通道时由
+    // SshHandler::server_channel_open_agent_forward 桥到本机 agent。
+    if profile.agent_forwarding {
+        match channel.agent_forward(false).await {
+            Ok(()) => log("Agent forwarding requested.".to_owned()),
+            Err(e) => log(format!("Agent forwarding request failed: {e}")),
+        }
+    }
 
     channel
         .request_pty(false, "xterm-256color", cols, rows, 0, 0, &[])

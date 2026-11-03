@@ -2826,3 +2826,53 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本地 commit，**本轮不 push**（阶段 B 一起推）。
+
+## 2026-11-03 钥匙串阶段 B：SSH agent 状态展示 + 主机档案「转发 Agent」开关 + 129 实机验证 + push
+
+### 背景与范围
+
+- 阶段 B 收尾：钥匙串页 agent 状态卡、主机档案「转发 Agent」开关（新建表单 + 主机详情抽屉双入口）、129 实机验证、review 自审、门禁、push（含阶段 A fc5e93e 一起快进推送）。
+- Netcatty 对照：agent 状态展示（running/startupType/error）在其代理页 `SshAgentStatus`，agentForwarding 开关在主机详情高级区 `HostDetailsAdvancedSections`；termX 落位：状态卡挂钥匙串页顶部、开关挂主机档案 SSH 区（抽屉与表单同步），语义对齐、位置按 termX 信息架构就近放置。
+
+### 修改点
+
+- 后端新命令 `ssh_agent_status`（R4 双注册：lib.rs `generate_handler!` + server.rs dispatcher 直调 impl）：返回 `{running, kind, path, identity_count, error}`；Windows 先探 OpenSSH named pipe `\\.\pipe\openssh-ssh-agent` 再 Pageant，unix 走 `$SSH_AUTH_SOCK`；**running 以 `request_identities()` 成功为准**（修 pageant crate 懒连接假阳性：connect Ok ≠ agent 可用，失败返回 running=false + error）。
+- Profile 新字段 `agent_forwarding`（schema v36 迁移，`column_exists` 幂等守卫，默认 false 安全敏感关）；[profile.rs](src-tauri/src/db/profile.rs) row_to_profile/insert/update 全链路接线；SFTP 后台连接、CLI 与测试字面量一律 false。
+- 转发实现 [client.rs](src-tauri/src/ssh/client.rs)：connect() 在 channel_open_session 后、request_pty/shell **之前**发 `auth-agent-req@openssh.com`（want_reply=false，同 OpenSSH -A；sshd 在 shell 拉起时才建监听，顺序必须在前）；Handler 实现 `server_channel_open_agent_forward`：档案未开启 → reject(AdministrativelyProhibited)；本机 agent 不可达 → reject(ConnectFailed) 而非 accept 挂起；可达则 accept 并用 `Channel::into_stream()` + `tokio::io::copy_bidirectional` 泵双向字节（russh 默认只 accept 不泵数据）；逐跳按各自档案 flag 独立判定。
+- 前端：KeychainView 顶部「SSH Agent」状态卡（状态点/运行徽标/kind·path/已加载身份 N/刷新，首挂载拉取）；ConnectionManager 新建表单与 VaultView 主机详情抽屉「转发 Agent」开关（host-switch 同款），开启且探测 running=false 时警告「未检测到运行中的 SSH Agent，转发将不可用」；client.ts `sshAgentStatus()` 封装 + `src/domain/sshAgentStatus.ts` 纯逻辑 + 7 单测。
+
+### 门禁
+
+- `npm run test:run` 227✓（220 → +7 sshAgentStatus）；`npm run build` ✓；`cargo check --features server` ✓；`cargo test --lib` 836✓（+1 migration_36_adds_profile_agent_forwarding）。
+- debug 构建 ✓，前台直跑 pid=22960 稳定（Start-Process 数秒即退怪象沿用阶段 A 留档）。
+
+### 129 实机验证
+
+- 档案 129 开启「转发 Agent」保存后连接成功（会话 c76959bf），仅密码认证正常，连接日志含 Agent forwarding requested。
+- 远端 `echo SOCK=[$SSH_AUTH_SOCK]; ssh-add -l` → `SOCK=[]` + `The agent has no identities.`（RC=1）；追加探测：`ls -d /tmp/ssh-*` 无输出（sshd 未建转发监听）、`/etc/ssh/sshd_config` 仅 `#AllowAgentForwarding yes`（注释=默认允许）。
+- 定性：客户端线格式（russh `CHANNEL_REQUEST auth-agent-req@openssh.com`，源码核对 session.rs）与请求顺序正确、本机桥接实现正确；**sshd 静默未建转发监听**，失败点在服务端（可能存在无 sudo 不可读的配置覆盖或非 OpenSSH sshd），转人工排查；本机 ssh-agent 服务 Stopped+Disabled、Start-Service 需管理员（Access denied）→ 正向身份场景转人工点测。
+
+### 比对结论（三类）
+
+- **一致项（截图确认）**：钥匙串页 agent 状态卡（未运行态：状态点灰 + 「Agent 无响应：early eof」+ kind·path）；主机详情抽屉「转发 Agent」开关与关闭态警告文案；开关保存后重连生效。
+- **已修项**：① pageant 懒连接假阳性（状态卡曾误报「运行中/已加载身份 0」，机器上并无 Pageant → 改为 request_identities 成功才判运行，复测显示「未运行 + 错误原因」）；② 主机详情抽屉缺开关（初版只加进 ConnectionManager 新建表单，主编辑面是 VaultView 抽屉 → 补开关 + 打开即探测 + 保存接线）。
+- **待人工项**：① 129 服务端排查：`sudo sshd -T | grep -i forwarding` 与 auth.log 确认 sshd 为何静默拒绝 auth-agent-req；② 正向身份验证：管理员启动 ssh-agent 服务并 `ssh-add` 加载密钥（含 passphrase 场景）后重连 129，远端 `ssh-add -l` 应列出身份、`$SSH_AUTH_SOCK` 应有值；③ Pageant 传输（namedpipes/wmmessage）不可泵，Pageant 用户转发不可用（留档）；④ 状态卡刷新按钮与抽屉打开即探测的时序点测。
+
+### review 自审
+
+- 私钥不外泄：status 命令仅返回 running/kind/path/identity_count/error，无任何密钥材料；转发桥只泵字节不解析身份；keychain.rs 无日志语句（阶段 A 结论延续）。
+- 转发安全边界：档案未开启一律 reject；本机 agent 不可达 reject 而非 accept 挂起；逐跳独立判定；SFTP 后台连接强制关闭转发。
+- 错误码 i18n：本轮无新错误码（status 失败走通用信封），sshErrors.ts 无需新增映射。
+- 命令双注册：`ssh_agent_status` lib.rs + server.rs 两臂齐（R4/INV-4）。
+- UI 与后端能力一致：开关 ↔ profile.agent_forwarding ↔ connect() 请求三点一线；状态卡 ↔ ssh_agent_status 真实探测，无假开关。
+
+### 踩坑经验
+
+- russh 0.62 agent API：方法名 `request_identities()`（无 list_identities）；`server_channel_open_agent_forward` 默认只 accept，应用必须自行泵数据。
+- pageant 0.2 懒连接：connect() 成功仅表示传输可构造；状态判定必须以 request_identities 结果为准。
+- sshd 转发监听在 shell 拉起（do_child）时创建 → 请求必须早于 request_shell；want_reply=false 时拒绝静默，只能靠远端 `$SSH_AUTH_SOCK` 与 `/tmp/ssh-*` 反推。
+- Windows ssh-agent 服务启动需管理员权限，沙箱 shell 非提权 → 正向场景只能人工点测。
+
+### 提交状态
+
+- 本轮 commit（含阶段 A fc5e93e）push 至 origin/main，快进 7c53f39 → 新 HEAD，ls-remote 复核一致。

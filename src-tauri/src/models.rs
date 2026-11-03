@@ -88,6 +88,12 @@ pub struct Profile {
     /// 本地主机：启动目录；`~` 在 spawn 时展开为主目录。None = 继承全局起始目录。
     #[serde(default)]
     pub local_start_dir: Option<String>,
+    // ── 钥匙串阶段 B 新增字段（schema v36）──
+    /// SSH Agent 转发（对齐 Netcatty agentForwarding）：连接时向服务端请求
+    /// `auth-agent-req@openssh.com`，把本机 agent 借给远端用。默认关闭——
+    /// 转发会让远端能借用本机所有已加载身份，属安全敏感开关。
+    #[serde(default)]
+    pub agent_forwarding: bool,
 }
 
 /// `protocol` 的 serde 默认值：历史数据全是 SSH 主机。

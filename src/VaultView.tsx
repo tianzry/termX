@@ -155,6 +155,8 @@ type ComposerDraft = {
   /** `~/.ssh` 下的私钥文件名（auth_method=key 时生效）。 */
   key_file: string;
   init_command: string;
+  /** 转发本机 SSH Agent（对齐 Netcatty agentForwarding）。 */
+  agent_forwarding: boolean;
   // ── Netcatty 1:1 对齐新增（schema v33）──
   sftp_protocol: "auto" | "sftp" | "scp";
   sftp_sudo: boolean;
@@ -556,6 +558,21 @@ export function VaultView({
   });
 
   const [composer, setComposer] = useState<ComposerDraft | null>(null);
+  // 「转发 Agent」开关可用性探测（与 ConnectionManager 同款警告）。
+  const [composerAgentRunning, setComposerAgentRunning] = useState<
+    boolean | null
+  >(null);
+  function probeComposerAgent() {
+    api
+      .sshAgentStatus()
+      .then((st) => setComposerAgentRunning(st.running))
+      .catch(() => setComposerAgentRunning(false));
+  }
+  // 打开已开启转发的档案时探测一次；开关拨动由 onClick 自行探测。
+  useEffect(() => {
+    if (composer?.agent_forwarding) probeComposerAgent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [composer?.id]);
   const [composerBusy, setComposerBusy] = useState(false);
   const [composerErr, setComposerErr] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -1416,6 +1433,7 @@ export function VaultView({
       mfa: false,
       key_file: "",
       init_command: "",
+      agent_forwarding: false,
       sftp_protocol: "auto",
       sftp_sudo: false,
       sftp_encoding: "auto",
@@ -1455,6 +1473,7 @@ export function VaultView({
       mfa,
       key_file: "",
       init_command: p.init_command ?? "",
+      agent_forwarding: p.agent_forwarding ?? false,
       sftp_protocol:
         p.sftp_protocol === "sftp" || p.sftp_protocol === "scp"
           ? p.sftp_protocol
@@ -1618,6 +1637,7 @@ export function VaultView({
         icon_color: d.icon_color || null,
         totp_auto_submit: d.totp_auto_submit,
         totp_regex: d.totp_regex.trim() || null,
+        agent_forwarding: d.agent_forwarding,
       };
       const isEdit = profiles.some((p) => p.id === d.id);
       if (isEdit) {
@@ -1884,6 +1904,7 @@ export function VaultView({
       bastion_profile_id: null,
       init_command: null,
       group_id: null,
+      agent_forwarding: false,
     };
     api
       .createCredential({
@@ -3903,6 +3924,29 @@ export function VaultView({
                   </button>
                 </div>
                 <p className="host-setting-hint">{MFA_HINT}</p>
+
+                <div className="host-setting-row">
+                  <span className="host-setting-label">转发 Agent</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={composer.agent_forwarding}
+                    className={`host-switch${composer.agent_forwarding ? " on" : ""}`}
+                    onClick={() => {
+                      const next = !composer.agent_forwarding;
+                      setComposer({ ...composer, agent_forwarding: next });
+                      if (next) probeComposerAgent();
+                      else setComposerAgentRunning(null);
+                    }}
+                  >
+                    <span className="host-switch-knob" />
+                  </button>
+                </div>
+                {composer.agent_forwarding && composerAgentRunning === false && (
+                  <p className="host-setting-hint">
+                    未检测到运行中的 SSH Agent，转发将不可用
+                  </p>
+                )}
 
                 <div className="host-setting-row">
                   <span className="host-setting-label">用户名</span>
