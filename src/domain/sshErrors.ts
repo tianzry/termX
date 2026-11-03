@@ -150,6 +150,10 @@ const ERROR_MESSAGES: Record<
     return `当前平台不支持该串口特性：${name}`;
   },
   serial_charset_unsupported: (p) => `不支持的串口字符集：${str(p, "charset")}`,
+  // ── Telnet ──
+  telnet_not_found: () => "Telnet 会话已关闭或不存在",
+  telnet_open_failed: (p) => `连接 Telnet ${str(p, "peer")} 失败：${str(p, "err")}`,
+  telnet_op_failed: (p) => `Telnet 操作失败：${str(p, "err")}`,
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,

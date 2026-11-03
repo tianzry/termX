@@ -51,6 +51,7 @@ interface Props {
   onConnect: (profile: Profile) => void;
   onLocal: () => void;
   onSerial: () => void;
+  onTelnet: () => void;
   /** 新建 / 删除后刷新 App 侧列表。 */
   onDataChanged: () => void;
 }
@@ -477,6 +478,7 @@ export function VaultView({
   onConnect,
   onLocal,
   onSerial,
+  onTelnet,
   onDataChanged,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
@@ -3419,6 +3421,10 @@ export function VaultView({
               <button className="vault-secondary-btn" onClick={onSerial}>
                 <Icon name="usb" size={14} />
                 串口
+              </button>
+              <button className="vault-secondary-btn" onClick={onTelnet}>
+                <Icon name="network" size={14} />
+                Telnet
               </button>
             </div>
           </header>

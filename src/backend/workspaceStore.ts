@@ -40,6 +40,15 @@ function isConnector(v: unknown): v is Connector {
       typeof s.byteOrientedBackspace === "boolean"
     );
   }
+  if (c.kind === "telnet") {
+    const s = c.session as Record<string, unknown> | undefined;
+    return (
+      !!s &&
+      typeof s.host === "string" &&
+      typeof s.port === "number" &&
+      (s.inputNewline === "crlf" || s.inputNewline === "lf" || s.inputNewline === "cr")
+    );
+  }
   return (
     c.kind === "ssh" &&
     typeof c.profileId === "string" &&

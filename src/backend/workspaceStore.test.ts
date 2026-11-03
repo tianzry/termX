@@ -65,6 +65,21 @@ describe("workspaceStore", () => {
     expect(loadWorkspace()).toEqual(ws);
   });
 
+  it("Telnet 标签可持久化并恢复", () => {
+    const ws = validWorkspace();
+    ws.tabs.push({
+      id: "t3",
+      title: "Telnet 10.0.0.5",
+      layout: { type: "leaf", id: "l4" },
+      connector: {
+        kind: "telnet",
+        session: { host: "10.0.0.5", port: 23, inputNewline: "crlf" },
+      },
+    });
+    saveWorkspace(ws);
+    expect(loadWorkspace()).toEqual(ws);
+  });
+
   it("无记录时返回 null", () => {
     expect(loadWorkspace()).toBeNull();
   });

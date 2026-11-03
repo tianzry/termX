@@ -23,6 +23,14 @@ export interface SerialSessionConfig {
   byteOrientedBackspace: boolean;
 }
 
+/** Telnet 标签的连接参数（对齐 Netcatty host 的 protocol=telnet；不含凭据）。 */
+export interface TelnetSessionConfig {
+  host: string;
+  port: number;
+  /** 发送回车时使用的行结束符（NVT 默认 CRLF）。 */
+  inputNewline: "crlf" | "lf" | "cr";
+}
+
 export type Connector =
   | {
       kind: "pty";
@@ -36,7 +44,8 @@ export type Connector =
       name?: string;
     }
   | { kind: "ssh"; profileId: string; name: string }
-  | { kind: "serial"; session: SerialSessionConfig; name?: string };
+  | { kind: "serial"; session: SerialSessionConfig; name?: string }
+  | { kind: "telnet"; session: TelnetSessionConfig; name?: string };
 
 export interface LeafNode {
   type: "leaf";
@@ -155,6 +164,9 @@ export function defaultTitle(
   if (connector.kind === "ssh") return connector.name;
   if (connector.kind === "serial") {
     return connector.name || `串口 ${connector.session.port || ""}`.trim();
+  }
+  if (connector.kind === "telnet") {
+    return connector.name || `Telnet ${connector.session.host}`.trim();
   }
   return connector.name || `本地终端 ${ptySeq}`;
 }

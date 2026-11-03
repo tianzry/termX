@@ -692,25 +692,14 @@ export function sftpOpenExternal(
 /** 连接类型全集（比 TerminalDomain 多了 serial / telnet，无域名事件）。 */
 export type ConnKind = "pty" | "ssh" | "serial" | "telnet";
 
-/** 终端面板与主终端的传输绑定：按键上行 / resize / close 三句柄。 */
+/**
+ * 主终端传输绑定（按键上行 / resize / close），由 TerminalPane 自持。
+ */
 export interface TerminalTransport {
   kind: ConnKind;
   write: (text: string) => void;
   resize: (cols: number, rows: number) => void;
   close: () => void;
-}
-
-/**
- * 主终端 ↔ 侧栏面板（串口 / Telnet）的桥：面板持会话，主终端负责渲染与按键。
- * - receive：会话下行字节写入主终端；
- * - attach / detach：把主终端的按键与 resize 路由到该会话，或解除路由；
- * - size：读主终端当前尺寸（telnet_open 需要 cols/rows 作为 NAWS 初值）。
- */
-export interface TermBridge {
-  receive: (bytes: Uint8Array) => void;
-  attach: (transport: TerminalTransport) => void;
-  detach: () => void;
-  size: () => { cols: number; rows: number } | null;
 }
 
 // ── 串口 ──────────────────────────────────────────────────

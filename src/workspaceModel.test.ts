@@ -133,4 +133,12 @@ describe("makeLeaf / defaultTitle", () => {
     expect(defaultTitle({ kind: "serial", session }, 3)).toBe("串口 COM3");
     expect(defaultTitle({ kind: "serial", session, name: "开发板" }, 3)).toBe("开发板");
   });
+
+  it("Telnet 标签默认标题为主机名", () => {
+    const session = { host: "10.0.0.5", port: 23, inputNewline: "crlf" as const };
+    expect(defaultTitle({ kind: "telnet", session }, 3)).toBe("Telnet 10.0.0.5");
+    expect(defaultTitle({ kind: "telnet", session, name: "交换机" }, 3)).toBe(
+      "交换机",
+    );
+  });
 });

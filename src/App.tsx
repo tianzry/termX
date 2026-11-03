@@ -22,7 +22,7 @@ import { VaultView } from "./VaultView";
 import { AsidePanel } from "./AsidePanel";
 import { SftpPanel } from "./SftpPanel";
 import { SerialConnectModal } from "./serial/SerialConnectModal";
-import { TelnetPanel } from "./TelnetPanel";
+import { TelnetConnectModal } from "./telnet/TelnetConnectModal";
 import { ForwardPanel } from "./ForwardPanel";
 import { ConnectionManager } from "./ConnectionManager";
 import { SftpView } from "./sftp/SftpView";
@@ -35,19 +35,16 @@ import type {
   DiscoveredShell,
   Group,
   Profile,
-  TermBridge,
-  TerminalTransport,
 } from "./backend/client";
 import {
   resolveHostDefaultLocalShell,
   resolveShellSetting,
 } from "./domain/localShellHost";
 
-type Tool = "sftp" | "telnet" | "forward" | null;
+type Tool = "sftp" | "forward" | null;
 
 const TOOL_TITLE: Record<Exclude<Tool, null>, string> = {
   sftp: "文件传输",
-  telnet: "Telnet",
   forward: "端口转发",
 };
 
@@ -88,11 +85,6 @@ function saveRecent(id: string, prev: string[]): string[] {
 
 export default function App() {
   const workspaceRef = useRef<WorkspaceHandle>(null);
-  const activePaneRef = useRef<PaneHandle | null>(null);
-  const bridgeTargetRef = useRef<{
-    pane: PaneHandle | null;
-    transport: TerminalTransport | null;
-  }>({ pane: null, transport: null });
 
   const [status, setStatus] = useState("就绪");
   const [surface, setSurface] = useState<RootSurface>("vault");
@@ -195,7 +187,6 @@ export default function App() {
 
   const [activeHandle, setActiveHandle] = useState<PaneHandle | null>(null);
   const onActivePane = useCallback((handle: PaneHandle | null) => {
-    activePaneRef.current = handle;
     setActiveHandle(handle);
   }, []);
 
@@ -207,21 +198,6 @@ export default function App() {
     setActiveSshSid(activeHandle.sshSessionId());
     return activeHandle.subscribeSession(setActiveSshSid);
   }, [activeHandle]);
-
-  const bridge: TermBridge = {
-    receive: (bytes) => bridgeTargetRef.current.pane?.write(bytes),
-    attach: (t) => {
-      const pane = activePaneRef.current;
-      bridgeTargetRef.current = { pane, transport: t };
-      pane?.attachTransport(t);
-    },
-    detach: () => {
-      bridgeTargetRef.current.pane?.attachTransport(null);
-      bridgeTargetRef.current = { pane: null, transport: null };
-    },
-    size: () =>
-      (bridgeTargetRef.current.pane ?? activePaneRef.current)?.size() ?? null,
-  };
 
   function openLocal() {
     setSurface(null);
@@ -278,20 +254,22 @@ export default function App() {
   }
 
   const [showSerialModal, setShowSerialModal] = useState(false);
+  const [showTelnetModal, setShowTelnetModal] = useState(false);
 
-  // 串口入口与 Netcatty 一致：先弹连接参数弹窗，确认后才新建串口标签；
-  // 不再借 ensureTab() 兜底开本地终端（那是 P0 反馈里的错误分支）。
+  // 串口 / Telnet 入口与 Netcatty 一致：先弹连接参数弹窗，确认后才新建
+  // 对应协议的标签；不再借 ensureTab() 兜底开本地终端（错误分支）。
   function openSerial() {
     setShowSerialModal(true);
+  }
+
+  function openTelnet() {
+    setShowTelnetModal(true);
   }
 
   function toggleTool(next: Exclude<Tool, null>) {
     if (tool === next) {
       setTool(null);
       return;
-    }
-    if (next === "telnet") {
-      workspaceRef.current?.ensureTab();
     }
     setTool(next);
   }
@@ -362,6 +340,7 @@ export default function App() {
               onConnect={connect}
               onLocal={openLocal}
               onSerial={openSerial}
+              onTelnet={openTelnet}
               onDataChanged={() => void loadData()}
             />
           )}
@@ -396,7 +375,6 @@ export default function App() {
             onClose={() => setTool(null)}
           >
             {tool === "sftp" && <SftpPanel sshSessionId={activeSshSid} />}
-            {tool === "telnet" && <TelnetPanel bridge={bridge} />}
             {tool === "forward" && <ForwardPanel />}
           </AsidePanel>
         )}
@@ -413,6 +391,22 @@ export default function App() {
               kind: "serial",
               session,
               name: `串口 ${session.port}`,
+            });
+          }}
+        />
+      )}
+
+      {showTelnetModal && (
+        <TelnetConnectModal
+          open={showTelnetModal}
+          onClose={() => setShowTelnetModal(false)}
+          onConnect={(session) => {
+            setShowTelnetModal(false);
+            setSurface(null);
+            workspaceRef.current?.newTab({
+              kind: "telnet",
+              session,
+              name: `Telnet ${session.host}`,
             });
           }}
         />

@@ -3159,3 +3159,54 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 
 
 
+
+---
+
+## 2026-11-03 Telnet 连接入口修复（同串口病根）
+
+### 背景与复现
+- 用户口径：点击「Telnet」会先开出本地终端，再把右侧 TelnetPanel 挂上去。
+- 复现路径（代码级）：`App.toggleTool("telnet")` → `workspaceRef.ensureTab()`（工作区为空时 `newTab({kind:"pty"})`）→ 设置 `tool="telnet"` → 右侧 `TelnetPanel` 通过 `TermBridge` 接管活动窗格的按键路由。
+- 根因：Telnet 被实现成「侧栏工具面板 + 借用某个终端窗格」，入口没有独立连接流程；`ensureTab()` 的兜底分支直接创建了本地 pty 标签。与串口热修前的 `ensureTab()` 病根相同。
+- 现状补充：本轮开工时 `src/` 内已没有 Telnet 按钮（历史批次把 ⋮ 菜单的 Telnet 项移除后，只剩未接线的 `toggleTool` 分支），因此代码路径仍在、UI 入口已缺。本轮按 Netcatty 口径补回入口。
+
+### Netcatty 真实形态（运行版 1.1.90 截图取证）
+- `evidence/netcatty-quickconnect.png`：Vault 搜索框输入主机后回车 → 出现**居中模态向导**（非右侧面板）；协议卡片 SSH / Telnet / Mosh。
+- `evidence/netcatty-telnet-selected.png`：选择 Telnet 后标题变为「连接到 <host>:23」，端口 23，底部「关闭 / 继续」。
+- `evidence/netcatty-telnet-step2.png`：第二步用户名/密码为终端内交互登录做预填，第三步认证。
+- 结论：Netcatty 的 Telnet 是 **host 协议 + 模态连接流程**；它没有「独立 Telnet 工具面板」这种形态。
+
+### 修复方式
+1. **入口改为弹窗先行**：`App.openTelnet()` 只 `setShowTelnetModal(true)`；`TelnetConnectModal` 确认后才 `newTab({kind:"telnet", session})`。删除 `ensureTab()` 及其在 `WorkspaceHandle` 上的接口（全仓已无调用点）。
+2. **Telnet 成为一等连接器**：`workspaceModel` 新增 `TelnetSessionConfig`（host / port / inputNewline）与 `Connector.kind="telnet"`；`defaultTitle` 为 `Telnet <host>`；`workspaceStore.isConnector` 接受 telnet 并持久化恢复。
+3. **会话生命周期归 TerminalPane**：telnet 分支在 `connect()` 内先订阅 `telnet:data/echo/close`，再 `telnet_open`；输入走 `telnet_write`、resize 走 `telnet_resize`、卸载走 `telnet_close`；`RemoteEcho` 事件映射为「本地回显 = 非远端回显」，回显格式化移植自 Netcatty `telnetLocalEcho.ts`（`src/domain/telnetEcho.ts`）。
+4. **删除旧实现**：`src/TelnetPanel.tsx`、`client.ts` 的 `TermBridge`、`PaneHandle` 的 `write/size/attachTransport` 外部接管通道；`Tool` 收敛为 `sftp | forward`。SFTP / 端口转发入口复核：只切工具面板、不建 pty，无同类问题。
+5. **弹窗字段（单步，对照 Netcatty 协议步骤裁剪）**：主机（自动聚焦）、端口（默认 23）、高级折叠内的换行风格（CRLF 默认 / LF / CR）；标题「连接 Telnet」+ 描述「配置 Telnet 连接参数」；底部「取消 / 连接」，主机或端口非法时连接禁用。弹窗壳复用串口弹窗（同一套 Netcatty 对话框骨架）。
+6. **错误码 i18n**：补 `telnet_not_found` / `telnet_open_failed` / `telnet_op_failed` 三条中文映射。
+7. **测试**：新增 `telnetFormConfig`（默认值 / 主机空白 / 端口 1–65535 / 禁用态 / 会话转换）与 `telnetEcho`（可见字符 / 换行 / 退格 / Ctrl-C / 转义序列）共 8 例；`workspaceModel` + Telnet 默认标题，`workspaceStore` + Telnet 持久化恢复。
+
+### 差异清单（termX vs Netcatty）
+| 维度 | Netcatty | termX（本轮） | 结论 |
+|---|---|---|---|
+| 形态 | 居中模态向导（协议卡片 → 用户名 → 认证） | 居中模态单步弹窗 | 对应形态；入口差异见下 |
+| 入口 | Telnet 是 host 协议，经 Vault 搜索 / 新建主机触发 | Vault 工具栏新增「Telnet」按钮（与已有「串口」并列） | 有意保留独立入口（termX 无 host 协议模型） |
+| 字段 | 协议卡片 + 端口 23 + 用户名 / 密码 / 密钥 | 主机 + 端口 23 + 换行风格 | 凭据后端不支持（`telnet_open` 无凭据参数），登录在终端内交互完成，未做假字段 |
+| 底栏 | 关闭 / 继续（多步） | 取消 / 连接（单步） | 一致的单步语义 |
+| 视觉壳 | 448px 居中卡片、标题+描述、字段、底部右对齐主按钮 | 复用串口弹窗同一套样式 | 一致 |
+| 自动登录 | QuickConnect 预填用户名/密码 | 未做（P1 #20 自动登录仍 ⬜） | 待人工/后续 |
+
+### 验证证据
+- `evidence/telnet-before-click.png`：新实例 Vault，工具栏含「Telnet」。
+- `evidence/telnet-after-click.png`：点击 Telnet **只出现弹窗**，没有新建本地终端标签（对照 symptom 修复）。
+- `evidence/telnet-connected.png`：输入 `127.0.0.1:2323`（本地测试服务器）确认后，新建标题为 `Telnet 127.0.0.1` 的标签并显示服务器横幅。
+- `evidence/telnet-input.png`：在 Telnet 标签输入 `hello` 并回车，字节经 `telnet_write` 上行、服务端回显落到终端（输入链路通）。
+- 本地测试服务器为临时 PowerShell TCP 回显（`%TEMP%\tx-telnet-server.ps1`），仅用于验证打开/输入/回显，不属于仓库产物。
+
+### 门禁
+- `npm run test:run` 306✓；`npm run build` ✓；`cargo check --features server` ✓（仅 3 条既有 warning）；`cargo test --lib` 836✓。
+- debug 版本已重新构建并启动（`src-tauri/target/debug/rssh.exe`），实例保持运行供人工手测。
+
+### 无法自动核对 / 待人工
+- Netcatty 的 Telnet 用户名/密码/密钥、自动登录脚本（后端无对应参数，未做）。
+- 与真实 Telnet 设备（交换机/嵌入式板）的协商与中文/UTF-8 表现（本轮仅用本地回显服务器）。
+- 视觉逐像素比对（弹窗壳复用串口已对齐项；本机 DPI 缩放下截图存在比例误差）。

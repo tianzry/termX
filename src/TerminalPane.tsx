@@ -11,7 +11,7 @@
  * 与旧版 App 单会话的区别：
  * - 每格独立一个 sessionId 与传输对象，互不影响；
  * - 断线后保留终端内容，由连接弹窗提示；
- * - 支持被串口 / Telnet 侧栏面板临时「接管」按键路由（外部传输优先）。
+ * - 支持 SSH / 本地 / 串口 / Telnet 四种传输，各自独立连接与生命周期。
  */
 
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
@@ -51,6 +51,7 @@ import {
 import { toHostKeyInfo, type HostKeyInfo } from "./domain/hostKey";
 import { isAuthFailureMessage, userVisibleError } from "./domain/sshErrors";
 import { createSerialInput } from "./domain/serialInput";
+import { formatTelnetLocalEcho } from "./domain/telnetEcho";
 import {
   TerminalConnectionDialog,
   type ChainProgress,
@@ -64,15 +65,9 @@ type Prompt =
   | { kind: "auth"; sessionId: string; payload: AuthPrompt }
   | { kind: "passphrase"; sessionId: string; payload: { prompt: string } };
 
-/** 窗格对外的句柄：供工作区取尺寸 / 写入 / 路由外部会话。 */
+/** 窗格对外的句柄：供工作区切换活动窗格并订阅读话状态。 */
 export interface PaneHandle {
   paneId: string;
-  /** 写入终端（串口 / Telnet 下行字节）。 */
-  write: (bytes: Uint8Array) => void;
-  /** 当前行列（telnet_open 的 NAWS 初值等）。 */
-  size: () => { cols: number; rows: number } | null;
-  /** 接管（或解除）按键 / resize 路由；传 null 恢复本窗格自身会话。 */
-  attachTransport: (t: TerminalTransport | null) => void;
   /** 本窗格 SSH 会话 id；非 SSH 或未连接为 null。 */
   sshSessionId: () => string | null;
   /** 订阅 SSH 会话变化（连接 / 断开时回调）。 */
@@ -87,8 +82,8 @@ interface Props {
   onActivate: () => void;
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
   onStatus: (text: string) => void;
-  /** 打开右侧工具面板（SFTP / Telnet / 端口转发）。 */
-  onOpenTool?: (tool: "sftp" | "telnet" | "forward") => void;
+  /** 打开右侧工具面板（SFTP / 端口转发）。 */
+  onOpenTool?: (tool: "sftp" | "forward") => void;
   /** 关闭当前窗格。 */
   onClosePane?: () => void;
   /** 分屏（在当前标签内）。 */
@@ -159,7 +154,7 @@ export function TerminalPane({
   }
 
   function writeToPane(text: string) {
-    (externalRef.current ?? transportRef.current)?.write(text);
+    transportRef.current?.write(text);
   }
 
   /**
@@ -222,7 +217,6 @@ export function TerminalPane({
   const paneRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<TerminalController | null>(null);
   const transportRef = useRef<TerminalTransport | null>(null);
-  const externalRef = useRef<TerminalTransport | null>(null);
   const unsubRef = useRef<UnlistenFn[]>([]);
   const promptUnsubRef = useRef<UnlistenFn[]>([]);
   const sidRef = useRef<string | null>(null);
@@ -289,19 +283,6 @@ export function TerminalPane({
   useEffect(() => {
     const handle: PaneHandle = {
       paneId,
-      write: (bytes) => {
-        if (aliveRef.current) controllerRef.current?.term.write(bytes);
-      },
-      size: () =>
-        controllerRef.current
-          ? {
-              cols: controllerRef.current.term.cols,
-              rows: controllerRef.current.term.rows,
-            }
-          : null,
-      attachTransport: (t) => {
-        externalRef.current = t;
-      },
       sshSessionId: () =>
         tab.connector.kind === "ssh" ? sidRef.current : null,
       subscribeSession: (cb) => {
@@ -590,6 +571,90 @@ export function TerminalPane({
         setStatus("disconnected");
         setError(message);
         onStatus(`${tab.title} 串口连接失败：${message}`);
+      }
+      return;
+    }
+
+    if (tab.connector.kind === "telnet") {
+      const conn = tab.connector;
+      const sid = api.newSessionId();
+      const cols = c.term.cols;
+      const rows = c.term.rows;
+      // 服务端 WILL ECHO 时自己回显；否则本地回显（默认由服务端回显，
+      // 与 Netcatty 的 telnetLocalEchoRef 初值一致）。
+      const localEcho = { current: false };
+      try {
+        const unsubs: UnlistenFn[] = [];
+        unsubRef.current = unsubs;
+        unsubs.push(
+          await api.onTelnetData(sid, (bytes) =>
+            controllerRef.current?.term.write(bytes),
+          ),
+        );
+        unsubs.push(
+          await api.onTelnetEcho(sid, (remoteEcho) => {
+            localEcho.current = !remoteEcho;
+          }),
+        );
+        unsubs.push(
+          await api.onTelnetClose(sid, () => {
+            if (!aliveRef.current || attempt !== attemptRef.current) return;
+            transportRef.current = null;
+            notifySession(null);
+            setStatus("disconnected");
+            setError("Telnet 已断开");
+            setDisconnectedDismissed(false);
+            onStatus(`${tab.title} Telnet 已断开`);
+          }),
+        );
+        const actual = await api.telnetOpen(
+          conn.session.host,
+          conn.session.port,
+          cols,
+          rows,
+          conn.session.inputNewline,
+          sid,
+        );
+        if (!aliveRef.current || attempt !== attemptRef.current) {
+          void api.telnetClose(actual);
+          return;
+        }
+        transportRef.current = {
+          kind: "telnet",
+          write: (text) => {
+            if (localEcho.current) {
+              const echo = formatTelnetLocalEcho(text);
+              if (echo) {
+                controllerRef.current?.term.write(new TextEncoder().encode(echo));
+              }
+            }
+            void api.telnetWrite(actual, text);
+          },
+          resize: (nextCols, nextRows) => {
+            void api.telnetResize(actual, nextCols, nextRows);
+          },
+          close: () => {
+            void api.telnetClose(actual);
+          },
+        };
+        setStatus("connected");
+        setError(null);
+        setChainProgress(null);
+        setDisconnectedDismissed(false);
+        notifySession(actual);
+        onStatus(
+          `${tab.title} 已连接 Telnet ${conn.session.host}:${conn.session.port}`,
+        );
+        controllerRef.current?.fit.fit();
+        controllerRef.current?.term.focus();
+      } catch (e) {
+        if (!aliveRef.current || attempt !== attemptRef.current) return;
+        const message = userVisibleError(String(e));
+        unsubRef.current.forEach((u) => u());
+        unsubRef.current = [];
+        setStatus("disconnected");
+        setError(message);
+        onStatus(`${tab.title} Telnet 连接失败：${message}`);
       }
       return;
     }
@@ -1175,12 +1240,8 @@ export function TerminalPane({
             void connect();
           }
         }}
-        onData={(data) =>
-          (externalRef.current ?? transportRef.current)?.write(data)
-        }
-        onResize={(cols, rows) =>
-          (externalRef.current ?? transportRef.current)?.resize(cols, rows)
-        }
+        onData={(data) => transportRef.current?.write(data)}
+        onResize={(cols, rows) => transportRef.current?.resize(cols, rows)}
       />
 
       {showConnectionDialog && (

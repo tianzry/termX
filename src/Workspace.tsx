@@ -40,8 +40,6 @@ import {
 export interface WorkspaceHandle {
   /** 新建一个标签并立即连接。 */
   newTab: (connector: Connector) => void;
-  /** 工作区为空时兜底建一个本地终端（侧栏面板需要窗格承载）。 */
-  ensureTab: () => void;
   activateTab: (tabId: string) => void;
   closeTab: (tabId: string) => void;
   renameTab: (tabId: string, title: string) => void;
@@ -57,7 +55,7 @@ interface Props {
   /** 向上发布标签快照，供顶部 TopTabs 渲染（标签状态仍由本组件持有）。 */
   onSnapshot?: (tabs: Tab[], activeTabId: string | null, restorePending: boolean) => void;
   /** 终端工具栏里打开右侧工具面板。 */
-  onOpenTool?: (tool: "sftp" | "telnet" | "forward") => void;
+  onOpenTool?: (tool: "sftp" | "forward") => void;
 }
 
 function resolveActivePane(
@@ -77,7 +75,7 @@ interface LayoutProps {
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
   onStatus: (paneId: string, text: string) => void;
   onRatio: (splitId: string, ratio: number) => void;
-  onOpenTool?: (tool: "sftp" | "telnet" | "forward") => void;
+  onOpenTool?: (tool: "sftp" | "forward") => void;
   onClosePane: (paneId: string) => void;
   onSplit: (dir: SplitDir) => void;
 }
@@ -209,10 +207,6 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       setHydrated(true);
     }, []);
 
-    const ensureTab = useCallback(() => {
-      if (tabsRef.current.length === 0) newTab({ kind: "pty" });
-    }, [newTab]);
-
     const registerPane = useCallback(
       (paneId: string, handle: PaneHandle | null) => {
         setHandles((cur) => {
@@ -342,7 +336,6 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       ref,
       () => ({
         newTab,
-        ensureTab,
         activateTab: (tabId: string) => setActiveTabId(tabId),
         closeTab,
         renameTab: (tabId: string, title: string) =>
@@ -354,7 +347,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
         acceptRestore,
         skipRestore,
       }),
-      [newTab, ensureTab, closeTab, splitActive, closeActivePane],
+      [newTab, closeTab, splitActive, closeActivePane],
     );
 
     // 启动时没有旧记录 → 立即进入可落盘状态
