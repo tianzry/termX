@@ -35,6 +35,7 @@ import { shellDisplayName } from "./domain/shellName";
 import { KeychainView } from "./keychain/KeychainView";
 import { SnippetsView } from "./snippets/SnippetsView";
 import { NotesView } from "./notes/NotesView";
+import { SessionLogsView } from "./sessionLogs/SessionLogsView";
 import {
   getVaultHostRowSubtitle,
   LOCAL_SHELL_HOST_TAG,
@@ -214,7 +215,7 @@ const navItems: Array<{
   { id: "snippets", label: "脚本", icon: "file-code", enabled: true },
   { id: "notes", label: "笔记", icon: "file-text", enabled: true },
   { id: "known-hosts", label: "已知主机", icon: "shield", enabled: true },
-  { id: "logs", label: "日志", icon: "history" },
+  { id: "logs", label: "日志", icon: "history", enabled: true },
 ];
 
 /** 新建主机下拉（对齐 Netcatty：本地终端 (CMD)/新建分组/导入/导出）。
@@ -3753,6 +3754,8 @@ export function VaultView({
               credentials={credentials}
               onOpenHost={onConnect}
             />
+          ) : activeNav === "logs" ? (
+            <SessionLogsView />
           ) : null}
         </div>
 

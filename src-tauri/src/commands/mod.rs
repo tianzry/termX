@@ -16,6 +16,7 @@ pub mod pty;
 #[cfg(desktop)]
 pub mod serial;
 pub mod session;
+pub mod session_logs;
 pub mod settings;
 pub mod sftp;
 pub mod sync;

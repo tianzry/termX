@@ -141,7 +141,7 @@ pub fn read_recording(state: State<AppState>, name: String) -> AppResult<String>
 /// separators, `..`, or an absolute prefix differs from its own `file_name()`,
 /// so this one comparison rejects every traversal/escape shape with no special
 /// cases.
-fn is_safe_recording_name(name: &str) -> bool {
+pub(crate) fn is_safe_recording_name(name: &str) -> bool {
     std::path::Path::new(name).file_name() == Some(std::ffi::OsStr::new(name))
 }
 

@@ -14,6 +14,7 @@ pub mod profile;
 pub mod schema;
 pub mod secret;
 pub mod serial_profile;
+pub mod session_logs;
 pub mod settings;
 pub mod sftp_transfer;
 pub mod snippet;

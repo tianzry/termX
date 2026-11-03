@@ -1,0 +1,330 @@
+/* 会话日志页（阶段 A）。主题变量沿用 styles.css 的 --nc-*。 */
+
+.session-logs-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  border-top: 1px solid hsl(var(--nc-border) / 0.45);
+}
+
+.session-logs-tree {
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  min-width: 240px;
+  min-height: 0;
+  border-right: 1px solid hsl(var(--nc-border) / 0.55);
+}
+
+.session-logs-tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.session-logs-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--nc-border));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.session-logs-refresh:hover:not(:disabled) {
+  background: hsl(var(--nc-hover));
+}
+
+.session-logs-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.session-logs-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 10px 8px;
+  padding: 4px 8px;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 6px;
+  color: hsl(var(--nc-muted));
+}
+
+.session-logs-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.session-logs-clear {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--nc-muted));
+  cursor: pointer;
+  padding: 0;
+}
+
+.session-logs-filters {
+  display: flex;
+  gap: 6px;
+  margin: 0 10px 8px;
+}
+
+.session-logs-select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 6px;
+  background: hsl(var(--nc-bg, 0 0% 100%));
+  color: inherit;
+  font-size: 11px;
+  outline: none;
+}
+
+.session-logs-message {
+  margin: 0 10px 8px;
+  font-size: 12px;
+  color: hsl(var(--nc-muted));
+}
+
+.session-logs-message.error {
+  color: #e5534b;
+}
+
+.session-logs-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 10px;
+}
+
+.session-logs-list-empty {
+  margin: 18px 6px;
+  color: hsl(var(--nc-muted));
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.session-logs-list-empty p {
+  margin: 0 0 6px;
+}
+
+.session-logs-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-logs-item:hover {
+  background: hsl(var(--nc-hover) / 0.6);
+}
+
+.session-logs-item.active {
+  border-color: hsl(var(--nc-border));
+  background: hsl(var(--nc-hover) / 0.8);
+}
+
+.session-logs-item-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.session-logs-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-logs-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 999px;
+  color: hsl(var(--nc-muted));
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.session-logs-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: hsl(var(--nc-muted));
+}
+
+.session-logs-item-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-logs-detail {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.session-logs-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.45);
+}
+
+.session-logs-detail-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-logs-detail-title h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-logs-detail-title p {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: hsl(var(--nc-muted));
+}
+
+.session-logs-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--nc-border));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.session-logs-action:hover {
+  background: hsl(var(--nc-hover));
+}
+
+.session-logs-danger:hover {
+  border-color: #e5534b;
+  color: #e5534b;
+}
+
+.session-logs-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.3);
+}
+
+.session-logs-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  color: hsl(var(--nc-muted));
+}
+
+.session-logs-stat strong {
+  font-weight: 500;
+  color: inherit;
+}
+
+.session-logs-path {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.session-logs-path strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.session-logs-content-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.session-logs-content {
+  margin: 0;
+  padding: 12px 14px;
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.session-logs-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: hsl(var(--nc-muted));
+  font-size: 13px;
+}
+
+.session-logs-delete-modal {
+  width: min(420px, 92vw);
+}
+
+.session-logs-delete-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.session-logs-delete-desc {
+  margin: 0 0 14px;
+  color: hsl(var(--nc-muted));
+  font-size: 12px;
+  line-height: 1.6;
+}

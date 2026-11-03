@@ -157,6 +157,11 @@ const ERROR_MESSAGES: Record<
   // ── Notes ──
   note_id_required: () => "笔记缺少 id，无法保存",
   note_not_found: (p) => `笔记不存在或已删除：${str(p, "id")}`,
+  // ── 会话日志（阶段 A）──
+  session_log_not_found: () => "会话日志不存在或已被删除。",
+  session_log_read_failed: (p) => `读取会话日志失败：${str(p, "err")}`,
+  session_log_format_invalid: (p) => `不支持的导出格式：${str(p, "format")}`,
+  session_log_delete_failed: (p) => `删除会话日志失败：${str(p, "err")}`,
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,

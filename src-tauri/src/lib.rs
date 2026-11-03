@@ -206,6 +206,11 @@ pub fn run() {
             commands::notes::get_note,
             commands::notes::save_note,
             commands::notes::delete_note,
+            // session logs（Vault 日志页；扫描 recordings 目录 + 落库索引）
+            commands::session_logs::list_session_logs,
+            commands::session_logs::get_session_log,
+            commands::session_logs::export_session_log,
+            commands::session_logs::delete_session_log,
             commands::settings::reset_highlights,
             commands::settings::list_recordings,
             commands::settings::read_recording,

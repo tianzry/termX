@@ -717,6 +717,28 @@ fn dispatch(
             &arg::<String>(&args, "id")?,
         )),
 
+        // ---- session logs（Vault 日志页；与 Tauri command 共用同一引擎） ----
+        "list_session_logs" => ok(crate::commands::session_logs::list_session_logs_impl(
+            state,
+        )),
+        "get_session_log" => ok(crate::commands::session_logs::get_session_log_impl(
+            state,
+            &arg::<String>(&args, "id")?,
+        )),
+        "export_session_log" => ok(crate::commands::session_logs::export_session_log_impl(
+            state,
+            &arg::<String>(&args, "id")?,
+            &arg::<String>(&args, "format")?,
+        )),
+        "delete_session_log" => {
+            crate::commands::session_logs::delete_session_log_impl(
+                state,
+                &arg::<String>(&args, "id")?,
+            )
+            .map_err(err_value)?;
+            Ok(Value::Null)
+        }
+
         // ---- serial profiles (CRUD; peer of forwards) ----
         "list_serial_profiles" => ok(crate::db::serial_profile::list(&state.db)),
         "get_serial_profile" => ok(crate::db::serial_profile::get(

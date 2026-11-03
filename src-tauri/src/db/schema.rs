@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 37;
+const SCHEMA_VERSION: u32 = 38;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -795,6 +795,31 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    if version < 38 {
+        // 会话日志索引（阶段 A）：recordings 目录里的 .cast 文件是唯一事实源，
+        // 这张表只存扫描得到的元数据，供 Vault「日志」页列表 / 详情查询。
+        // path 只存裸文件名（不含目录），不设 UNIQUE：扫描 upsert 用 id 冲突即可，
+        // 同一文件名在不同主机名清洗后可能重复，交给 id 保证唯一。
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS session_logs (
+                 id           TEXT PRIMARY KEY,
+                 session_id   TEXT NOT NULL DEFAULT '',
+                 host_id      TEXT,
+                 host_name    TEXT NOT NULL DEFAULT '',
+                 title        TEXT NOT NULL DEFAULT '',
+                 format       TEXT NOT NULL DEFAULT 'asciicast',
+                 path         TEXT NOT NULL,
+                 started_at   INTEGER NOT NULL DEFAULT 0,
+                 ended_at     INTEGER,
+                 duration_ms  INTEGER NOT NULL DEFAULT 0,
+                 size_bytes   INTEGER NOT NULL DEFAULT 0,
+                 event_count  INTEGER NOT NULL DEFAULT 0,
+                 status       TEXT NOT NULL DEFAULT 'completed'
+             );
+             CREATE INDEX IF NOT EXISTS idx_session_logs_started ON session_logs(started_at);",
+        )?;
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -924,6 +949,32 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_38_creates_session_logs_table() {
+        // v37 fixture：只有空库 + user_version=37，migrate 只需要新块即可收尾。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "user_version", 37u32).unwrap();
+
+        migrate(&conn).unwrap();
+        // 幂等：同一版本再跑一次不应报错，也不应重复建表。
+        migrate(&conn).unwrap();
+
+        assert!(table_exists(&conn, "session_logs").unwrap());
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        let indexes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_session_logs_started'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexes, 1);
     }
 
     #[test]

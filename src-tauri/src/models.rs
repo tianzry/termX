@@ -669,6 +669,36 @@ pub struct Note {
     pub is_pinned: bool,
 }
 
+// --- Session Log ---
+
+/// 会话日志索引（阶段 A）：`.cast` 文件是唯一事实源，DB 只存扫描出来的元数据。
+/// `path` 是 recordings 目录内的裸文件名（不含目录），读取时再拼回目录，
+/// 避免把绝对路径暴露给前端 / headless 客户端。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionLog {
+    pub id: String,
+    pub session_id: String,
+    pub host_id: Option<String>,
+    pub host_name: String,
+    pub title: String,
+    pub format: String,
+    /// recordings 目录内的纯文件名（不含目录）。
+    pub path: String,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+    pub duration_ms: i64,
+    pub size_bytes: i64,
+    pub event_count: i64,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionLogDetail {
+    pub log: SessionLog,
+    /// asciicast 原始内容（详情页前端自行解析；保留 ANSI）。
+    pub content: String,
+}
+
 // --- Plugin ---
 
 /// A third-party plugin package installed on this machine. `id` doubles as the

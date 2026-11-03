@@ -3286,3 +3286,26 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 ### 门禁
 - `npm run test:run` 325✓（新增 10 例 markdown/分组/主机链接）；`npm run build` ✓；`cargo check --features server` ✓（仅 3 条既有 warning，本轮无 Rust 改动）；`cargo test --lib` 842✓。
 - 本轮新增依赖 `@tauri-apps/plugin-dialog@2.7.1`（与 Rust crate 2.7.1 版本校验一致；capabilities 原已授予 `dialog:default`）。
+
+---
+
+## 2026-11-03 — 会话日志阶段 A（Vault 日志页 + 索引落库）
+
+### 修改点
+
+1. **后端**
+   - schema v38 新增 `session_logs` 索引表（id/session_id/host/title/format/path/started_at/ended_at/duration_ms/size_bytes/event_count/status）+ `idx_session_logs_started`，历史迁移块未动。
+   - 新增 `db/session_logs.rs`（list/get/upsert/delete）与 `commands/session_logs.rs`（扫描 recordings 目录、解析 asciicast v2 header/事件、标题从 `_YYYYmmdd_HHMMSS` 后缀剥离、时长=最后 elapsed、事件数=o 事件）。
+   - 四个命令 `list_session_logs` / `get_session_log` / `export_session_log`(cast|txt|html) / `delete_session_log`，同时注册 `generate_handler!` 与 server.rs dispatcher；删除前复用 `is_safe_recording_name` 防目录穿越，文件缺失仍清索引。
+   - 导出 txt 保留 ANSI 原样（阶段 A 明确不清洗），html 对 `& < >` 转义并内嵌 `<meta charset>`。
+2. **前端**
+   - `src/sessionLogs/` 新页：左栏 300px（刷新/搜索/主机/格式/列表）+ 右侧详情（开始/结束/时长/事件数/大小/路径 + `<pre>` 原文），删除走页面内确认模态；布局对齐 NotesView，全部 `--nc-*` 变量。
+   - `sessionLogsModel.ts` 纯逻辑：asciicast 解析、时长/大小/时间格式化、筛选、主机去重、排序、导出文件名，11 个单测。
+   - `VaultView` 启用「日志」导航并挂载页面；`client.ts` 四个 invoke 封装；`sshErrors.ts` 补 4 个错误码。
+
+### 踩坑 / 结论
+
+- Netcatty 本身**没有 Vault 日志列表页**：日志是 `recordings` 下的文件，入口在终端工具栏 More actions（Open / Show in folder / Open with…）。termX 的列表页属新增能力，事实源仍是 `.cast` 文件，DB 只存索引，避免把大内容塞进 SQLite。
+- 扫描允许坏行：asciicast 单行损坏只跳过该行，不能让整页 500；文件缺失时详情按 `session_log_read_failed` 报错而不是静默打开别的文件。
+- `recording_enabled` 旧键从未接线，当前页面只索引已有 `.cast`；录制开关、ANSI 渲染/回放、导出落盘留阶段 B。
+- 63 个工具点内完成：门禁 336✓（27 文件）/ build✓ / cargo check(server)✓ / cargo test --lib 853✓；实机截图 `evidence/sessionlogs-page.png`（3 条样例 cast，列表排序、筛选、详情统计与 ANSI 原文可见）。

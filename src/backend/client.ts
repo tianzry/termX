@@ -444,6 +444,49 @@ export async function pickNoteImportFiles(): Promise<string[]> {
   return Array.isArray(picked) ? picked : [picked];
 }
 
+// --- Session Logs（Vault 日志页；扫描 recordings 目录并落库索引） ---
+
+export interface SessionLog {
+  id: string;
+  session_id: string;
+  host_id: string | null;
+  host_name: string;
+  title: string;
+  /** 目前固定 "asciicast"。 */
+  format: string;
+  /** recordings 目录内的纯文件名（不含目录）。 */
+  path: string;
+  /** Unix 毫秒。 */
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number;
+  size_bytes: number;
+  event_count: number;
+  status: string;
+}
+
+export interface SessionLogDetail {
+  log: SessionLog;
+  /** asciicast 原始内容（前端自行解析；保留 ANSI）。 */
+  content: string;
+}
+
+export function listSessionLogs(): Promise<SessionLog[]> {
+  return invoke<SessionLog[]>("list_session_logs");
+}
+
+export function getSessionLog(id: string): Promise<SessionLogDetail> {
+  return invoke<SessionLogDetail>("get_session_log", { id });
+}
+
+export function exportSessionLog(id: string, format: string): Promise<string> {
+  return invoke<string>("export_session_log", { id, format });
+}
+
+export function deleteSessionLog(id: string): Promise<void> {
+  return invoke("delete_session_log", { id });
+}
+
 export function listFonts(): Promise<FontInfo[]> {
   return invoke<FontInfo[]>("list_fonts");
 }
