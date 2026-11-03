@@ -1,28 +1,44 @@
 /**
- * 已连接面板：标签头（名称 + 当前路径）+ 条目列表 + 文件操作。
- * 交互基准为 Netcatty SftpPaneFileList 右键菜单的 termX 范围子集：
- * - 远端行：下载（仅文件）/ 重命名 / 修改权限 / 删除；
- * - 本地行：重命名 / 删除；
- * - 空白处：新建文件夹（远端另有「上传文件」）。
- * 上传 / 下载统一入队传输队列（sftp_transfer_enqueue，阶段 B），
- * 进度 / 暂停 / 取消在 SftpQueuePanel 展示（不再有面板内传输条）；
- * 上传完成后自动刷新本面板列表。
- * 列头 / 排序 / 选择模型 / 虚拟化 / 面包屑留后续阶段；本地侧默认过滤隐藏文件。
+ * 已连接面板：标签头 + 面包屑（可点路径段 / 回根 / 回主目录）+ 工具行
+ * （复制路径 / 新建文件夹 / 显示隐藏文件 / 刷新）+ 列头排序 + 条目列表 + 文件操作。
+ * 交互基准为 Netcatty SftpPaneToolbar / SftpBreadcrumb / SftpPaneFileList 的
+ * termX 范围子集：
+ * - 单击选中，双击 / 回车进入目录（文件 → 内置编辑器，除非已知二进制）；
+ * - 列头点选排序（名称 / 大小 / 修改时间，目录恒置顶）；
+ * - 隐藏文件开关：本地看 hidden 属性，远端按点前缀约定；
+ * - 右键菜单：远端行（下载/重命名/修改权限/删除）、本地行（重命名/删除）、
+ *   空白处（新建文件夹，远端另有「上传文件」）。
+ * 上传 / 下载统一入队传输队列（sftp_transfer_enqueue），
+ * 进度 / 暂停 / 取消在 SftpQueuePanel 展示；上传完成后自动刷新本面板列表。
+ * 跨栏拖放 / 视图切换 / 列显隐留后续阶段。
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+} from "react";
 import * as api from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import { SftpEditorDialog } from "../editor/EditorDialog";
 import { isKnownBinaryFile } from "../editor/editorFile";
 import { Icon } from "../ui/icons";
 import {
+  breadcrumbSegments,
+  filterHiddenEntries,
+  formatEntryMtime,
+  formatEntrySize,
+  isPathRoot,
   joinLocalPath,
   joinRemotePath,
   localParent,
+  pathRoot,
   remoteParent,
+  resolveBreadcrumbVisibleParts,
+  sortSftpRows,
   type PaneConnection,
+  type SftpSortField,
+  type SftpSortOrder,
 } from "./sftpModel";
 import {
   SftpContextMenu,
@@ -37,6 +53,11 @@ interface Row {
   isDir: boolean;
   /** 本地条目类型（local_remove 的 expectedType 守卫）。 */
   kind?: "file" | "directory" | "symlink";
+  size?: number;
+  /** unix 秒；0 = 服务端未提供。 */
+  mtime?: number;
+  /** 本地 hidden 属性（远端无此属性，按点前缀约定判定）。 */
+  hidden?: boolean;
 }
 
 type DialogState =
@@ -80,6 +101,15 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   const [notice, setNotice] = useState("");
   /** 远端外部打开后的临时文件路径记录（key=远端路径），供后续「保存后回传」。 */
   const externalTemps = useRef(new Map<string, string>());
+  /** 显示隐藏文件（本地看 hidden 属性，远端按点前缀约定）。 */
+  const [showHidden, setShowHidden] = useState(false);
+  /** 列头排序状态（默认名称升序，目录恒置顶）。 */
+  const [sortField, setSortField] = useState<SftpSortField>("name");
+  const [sortOrder, setSortOrder] = useState<SftpSortOrder>("asc");
+  /** 面包屑省略号菜单（被折叠的中间段）。 */
+  const [crumbMenu, setCrumbMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
 
   const isRemote = connection.kind === "remote";
   const join = isRemote ? joinRemotePath : joinLocalPath;
@@ -101,21 +131,30 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
       setBusy(true);
       setError("");
       setNotice("");
+      setSelected(null);
       try {
         if (connection.kind === "local") {
           const entries = await api.localListDir(target);
           setRows(
-            entries
-              .filter((e) => !e.hidden)
-              .map((e) => ({
-                name: e.name,
-                isDir: e.kind === "directory" || e.link_target === "directory",
-                kind: e.kind,
-              })),
+            entries.map((e) => ({
+              name: e.name,
+              isDir: e.kind === "directory" || e.link_target === "directory",
+              kind: e.kind,
+              size: e.size,
+              mtime: e.mtime,
+              hidden: e.hidden,
+            })),
           );
         } else {
           const entries = await api.sftpList(connection.sftpId, target);
-          setRows(entries.map((e) => ({ name: e.name, isDir: e.is_dir })));
+          setRows(
+            entries.map((e) => ({
+              name: e.name,
+              isDir: e.is_dir,
+              size: e.size,
+              mtime: e.mtime,
+            })),
+          );
         }
         setPath(target);
         onPathChange(target);
@@ -133,6 +172,82 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
     // 仅在挂载时加载一次；其后的导航走 navigate()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── 导航 / 工具行（面包屑、排序、隐藏开关）──────────────
+
+  /** 过滤 + 排序后的可见行（隐藏开关 / 列头排序不触发重新加载）。 */
+  const visibleRows = useMemo(
+    () =>
+      sortSftpRows(filterHiddenEntries(rows, showHidden), sortField, sortOrder),
+    [rows, showHidden, sortField, sortOrder],
+  );
+
+  /** 双击 / 回车激活：目录进入，文件开内置编辑器（已知二进制不开）。 */
+  const activateRow = (row: Row) => {
+    if (row.isDir) {
+      void load(join(path, row.name));
+      return;
+    }
+    if (!isKnownBinaryFile(row.name)) setEditorRow(row);
+  };
+
+  const onListKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter") return;
+    if (selected === "..") {
+      if (!isPathRoot(path)) {
+        void load(
+          connection.kind === "local" ? localParent(path) : remoteParent(path),
+        );
+      }
+      return;
+    }
+    const row = visibleRows.find((r) => r.name === selected);
+    if (row) activateRow(row);
+  };
+
+  /** 回主目录（本地 local_home / 远端 sftp_home）。 */
+  const goHome = async () => {
+    try {
+      const home =
+        connection.kind === "local"
+          ? await api.localHome()
+          : await api.sftpHome(connection.sftpId);
+      void load(home);
+    } catch (e) {
+      setError(userVisibleError(String(e)));
+    }
+  };
+
+  /** 复制当前路径（Netcatty copyPath 工具项）。 */
+  const copyCurrentPath = async () => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setNotice("已复制当前路径");
+    } catch {
+      setNotice("复制失败：剪贴板不可用");
+    }
+  };
+
+  /** 列头点选：同字段切换方向，换字段回到升序。 */
+  const toggleSort = (field: SftpSortField) => {
+    if (sortField === field) {
+      setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortOrder("asc");
+    }
+  };
+
+  const { segments } = useMemo(() => breadcrumbSegments(path), [path]);
+  const { visibleParts, hiddenParts, needsTruncation } = useMemo(
+    () => resolveBreadcrumbVisibleParts({ segments, maxVisibleParts: 4 }),
+    [segments],
+  );
+  const showEllipsis = needsTruncation && hiddenParts.length > 0;
+  const root = pathRoot(path);
+  const atRoot = isPathRoot(path);
+  const parent =
+    connection.kind === "local" ? localParent(path) : remoteParent(path);
 
   // ── 传输（入队到全局队列，进度在 SftpQueuePanel 展示） ──
 
@@ -377,12 +492,10 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
 
   // ── 渲染 ───────────────────────────────────────────────
 
-  const isRoot =
-    connection.kind === "local"
-      ? localParent(path) === path
-      : path === "/";
-  const parent =
-    connection.kind === "local" ? localParent(path) : remoteParent(path);
+  const sortArrow = (field: SftpSortField) =>
+    sortField === field ? (
+      <Icon name={sortOrder === "asc" ? "arrow-up" : "arrow-down"} size={11} />
+    ) : null;
 
   return (
     <div className="nc-sftp-pane">
@@ -392,11 +505,106 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
           size={13}
         />
         <span className="nc-sftp-pane-label">{connection.label}</span>
-        <span className="nc-sftp-pane-path" title={path}>
-          {path}
-        </span>
+      </div>
+
+      {/* 面包屑行：回主目录 / 回根 / 可点路径段（超长折叠中间段进省略号） */}
+      <div className="nc-sftp-toolbar">
         <button
-          className="nc-sftp-pane-refresh"
+          className="nc-sftp-toolbar-btn"
+          aria-label="回主目录"
+          title="回主目录"
+          onClick={() => void goHome()}
+        >
+          <Icon name="home" size={13} />
+        </button>
+        {root !== null && (
+          <button
+            className="nc-sftp-toolbar-btn nc-sftp-toolbar-root"
+            aria-label="回根目录"
+            title={atRoot ? "已在根目录" : `回到 ${root}`}
+            onClick={() => void load(root)}
+            disabled={atRoot}
+          >
+            {root}
+          </button>
+        )}
+        <div className="nc-sftp-breadcrumb">
+          {visibleParts.map((part, i) => (
+            <Fragment key={part.segment.path}>
+              {i > 0 && (
+                <Icon
+                  name="chevron-right"
+                  size={12}
+                  className="nc-sftp-breadcrumb-sep"
+                />
+              )}
+              {i === 1 && showEllipsis && (
+                <>
+                  <button
+                    className="nc-sftp-breadcrumb-seg"
+                    title="展开被折叠的路径段"
+                    onClick={(e) =>
+                      setCrumbMenu({ x: e.clientX, y: e.clientY })
+                    }
+                  >
+                    …
+                  </button>
+                  <Icon
+                    name="chevron-right"
+                    size={12}
+                    className="nc-sftp-breadcrumb-sep"
+                  />
+                </>
+              )}
+              <button
+                className={
+                  part.originalIndex === segments.length - 1
+                    ? "nc-sftp-breadcrumb-seg current"
+                    : "nc-sftp-breadcrumb-seg"
+                }
+                title={part.segment.path}
+                onClick={() => void load(part.segment.path)}
+              >
+                {part.segment.label}
+              </button>
+            </Fragment>
+          ))}
+        </div>
+      </div>
+
+      {/* 动作行：复制路径 / 新建文件夹 / 显示隐藏文件 / 刷新 */}
+      <div className="nc-sftp-toolbar">
+        <button
+          className="nc-sftp-toolbar-btn"
+          title="复制当前路径"
+          onClick={() => void copyCurrentPath()}
+        >
+          <Icon name="copy" size={13} />
+        </button>
+        <button
+          className="nc-sftp-toolbar-btn"
+          title="新建文件夹"
+          onClick={() => {
+            setDialogError("");
+            setDialog({ type: "mkdir" });
+          }}
+        >
+          <Icon name="folder" size={13} />
+        </button>
+        <button
+          className={
+            showHidden
+              ? "nc-sftp-toolbar-btn active"
+              : "nc-sftp-toolbar-btn"
+          }
+          title={showHidden ? "隐藏隐藏文件" : "显示隐藏文件"}
+          onClick={() => setShowHidden((v) => !v)}
+        >
+          <Icon name={showHidden ? "eye-off" : "eye"} size={13} />
+        </button>
+        <div className="nc-sftp-toolbar-spacer" />
+        <button
+          className="nc-sftp-toolbar-btn"
           aria-label="刷新"
           title="刷新"
           onClick={() => void load(path)}
@@ -406,7 +614,31 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
         </button>
       </div>
 
-      <div className="nc-sftp-pane-list" onContextMenu={openBlankMenu}>
+      {/* 列头：点选排序（目录恒置顶） */}
+      <div className="nc-sftp-cols">
+        <button className="nc-sftp-col" onClick={() => toggleSort("name")}>
+          名称 {sortArrow("name")}
+        </button>
+        <button
+          className="nc-sftp-col nc-sftp-col-num"
+          onClick={() => toggleSort("size")}
+        >
+          大小 {sortArrow("size")}
+        </button>
+        <button
+          className="nc-sftp-col nc-sftp-col-num"
+          onClick={() => toggleSort("modified")}
+        >
+          修改时间 {sortArrow("modified")}
+        </button>
+      </div>
+
+      <div
+        className="nc-sftp-pane-list"
+        tabIndex={0}
+        onContextMenu={openBlankMenu}
+        onKeyDown={onListKeyDown}
+      >
         {error && <div className="nc-sftp-pane-error">{error}</div>}
         {!error && notice && (
           <div className="nc-sftp-pane-hint">{notice}</div>
@@ -414,20 +646,29 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
         {!error && busy && rows.length === 0 && (
           <div className="nc-sftp-pane-hint">加载中...</div>
         )}
-        {!error && !busy && rows.length === 0 && (
+        {!error && !busy && visibleRows.length === 0 && (
           <div className="nc-sftp-pane-hint">空目录</div>
         )}
-        {!error && !isRoot && (
+        {!error && !atRoot && (
           <div
-            className="nc-sftp-pane-row"
-            onClick={() => void load(parent)}
+            className={
+              selected === ".."
+                ? "nc-sftp-pane-row selected"
+                : "nc-sftp-pane-row"
+            }
+            onClick={() => setSelected("..")}
+            onDoubleClick={() => void load(parent)}
           >
-            <Icon name="folder" size={14} />
-            <span>..</span>
+            <span className="nc-sftp-pane-row-cell-name">
+              <Icon name="folder" size={14} />
+              <span className="nc-sftp-pane-row-name">..</span>
+            </span>
+            <span className="nc-sftp-pane-row-cell-num" />
+            <span className="nc-sftp-pane-row-cell-num" />
           </div>
         )}
         {!error &&
-          rows.map((row) => (
+          visibleRows.map((row) => (
             <div
               key={row.name}
               className={
@@ -435,27 +676,39 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
                   ? "nc-sftp-pane-row selected"
                   : "nc-sftp-pane-row"
               }
-              onClick={() => {
-                setSelected(row.name);
-                if (row.isDir) void load(join(path, row.name));
-              }}
-              onDoubleClick={() => {
-                // 双击文件 → 内置编辑器（对齐 Netcatty 打开动作；目录已由单击导航）。
-                if (!row.isDir && !isKnownBinaryFile(row.name)) {
-                  setEditorRow(row);
-                }
-              }}
+              onClick={() => setSelected(row.name)}
+              onDoubleClick={() => activateRow(row)}
               onContextMenu={(e) => openRowMenu(e, row)}
             >
-              {row.isDir ? (
-                <Icon name="folder" size={14} />
-              ) : (
-                <span className="nc-sftp-pane-row-filemark" />
-              )}
-              <span className="nc-sftp-pane-row-name">{row.name}</span>
+              <span className="nc-sftp-pane-row-cell-name">
+                {row.isDir ? (
+                  <Icon name="folder" size={14} />
+                ) : (
+                  <span className="nc-sftp-pane-row-filemark" />
+                )}
+                <span className="nc-sftp-pane-row-name">{row.name}</span>
+              </span>
+              <span className="nc-sftp-pane-row-cell-num">
+                {formatEntrySize(row.size)}
+              </span>
+              <span className="nc-sftp-pane-row-cell-num">
+                {formatEntryMtime(row.mtime)}
+              </span>
             </div>
           ))}
       </div>
+
+      {crumbMenu && (
+        <SftpContextMenu
+          x={crumbMenu.x}
+          y={crumbMenu.y}
+          items={hiddenParts.map((h) => ({
+            label: h.segment.label,
+            onClick: () => void load(h.segment.path),
+          }))}
+          onClose={() => setCrumbMenu(null)}
+        />
+      )}
 
       {menu && (
         <SftpContextMenu

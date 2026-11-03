@@ -314,3 +314,231 @@ export function octalToMode(octal: string): number | null {
   if (!/^[0-7]{3,4}$/.test(octal)) return null;
   return Number.parseInt(octal, 8);
 }
+
+// ── 面包屑分段 / 根判定（对齐 Netcatty SftpBreadcrumb 语义）──
+
+export interface BreadcrumbSegment {
+  label: string;
+  /** 点击该段应导航到的完整路径。 */
+  path: string;
+}
+
+/**
+ * Windows 风格路径：盘符（C:）或反斜杠 UNC（\\server\share）。
+ * 纯 //host/share 按 POSIX 处理（远端约定；正斜杠在 POSIX 里是合法文件名字符，
+ * 不能默认当 UNC）。
+ */
+export function isWindowsLikePath(path: string): boolean {
+  return /^[A-Za-z]:/.test(path) || /^\\\\[^\\]+\\[^\\]+/.test(path);
+}
+
+/**
+ * 路径的文件系统根（面包屑「回根」按钮用）：
+ * POSIX → "/"；Windows → 盘符根（C:\）或 UNC 共享根（\\server\share）；
+ * 无法导出根（如 Windows 相对路径）返回 null。
+ */
+export function pathRoot(path: string): string | null {
+  if (!isWindowsLikePath(path)) return "/";
+  const unc = path.match(/^\\\\([^\\]+)\\([^\\]+)/);
+  if (unc) return `\\\\${unc[1]}\\${unc[2]}`;
+  const drive = path.match(/^[A-Za-z]:/);
+  return drive ? `${drive[0]}\\` : null;
+}
+
+/** 已在文件系统根（禁用面包屑根按钮）。 */
+export function isPathRoot(path: string): boolean {
+  if (!isWindowsLikePath(path)) return path === "/";
+  const root = pathRoot(path);
+  if (root === null) return false;
+  return path.replace(/[\\/]+$/, "") === root.replace(/[\\/]+$/, "");
+}
+
+/**
+ * 当前路径 → 面包屑分段（每段可点击，path 为该段的完整路径）：
+ * - POSIX：按 "/" 分段，前缀 "/"（//host/share 形态保留 "//" 前缀）；
+ * - Windows 盘符：首段为盘符（"C:" 显示，路径补 "C:\"），其余按斜杠分段；
+ * - UNC：\\server\share 合并为单一首段，避免点进半截共享根。
+ */
+export function breadcrumbSegments(path: string): {
+  segments: BreadcrumbSegment[];
+  isWindowsDrive: boolean;
+} {
+  if (!isWindowsLikePath(path)) {
+    const parts = path.split("/").filter(Boolean);
+    const prefix = /^\/\/(?!\/)/.test(path) ? "//" : "/";
+    return {
+      segments: parts.map((part, i) => ({
+        label: part,
+        path: `${prefix}${parts.slice(0, i + 1).join("/")}`,
+      })),
+      isWindowsDrive: false,
+    };
+  }
+  const unc = path.match(/^\\\\([^\\]+)\\([^\\]+)/);
+  if (unc) {
+    const root = `\\\\${unc[1]}\\${unc[2]}`;
+    const rest = path.slice(root.length).replace(/^[\\/]+/, "");
+    const restParts = rest ? rest.split(/[\\/]+/).filter(Boolean) : [];
+    return {
+      segments: [
+        { label: root, path: root },
+        ...restParts.map((part, i) => ({
+          label: part,
+          path: `${root}\\${restParts.slice(0, i + 1).join("\\")}`,
+        })),
+      ],
+      isWindowsDrive: false,
+    };
+  }
+  const parts = path.split(/[\\/]+/).filter(Boolean);
+  return {
+    segments: parts.map((part, i) => {
+      const built = parts.slice(0, i + 1).join("\\");
+      return {
+        label: part,
+        path: /^[A-Za-z]:$/.test(built) ? `${built}\\` : built,
+      };
+    }),
+    isWindowsDrive: true,
+  };
+}
+
+export interface BreadcrumbVisiblePart {
+  segment: BreadcrumbSegment;
+  originalIndex: number;
+}
+
+/** 截断预算钳制为正整数（非法 / 小数 → 向下取整，最小 1）。 */
+export function normalizeBreadcrumbBudget(maxVisibleParts: number): number {
+  if (!Number.isFinite(maxVisibleParts)) return 1;
+  return Math.max(1, Math.floor(maxVisibleParts));
+}
+
+/**
+ * 面包屑截断（对齐 Netcatty resolveSftpBreadcrumbVisibleParts）：
+ * 超长时保留首段（根 / 盘符恒可点）+ 尾部 budget-1 段，中间折叠进省略号；
+ * budget=1 只显示首段。不超长原样返回。
+ */
+export function resolveBreadcrumbVisibleParts(opts: {
+  segments: BreadcrumbSegment[];
+  maxVisibleParts: number;
+}): {
+  visibleParts: BreadcrumbVisiblePart[];
+  hiddenParts: BreadcrumbVisiblePart[];
+  needsTruncation: boolean;
+} {
+  const budget = normalizeBreadcrumbBudget(opts.maxVisibleParts);
+  const { segments } = opts;
+  if (segments.length <= budget) {
+    return {
+      visibleParts: segments.map((segment, i) => ({
+        segment,
+        originalIndex: i,
+      })),
+      hiddenParts: [],
+      needsTruncation: false,
+    };
+  }
+  if (budget === 1) {
+    return {
+      visibleParts: [{ segment: segments[0], originalIndex: 0 }],
+      hiddenParts: segments.slice(1).map((segment, i) => ({
+        segment,
+        originalIndex: i + 1,
+      })),
+      needsTruncation: true,
+    };
+  }
+  const tailCount = budget - 1;
+  const tail = segments.slice(-tailCount).map((segment, i) => ({
+    segment,
+    originalIndex: segments.length - tailCount + i,
+  }));
+  const hidden = segments.slice(1, -tailCount).map((segment, i) => ({
+    segment,
+    originalIndex: i + 1,
+  }));
+  return {
+    visibleParts: [{ segment: segments[0], originalIndex: 0 }, ...tail],
+    hiddenParts: hidden,
+    needsTruncation: true,
+  };
+}
+
+// ── 排序 / 隐藏过滤 / 格式化（对齐 Netcatty sortSftpEntries / filterHiddenFiles）──
+
+export type SftpSortField = "name" | "size" | "modified";
+export type SftpSortOrder = "asc" | "desc";
+
+export interface SortableRow {
+  name: string;
+  isDir: boolean;
+  size?: number;
+  /** unix 秒；0 = 服务端未提供。 */
+  mtime?: number;
+}
+
+/**
+ * 列表排序：目录恒置顶（降序也只反转字段比较，不打散分组）；
+ * 名称用 localeCompare，大小 / 时间用数值比较。
+ */
+export function sortSftpRows<T extends SortableRow>(
+  rows: T[],
+  field: SftpSortField,
+  order: SftpSortOrder,
+): T[] {
+  if (rows.length === 0) return rows;
+  return [...rows].sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    let cmp = 0;
+    switch (field) {
+      case "name":
+        cmp = a.name.localeCompare(b.name);
+        break;
+      case "size":
+        cmp = (a.size ?? 0) - (b.size ?? 0);
+        break;
+      case "modified":
+        cmp = (a.mtime ?? 0) - (b.mtime ?? 0);
+        break;
+    }
+    return order === "asc" ? cmp : -cmp;
+  });
+}
+
+/** 隐藏判定：".." 永不隐藏；Windows hidden 属性或 Unix 点前缀（远端约定）。 */
+export function isHiddenEntry(entry: { name: string; hidden?: boolean }): boolean {
+  if (entry.name === "..") return false;
+  if (entry.hidden === true) return true;
+  return entry.name.startsWith(".");
+}
+
+/** 按开关过滤隐藏条目；showHidden 时原样返回（不做无谓拷贝）。 */
+export function filterHiddenEntries<T extends { name: string; hidden?: boolean }>(
+  entries: T[],
+  showHidden: boolean,
+): T[] {
+  if (showHidden) return entries;
+  return entries.filter((e) => !isHiddenEntry(e));
+}
+
+/** 文件大小格式化：0 / 缺省 → "--"；Bytes 无小数，其余保留两位。 */
+export function formatEntrySize(bytes: number | undefined): string {
+  if (!bytes || bytes <= 0) return "--";
+  const units = ["Bytes", "KB", "MB", "GB", "TB"];
+  const i = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
+  const size = bytes / Math.pow(1024, i);
+  return `${size.toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
+}
+
+/** mtime（unix 秒）→ "YYYY-MM-DD HH:mm"；0 / 无效 → "--"。 */
+export function formatEntryMtime(epochSeconds: number | undefined): string {
+  if (!epochSeconds) return "--";
+  const d = new Date(epochSeconds * 1000);
+  if (Number.isNaN(d.getTime())) return "--";
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

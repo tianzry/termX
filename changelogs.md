@@ -2686,3 +2686,35 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 随推 d4b0886（阶段 A）+ 本轮阶段 B；远端 main 以 ls-remote 复核。
+
+---
+
+## 2026-11-03 · SFTP 拖放与面包屑/工具条（P0 #9）阶段 A：工具栏 + 面包屑 + 排序 + 隐藏开关
+
+### 调研（Netcatty 基准，行为对齐不复制代码）
+
+- 工具栏为两行布局（`SftpPaneToolbar`）：路径行（面包屑）+ 动作行；按钮全集含 bookmark/终端联动/copyPath/viewMode/listDensity/filter/encoding/newFolder/newFile/showHidden/refresh——termX 阶段 A 取已具备后端支撑的子集（copyPath/newFolder/showHidden/refresh），其余（书签/视图切换/密度/过滤/编码/新建文件）随后续阶段，避免假按钮（Pr3）。
+- 面包屑（`SftpBreadcrumb` + `state/sftp/utils.ts`）：Home + 根按钮（atRoot 禁用）+ 可点路径段；`maxVisibleParts=4` 截断（首段恒显 + 尾部 budget-1 段，中间进省略号下拉）；纯 `//host/share` 默认按 POSIX（正斜杠是合法 POSIX 文件名字符，不能默认当 UNC）。
+- 排序/隐藏（`components/sftp/utils.ts`）：`sortSftpEntries` 目录恒置顶（降序只反转字段比较）、名称 localeCompare / 大小 / 时间数值比较；`filterHiddenFiles`：Windows hidden 属性或点前缀，".." 永不隐藏。
+- 交互：单击仅选中，双击 / 回车进入目录（替换骨架期「单击进目录」）。
+
+### 修改点
+
+- `src/sftp/sftpModel.ts` 纯逻辑（+19 单测，全部可直接 Vitest 断言）：`isWindowsLikePath`（盘符/反斜杠 UNC；`//x` 按 POSIX）、`pathRoot`（"/" / "C:\" / UNC 共享根 / 相对路径 null）、`isPathRoot`、`breadcrumbSegments`（POSIX 前缀累积 / 盘符首段 "C:"→"C:\" / UNC 根合并单段）、`normalizeBreadcrumbBudget` + `resolveBreadcrumbVisibleParts`（截断保留原始下标）、`sortSftpRows`（目录恒置顶泛型比较器）、`isHiddenEntry` / `filterHiddenEntries`（showHidden 原样返回不拷贝）、`formatEntrySize`（0→"--"，Bytes 无小数其余两位）、`formatEntryMtime`（0/无效→"--"）。
+- `src/sftp/SftpPaneView.tsx`：头部改为标签行 + 面包屑行 + 动作行 + 列头四段；面包屑行 = 回主目录（`localHome`/`sftpHome`）+ 回根按钮（atRoot 禁用）+ 路径段（末段加粗，超 4 段出省略号 → 复用 SftpContextMenu 展开折叠段）；动作行 = 复制路径（navigator.clipboard，成功提示走 notice）/ 新建文件夹（复用既有对话框）/ 显示隐藏开关（Eye/EyeOff 切换，active 态）/ 刷新；列头（名称/大小/修改时间）点选排序，同字段切方向、换字段回升序；`Row` 扩展 size/mtime/hidden，load 不再预过滤隐藏（改渲染期 `filterHiddenEntries` + `sortSftpRows` memo 管线，开关/排序零重载）；单击选中、双击/回车激活（目录进入，文件开编辑器，".." 回上级），导航清空选中。
+- `src/ui/icons.tsx`：补 home / arrow-up / arrow-down（lucide 路径，ISC）。
+- `src/styles.css`：`.nc-sftp-toolbar*`（28px 双行、22px 图标按钮、active/disabled 态）、`.nc-sftp-breadcrumb*`（段按钮 max-width 160 截断、current 加粗、分隔符 40% 透明）、`.nc-sftp-cols/.nc-sftp-col`（与行同网格模板 `minmax(0,1fr) 88px 128px`）、行改 grid + 数值列右对齐 muted；删除孤儿 `.nc-sftp-pane-path/.nc-sftp-pane-refresh`。
+- 纯前端改动，无新后端命令（排序/隐藏/剪贴板/面包屑全在前端，复用既有 `localHome`/`sftpHome`/`localListDir`/`sftpList` 封装）。
+
+### 踩坑
+
+- 排序测试期望初稿漏了「目录恒置顶优先于字段序」：`size desc` / `modified asc` 的目录组内顺序要单独推（降序反转组内比较，稳定排序保持并列序）。
+- 空目录提示判定从 `rows.length` 改 `visibleRows.length`：否则隐藏开关关闭且目录只剩隐藏文件时误显「..」+ 无行。
+
+### 门禁
+
+- npm run test:run **202/202** ✓（183 → 202：sftpModel +19）；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check --features server ✓（仅既有 3 警告）；cargo test --lib **813✓**。
+
+### 提交状态
+
+- 本地 commit，未推送（阶段 B：跨栏拖放含拖到桌面 + 入队联动 + 129 live + review + push）。

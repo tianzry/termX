@@ -3426,20 +3426,24 @@ button:disabled {
   flex-shrink: 0;
 }
 
-.nc-sftp-pane-path {
-  flex: 1;
-  min-width: 0;
+/* 工具行（面包屑行 / 动作行共用；对齐 Netcatty 两行 h-7 布局） */
+.nc-sftp-toolbar {
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+  font-size: 12px;
   color: hsl(var(--muted-foreground));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.nc-sftp-pane-refresh {
+.nc-sftp-toolbar-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  min-width: 22px;
   height: 22px;
   flex-shrink: 0;
   border: none;
@@ -3447,11 +3451,110 @@ button:disabled {
   border-radius: 5px;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
+  font-size: 12px;
 }
 
-.nc-sftp-pane-refresh:hover {
+.nc-sftp-toolbar-btn:hover {
   background: hsl(var(--muted));
   color: hsl(var(--foreground));
+}
+
+.nc-sftp-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.nc-sftp-toolbar-btn:disabled:hover {
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-toolbar-btn.active {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+/* 根按钮（"/" 或 "C:\"）：文本形态，禁用 = 已在根 */
+.nc-sftp-toolbar-root {
+  padding: 0 6px;
+}
+
+.nc-sftp-toolbar-spacer {
+  flex: 1;
+}
+
+.nc-sftp-breadcrumb {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.nc-sftp-breadcrumb-seg {
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.nc-sftp-breadcrumb-seg:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.nc-sftp-breadcrumb-seg.current {
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+
+.nc-sftp-breadcrumb-sep {
+  opacity: 0.4;
+  flex-shrink: 0;
+}
+
+/* 列头（点选排序；网格模板与行保持一致） */
+.nc-sftp-cols {
+  height: 28px;
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 128px;
+  gap: 8px;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-col {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  min-width: 0;
+}
+
+.nc-sftp-col:hover {
+  color: hsl(var(--foreground));
+}
+
+.nc-sftp-col-num {
+  justify-content: flex-end;
 }
 
 .nc-sftp-pane-list {
@@ -3459,12 +3562,14 @@ button:disabled {
   min-height: 0;
   overflow-y: auto;
   padding: 4px 0;
+  outline: none;
 }
 
 .nc-sftp-pane-row {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px 128px;
   gap: 8px;
+  align-items: center;
   padding: 5px 12px;
   font-size: 12.5px;
   cursor: pointer;
@@ -3472,6 +3577,22 @@ button:disabled {
 
 .nc-sftp-pane-row:hover {
   background: hsl(var(--accent));
+}
+
+.nc-sftp-pane-row-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nc-sftp-pane-row-cell-num {
+  font-size: 11.5px;
+  color: hsl(var(--muted-foreground));
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nc-sftp-pane-row-name {

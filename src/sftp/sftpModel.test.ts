@@ -1,19 +1,30 @@
 import { describe, expect, it } from "vitest";
 import type { Profile } from "../backend/client";
 import {
+  breadcrumbSegments,
   buildPickerSections,
   connectBranch,
+  filterHiddenEntries,
   flattenPickerItems,
+  formatEntryMtime,
+  formatEntrySize,
+  isHiddenEntry,
+  isPathRoot,
+  isWindowsLikePath,
   joinLocalPath,
   joinRemotePath,
   localParent,
+  normalizeBreadcrumbBudget,
   octalToMode,
   osFromUname,
   osIconName,
+  pathRoot,
   permsFromMode,
   permsToOctal,
   pickerItemToTarget,
   remoteParent,
+  resolveBreadcrumbVisibleParts,
+  sortSftpRows,
   type ConnectedHostEntry,
   type PickerSection,
 } from "./sftpModel";
@@ -216,5 +227,177 @@ describe("权限位换算（chmod 对话框）", () => {
     expect(octalToMode("9")).toBeNull();
     expect(octalToMode("abc")).toBeNull();
     expect(octalToMode("")).toBeNull();
+  });
+});
+
+describe("面包屑分段 / 根判定", () => {
+  it("isWindowsLikePath：盘符与反斜杠 UNC 命中，纯 //host/share 按 POSIX", () => {
+    expect(isWindowsLikePath("C:\\Users")).toBe(true);
+    expect(isWindowsLikePath("c:/Users")).toBe(true);
+    expect(isWindowsLikePath("\\\\srv\\share\\x")).toBe(true);
+    expect(isWindowsLikePath("//srv/share")).toBe(false);
+    expect(isWindowsLikePath("/home/x")).toBe(false);
+  });
+
+  it("POSIX 分段：前缀 /，逐段累积路径", () => {
+    const { segments, isWindowsDrive } = breadcrumbSegments("/home/tianzry/docs");
+    expect(isWindowsDrive).toBe(false);
+    expect(segments.map((s) => s.label)).toEqual(["home", "tianzry", "docs"]);
+    expect(segments.map((s) => s.path)).toEqual([
+      "/home",
+      "/home/tianzry",
+      "/home/tianzry/docs",
+    ]);
+  });
+
+  it("POSIX 根路径无分段；//host/share 保留 // 前缀", () => {
+    expect(breadcrumbSegments("/").segments).toEqual([]);
+    const { segments } = breadcrumbSegments("//host/share/a");
+    expect(segments[0]).toEqual({ label: "host", path: "//host" });
+    expect(segments[1].path).toBe("//host/share");
+  });
+
+  it("Windows 盘符分段：首段显示 C: 但路径为 C:\\", () => {
+    const { segments, isWindowsDrive } = breadcrumbSegments("C:\\Users\\tianzry");
+    expect(isWindowsDrive).toBe(true);
+    expect(segments[0]).toEqual({ label: "C:", path: "C:\\" });
+    expect(segments[1]).toEqual({ label: "Users", path: "C:\\Users" });
+    expect(segments[2].path).toBe("C:\\Users\\tianzry");
+  });
+
+  it("UNC 分段：\\\\server\\share 合并为单一首段", () => {
+    const { segments, isWindowsDrive } = breadcrumbSegments("\\\\wsl.localhost\\Ubuntu\\home");
+    expect(isWindowsDrive).toBe(false);
+    expect(segments[0]).toEqual({
+      label: "\\\\wsl.localhost\\Ubuntu",
+      path: "\\\\wsl.localhost\\Ubuntu",
+    });
+    expect(segments[1].path).toBe("\\\\wsl.localhost\\Ubuntu\\home");
+  });
+
+  it("pathRoot：POSIX → /；盘符 → C:\\；UNC → 共享根", () => {
+    expect(pathRoot("/home/x")).toBe("/");
+    expect(pathRoot("C:\\Users")).toBe("C:\\");
+    expect(pathRoot("\\\\srv\\share\\dir")).toBe("\\\\srv\\share");
+  });
+
+  it("isPathRoot：根目录命中，非根不命中", () => {
+    expect(isPathRoot("/")).toBe(true);
+    expect(isPathRoot("/home")).toBe(false);
+    expect(isPathRoot("C:\\")).toBe(true);
+    expect(isPathRoot("C:")).toBe(true);
+    expect(isPathRoot("C:\\Users")).toBe(false);
+    expect(isPathRoot("\\\\srv\\share")).toBe(true);
+    expect(isPathRoot("\\\\srv\\share\\x")).toBe(false);
+  });
+});
+
+describe("面包屑截断", () => {
+  const segs = (labels: string[]) =>
+    labels.map((label, i) => ({ label, path: `/${labels.slice(0, i + 1).join("/")}` }));
+
+  it("预算钳制为正整数", () => {
+    expect(normalizeBreadcrumbBudget(4)).toBe(4);
+    expect(normalizeBreadcrumbBudget(0)).toBe(1);
+    expect(normalizeBreadcrumbBudget(2.9)).toBe(2);
+    expect(normalizeBreadcrumbBudget(Number.NaN)).toBe(1);
+  });
+
+  it("不超长原样返回", () => {
+    const r = resolveBreadcrumbVisibleParts({ segments: segs(["a", "b"]), maxVisibleParts: 4 });
+    expect(r.needsTruncation).toBe(false);
+    expect(r.visibleParts).toHaveLength(2);
+    expect(r.hiddenParts).toHaveLength(0);
+  });
+
+  it("budget=1 只显示首段", () => {
+    const r = resolveBreadcrumbVisibleParts({ segments: segs(["a", "b", "c"]), maxVisibleParts: 1 });
+    expect(r.visibleParts.map((p) => p.segment.label)).toEqual(["a"]);
+    expect(r.hiddenParts.map((p) => p.segment.label)).toEqual(["b", "c"]);
+    expect(r.needsTruncation).toBe(true);
+  });
+
+  it("budget=4：首段 + 尾部 3 段，中间折叠且保留原始下标", () => {
+    const r = resolveBreadcrumbVisibleParts({
+      segments: segs(["s1", "s2", "s3", "s4", "s5", "s6", "s7"]),
+      maxVisibleParts: 4,
+    });
+    expect(r.visibleParts.map((p) => p.segment.label)).toEqual(["s1", "s5", "s6", "s7"]);
+    expect(r.visibleParts.map((p) => p.originalIndex)).toEqual([0, 4, 5, 6]);
+    expect(r.hiddenParts.map((p) => p.segment.label)).toEqual(["s2", "s3", "s4"]);
+    expect(r.hiddenParts.map((p) => p.originalIndex)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("排序 / 隐藏过滤", () => {
+  const rows = [
+    { name: "zeta.txt", isDir: false, size: 10, mtime: 300 },
+    { name: "alpha", isDir: true, size: 0, mtime: 100 },
+    { name: "beta.txt", isDir: false, size: 2048, mtime: 200 },
+    { name: "gamma", isDir: true, size: 0, mtime: 400 },
+  ];
+
+  it("名称升序：目录恒置顶", () => {
+    const sorted = sortSftpRows(rows, "name", "asc");
+    expect(sorted.map((r) => r.name)).toEqual(["alpha", "gamma", "beta.txt", "zeta.txt"]);
+  });
+
+  it("名称降序：只反转组内顺序，目录仍置顶", () => {
+    const sorted = sortSftpRows(rows, "name", "desc");
+    expect(sorted.map((r) => r.name)).toEqual(["gamma", "alpha", "zeta.txt", "beta.txt"]);
+  });
+
+  it("大小 / 时间排序（缺省按 0 计；目录仍恒置顶）", () => {
+    expect(sortSftpRows(rows, "size", "desc").map((r) => r.name)).toEqual([
+      "alpha", "gamma", "beta.txt", "zeta.txt",
+    ]);
+    expect(sortSftpRows(rows, "modified", "asc").map((r) => r.name)).toEqual([
+      "alpha", "gamma", "beta.txt", "zeta.txt",
+    ]);
+    expect(sortSftpRows(rows, "modified", "desc").map((r) => r.name)).toEqual([
+      "gamma", "alpha", "zeta.txt", "beta.txt",
+    ]);
+  });
+
+  it("不修改原数组", () => {
+    const before = rows.map((r) => r.name);
+    sortSftpRows(rows, "name", "desc");
+    expect(rows.map((r) => r.name)).toEqual(before);
+  });
+
+  it("隐藏判定：.. 永不隐藏；点前缀与 hidden 属性均命中", () => {
+    expect(isHiddenEntry({ name: ".." })).toBe(false);
+    expect(isHiddenEntry({ name: ".bashrc" })).toBe(true);
+    expect(isHiddenEntry({ name: "desktop.ini", hidden: true })).toBe(true);
+    expect(isHiddenEntry({ name: "a.txt", hidden: false })).toBe(false);
+  });
+
+  it("过滤：关闭时隐藏条目被移除，开启时原样返回", () => {
+    const entries = [
+      { name: ".." },
+      { name: ".ssh" },
+      { name: "a.txt" },
+      { name: "hidden.sys", hidden: true },
+    ];
+    expect(filterHiddenEntries(entries, false).map((e) => e.name)).toEqual(["..", "a.txt"]);
+    expect(filterHiddenEntries(entries, true)).toBe(entries);
+  });
+});
+
+describe("大小 / 时间格式化", () => {
+  it("0 与缺省 → --；Bytes 无小数，其余两位", () => {
+    expect(formatEntrySize(0)).toBe("--");
+    expect(formatEntrySize(undefined)).toBe("--");
+    expect(formatEntrySize(512)).toBe("512 Bytes");
+    expect(formatEntrySize(1024)).toBe("1.00 KB");
+    expect(formatEntrySize(1536)).toBe("1.50 KB");
+    expect(formatEntrySize(5 * 1024 * 1024)).toBe("5.00 MB");
+  });
+
+  it("mtime → YYYY-MM-DD HH:mm；0 / 缺省 → --", () => {
+    expect(formatEntryMtime(0)).toBe("--");
+    expect(formatEntryMtime(undefined)).toBe("--");
+    const ts = new Date(2026, 0, 5, 8, 7).getTime() / 1000;
+    expect(formatEntryMtime(ts)).toBe("2026-01-05 08:07");
   });
 });
