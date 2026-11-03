@@ -16,7 +16,7 @@
 | P0 日常可用性 | 7 / 14 | 不补齐难以日常使用 |
 | P1 差异化能力 | 0 / 19 | 拉开与普通 SSH 客户端差距（含 1 项 ⏸ 不移植；#39 为范围修正新增） |
 | P2 大工程 | 0 / 6 | 需单独立项（含 4 项 ⏸ 暂缓移植，见 plan.md） |
-| **合计** | **7 / 39** | 2026-11-03：SFTP 实现③（状态保活 + OS 图标 + 低危收尾）：SftpView 改首次激活后常驻挂载 + `.nc-sftp-mount.hidden` 隐藏（对齐 Netcatty SftpViewMount sticky 保活，切 surface 不丢 pane tab/双栏状态）；新增 HostOs 判定（本地 userAgent / 复用会话 uname -s best-effort）与 os-* 原创图标（Netcatty GPL 资产与 host.os 字段判定不可复用，通用映射并说明）；低危 4 项闭环（FileStat.is_symlink、localRemove 守卫恒传、12 封装测试覆盖、孤儿 CSS）；门禁全绿（136✓/build✓/cargo check×2✓/test --lib 793✓），本地 commit 未推送；实现③实机比对受 CU 坐标 artifact 阻塞延后（构建/启动/空态渲染已确认，未见代码缺陷）；review+push 完成（无高/中危，门禁全绿，远端 main=3d9c143）；SFTP 文件操作（上传/下载/删除/重命名/chmod）实现完成：server.rs 补 sftp_chmod 双注册、SftpPaneView 右键菜单/对话框/传输条接线、129 真实连接 live 测试全链路绿；review+push 完成（中危 1 修复= sftp 错误码 i18n 映射，低危 5 记录，门禁 140✓/794✓，远端 main=87e197e）；下一起点=传输队列与冲突对话框（Netcatty 队列面板：暂停/恢复/优先级/并发 + 冲突提示），视觉比对留人工/新 CU |
+| **合计** | **7 / 39** | 2026-11-03：SFTP 实现③（状态保活 + OS 图标 + 低危收尾）：SftpView 改首次激活后常驻挂载 + `.nc-sftp-mount.hidden` 隐藏（对齐 Netcatty SftpViewMount sticky 保活，切 surface 不丢 pane tab/双栏状态）；新增 HostOs 判定（本地 userAgent / 复用会话 uname -s best-effort）与 os-* 原创图标（Netcatty GPL 资产与 host.os 字段判定不可复用，通用映射并说明）；低危 4 项闭环（FileStat.is_symlink、localRemove 守卫恒传、12 封装测试覆盖、孤儿 CSS）；门禁全绿（136✓/build✓/cargo check×2✓/test --lib 793✓），本地 commit 未推送；实现③实机比对受 CU 坐标 artifact 阻塞延后（构建/启动/空态渲染已确认，未见代码缺陷）；review+push 完成（无高/中危，门禁全绿，远端 main=3d9c143）；SFTP 文件操作（上传/下载/删除/重命名/chmod）实现完成：server.rs 补 sftp_chmod 双注册、SftpPaneView 右键菜单/对话框/传输条接线、129 真实连接 live 测试全链路绿；review+push 完成（中危 1 修复= sftp 错误码 i18n 映射，低危 5 记录，门禁 140✓/794✓，远端 main=87e197e）；下一起点=传输队列与冲突对话框（Netcatty 队列面板：暂停/恢复/优先级/并发 + 冲突提示），视觉比对留人工/新 CU；传输队列阶段 A（后端队列中心）完成：队列中心+冲突检测后端+事件契约+schema v35+9 命令双注册+11 单测（805✓），本地 commit 未推送，阶段 B 前端队列面板 / 阶段 C 冲突对话框+129 live 待办 |
 
 ---
 
@@ -85,8 +85,10 @@
 - [ ] ⬜ **9. SFTP 双栏 + 拖放**
   - 本地/远端双栏并排，拖拽上传下载，支持拖到系统桌面。
   - 参考：`components/sftp/`、`startLocalFileDrag`。
-- [ ] ⬜ **10. 传输队列持久化**
+- [ ] 🟨 **10. 传输队列持久化**
   - 队列落盘、重启续传；暂停 / 恢复 / 优先级 / 全局并发上限。
+  - 阶段 A（后端，2026-11-03）✅：队列中心 `sftp/transfer_center.rs` + 持久化 `db/sftp_transfer.rs`（schema v35 `sftp_transfer_queue`，重启恢复 Running→Queued）；冲突检测后端（启动前 stat 目标，`resolve_conflict` replace/skip/rename + 应用到全部，批次作用域）；事件契约（新增 `sftp:transfer_updated:<id>` / `sftp:queue_changed`，进度复用 `sftp:progress:<id>`）；9 命令 lib.rs + server.rs 双注册；11 单测（cargo test --lib 805✓）。
+  - 剩余待办：阶段 B 前端队列面板（底部停靠面板 + 队列状态 UI）；阶段 C 冲突对话框前端 + 129 live 验证（含 2 个新 i18n code 进 sshErrors）。
   - 参考：`netcatty-bridge-sftp.d.ts` L33-L36、`components/sftp/`。
 - [ ] ⬜ **11. 终端搜索 / URL 识别 / 滚动缓冲**
   - 搜索高亮与跳转、Ctrl+点击打开链接、缓冲区上限可配。
@@ -169,6 +171,7 @@
 - [ ] ⬜ **36. SFTP 细节交互**
   - 面包屑导航、覆盖冲突对话框、同主机复制（与 #24 归档解压联动）。
   - 依据：netcatty `components/sftp/SftpBreadcrumb.tsx` / `SftpConflictDialog.tsx`；termX `SftpPanel.tsx` 为单栏、无面包屑、无冲突提示。
+  - 冲突检测后端已随 #10 阶段 A 完成（2026-11-03）；冲突对话框前端留 #10 阶段 C，面包屑/同主机复制仍全缺。
 - [ ] ⬜ **37. Vault 其余子页**
   - 笔记、会话日志页、代理配置入口（当前导航为禁用占位）。
   - 依据：netcatty `components/notes/`、会话日志与代理配置入口；termX `VaultView.tsx` navItems 中 monitor/keys/proxies/port/snippets/notes/logs 均禁用。
@@ -259,3 +262,4 @@
 | 2026-11-03 | SFTP 实现③完成（状态保活 + OS 图标 + 低危收尾）：App.tsx SftpView 改首次激活后常驻挂载 + `.nc-sftp-mount.hidden` 隐藏（对齐 Netcatty SftpViewMount sticky 保活，切 surface 不丢 pane tab/双栏状态）；sftpModel 新增 HostOs/detectLocalOs/osFromUname/osIconName（纯函数 + 单测），本地标签图标随本机 OS、复用会话远端标签 uname -s best-effort 探测、独立连接回落服务器图标（Netcatty GPL 资产与 host.os 字段判定不可复用，采原创通用映射并落 changelogs）；低危 4 项闭环（FileStat.is_symlink 声明、localRemove expectedType 必传、client.test.ts +8 例覆盖 12 封装、孤儿 .nc-sftp-page CSS 删除）；门禁全绿（136/136 + build✓ + cargo check×2✓ + cargo test --lib 793✓）；本地 commit 未推送，实机比对留下一轮。 |
 | 2026-11-03 | SFTP 实现③·实机比对：CU 验证受坐标 artifact 阻塞延后（多种坐标映射证伪、按钮 7 次点击仅焦点变化 picker 未弹、overlay fixed 排除 CSS 回归、devtools 注入无效、无快捷键可绕过）；构建/启动/双栏空态渲染已确认，源码核查未见缺陷，本轮无代码修复，门禁沿用 35e988a 全绿；仅文档提交，轮末结束 rssh.exe 防构建锁；下一起点=review+push → SFTP 文件操作。 |
 | 2026-11-03 | SFTP 实现③推送前 review + push：子 agent review 范围 0132eea..HEAD，六大重点全过（保活无泄漏 / display 切换无副作用 / uname 探测安全 / OS 回退健全 / localRemove 无破坏 / 测试非形式主义），无高/中危，低危 2 项记录（osFromUname startsWith 容忍度、保活拉长死标签驻留）；门禁全绿（136/136 + build✓ + cargo check×2✓ + cargo test --lib 793✓）；推送 35e988a+3d9c143，远端 main=3d9c143（ls-remote 复核）；下一起点=SFTP 文件操作（后端用 129 真实连接自动化验证，不依赖 CU）。 |
+| 2026-11-03 | SFTP 传输队列与冲突对话框·阶段 A（后端队列中心）完成：新增 `sftp/transfer_center.rs` + `db/sftp_transfer.rs`（TransferItem 状态机、并发上限 `sftp_transfer_concurrency`、暂停/恢复、优先级重排、取消、冲突检测与 `resolve_conflict` 批次作用域、自动重命名、重启恢复）；事件 `sftp:transfer_updated:<id>` / `sftp:queue_changed`；schema v35 `sftp_transfer_queue`；9 命令 lib.rs + server.rs 双注册；+11 单测（805✓）；门禁 cargo check×2 + build ✓；P0 #10 标 🟨（阶段 B 前端队列面板 / 阶段 C 冲突对话框+129 live 待办），#36 补冲突后端进展注记；本地 commit 未推送。 |

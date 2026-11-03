@@ -954,6 +954,7 @@ mod tests {
         let secret_store: std::sync::Arc<dyn crate::secret::SecretStore> =
             std::sync::Arc::new(crate::secret::DbStore::new(db.clone()));
         AppState {
+            transfer_center: std::sync::Arc::new(crate::sftp::transfer_center::TransferCenter::new(db.clone())),
             db,
             secret_store,
             lifecycle_sessions: Default::default(),

@@ -26,6 +26,7 @@ pub(crate) mod test_support {
         let db = Arc::new(crate::db::Db::open_in_memory().unwrap());
         let state = Arc::new(AppState {
             secret_store: Arc::new(crate::secret::DbStore::new(db.clone())),
+            transfer_center: Arc::new(crate::sftp::transfer_center::TransferCenter::new(db.clone())),
             db,
             lifecycle_sessions: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),

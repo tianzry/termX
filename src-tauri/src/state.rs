@@ -84,6 +84,8 @@ pub struct AppState {
     /// 用户在传输页点"取消"会把对应位置 1，streaming 循环每个 chunk 查一次，
     /// 命中即提前 Err 退出。传输结束（成功 / 失败 / 取消）都从 map 里移除。
     pub transfer_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// SFTP 传输队列中心（阶段 A）：排队项 / 并发 / 暂停恢复 / 优先级 / 冲突决策，见 sftp/transfer_center.rs。
+    pub transfer_center: Arc<crate::sftp::transfer_center::TransferCenter>,
     pub active_forwards: Mutex<HashMap<String, ForwardHandle>>,
     /// Keyboard-interactive prompt：prompt_id → owner/nonce/sender。
     pub auth_waiters: Mutex<HashMap<String, OwnedWaiter<Vec<String>>>>,

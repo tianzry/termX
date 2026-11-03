@@ -1261,6 +1261,7 @@ mod tests {
         let secret_store: Arc<dyn crate::secret::SecretStore> =
             Arc::new(crate::secret::DbStore::new(db.clone()));
         AppState {
+            transfer_center: Arc::new(crate::sftp::transfer_center::TransferCenter::new(db.clone())),
             db,
             secret_store,
             lifecycle_sessions: Mutex::new(HashMap::new()),

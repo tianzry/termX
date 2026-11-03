@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 34;
+const SCHEMA_VERSION: u32 = 35;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -740,6 +740,28 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
                 conn.execute_batch(&format!("ALTER TABLE profiles ADD COLUMN {col} {decl};"))?;
             }
         }
+    }
+
+    if version < 35 {
+        // SFTP 传输队列持久化（sftp::transfer_center）：排队项 / 状态 / 优先级 /
+        // 冲突决策；重启恢复未完成项（Running 还原为 Queued）。
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sftp_transfer_queue (
+                 id          TEXT PRIMARY KEY,
+                 sftp_id     TEXT NOT NULL,
+                 batch_id    TEXT NOT NULL,
+                 direction   TEXT NOT NULL,
+                 local_path  TEXT NOT NULL,
+                 remote_path TEXT NOT NULL,
+                 size        INTEGER NOT NULL DEFAULT 0,
+                 status      TEXT NOT NULL,
+                 priority    INTEGER NOT NULL DEFAULT 1,
+                 seq         INTEGER NOT NULL DEFAULT 0,
+                 overwrite   INTEGER NOT NULL DEFAULT 0,
+                 error       TEXT,
+                 created_at  INTEGER NOT NULL DEFAULT 0
+             );",
+        )?;
     }
 
     if version < SCHEMA_VERSION {

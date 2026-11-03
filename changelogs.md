@@ -2534,3 +2534,29 @@ select_application/open_with_application；⑤ 临时文件注册表
 - 门禁：test:run **140/140** ✓（+1 sftp i18n 测试）；build ✓；cargo check + --features server ✓（本轮后端无改动，沿用工位全绿）；cargo test --lib **794✓**；129 live 按指示未重跑。
 - 推送：核对远端 main=3d9c143 且为 HEAD 祖先（快进）→ 推 3d9c143..19adac3；i18n 修复补提交后再推 19adac3..87e197e；ls-remote 复核远端 main=**87e197e**。
 - 过程记录：首次推送脚本里远端全哈希凭记忆写错导致中止（前缀正确），改用 `git merge-base --is-ancestor` 判定后成功——后续推送核对一律用祖先判定，不手写全哈希。
+
+---
+
+## 2026-11-03 SFTP 传输队列与冲突对话框 · 阶段 A（后端队列中心）
+
+### 修改点
+- 新增 `src-tauri/src/sftp/transfer_center.rs`（队列中心）与 `src-tauri/src/db/sftp_transfer.rs`（持久化）：
+  - 排队项 TransferItem（id/sftp_id/batch_id/direction/路径/size/status/priority/seq/overwrite/error），状态机 queued/running/paused/conflict/completed/failed/cancelled/skipped；
+  - 全局并发上限（settings key `sftp_transfer_concurrency`，默认 2、上限 8）、暂停/恢复、优先级重排（High/Normal/Low，同级 FIFO）、取消；
+  - 冲突检测：传输启动前检测目标存在（上传查远端 stat、下载查本地），命中置 Conflict 等待答复；`resolve_conflict` 支持 replace/skip/rename 与"应用到全部"（按批次记忆，批次无活跃项即回收，对位 Netcatty pruneTransferConflictDefaults）；
+  - 自动重命名沿用 Netcatty getDuplicateTarget 规则：`file (copy).ext` / `file (copy N).ext`；
+  - 进度复用既有 `sftp:progress:<transfer_id>`；新增事件 `sftp:transfer_updated:<id>`（单项状态）与 `sftp:queue_changed`（结构性快照）；
+  - 9 个命令双注册（lib.rs generate_handler! + server.rs dispatcher，R4/INV-4）：sftp_transfer_enqueue/list/pause/resume/cancel/set_priority/set_concurrency/resolve_conflict/clear_finished；
+  - schema v35 新表 `sftp_transfer_queue`；重启恢复未完成项（Running→Queued，Conflict/Paused 保持）。
+- 新增 11 个 Rust 单测（优先级排序/并发调度/死会话不阻塞/重命名规则/冲突策略批次作用域/状态映射往返等）。
+
+### 踩坑
+- MutexGuard 经 Deref 借用整个 Inner，不支持跨字段分裂借用：持有 items 迭代器时再碰 pause_requested/conflict_policy 会 E0499/E0502——改索引访问或先 clone 再改。
+- worker 是 'static tokio 任务，不能借用 AppState：pump 时把 sftp_sessions 快照进 Inner::handles，worker 侧只用快照；命令侧每次 pump 先刷新快照。
+- 远端存在性探测依赖 russh_sftp 把 SSH_FX_NO_SUCH_FILE 文案（"no such file"）透传进 stat 错误串；阶段 C 的 129 live 需覆盖验证。
+- 运行中项"暂停" = 取消 + 记 Paused（恢复时从头重传），流式不支持断点续传；pause_requested 在 pick 时清理，防 resume 后误判。
+- 新 i18n code `sftp_transfer_not_found` / `sftp_transfer_state_invalid` 尚未进前端 sshErrors 字典，阶段 B 补。
+- `tokio::fs::try_exists` 返回 io::Result<bool>，错误按不存在处理（unwrap_or(false)）。
+
+### 门禁
+- cargo check + --features server 通过（仅既有警告）；cargo test --lib 805 通过（+11）；npm run build 通过（仅既有 chunk>500kB 提示）。本轮未动前端。

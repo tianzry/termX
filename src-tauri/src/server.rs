@@ -57,6 +57,7 @@ fn build_state() -> AppResult<AppState> {
         log::warn!("migration failed (will retry on next startup): {e}");
     }
     Ok(AppState {
+        transfer_center: Arc::new(crate::sftp::transfer_center::TransferCenter::new(db.clone())),
         db,
         secret_store: secret_system.store,
         lifecycle_sessions: Mutex::new(HashMap::new()),
@@ -1178,6 +1179,59 @@ async fn dispatch_async(
                 .upload_streaming(&mut reader, total, &remote_path, &host, &transfer_id, flag)
                 .await
                 .map(|_| ()))
+        }
+
+        // ---- SFTP 传输队列（阶段 A） ----
+        "sftp_transfer_enqueue" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::enqueue(state, &host, arg(&args, "items")?).await)
+        }
+        "sftp_transfer_list" => ok(crate::sftp::transfer_center::list(state).await),
+        "sftp_transfer_pause" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::pause(state, &host, arg(&args, "transferId")?).await)
+        }
+        "sftp_transfer_resume" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::resume(state, &host, arg(&args, "transferId")?).await)
+        }
+        "sftp_transfer_cancel" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::cancel(state, &host, arg(&args, "transferId")?).await)
+        }
+        "sftp_transfer_set_priority" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::set_priority(
+                state,
+                &host,
+                arg(&args, "transferId")?,
+                arg(&args, "priority")?,
+            )
+            .await)
+        }
+        "sftp_transfer_set_concurrency" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::set_concurrency(
+                state,
+                &host,
+                arg(&args, "concurrency")?,
+            )
+            .await)
+        }
+        "sftp_transfer_resolve_conflict" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::resolve_conflict(
+                state,
+                &host,
+                arg(&args, "transferId")?,
+                arg(&args, "action")?,
+                arg(&args, "applyToAll")?,
+            )
+            .await)
+        }
+        "sftp_transfer_clear_finished" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::clear_finished(state, &host).await)
         }
 
         // ---- AI (settings + models + sessions + messaging + skills + audit) ----

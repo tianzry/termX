@@ -10,6 +10,7 @@ pub mod migration;
 pub mod models;
 mod redaction;
 pub mod secret;
+mod sftp;
 mod ssh;
 pub use ssh::bastion;
 #[cfg(all(feature = "server", desktop))]
@@ -114,6 +115,7 @@ pub fn run() {
             }
 
             app.manage(AppState {
+                transfer_center: Arc::new(crate::sftp::transfer_center::TransferCenter::new(db.clone())),
                 db,
                 secret_store: secret_system.store,
                 lifecycle_sessions: Mutex::new(HashMap::new()),
@@ -313,6 +315,16 @@ pub fn run() {
             commands::sftp::sftp_lstat,
             commands::sftp::sftp_realpath,
             commands::sftp::sftp_chmod,
+            // SFTP 传输队列（阶段 A：队列中心 / 并发 / 暂停恢复 / 优先级 / 冲突）
+            crate::sftp::transfer_center::sftp_transfer_enqueue,
+            crate::sftp::transfer_center::sftp_transfer_list,
+            crate::sftp::transfer_center::sftp_transfer_pause,
+            crate::sftp::transfer_center::sftp_transfer_resume,
+            crate::sftp::transfer_center::sftp_transfer_cancel,
+            crate::sftp::transfer_center::sftp_transfer_set_priority,
+            crate::sftp::transfer_center::sftp_transfer_set_concurrency,
+            crate::sftp::transfer_center::sftp_transfer_resolve_conflict,
+            crate::sftp::transfer_center::sftp_transfer_clear_finished,
             // Local FS (SFTP dual-pane B1)
             commands::localfs::local_home,
             commands::localfs::local_list_drives,
