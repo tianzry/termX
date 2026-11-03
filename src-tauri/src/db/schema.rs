@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 36;
+const SCHEMA_VERSION: u32 = 37;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -772,6 +772,27 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
                 "ALTER TABLE profiles ADD COLUMN agent_forwarding INTEGER NOT NULL DEFAULT 0;",
             )?;
         }
+    }
+
+    if version < 37 {
+        // 笔记（Notes，对齐 Netcatty VaultNote）：正文 Markdown 原文入库，
+        // tags / linked_host_ids 以 JSON 数组文本保存；group_name 是文件夹路径
+        // （可空），order_index 留给手动排序，is_pinned 置顶。
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS notes (
+                 id              TEXT PRIMARY KEY,
+                 title           TEXT NOT NULL DEFAULT '',
+                 content         TEXT NOT NULL DEFAULT '',
+                 group_name      TEXT,
+                 tags            TEXT NOT NULL DEFAULT '[]',
+                 linked_host_ids TEXT NOT NULL DEFAULT '[]',
+                 created_at      INTEGER NOT NULL DEFAULT 0,
+                 updated_at      INTEGER NOT NULL DEFAULT 0,
+                 order_index     INTEGER,
+                 is_pinned       INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at);",
+        )?;
     }
 
     if version < SCHEMA_VERSION {

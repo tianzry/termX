@@ -638,6 +638,37 @@ pub struct Snippet {
     pub multi_line_run_mode: String,
 }
 
+// --- Note ---
+
+/// Vault 笔记（对齐 Netcatty `VaultNote`）：Markdown 正文 + 分组 / 标签 /
+/// 关联主机 / 置顶 / 时间戳。阶段 A 只用标题 / 正文 / 分组 / 标签 / 置顶；
+/// linked_host_ids 与 order 先在 schema 里留位，阶段 B 接关联主机与排序。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub content: String,
+    /// 分组（文件夹路径，如 "ops/db"）；None / 空 = 未分组。
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub linked_host_ids: Vec<String>,
+    /// Unix 毫秒。写入时由前端 / 调用方维护。
+    #[serde(default)]
+    pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
+    /// 手动排序位；None = 按更新时间。
+    #[serde(default)]
+    pub order: Option<i64>,
+    #[serde(default)]
+    pub is_pinned: bool,
+}
+
 // --- Plugin ---
 
 /// A third-party plugin package installed on this machine. `id` doubles as the

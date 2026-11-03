@@ -3210,3 +3210,41 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 - Netcatty 的 Telnet 用户名/密码/密钥、自动登录脚本（后端无对应参数，未做）。
 - 与真实 Telnet 设备（交换机/嵌入式板）的协商与中文/UTF-8 表现（本轮仅用本地回显服务器）。
 - 视觉逐像素比对（弹窗壳复用串口已对齐项；本机 DPI 缩放下截图存在比例误差）。
+
+---
+
+## 2026-11-03 笔记（Notes）阶段 A
+
+### 后端（自 stash 恢复并复核）
+- schema 迁移 v37 新增 `notes` 表：`id / title / content / group_name / tags_json / linked_host_ids_json / created_at / updated_at / sort_order / is_pinned`，带 `updated_at` 索引；SCHEMA_VERSION 只增到 37。
+- `commands/notes.rs`：`list_notes` / `get_note` / `save_note`（upsert）/ `delete_note`，按 id 校验并映射 `note_id_required` / `note_not_found`；双注册（`lib.rs generate_handler!` + `server.rs` dispatcher）已核对。
+- `db/notes.rs` 6 例单测：往返、标签/关联主机 JSON、排序（置顶→updated_at）、upsert 保留 created_at、删除、缺 id 错误。
+
+### 前端（本轮新增）
+- `src/notes/notesModel.ts`：搜索（标题/正文/分组/标签）、标签筛选（大小写不敏感）、排序（置顶优先→更新时间倒序）、标签汇总与输入拆分、摘要压平、草稿 ↔ Note 转换（保留 group/order/linked_host_ids）、保存队列（600ms 合并写 / flush / cancel / dirty）。
+- `src/notes/NotesView.tsx` + `notes.css`：左侧 300px 笔记树（搜索、标签 chips、置顶标记、摘要、时间）+ 右侧编辑器（标题、标签输入、等宽 Markdown 原文 textarea、置顶、删除、Ctrl/Cmd+S、已保存/未保存状态）；新建/删除走 termX DB，不使用 localStorage；空态与错误码 i18n 齐备。
+- `client.ts` 新增 `Note` 类型与 `listNotes/getNote/saveNote/deleteNote`（invoke 仅在此文件，符合 R1）；`VaultView` 启用「笔记」导航并挂载 `NotesView`。
+- 阶段 A 不做：Markdown 预览、关联主机、分组文件夹、导入导出、分享（留阶段 B）。
+- 单测 8 例：搜索/标签筛选/排序/标签汇总与拆分/摘要/草稿转换/防抖合并写/flush 与 cancel。
+
+### Netcatty 对照（运行版 1.1.90）
+- 截图 `evidence/netcatty-notes.png`：左侧笔记列表 + 右侧富文本编辑器（标题、实时预览下拉、添加标签、格式工具栏、删除/分享）。
+- 结构级一致项：左列表 + 右编辑器、标题置顶、标签入口、删除入口、置顶标记。
+- 有意差异：Netcatty 用 MDXEditor 富文本 + 实时预览与格式工具栏；termX 阶段 A 用等宽 textarea 编辑 Markdown 原文（不引入 Monaco/MDXEditor），预览与格式工具栏留阶段 B；Netcatty 有文件夹/导入导出/分享，termX 暂未做。
+
+### 实测证据
+- `evidence/netcatty-notes.png`：Netcatty 1.1.90 笔记页（列表 + 富文本编辑器 + 标签 + 工具栏）。
+- `evidence/notes-vault.png`：termX Vault，「笔记」导航已启用。
+- `evidence/notes-termx.png`：笔记页空态（左 300px 列表 + 搜索 + 右空态）。
+- `evidence/notes-edited.png` / `notes-tags.png`：新建「DB check」，正文两行，标签 `ssh, db`，列表出现摘要、时间、标签与筛选条 `#db/#ssh`，右上显示「已保存 · 20:53」。
+- `evidence/notes-persisted.png`：切到「主机」再回「笔记」，标题/正文/标签完整保留（走 DB 持久化，非 localStorage）。
+- 注：截图输入通过剪贴板注入以避开本机中文输入法组合；直接 SendKeys 会被 IME 转写，非应用缺陷。
+
+### 门禁
+- `npm run test:run` 315✓（新增 8 例）；`npm run build` ✓；`cargo check --features server` ✓（仅 3 条既有 warning）；`cargo test --lib` 842✓（新增 6 例）。
+- debug 版本已重新构建（`src-tauri/target/debug/rssh.exe`）并启动；本轮不 push。
+
+### 待人工 / 阶段 B
+- 与 Netcatty 富文本编辑体验逐项对齐（预览、格式工具栏）。
+- 关联主机跳转、导出/导入、分组文件夹。
+- 大量笔记（>500）时列表滚动与搜索性能。

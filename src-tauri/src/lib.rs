@@ -201,6 +201,11 @@ pub fn run() {
             commands::settings::update_highlight,
             commands::settings::load_snippets,
             commands::settings::save_snippets,
+            // notes（Vault 笔记 CRUD）
+            commands::notes::list_notes,
+            commands::notes::get_note,
+            commands::notes::save_note,
+            commands::notes::delete_note,
             commands::settings::reset_highlights,
             commands::settings::list_recordings,
             commands::settings::read_recording,

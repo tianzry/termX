@@ -34,6 +34,7 @@ import { userVisibleError } from "./domain/sshErrors";
 import { shellDisplayName } from "./domain/shellName";
 import { KeychainView } from "./keychain/KeychainView";
 import { SnippetsView } from "./snippets/SnippetsView";
+import { NotesView } from "./notes/NotesView";
 import {
   getVaultHostRowSubtitle,
   LOCAL_SHELL_HOST_TAG,
@@ -211,7 +212,7 @@ const navItems: Array<{
   { id: "proxies", label: "代理", icon: "network" },
   { id: "port", label: "端口转发", icon: "transfer" },
   { id: "snippets", label: "脚本", icon: "file-code", enabled: true },
-  { id: "notes", label: "笔记", icon: "file-text" },
+  { id: "notes", label: "笔记", icon: "file-text", enabled: true },
   { id: "known-hosts", label: "已知主机", icon: "shield", enabled: true },
   { id: "logs", label: "日志", icon: "history" },
 ];
@@ -3746,6 +3747,8 @@ export function VaultView({
             </div>
           ) : activeNav === "snippets" ? (
             <SnippetsView />
+          ) : activeNav === "notes" ? (
+            <NotesView />
           ) : null}
         </div>
 

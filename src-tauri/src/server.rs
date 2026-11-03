@@ -26,7 +26,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::error::{locked, AppError, AppResult};
 use crate::models::{
-    AuthOverride, Credential, CredentialType, Forward, Group, HighlightRule, Profile,
+    AuthOverride, Credential, CredentialType, Forward, Group, HighlightRule, Note, Profile,
     SerialProfile, Snippet, TelnetProfile,
 };
 use crate::state::{AppState, SessionKind, SessionOwner};
@@ -701,6 +701,21 @@ fn dispatch(
                 .map_err(err_value)?;
             Ok(Value::Null)
         }
+
+        // ---- notes（Vault 笔记 CRUD；与 Tauri command 同一 db 函数） ----
+        "list_notes" => ok(crate::db::notes::list(&state.db)),
+        "get_note" => ok(crate::db::notes::get(
+            &state.db,
+            &arg::<String>(&args, "id")?,
+        )),
+        "save_note" => ok(crate::db::notes::save(
+            &state.db,
+            &arg::<Note>(&args, "note")?,
+        )),
+        "delete_note" => ok(crate::db::notes::delete(
+            &state.db,
+            &arg::<String>(&args, "id")?,
+        )),
 
         // ---- serial profiles (CRUD; peer of forwards) ----
         "list_serial_profiles" => ok(crate::db::serial_profile::list(&state.db)),

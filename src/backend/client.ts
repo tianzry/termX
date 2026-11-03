@@ -371,6 +371,42 @@ export function saveSnippets(snippets: Snippet[]): Promise<void> {
   return invoke("save_snippets", { snippets });
 }
 
+// --- Notes（Vault 笔记 CRUD；字段对齐 Netcatty VaultNote / 后端 Note） ---
+
+export interface Note {
+  id: string;
+  title: string;
+  /** Markdown 原文。 */
+  content: string;
+  /** 分组（文件夹路径，如 "ops/db"）；空 = 未分组。 */
+  group: string | null;
+  tags: string[];
+  /** 阶段 B 接关联主机；阶段 A 不编辑。 */
+  linked_host_ids: string[];
+  /** Unix 毫秒。 */
+  created_at: number;
+  updated_at: number;
+  /** 手动排序位；null = 按更新时间。 */
+  order: number | null;
+  is_pinned: boolean;
+}
+
+export function listNotes(): Promise<Note[]> {
+  return invoke<Note[]>("list_notes");
+}
+
+export function getNote(id: string): Promise<Note> {
+  return invoke<Note>("get_note", { id });
+}
+
+export function saveNote(note: Note): Promise<void> {
+  return invoke("save_note", { note });
+}
+
+export function deleteNote(id: string): Promise<void> {
+  return invoke("delete_note", { id });
+}
+
 export function listFonts(): Promise<FontInfo[]> {
   return invoke<FontInfo[]>("list_fonts");
 }

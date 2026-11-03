@@ -154,6 +154,9 @@ const ERROR_MESSAGES: Record<
   telnet_not_found: () => "Telnet 会话已关闭或不存在",
   telnet_open_failed: (p) => `连接 Telnet ${str(p, "peer")} 失败：${str(p, "err")}`,
   telnet_op_failed: (p) => `Telnet 操作失败：${str(p, "err")}`,
+  // ── Notes ──
+  note_id_required: () => "笔记缺少 id，无法保存",
+  note_not_found: (p) => `笔记不存在或已删除：${str(p, "id")}`,
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,
