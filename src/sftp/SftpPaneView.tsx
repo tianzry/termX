@@ -10,11 +10,15 @@
  *   空白处（新建文件夹，远端另有「上传文件」）。
  * 上传 / 下载统一入队传输队列（sftp_transfer_enqueue），
  * 进度 / 暂停 / 取消在 SftpQueuePanel 展示；上传完成后自动刷新本面板列表。
- * 跨栏拖放 / 视图切换 / 列显隐留后续阶段。
+ * 跨栏拖放（阶段 B）：文件行可拖，拖到对面栏松手即入队传输队列——
+ * 落点语义对齐 Netcatty：拖到目录行 = 放进该目录，拖到空白 = 当前目录；
+ * 同侧拖拽在 dragover 阶段即被拒绝（no-drop 光标，等价取消）。
+ * 拖出到桌面 / 视图切换 / 列显隐留后续阶段。
  */
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  DragEvent as ReactDragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
 } from "react";
@@ -25,6 +29,8 @@ import { isKnownBinaryFile } from "../editor/editorFile";
 import { Icon } from "../ui/icons";
 import {
   breadcrumbSegments,
+  buildDropTransferTasks,
+  dropTargetPath,
   filterHiddenEntries,
   formatEntryMtime,
   formatEntrySize,
@@ -32,11 +38,16 @@ import {
   joinLocalPath,
   joinRemotePath,
   localParent,
+  parseSftpDragPayload,
   pathRoot,
   remoteParent,
   resolveBreadcrumbVisibleParts,
+  SFTP_DRAG_MIME,
+  sftpDragSideMime,
   sortSftpRows,
+  type DropTransferTask,
   type PaneConnection,
+  type SftpDragPayload,
   type SftpSortField,
   type SftpSortOrder,
 } from "./sftpModel";
@@ -108,6 +119,10 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   const [sortOrder, setSortOrder] = useState<SftpSortOrder>("asc");
   /** 面包屑省略号菜单（被折叠的中间段）。 */
   const [crumbMenu, setCrumbMenu] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  /** 跨栏拖放悬停：rowName = 悬停行（目录行高亮为落点）；null = 未悬停。 */
+  const [dropHint, setDropHint] = useState<{ rowName: string | null } | null>(
     null,
   );
 
@@ -321,6 +336,87 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
     }
   };
 
+  // ── 跨栏拖放（远端→本地 = 下载入队；本地→远端 = 上传入队） ──
+
+  /** 行 dragstart：仅文件可拖（传输队列只支持单文件传输）。 */
+  const onRowDragStart = (e: ReactDragEvent, row: Row) => {
+    if (row.isDir) return;
+    const payload: SftpDragPayload = {
+      side: connection.kind,
+      sftpId: connection.kind === "remote" ? connection.sftpId : undefined,
+      fromPath: path,
+      names: [row.name],
+    };
+    e.dataTransfer.setData(SFTP_DRAG_MIME, JSON.stringify(payload));
+    // 侧标记：dragover 阶段可读 types，目标栏据此拒绝同侧拖拽。
+    e.dataTransfer.setData(sftpDragSideMime(connection.kind), "");
+    e.dataTransfer.effectAllowed = "copy";
+    setSelected(row.name);
+  };
+
+  /** 跨栏拖拽中（且非本栏自身发起）：此时本栏才接受 drop。 */
+  const isCrossPaneDrag = (e: ReactDragEvent) => {
+    const types = Array.from(e.dataTransfer.types);
+    return (
+      types.includes(SFTP_DRAG_MIME) &&
+      !types.includes(sftpDragSideMime(connection.kind))
+    );
+  };
+
+  /** 从事件目标取悬停行（data-sftp-row）；空白处返回 null。 */
+  const rowNameFromEvent = (e: ReactDragEvent): string | null => {
+    const el = (e.target as HTMLElement).closest("[data-sftp-row]");
+    return el?.getAttribute("data-sftp-row") ?? null;
+  };
+
+  /** drop 入队：走既有传输队列（冲突策略沿用阶段 C），上传完成刷新。 */
+  const enqueueDropTasks = async (tasks: DropTransferTask[]) => {
+    try {
+      const created = await api.sftpTransferEnqueue(tasks);
+      watchUploads(created);
+    } catch (e) {
+      setError(userVisibleError(String(e)));
+    }
+  };
+
+  const onListDragOver = (e: ReactDragEvent) => {
+    if (!isCrossPaneDrag(e)) return; // 同侧 / OS 文件等拖拽：不接受（系统 no-drop）
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    const rowName = rowNameFromEvent(e);
+    setDropHint((prev) =>
+      prev !== null && prev.rowName === rowName ? prev : { rowName },
+    );
+  };
+
+  const onListDragLeave = (e: ReactDragEvent) => {
+    if (!isCrossPaneDrag(e)) return;
+    const next = e.relatedTarget as Node | null;
+    if (next !== null && e.currentTarget.contains(next)) return;
+    setDropHint(null);
+  };
+
+  const onListDrop = (e: ReactDragEvent) => {
+    if (!isCrossPaneDrag(e)) return;
+    e.preventDefault();
+    const rowName = rowNameFromEvent(e);
+    setDropHint(null);
+    const payload = parseSftpDragPayload(
+      e.dataTransfer.getData(SFTP_DRAG_MIME),
+    );
+    if (!payload) return;
+    const hoverRow = visibleRows.find((r) => r.name === rowName) ?? null;
+    const targetDir = dropTargetPath(path, hoverRow, join);
+    const tasks = buildDropTransferTasks({
+      payload,
+      destKind: connection.kind,
+      destSftpId: connection.kind === "remote" ? connection.sftpId : undefined,
+      targetDir,
+    });
+    if (!tasks || tasks.length === 0) return;
+    void enqueueDropTasks(tasks);
+  };
+
   // ── 外部打开（Netcatty downloadToTempAndOpen / openPath 等价） ──
 
   /** 外部打开：本地直接系统默认程序；远端先下载到临时目录再打开，
@@ -497,6 +593,14 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
       <Icon name={sortOrder === "asc" ? "arrow-up" : "arrow-down"} size={11} />
     ) : null;
 
+  /** 行 className：选中态 + 跨栏拖放悬停时的落点目录高亮。 */
+  const rowClasses = (row: Row): string => {
+    const cls = ["nc-sftp-pane-row"];
+    if (selected === row.name) cls.push("selected");
+    if (dropHint?.rowName === row.name && row.isDir) cls.push("drop-target");
+    return cls.join(" ");
+  };
+
   return (
     <div className="nc-sftp-pane">
       <div className="nc-sftp-pane-header">
@@ -634,10 +738,17 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
       </div>
 
       <div
-        className="nc-sftp-pane-list"
+        className={
+          dropHint !== null
+            ? "nc-sftp-pane-list drop-active"
+            : "nc-sftp-pane-list"
+        }
         tabIndex={0}
         onContextMenu={openBlankMenu}
         onKeyDown={onListKeyDown}
+        onDragOver={onListDragOver}
+        onDragLeave={onListDragLeave}
+        onDrop={onListDrop}
       >
         {error && <div className="nc-sftp-pane-error">{error}</div>}
         {!error && notice && (
@@ -671,14 +782,13 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
           visibleRows.map((row) => (
             <div
               key={row.name}
-              className={
-                selected === row.name
-                  ? "nc-sftp-pane-row selected"
-                  : "nc-sftp-pane-row"
-              }
+              className={rowClasses(row)}
+              draggable={!row.isDir}
+              data-sftp-row={row.name}
               onClick={() => setSelected(row.name)}
               onDoubleClick={() => activateRow(row)}
               onContextMenu={(e) => openRowMenu(e, row)}
+              onDragStart={(e) => onRowDragStart(e, row)}
             >
               <span className="nc-sftp-pane-row-cell-name">
                 {row.isDir ? (

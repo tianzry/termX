@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { Profile } from "../backend/client";
 import {
   breadcrumbSegments,
+  buildDropTransferTasks,
   buildPickerSections,
   connectBranch,
+  dropTargetPath,
   filterHiddenEntries,
   flattenPickerItems,
   formatEntryMtime,
@@ -18,15 +20,19 @@ import {
   octalToMode,
   osFromUname,
   osIconName,
+  parseSftpDragPayload,
   pathRoot,
   permsFromMode,
   permsToOctal,
   pickerItemToTarget,
   remoteParent,
   resolveBreadcrumbVisibleParts,
+  SFTP_DRAG_MIME,
+  sftpDragSideMime,
   sortSftpRows,
   type ConnectedHostEntry,
   type PickerSection,
+  type SftpDragPayload,
 } from "./sftpModel";
 
 function profile(partial: Partial<Profile> & { id: string }): Profile {
@@ -399,5 +405,84 @@ describe("大小 / 时间格式化", () => {
     expect(formatEntryMtime(undefined)).toBe("--");
     const ts = new Date(2026, 0, 5, 8, 7).getTime() / 1000;
     expect(formatEntryMtime(ts)).toBe("2026-01-05 08:07");
+  });
+});
+
+describe("跨栏拖放：载荷解析 / 落点目录 / 任务构建", () => {
+  const remotePayload: SftpDragPayload = {
+    side: "remote",
+    sftpId: "sftp-1",
+    fromPath: "/home/tianzry",
+    names: ["a.txt"],
+  };
+
+  it("载荷 MIME 与侧标记 MIME", () => {
+    expect(SFTP_DRAG_MIME).toBe("application/x-termx-sftp");
+    expect(sftpDragSideMime("local")).toBe("application/x-termx-sftp-side-local");
+    expect(sftpDragSideMime("remote")).toBe("application/x-termx-sftp-side-remote");
+  });
+
+  it("解析合法 local / remote 载荷", () => {
+    expect(
+      parseSftpDragPayload(
+        JSON.stringify({ side: "local", fromPath: "C:\\tmp", names: ["a.txt", "b.log"] }),
+      ),
+    ).toEqual({ side: "local", fromPath: "C:\\tmp", names: ["a.txt", "b.log"] });
+    expect(parseSftpDragPayload(JSON.stringify(remotePayload))).toEqual(remotePayload);
+  });
+
+  it("拒绝非法载荷：坏 JSON / 未知 side / 空 names / 穿越名 / 远端缺 sftpId / 空 fromPath", () => {
+    expect(parseSftpDragPayload("{oops")).toBeNull();
+    expect(parseSftpDragPayload(JSON.stringify({ side: "both", fromPath: "/", names: ["a"] }))).toBeNull();
+    expect(parseSftpDragPayload(JSON.stringify({ side: "local", fromPath: "/", names: [] }))).toBeNull();
+    expect(parseSftpDragPayload(JSON.stringify({ side: "local", fromPath: "/", names: [".."] }))).toBeNull();
+    expect(parseSftpDragPayload(JSON.stringify({ side: "local", fromPath: "/", names: ["a/b"] }))).toBeNull();
+    expect(parseSftpDragPayload(JSON.stringify({ side: "local", fromPath: "/", names: ["a\\b"] }))).toBeNull();
+    expect(parseSftpDragPayload(JSON.stringify({ side: "remote", fromPath: "/", names: ["a"] }))).toBeNull();
+    expect(parseSftpDragPayload(JSON.stringify({ side: "local", fromPath: "", names: ["a"] }))).toBeNull();
+  });
+
+  it("落点目录：目录行 = 进该目录；文件行 / 空白 / .. = 当前路径", () => {
+    expect(dropTargetPath("/home", { name: "docs", isDir: true }, joinRemotePath)).toBe("/home/docs");
+    expect(dropTargetPath("/home", { name: "a.txt", isDir: false }, joinRemotePath)).toBe("/home");
+    expect(dropTargetPath("/home", null, joinRemotePath)).toBe("/home");
+    expect(dropTargetPath("/home", { name: "..", isDir: true }, joinRemotePath)).toBe("/home");
+    expect(dropTargetPath("C:\\tmp", { name: "d", isDir: true }, joinLocalPath)).toBe("C:\\tmp\\d");
+  });
+
+  it("remote → local 栏 = 下载批次（sftp_id 取来源会话，两侧路径各自拼接）", () => {
+    const tasks = buildDropTransferTasks({
+      payload: { ...remotePayload, names: ["a.txt", "b.log"] },
+      destKind: "local",
+      targetDir: "D:\\dl",
+    });
+    expect(tasks).toEqual([
+      { sftp_id: "sftp-1", direction: "download", local_path: "D:\\dl\\a.txt", remote_path: "/home/tianzry/a.txt" },
+      { sftp_id: "sftp-1", direction: "download", local_path: "D:\\dl\\b.log", remote_path: "/home/tianzry/b.log" },
+    ]);
+  });
+
+  it("local → remote 栏 = 上传批次（sftp_id 取落点栏会话）", () => {
+    const tasks = buildDropTransferTasks({
+      payload: { side: "local", fromPath: "C:\\tmp", names: ["c.txt"] },
+      destKind: "remote",
+      destSftpId: "sftp-2",
+      targetDir: "/var/tmp",
+    });
+    expect(tasks).toEqual([
+      { sftp_id: "sftp-2", direction: "upload", local_path: "C:\\tmp\\c.txt", remote_path: "/var/tmp/c.txt" },
+    ]);
+  });
+
+  it("不入队：同侧拖拽 / 上传缺落点会话 / 下载缺来源会话", () => {
+    expect(
+      buildDropTransferTasks({ payload: remotePayload, destKind: "remote", destSftpId: "s", targetDir: "/" }),
+    ).toBeNull();
+    expect(
+      buildDropTransferTasks({ payload: { side: "local", fromPath: "C:\\", names: ["a"] }, destKind: "remote", targetDir: "/" }),
+    ).toBeNull();
+    expect(
+      buildDropTransferTasks({ payload: { side: "remote", fromPath: "/", names: ["a"] }, destKind: "local", targetDir: "C:\\" }),
+    ).toBeNull();
   });
 });

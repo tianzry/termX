@@ -542,3 +542,124 @@ export function formatEntryMtime(epochSeconds: number | undefined): string {
   const pad = (n: number) => n.toString().padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// ── 跨栏拖放（阶段 B：拖拽入队传输队列；落点语义对齐 Netcatty）──
+
+/** 跨栏拖放载荷的自定义 MIME（避免与 text/plain 等混淆）。 */
+export const SFTP_DRAG_MIME = "application/x-termx-sftp";
+
+/**
+ * 拖拽来源侧标记（dragstart 时作为独立 type 写入）。
+ * dataTransfer.types 在 dragover 阶段可读（值不可读），
+ * 目标栏据此拒绝同侧拖拽（不 preventDefault → 系统 no-drop → 等价取消）。
+ */
+export const sftpDragSideMime = (side: "local" | "remote"): string =>
+  `application/x-termx-sftp-side-${side}`;
+
+/** 跨栏拖放载荷：dragstart 写入 dataTransfer，对面栏 drop 时解析。 */
+export interface SftpDragPayload {
+  /** 来源侧：local = 本地文件系统；remote = SFTP 会话。 */
+  side: "local" | "remote";
+  /** side=remote 时的会话 id（下载入队的 sftp_id 来源）。 */
+  sftpId?: string;
+  /** 被拖条目所在目录。 */
+  fromPath: string;
+  /** 条目名（拒绝路径分隔符 / . / ..）。 */
+  names: string[];
+}
+
+function isValidDragName(n: unknown): n is string {
+  return (
+    typeof n === "string" &&
+    n.length > 0 &&
+    n !== "." &&
+    n !== ".." &&
+    !n.includes("/") &&
+    !n.includes("\\")
+  );
+}
+
+/** 解析并校验拖放载荷；任何非法形状返回 null（drop 忽略）。 */
+export function parseSftpDragPayload(raw: string): SftpDragPayload | null {
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (o.side !== "local" && o.side !== "remote") return null;
+  if (typeof o.fromPath !== "string" || o.fromPath.length === 0) return null;
+  if (!Array.isArray(o.names) || o.names.length === 0) return null;
+  if (!o.names.every(isValidDragName)) return null;
+  if (o.side === "remote") {
+    if (typeof o.sftpId !== "string" || o.sftpId.length === 0) return null;
+    return {
+      side: "remote",
+      sftpId: o.sftpId,
+      fromPath: o.fromPath,
+      names: o.names,
+    };
+  }
+  return { side: "local", fromPath: o.fromPath, names: o.names };
+}
+
+/**
+ * 落点目录（Netcatty 语义）：
+ * - 悬停在目录行 → 放进该目录；
+ * - 空白处 / 文件行 / ".." → 栏当前路径。
+ */
+export function dropTargetPath(
+  currentPath: string,
+  hoverRow: { name: string; isDir: boolean } | null,
+  join: (dir: string, name: string) => string,
+): string {
+  if (hoverRow && hoverRow.isDir && hoverRow.name !== "..") {
+    return join(currentPath, hoverRow.name);
+  }
+  return currentPath;
+}
+
+/** drop 构建出的传输项（形状与 client.ts 的 NewTransferRequest 一致）。 */
+export interface DropTransferTask {
+  sftp_id: string;
+  direction: "upload" | "download";
+  local_path: string;
+  remote_path: string;
+}
+
+/**
+ * drop → 传输批次（统一走既有队列，冲突策略沿用阶段 C）：
+ * - remote → local 栏 = 下载（sftp_id 取来源会话）；
+ * - local → remote 栏 = 上传（sftp_id 取落点栏会话）；
+ * - 同侧拖拽或缺少必需会话 id → null（不入队）。
+ * 注：队列仅支持单文件传输（transfer_center 无目录递归），
+ * 调用方不得传入目录条目。
+ */
+export function buildDropTransferTasks(opts: {
+  payload: SftpDragPayload;
+  destKind: "local" | "remote";
+  destSftpId?: string;
+  targetDir: string;
+}): DropTransferTask[] | null {
+  const { payload, destKind, destSftpId, targetDir } = opts;
+  if (payload.side === destKind) return null;
+  if (payload.side === "remote") {
+    if (!payload.sftpId) return null;
+    const sftpId = payload.sftpId;
+    return payload.names.map((name) => ({
+      sftp_id: sftpId,
+      direction: "download" as const,
+      local_path: joinLocalPath(targetDir, name),
+      remote_path: joinRemotePath(payload.fromPath, name),
+    }));
+  }
+  if (!destSftpId) return null;
+  return payload.names.map((name) => ({
+    sftp_id: destSftpId,
+    direction: "upload" as const,
+    local_path: joinLocalPath(payload.fromPath, name),
+    remote_path: joinRemotePath(targetDir, name),
+  }));
+}

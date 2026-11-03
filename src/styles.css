@@ -3623,6 +3623,16 @@ button:disabled {
   background: hsl(var(--accent) / 0.18);
 }
 
+/* 跨栏拖放：接受 drop 的面板高亮 + 落点目录行高亮 */
+.nc-sftp-pane-list.drop-active {
+  outline: 1px dashed hsl(var(--accent));
+  outline-offset: -1px;
+}
+
+.nc-sftp-pane-row.drop-target {
+  background: hsl(var(--accent) / 0.3);
+}
+
 .nc-sftp-ctx {
   position: fixed;
   z-index: 80;

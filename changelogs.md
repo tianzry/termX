@@ -2718,3 +2718,31 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本地 commit，未推送（阶段 B：跨栏拖放含拖到桌面 + 入队联动 + 129 live + review + push）。
+
+---
+
+## 2026-11-03 · SFTP 拖放与面包屑/工具条（P0 #9）阶段 B：跨栏拖放入队 + 拖出决策不做 + 收官推送
+
+### 修改点
+
+- `src/sftp/sftpModel.ts`（+7 单测）：`SFTP_DRAG_MIME`（application/x-termx-sftp）+ `sftpDragSideMime` 侧标记（dragover 阶段仅 types 可读，目标栏据此拒绝同侧）；`parseSftpDragPayload` 载荷全校验（拒绝坏 JSON / 未知 side / 空 names / `.`/`..` / 含路径分隔符的名 / 远端缺 sftpId / 空 fromPath）；`dropTargetPath` 落点语义（目录行 = 进该目录；文件行 / 空白 / ".." = 当前路径，对齐 Netcatty）；`buildDropTransferTasks`（remote→local = 下载批次，sftp_id 取来源会话；local→remote = 上传批次，sftp_id 取落点栏会话；同侧或缺会话 → null 不入队）。
+- `src/sftp/SftpPaneView.tsx`：文件行 draggable（目录不可拖——传输队列仅支持单文件）+ dragstart 写载荷与侧标记；列表容器单组 onDragOver/onDragLeave/onDrop：跨栏拖拽 preventDefault + 高亮（容器 drop-active / 目录行 drop-target），同侧或 OS 拖拽不接受（系统 no-drop = 取消）；drop → 解析 → 落点 → 既有 `sftp_transfer_enqueue` 入队（冲突策略沿用阶段 C，单批次作用域）→ watchUploads 上传完成自动刷新。
+- `src/styles.css`：`.nc-sftp-pane-list.drop-active`（虚线 outline）/ `.nc-sftp-pane-row.drop-target`（accent 高亮）。
+- 纯前端改动，无新后端命令（R4 未触发）；容器级单 drop 处理器，行事件冒泡只处理一次，无重复入队。
+
+### 拖出到桌面 / 资源管理器（CF_HDROP）：决策不做，记后续候选
+
+- ① HTML5/WebView2 网页内容无法发起携带真实文件（CF_HDROP）的 OS 拖放（浏览器安全模型）；② Tauri v2 无 Electron `startDrag` 等价 API；③ Netcatty 靠 Electron 主进程原生桥 `startLocalFileDrag/cancelLocalFileDrag`，termX 需从零写 Win32 OLE DoDragDrop + IDataObject/IDropSource，且须与手势同帧耦合——经 IPC 异步命令接管 WebView2 已占用的 OLE 拖放循环不可靠；④ 项目 Cargo.toml 无 windows crate，需新增重依赖；⑤ 远端项还需先下载到临时目录。按「不强造不稳定的假功能」原则明确不做，记为后续候选（原生桥 spike）。
+
+### 验证
+
+- 129 live 等价验证（本轮零 Rust 改动，drop 复用既有队列后端）：`TERMX_SFTP_LIVE=1 cargo test --lib sftp` → **27✓**，其中 `live_sftp_file_ops_roundtrip`（远端→本地 / 本地→远端文件系统级往返）+ `live_sftp_transfer_conflict`（冲突策略）即拖放两条链路的后端路径。
+- review 自审四项无高/中危：拖放事件全走 React props（随卸载移除，无泄漏）；载荷全校验、名字拒绝分隔符，无路径穿越面；容器级单 drop 处理器 + 既有队列入队，无重复入队；落点语义有单测覆盖（目录行 / 文件行 / 空白 / ".." / 本地盘符）。
+
+### 门禁
+
+- npm run test:run **209/209** ✓（202 → 209：拖放 +7）；npm run build ✓；cargo check --features server ✓（仅既有警告）；cargo test --lib **813✓**。
+
+### 提交状态
+
+- 随阶段 A（ca0afe0）一并推送（远端基线 b92b94e，快进），P0 #9 收官；下一起点 = 串口（端口列表 / 参数 / 连接 / 数据收发对齐 Netcatty，含 mark/space、1.5 停止位、自动登录、字符集等已知缺口）。
