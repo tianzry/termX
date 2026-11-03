@@ -2513,3 +2513,24 @@ select_application/open_with_application；⑤ 临时文件注册表
 
 - npm run test:run **139/139** ✓（+3 权限位测试）；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check ✓ + cargo check --features server ✓（仅既有警告）；cargo test --lib **794✓ / 0✗**；129 live 测试 ✓。
 - 前端视觉核对（右键菜单/对话框/传输条渲染）按新节奏留人工或新 CU 会话。
+
+---
+
+## 2026-11-03 SFTP 文件操作 · 推送前 review + push
+
+### Review 结论（自审 + 定向取证；范围 3d9c143..19adac3）
+
+- **35e988a / 3d9c143 已在远端**：开工 ls-remote 确认（上轮推送成功，结论见上一节），本轮未重复 review。
+- **中危修复 1 项（87e197e）**：`sftp_io_failed` / `sftp_tree_too_deep` / `sftp_session_not_found` / `sftp_invalid_filename` / `sftp_file_too_large` 五个错误码未进前端 `ERROR_MESSAGES`，回退路径会把服务器英文原文直接展示（R5；先例 0132eea 修 local_* 同类）。补中文映射 + 3 例测试后随推。
+- **通过项**：
+  1. 对话框确认/取消路径：PromptDialog Enter/Esc/遮罩（busy 守卫）、删除/权限弹窗按钮与 busy 禁用，`finally` 统一释放 dialogBusy；ContextMenu 外部点击/Esc 清理完整。
+  2. chmod 拼装与回读：权限位三函数有往返单测；mode 经 sftpStat 回读；应用值为 3 位八进制 ≤ 0o777，合法 u32。
+  3. 取消竞态：CancelGuard 传输开始插入、Drop 移除；取消已完成传输为 no-op、重复取消幂等、前端 finally 保证 unlisten+dropTransfer。
+  4. `sftp_chmod` 双注册齐全（lib.rs + server.rs，参数形状一致）；R1 无裸 invoke/listen；进度订阅逐条 unlisten。
+- **低危记录（不修）**：① 远端 rename 目标已存在时报错（russh SFTP 语义，无静默覆盖），本地 localRename 覆盖语义随平台，两侧不完全一致；② 删除对话框未对目录加「递归删除」文案（引擎 remove() 对目录自动递归、深度上限 `sftp_tree_too_deep`，与 Netcatty 行为一致）；③ chmod 仅处理低 9 位，setuid/sticky 位会被丢弃（Netcatty 同为 9 位）；④ 删除/权限弹窗无 Esc 关闭（输入弹窗有）；⑤ `DialogShell` 遮罩 onMouseDown 为无效代码。
+
+### 门禁与推送
+
+- 门禁：test:run **140/140** ✓（+1 sftp i18n 测试）；build ✓；cargo check + --features server ✓（本轮后端无改动，沿用工位全绿）；cargo test --lib **794✓**；129 live 按指示未重跑。
+- 推送：核对远端 main=3d9c143 且为 HEAD 祖先（快进）→ 推 3d9c143..19adac3；i18n 修复补提交后再推 19adac3..87e197e；ls-remote 复核远端 main=**87e197e**。
+- 过程记录：首次推送脚本里远端全哈希凭记忆写错导致中止（前缀正确），改用 `git merge-base --is-ancestor` 判定后成功——后续推送核对一律用祖先判定，不手写全哈希。
