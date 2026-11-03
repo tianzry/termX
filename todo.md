@@ -17,7 +17,7 @@
 | P1 差异化能力 | 0 / 19 | 拉开与普通 SSH 客户端差距（含 1 项 ⏸ 不移植；#39 为范围修正新增） |
 | P2 大工程 | 0 / 6 | 需单独立项（含 4 项 ⏸ 暂缓移植，见 plan.md） |
 | **合计** | **11 / 39** | 2026-11-03：脚本与 Snippets 阶段 B（P0 #5）完成：脚本最小闭环（kind=script 发送到活动 shell）+ multiLineRunMode（paste/lineDelay 250ms）+ Netcatty snippet 导入导出（version 3）+ 129 实跑隔离验证；门禁 263✓/build✓/cargo check(server)✓/836✓；无高/中危；历史：2026-11-03：脚本与 Snippets 阶段 A 完成：后端字段补齐 + src/snippets 页面挂 Vault 导航 + 终端右键/快捷键插入（仅当前会话）+ 15 纯逻辑测试；门禁 242✓/build✓/cargo check(server)✓/836✓；CU 截图确认页面与 F2 插入执行；右键菜单插入待人工点测；本地 commit 未推送，阶段 B（脚本链路/导入导出/129/review+push）下轮。历史：2026-11-03：SFTP 拖放与面包屑/工具条（#9）全部完成：阶段 A 工具栏+面包屑+排序+隐藏开关（ca0afe0）；阶段 B 跨栏拖放入队（文件行拖对面栏=上传/下载入队，落点语义对齐 Netcatty：目录行=进该目录/空白=当前目录；同侧拖拽拒绝）+ 拖出到桌面明确不做（WebView2 无 CF_HDROP 桥，记后续原生桥候选）+ 129 live 等价验证 27✓ + 自审无高/中危；门禁 209✓/build✓/cargo check(server)✓/813✓，随阶段 A 推送；下一起点=串口。历史：2026-11-03：（#9）阶段 A 完成：两行工具栏+面包屑+列头排序+隐藏开关+双击/回车进入目录，sftpModel 纯逻辑+19 单测（202✓/813✓）。历史：2026-11-03：编辑器与监视回写（#8）阶段 B 收官、#8 全部完成：文件监视回写（本地轮询/远端 stat 比对 + 保存回环抑制 + 外部修改重载对话框）+ 外部编辑器打开（local_open_path / sftp_open_external，双注册）+ 129 live 全绿（揪出并修复 upload 不截断高危）+ 自审无遗留高/中危；门禁 183✓/build✓/cargo check✓/813✓/live✓，随推 d4b0886（阶段 A）+ 阶段 B；下一起点=SFTP 拖放与面包屑/工具条（#9）。历史：2026-11-03：编辑器与监视回写（#8）阶段 A 完成：远端读写命令（10 MiB 预检）+ src/editor 低依赖编辑器（保存/另存/未保存确认）+ 双注册 + 19 新单测（179✓/809✓），本地 commit 未推送；阶段 B 文件监视回写/外部编辑器/129 live/review+push 待办。2026-11-03：SFTP 实现③（状态保活 + OS 图标 + 低危收尾）：SftpView 改首次激活后常驻挂载 + `.nc-sftp-mount.hidden` 隐藏（对齐 Netcatty SftpViewMount sticky 保活，切 surface 不丢 pane tab/双栏状态）；新增 HostOs 判定（本地 userAgent / 复用会话 uname -s best-effort）与 os-* 原创图标（Netcatty GPL 资产与 host.os 字段判定不可复用，通用映射并说明）；低危 4 项闭环（FileStat.is_symlink、localRemove 守卫恒传、12 封装测试覆盖、孤儿 CSS）；门禁全绿（136✓/build✓/cargo check×2✓/test --lib 793✓），本地 commit 未推送；实现③实机比对受 CU 坐标 artifact 阻塞延后（构建/启动/空态渲染已确认，未见代码缺陷）；review+push 完成（无高/中危，门禁全绿，远端 main=3d9c143）；SFTP 文件操作（上传/下载/删除/重命名/chmod）实现完成：server.rs 补 sftp_chmod 双注册、SftpPaneView 右键菜单/对话框/传输条接线、129 真实连接 live 测试全链路绿；review+push 完成（中危 1 修复= sftp 错误码 i18n 映射，低危 5 记录，门禁 140✓/794✓，远端 main=87e197e）；下一起点=传输队列与冲突对话框（Netcatty 队列面板：暂停/恢复/优先级/并发 + 冲突提示），视觉比对留人工/新 CU；传输队列阶段 A（后端队列中心）完成：队列中心+冲突检测后端+事件契约+schema v35+9 命令双注册+11 单测（805✓），本地 commit 未推送，阶段 B 前端队列面板 / 阶段 C 冲突对话框+129 live 待办；阶段 B 完成（e9b2917）；阶段 C（冲突对话框 + apply-to-all 回溯 + 129 live 五场景全绿 + 自审无高/中危）完成，P0 #10 三阶段全部完成；门禁 163✓/build✓/cargo check✓/806✓/live✓，随推 e0e83c1+1cf1bcc+e9b2917+阶段 C；下一起点=编辑器与监视回写（#8） |
-| 串口 1:1 重做（#35） | 🟨 阶段 A 完成 | 2026-11-03：常量表 `serialFormConfig.ts` + 串口输入语义 `serialInput.ts` + `SerialPanel` 配置驱动重构；门禁 294✓/build✓/cargo check(server)✓/836✓；截图比对一致/已修/待人工已记录；阶段 B（实测复检 + review + push）下轮 |
+| 串口 1:1 重做（#35） | ✅ 完成 | 2026-11-03：常量表 + 输入语义 + 配置驱动 UI；阶段 B 视觉复检、COM1 实测、句柄释放/文案修复、review + push 完成；下一步进入「笔记（Notes）」 |
 
 ---
 
@@ -177,10 +177,10 @@
 - [ ] ⬜ **34. 主机表单高级字段**
   - 至少补：环境变量、字符集、启动命令执行模式、主题/字体覆盖、图标；向 netcatty Host 模型字段面对齐。
   - 依据：netcatty `domain/models/connection.ts` Host 约 30 字段；termX 表单仅 11 个（名称/地址/端口/凭据/分组/标签/登录方式/用户名/密码/密钥文件/启动命令）。
-- [ ] 🟨 **35. 串口 1:1 重做**
-  - ✅ 阶段 A（2026-11-03）：`serialFormConfig.ts` 对照表 + `serialInput.ts` 输入语义 + `SerialPanel` 常量表驱动重构（字段/顺序/默认值/文案/高级折叠/条件渲染）；门禁 294✓/build✓/cargo check(server)✓/836✓/debug 构建✓，截图逐项比对完成；本地 commit 未推送。
-  - ⬜ 阶段 B：129/本地串口实测与逐项复检、review + push。
-  - 留档：命名管道（后端 crate 不支持，明确报错）；ymodem/serialEraseChar（后端未实现）；保存配置为主机（无 host 模型）。
+- [x] ✅ **35. 串口 1:1 重做**
+  - ✅ 阶段 A（2026-11-03）：`serialFormConfig.ts` 对照表 + `serialInput.ts` 输入语义 + `SerialPanel` 常量表驱动重构；本地 commit `7a29ed3`。
+  - ✅ 阶段 B（2026-11-03）：间距/标签/主按钮视觉复检并修正；补卸载时串口句柄释放与 `serial_not_found` 文案；本机 COM1 真实打开 + 行模式/本地回显/退格手测通过；门禁 294✓/build✓/cargo check(server)✓/836✓；已 review + push。
+  - 留档（待人工）：ymodem（后端未实现且无设备验证，未加假按钮）；命名管道（crate 不支持，明确报错）；保存配置为主机（无 host 模型）。
 - [ ] ⬜ **36. SFTP 细节交互**
   - 面包屑导航、覆盖冲突对话框、同主机复制（与 #24 归档解压联动）。
   - 依据：netcatty `components/sftp/SftpBreadcrumb.tsx` / `SftpConflictDialog.tsx`；termX `SftpPanel.tsx` 为单栏、无面包屑、无冲突提示。

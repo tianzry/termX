@@ -70,6 +70,7 @@ export function SerialPanel({ bridge }: Props) {
 
   const unsubRef = useRef<UnlistenFn[]>([]);
   const inputRef = useRef<SerialInputController | null>(null);
+  const sidRef = useRef<string | null>(null);
 
   const errors = serialFormErrors(form);
   const namedPipe = isWindowsNamedPipePath(form.port.trim());
@@ -83,14 +84,21 @@ export function SerialPanel({ bridge }: Props) {
     unsubRef.current.forEach((u) => u());
     unsubRef.current = [];
     inputRef.current?.reset();
+    sidRef.current = null;
     bridge.detach();
     setSid(null);
   }
 
   useEffect(() => {
     void refreshPorts();
-    // 组件卸载时清理监听并解除终端路由
-    return () => unsubRef.current.forEach((u) => u());
+    // 卸载时释放监听与串口句柄，避免面板关闭后会话残留
+    return () => {
+      unsubRef.current.forEach((u) => u());
+      if (sidRef.current) void api.serialClose(sidRef.current);
+      inputRef.current?.reset();
+      sidRef.current = null;
+      bridge.detach();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -158,6 +166,7 @@ export function SerialPanel({ bridge }: Props) {
         },
       });
       setSid(actualId);
+      sidRef.current = actualId;
     } catch (e) {
       teardown();
       setErr(userVisibleError(String(e)));
@@ -207,7 +216,7 @@ export function SerialPanel({ bridge }: Props) {
   return (
     <div className="sftp-panel">
       {!sid ? (
-        <div className="sftp-connect">
+        <div className="sftp-connect serial-form">
           {/* ① 串口：标签 + 右侧刷新，Combobox 可手输，下方固定提示 + 非法红字 */}
           <div className="sftp-row" style={checkRowStyle}>
             <label htmlFor="serial-port" style={sectionLabelStyle}>
@@ -306,14 +315,7 @@ export function SerialPanel({ bridge }: Props) {
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
             aria-expanded={showAdvanced}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              width: "100%",
-              background: "transparent",
-              border: "none",
-            }}
+            className="serial-advanced"
           >
             <span>{SERIAL_TEXT.advanced}</span>
             <span aria-hidden="true">{showAdvanced ? "▴" : "▾"}</span>
@@ -492,7 +494,7 @@ export function SerialPanel({ bridge }: Props) {
           )}
 
           <div className="sftp-row">
-            <button onClick={open} disabled={busy || connectDisabled}>
+            <button className="serial-primary" onClick={open} disabled={busy || connectDisabled}>
               {SERIAL_TEXT.connect}
             </button>
           </div>

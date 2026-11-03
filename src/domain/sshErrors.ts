@@ -136,6 +136,7 @@ const ERROR_MESSAGES: Record<
       ? `文件过大（${fmtBytes(num(p, "size"))}），超出编辑器上限 ${fmtBytes(num(p, "limit"))}，请下载后用其他应用打开。`
       : "文件过大。",
   // ── 串口 ──
+  serial_not_found: () => "串口会话已关闭或不存在",
   serial_open_failed: (p) => `打开串口 ${str(p, "port")} 失败：${str(p, "err")}`,
   serial_op_failed: (p) => `串口操作失败：${str(p, "err")}`,
   serial_feature_unsupported: (p) => {

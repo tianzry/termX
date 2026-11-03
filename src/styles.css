@@ -145,6 +145,62 @@ body {
   padding: 12px;
 }
 
+/* 串口表单：对齐 Netcatty SerialConnectModal 的间距/标签/主按钮层级 */
+.sftp-connect.serial-form {
+  gap: 12px;
+  padding: 14px;
+}
+
+.serial-form label {
+  font-size: 13px;
+  color: #16202b;
+}
+
+.serial-form label > input,
+.serial-form label > select {
+  margin-top: 6px;
+  width: 100%;
+}
+
+.serial-form input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.serial-form .serial-advanced {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: #16202b;
+}
+
+.serial-form .serial-advanced:hover:not(:disabled) {
+  background: transparent;
+}
+
+.serial-form .serial-check {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.serial-form .serial-primary {
+  background: #0a84ff;
+  border-color: #0a84ff;
+  color: #ffffff;
+}
+
+.serial-form .serial-primary:hover:not(:disabled) {
+  background: #0070e0;
+}
+
+
 .sftp-row {
   display: flex;
   gap: 8px;
