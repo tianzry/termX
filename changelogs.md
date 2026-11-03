@@ -2457,3 +2457,33 @@ select_application/open_with_application；⑤ 临时文件注册表
 - 本轮未发现代码缺陷、无修复；实机比对（建标签 / OS 图标目检 / 保活实证 / 无残留 / Netcatty 对照）延后，留待后续轮重试（更换 CU 会话或改人工操作）。
 - 门禁沿用 35e988a 全绿：136/136 + build✓ + cargo check×2✓ + cargo test --lib 793✓（本轮无代码改动，未重跑）。
 - 本轮仅文档提交（changelogs/todo）；轮末结束 rssh.exe，防止下轮构建锁（上轮遗留实例曾致 os error 5）。
+
+---
+
+## 2026-11-03 SFTP 实现③推送前 review + push
+
+### Review 结论（子 agent，范围 0132eea..HEAD = 35e988a + 3d9c143）
+
+六大重点全部通过，无高危/中危：
+
+1. **SftpView 常驻挂载**：无 listen/定时器累积（picker 50ms 聚焦 timer 有 cleanup，window keydown 仅 open 时注册且 overlay 全屏、切走前必先关闭）；卸载清理经 sidesRef 关闭全部远端会话，sticky 后仅应用退出触发，路径仍正确；标签↔sftpId 一对一、closeTab 成对 sftpClose。
+2. **display:none 切换**：src/sftp 无 ResizeObserver/尺寸测量；聚焦三角纯 CSS；滚动位置浏览器保留；切回需重新点击聚焦属预期。
+3. **uname 探测**：后端 ssh_exec clamp [1s,60s]，3000ms 有效；探测期间标签关闭 → updateTabOs 按 sftpId map 无匹配即 no-op，setState 安全；sftpId 每次连接新 UUID 无误配竞态；失败静默回落 unknown。
+4. **OS 判定回退**：全正则/字符串操作不抛异常；空串/空白→unknown 有测试；osIconName unknown→null，两调用点（`??` / 三元）均有回落。
+5. **localRemove expectedType 必传**：全前端仅 client.ts 定义与测试引用，无调用点被破坏，tsc 通过。
+6. **测试真实性**：client.test 8 例均 `toHaveBeenLastCalledWith` 断言完整参数对象（含缺省 null、Uint8Array→number[] 转换）；sftpModel 2 例断言映射逻辑与边界。
+
+通用项：无裸 invoke/listen ✓；本 diff 不涉凭据流 ✓；`.nc-sftp-page*` 删除后全仓无残留引用 ✓；icons.tsx 三条 SVG 路径有效 ✓；FileStat.is_symlink 与后端结构匹配 ✓。
+
+### 低危记录（2 项，未修）
+
+1. `osFromUname` 用 `startsWith("linux")`，"GNU/Linux" 类非标准输出会落 unknown（实际 `uname -s` 只输出 "Linux"），可选改 `includes` 增稳。
+2. 复用会话的终端标签关闭后，SFTP 死标签驻留时间因保活变长（既有行为，非本次引入）。
+
+### 门禁
+
+- npm run test:run 136/136 ✓；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check ✓（仅既有 6 条 dead_code 警告）；cargo check --features server ✓；cargo test --lib 793✓ / 0✗。
+
+### 推送
+
+- 推送前核对远端 main=0132eea 且为本地 HEAD 祖先（快进）；`git push git@github.com:tianzry/termX.git HEAD:main` 推送 0132eea..3d9c143（实现③ + 实机比对结论文档，2 提交），ls-remote 复核远端 main=3d9c143。
