@@ -3005,3 +3005,63 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 
 - 本地 commit `d90c7cd`；核对远端 `a41ca88` 为 HEAD 祖先（快进）后 push `HEAD:main`，`ls-remote` 复核远端 main=`d90c7cd`。
 
+---
+
+## 2026-11-03 · 串口 1:1 重做 · 阶段 A（常量表 + SerialPanel 重构）
+
+### 背景与范围
+
+- 现行 `SerialPanel` 只是字段补全（mark/space、1.5 停止位、字符集、自动登录），布局/顺序/条件渲染与 Netcatty 不一致。本轮按「常量表驱动复刻」重做：对照 `Netcatty/components/SerialConnectModal.tsx` 与 `Netcatty/components/SerialHostDetailsPanel.tsx` 逐屏抄录，落成独立配置常量文件，再由 termX 侧栏渲染。
+- 本轮不引入 Netcatty host 模型 / localStorage / Tailwind / radix；数据仍走 `serial_*` 命令。阶段 B 再做 129/本地实测、逐项复检与 review+push。
+
+### 串口对照表（落点）
+
+完整逐屏表写在 [serialFormConfig.ts](src/domain/serialFormConfig.ts) 文件头（分组、字段、控件、默认值、文案、条件、按钮与禁用、桥接方法映射），要点：
+
+- 分组顺序：串口（端口 + 刷新 + 固定命名管道提示 + 非法红字）→ 波特率（命名管道隐藏、非标准值提示）→ 自动登录（来自主机编辑面板，位置在波特率后/高级前）→ 高级（默认收起：数据位/停止位两列、停止位 1.5 黄字、校验位、流控制、分隔线后终端选项）→ 连接。
+- 终端选项顺序：回退键（说明）→ 按字节退格 → 强制本地回显 → 行模式 → 字符编码。
+- 默认值：115200 / 8 / 1 / none / none / false / false / default / false / UTF-8；流控 UI 取值 `none|xon/xoff|rts/cts`，提交后端映射 `none|software|hardware`。
+- 禁用：`port 合法 && 波特率为正整数`；命名管道在 Netcatty 由 Electron 桥实现，termX crate 不支持，故直接报错禁用。
+
+### 修改点
+
+前端（`src`）：
+
+1. **`src/domain/serialFormConfig.ts`（新增）**：类型 / 默认值 / 选项 / 文案（逐字取自 Netcatty zh-CN i18n）/ 路径判定（`isWindowsNamedPipePath`、`isSerialEndpointPath` 与 Netcatty 同正则）/ 字段校验 / 禁用条件 / 默认值合并（非法枚举回落）/ 流控映射 / `toSerialConfig`。
+2. **`src/domain/serialInput.ts`（新增）**：串口输入纯逻辑，对齐 Netcatty `serialLineInput.ts`/`serialLocalEcho.ts`/`terminalBackspaceInput.ts`：行模式缓冲与回车提交、Ctrl+U 清行、Ctrl+C 立即发送、本地回显与宽字符擦除、DEL→Ctrl+H 映射、按 UTF-8 字节数多发 DEL。
+3. **`src/SerialPanel.tsx`（重构）**：配置驱动渲染字段顺序/标签/默认值/提示；高级默认收起；命名管道隐藏波特率与硬件帧参数；端口与波特率改为可手输的 Combobox（datalist，无 radix）；连接后按键经 `createSerialInput` 变换后写串口，本地回显写回终端；保留发送框与 DTR/RTS/BREAK。
+4. **测试**：`serialFormConfig.test.ts` 15 例、`serialInput.test.ts` 16 例（默认值合并、路径识别、校验、禁用、流控映射、行模式/回显/退格）。
+
+后端：无新增命令（localEcho/lineMode/backspace 均为客户端输入变换；`SerialConfig` 已有字段足够承载）。ymodem 与命名管道属后端能力缺口，未加假入口。
+
+### 门禁
+
+- `npm run test:run` **294 passed**（新增 31）。
+- `npm run build` 通过。
+- `cargo check --features server` 通过（既有 warning 不变）。
+- `cargo test --lib` **836 passed**。
+- `npm run tauri build -- --debug` 通过，产物 `src-tauri/target/debug/rssh.exe`。
+
+### 实机比对（debug 构建 + PowerShell UIA/截图）
+
+- 侧栏入口「串口」→ 收起态截图：串口 + 刷新、端口输入（自动选中 COM1）、命名管道提示、波特率 115200、自动登录用户名/密码、高级、连接；顺序与 Netcatty 一致。
+- 展开「高级」截图：数据位/停止位两列、校验位、流控制、回退键（默认 DEL）+ 说明、按字节退格、强制本地回显、行模式、字符编码 UTF-8；顺序与 Netcatty 一致。
+
+### 比对结论（三类）
+
+- **一致**：字段集合与顺序、控件类型（可手输 Combobox/Select/checkbox/文本框）、默认值、关键文案（命名管道提示、1.5 停止位警告、回退键说明、按字节退格/本地回显/行模式说明）、按钮禁用公式。
+- **已修**：手写散落 JSX → 常量表驱动；补齐 localEcho/lineMode/backspaceBehavior/byteOrientedBackspace 及实际输入语义；字符集由固定下拉改为自由文本默认 UTF-8；端口/波特率统一为可手输 Combobox；高级分区默认收起。
+- **待人工**：命名管道（后端未支持，明确报错）；ymodem 发送/接收入口（后端未实现，阶段 B 评估）；「保存配置为主机」与密码眼睛/清除控件（termX 无 host 模型，取舍留档）；中文输入法下的实际按键回显体感。
+
+### 取舍 / 留档
+
+- termX 入口是终端侧栏（Netcatty 是 `SerialConnectModal` 弹窗 + 主机编辑面板），内部结构与字段顺序对齐；无「取消」footer，主按钮为「打开串口」。
+- 自动登录来自 Netcatty 主机编辑面板（连接弹窗没有），按其在编辑面板中的位置放在波特率之后。
+- 命名管道在 Netcatty 由 `electron/bridges/serialNamedPipe.cjs` 支持；termX 串口 crate 无法打开，保留 Netcatty 提示文案但校验直接报错。
+- ymodem / `serialEraseChar` 未实现，未添加禁用按钮（阶段 B 再决定是否补后端）。
+
+### 提交状态
+
+- 本轮本地 commit，**不 push、不 review**；阶段 B：129/本地串口实测、逐项复检、review + push。
+
+
