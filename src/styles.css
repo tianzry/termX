@@ -3297,7 +3297,8 @@ button:disabled {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgb(0 0 0 / 0.45);
+  /* Netcatty 运行版选择器背景无暗色遮罩，保持透明 */
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3396,7 +3397,8 @@ button:disabled {
 }
 
 .nc-sftp-picker-row.selected {
-  background: hsl(var(--accent));
+  /* Netcatty 运行版为浅蓝底 + 深色文字，非实底高亮 */
+  background: hsl(var(--accent) / 0.16);
 }
 
 .nc-sftp-picker-row-main {

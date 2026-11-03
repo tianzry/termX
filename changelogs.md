@@ -2272,3 +2272,41 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 按指令本轮不 push：实现②完成、下一轮实机比对通过后再推。
+
+## 2026-11-03 SFTP 骨架·实机比对（实现②验证轮）
+
+### 比对结论（对照运行中 Netcatty 1.1.90 zh-CN 逐屏）
+
+一致项：
+- 双栏 50/50 比例与分割线位置；聚焦态=聚焦栏左上角蓝色三角，点击栏跟随移动（Netcatty 空态/连接态两屏确认）。
+- 空态：图标（左 monitor / 右 server）+「先选择一个主机」+「选择要浏览的本地或远端文件系统」+「+ 选择主机」蓝色按钮，文案与结构逐屏一致。
+- 主机选择器：头部（搜索图标 / 「搜索主机...」 / 左右侧 chip / ×）、三分区 本地→已连接→主机、本地行「本地文件系统—浏览本地文件」、无匹配「没有匹配的主机」、已连接去重隐藏主机分区同 profile（Netcatty 连接 129 时主机分区消失，termX 规则一致）；↑↓ 选择移动有效。
+- 标签栏：图标 + 名称 + ×，右端新建 +（Netcatty 连接态对照）。
+
+已修项（src/styles.css）：
+- 选择器背景暗遮罩 rgb(0 0 0 / 0.45) → transparent（Netcatty 运行版无遮罩）。
+- 选中行实底 hsl(var(--accent))（灰字不可读） → hsl(var(--accent) / 0.16) 浅蓝底深字（Netcatty 运行版样式）。
+- 复检受阻：修复重编后 termX 实例启动后自退（见踩坑1），视觉复检与连接流坐标点击复验未完成，留下一轮首轮执行。
+
+不可对齐 / 留档项：
+- 已连接行与远端标签图标：Netcatty 用主机 OS 图标（ubuntu 等），termX 用通用 server 图标；OS 图标资产体系留实现③。
+- 切 surface 卸载关闭远端会话（Netcatty visibility 保活）、独立连接无 secret 凭据报错、已连接分区仅活动会话：实现②留档，本轮复认。
+
+未决异常：
+- 选择器行点击（CU 元素路由）与 Enter 键均不触发 onPick（↑↓ 有效、button 元素点击有效）：疑 CU 对 WebView2 子窗口非 button 元素的路由/坐标 artifacts；坐标点击复验因应用自退未执行，下轮以坐标点击裁定：若坐标点击有效=CU artifacts，否则按应用缺陷排查。
+- 连接流三路径本轮仅完成选择器侧验证；本地/独立 129（列目录）/复用会话的端到端实测留下一轮。
+
+### 踩坑
+
+1. termX debug 版本轮 4 次启动中 3 次（detached Start-Process）启动后数秒~数分钟自退，事件日志仅空 stability 记录；前台持有 stdout 管道的实例长期存活。疑 WebView2/启动竞态或 stdout 句柄相关；下轮用前台管道方式启动实机并观察。
+2. CU 对 WebView2 子窗口内非 button 元素（选择器行 text/div）的元素点击不触发 React onClick，button 元素正常（走 Invoke pattern）；复验改用窗口相对坐标点击（本地行≈(610,461)、129 行≈(610,533)，1216x882 窗口）。
+3. cargo check 需 --manifest-path src-tauri\Cargo.toml（仓库根无 Cargo.toml）；tauri build 前必须先 Stop-Process rssh，否则 exe 被锁报 os error 5。
+4. Netcatty SFTP 窗口 web 内容需先对窗格 perform_action set_focus 才入 UIA 主树（termX 同，pane "termX - Web 内容"）。
+
+### 门禁
+
+- npm run test:run 126/126 ✓；npm run build ✓；cargo check ✓（仅既有 6 条 warning）；tauri debug 重编 ✓（含 styles.css 修复）。
+
+### 提交状态
+
+- 本轮本地 commit（styles.css 修复 + 文档）；按指令不 push、不 review，下一轮子 agent review 通过后与实现①②一并推送；视觉复检/连接流端到端实测为下一轮首项。
