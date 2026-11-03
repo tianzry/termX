@@ -3496,6 +3496,198 @@ button:disabled {
   color: hsl(var(--destructive));
 }
 
+/* ── SFTP 文件操作：右键菜单 / 对话框 / 传输条 ───────────── */
+
+.nc-sftp-pane-row.selected {
+  background: hsl(var(--accent) / 0.18);
+}
+
+.nc-sftp-ctx {
+  position: fixed;
+  z-index: 80;
+  min-width: 160px;
+  padding: 4px;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+}
+
+.nc-sftp-ctx-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: hsl(var(--popover-foreground));
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.nc-sftp-ctx-item:hover {
+  background: hsl(var(--accent) / 0.15);
+}
+
+.nc-sftp-ctx-item.danger {
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.45);
+}
+
+.nc-sftp-dialog {
+  width: 360px;
+  max-width: 90vw;
+  padding: 16px;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.35);
+}
+
+.nc-sftp-dialog h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: hsl(var(--popover-foreground));
+}
+
+.nc-sftp-dialog input[type="text"] {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: hsl(var(--popover-foreground));
+  background: hsl(var(--input) / 0.35);
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+}
+
+.nc-sftp-dialog-text {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: hsl(var(--popover-foreground));
+}
+
+.nc-sftp-dialog-list {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.nc-sftp-dialog-actions button {
+  padding: 5px 14px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  cursor: pointer;
+}
+
+.nc-sftp-dialog-actions button.primary {
+  background: hsl(var(--primary));
+  color: #fff;
+  border-color: transparent;
+}
+
+.nc-sftp-dialog-actions button.primary.danger-bg {
+  background: hsl(var(--destructive));
+}
+
+.nc-sftp-dialog-actions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.nc-sftp-dialog-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-perm-grid {
+  display: grid;
+  grid-template-columns: auto repeat(3, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+  font-size: 12px;
+  color: hsl(var(--popover-foreground));
+}
+
+.nc-sftp-perm-grid label {
+  display: flex;
+  align-items: center;
+}
+
+.nc-sftp-perm-octal {
+  margin-top: 10px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-transfers {
+  border-top: 1px solid hsl(var(--border));
+}
+
+.nc-sftp-transfer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-transfer-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-sftp-transfer-bar {
+  flex: 1;
+  height: 4px;
+  background: hsl(var(--muted));
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.nc-sftp-transfer-fill {
+  height: 100%;
+  background: hsl(var(--primary));
+}
+
+.nc-sftp-transfer-cancel {
+  background: none;
+  border: none;
+  padding: 0;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  font-size: 11px;
+}
+
 /* ── 终端右侧工具面板：36px 工具条 ───────────────────────── */
 
 .nc-aside {

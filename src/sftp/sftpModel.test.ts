@@ -7,8 +7,11 @@ import {
   joinLocalPath,
   joinRemotePath,
   localParent,
+  octalToMode,
   osFromUname,
   osIconName,
+  permsFromMode,
+  permsToOctal,
   pickerItemToTarget,
   remoteParent,
   type ConnectedHostEntry,
@@ -190,5 +193,28 @@ describe("主机 OS 判定（图标用）", () => {
     expect(osIconName("macos")).toBe("os-macos");
     expect(osIconName("linux")).toBe("os-linux");
     expect(osIconName("unknown")).toBeNull();
+  });
+});
+
+describe("权限位换算（chmod 对话框）", () => {
+  it("mode → 矩阵：0o640 为 owner rw、group r、others 无", () => {
+    const m = permsFromMode(0o640);
+    expect(m.owner).toEqual({ read: true, write: true, execute: false });
+    expect(m.group).toEqual({ read: true, write: false, execute: false });
+    expect(m.others).toEqual({ read: false, write: false, execute: false });
+  });
+
+  it("矩阵 → 八进制字符串与 mode 往返一致", () => {
+    expect(permsToOctal(permsFromMode(0o755))).toBe("755");
+    expect(permsToOctal(permsFromMode(0o644))).toBe("644");
+    expect(permsToOctal(permsFromMode(0o640))).toBe("640");
+  });
+
+  it("八进制 → mode：只接受 3-4 位八进制数", () => {
+    expect(octalToMode("640")).toBe(0o640);
+    expect(octalToMode("0755")).toBe(0o755);
+    expect(octalToMode("9")).toBeNull();
+    expect(octalToMode("abc")).toBeNull();
+    expect(octalToMode("")).toBeNull();
   });
 });

@@ -640,3 +640,80 @@ pub fn sftp_cancel_transfer(state: State<'_, AppState>, transfer_id: String) -> 
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    /// 真实远端主机的文件操作全链路（默认档案 "129"）：
+    /// 连接 → mkdir → upload → list/stat → rename → chmod → download 比对 → remove → rmdir。
+    /// 仅当 TERMX_SFTP_LIVE=1 时运行：依赖真实网络 + 本机 keychain（读取与应用相同的
+    /// ~/.rssh DB / SecretStore 凭据），不纳入默认 `cargo test --lib` 门禁。
+    #[tokio::test]
+    async fn live_sftp_file_ops_roundtrip() {
+        if std::env::var("TERMX_SFTP_LIVE").as_deref() != Ok("1") {
+            return;
+        }
+        let name = std::env::var("TERMX_SFTP_LIVE_PROFILE").unwrap_or_else(|_| "129".into());
+        let data_dir = dirs::home_dir().expect("home dir").join(".rssh");
+        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.rssh db"));
+        let secrets = crate::secret::open(db.clone(), &data_dir).expect("open secret store");
+
+        let profile = crate::db::profile::list(&db)
+            .expect("list profiles")
+            .into_iter()
+            .find(|p| p.name == name)
+            .unwrap_or_else(|| panic!("profile {name} not found"));
+        let cred_row =
+            crate::db::credential::get(&db, &profile.credential_id).expect("get credential");
+        let secret = secrets
+            .store
+            .get(&crate::secret::cred_secret_key(&cred_row.id))
+            .expect("decrypt credential secret");
+        let cred = Credential { secret, ..cred_row };
+
+        let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
+        let handle = SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15)
+            .await
+            .expect("sftp connect");
+
+        let (host, _rx) = crate::ssh::test_support::headless_host();
+        let dir = format!("/tmp/termx-live-{}", std::process::id());
+        let a = format!("{dir}/a.txt");
+        let b = format!("{dir}/b.txt");
+        let payload = b"termx live sftp roundtrip";
+
+        handle.mkdir(&dir).await.expect("mkdir");
+        // 走生产流式上传路径（sftp_upload_from 同款）；引擎的 upload() = sftp.write
+        // 对不存在的目标文件报 No such file（疑似 russh write 未带 CREATE），
+        // 本链路不用它，发现已记入 changelogs。
+        let mut reader: &[u8] = payload;
+        let up_cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        handle
+            .upload_streaming(&mut reader, payload.len() as u64, &a, &host, "live-up", up_cancel)
+            .await
+            .expect("upload");
+        let entries = handle.list_dir(&dir).await.expect("list");
+        assert!(entries.iter().any(|e| e.name == "a.txt"), "list after upload");
+        let st = handle.stat(&a).await.expect("stat");
+        assert_eq!(st.size, payload.len() as u64);
+
+        handle.rename(&a, &b).await.expect("rename");
+        handle.chmod(&b, 0o640).await.expect("chmod");
+        let st2 = handle.lstat(&b).await.expect("lstat");
+        assert_eq!(st2.permissions.unwrap_or(0) & 0o777, 0o640, "chmod persisted");
+
+        let tmp = std::env::temp_dir().join("termx-live-download.txt");
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let n = handle
+            .download_streaming(&b, &tmp, &host, "live", cancel)
+            .await
+            .expect("download");
+        assert_eq!(n, payload.len() as u64);
+        assert_eq!(std::fs::read(&tmp).expect("read downloaded"), payload);
+        let _ = std::fs::remove_file(&tmp);
+
+        handle.remove(&b).await.expect("remove file");
+        handle.remove(&dir).await.expect("remove dir");
+    }
+}

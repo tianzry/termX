@@ -2487,3 +2487,29 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 推送
 
 - 推送前核对远端 main=0132eea 且为本地 HEAD 祖先（快进）；`git push git@github.com:tianzry/termX.git HEAD:main` 推送 0132eea..3d9c143（实现③ + 实机比对结论文档，2 提交），ls-remote 复核远端 main=3d9c143。
+
+---
+
+## 2026-11-03 SFTP 文件操作（上传 / 下载 / 删除 / 重命名 / chmod）
+
+### 修改点
+
+1. **后端补缺（R4 双注册）**：`server.rs` dispatcher 补 `sftp_chmod`（此前 headless / JetBrains 侧不可用；GUI 侧 lib.rs 早已注册）。五操作命令本体（`sftp_download_to` / `sftp_upload_from` / `sftp_remove` / `sftp_rename` / `sftp_chmod`）均为既有实现，本轮未改。
+2. **129 真实连接自动化验证**：`commands/sftp.rs` 新增 `live_sftp_file_ops_roundtrip`（`TERMX_SFTP_LIVE=1` 门禁，默认静默跳过，不进常规门禁）：读取与应用相同的 `~/.rssh` DB + SecretStore（档案 "129" = 192.168.126.129，凭据经 keychain 解密，不落明文），走引擎直连跑 **连接 → mkdir → 流式上传 → list → stat → rename → chmod(0o640) → lstat 校验权限位 → 流式下载字节比对 → remove → rmdir** 全链路，实跑 **通过**。
+3. **前端接线**（基准 Netcatty SftpPaneFileList / SftpPaneDialogs / SftpPermissionsDialog 的 termX 范围子集）：
+   - `SftpPaneView.tsx` 重写：右键菜单（远端行=下载(仅文件)/重命名/修改权限/删除；本地行=重命名/删除；空白处=新建文件夹，远端另有上传文件）、底部传输条（每传输订阅 `sftp:progress:<transferId>`，进度 + 取消走 `sftp_cancel_transfer`）、行选中高亮。
+   - 新增 `SftpPaneDialogs.tsx`：右键菜单、重命名/新建文件夹输入弹窗（Enter 确认 / Esc 取消）、删除确认（删除中禁用）、chmod 3×3 复选弹窗（实时八进制展示）。
+   - `sftpModel.ts` 新增权限位纯函数 `permsFromMode` / `permsToOctal` / `octalToMode`（P4：FileStat.permissions 是 u32）+ 3 例单测。
+   - 上传/下载入口：原生文件选择（`sftp_pick_open_files` / `sftp_pick_save_path`）+ 流式命令；本地侧删除带 `expectedType` 守卫。
+4. **范围说明**：跨面板对传 / 拖放（todo #9）、工具条 / 面包屑（研究蓝图③）、目录下载（`sftp_download_to` 为文件流式）、本地侧 chmod（Netcatty 同样不提供）均不在本轮。
+
+### 踩坑经验
+
+1. **引擎 `SftpHandle::upload()`（= russh `sftp.write`）对不存在的目标文件报 `No such file`**（129 实测发现，疑似 open 未带 CREATE 标志）。UI 上传走 `upload_streaming`（生产路径）不受影响；未来 `sftp_save_file`（内置编辑器）写新文件时要走流式路径或先查此处。
+2. `SecretSystem` 不直接实现取密，需 `secrets.store.get(&cred_secret_key(id))`（`.store` 是 `Arc<dyn SecretStore>`，dyn 调用无需 trait import）。
+3. live 测试首次失败会在远端留下空目录（本轮遗留 `/tmp/termx-live-<首次pid>`，无害）；断言链越靠后失败残留越多，清理逻辑放最后是可接受取舍。
+
+### 门禁
+
+- npm run test:run **139/139** ✓（+3 权限位测试）；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check ✓ + cargo check --features server ✓（仅既有警告）；cargo test --lib **794✓ / 0✗**；129 live 测试 ✓。
+- 前端视觉核对（右键菜单/对话框/传输条渲染）按新节奏留人工或新 CU 会话。

@@ -1129,6 +1129,14 @@ async fn dispatch_async(
             let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
             ok(h.stat(&arg::<String>(&args, "path")?).await)
         }
+        "sftp_chmod" => {
+            let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
+            ok(h.chmod(
+                &arg::<String>(&args, "path")?,
+                arg::<u32>(&args, "mode")?,
+            )
+            .await)
+        }
         "sftp_download_to" => {
             let sftp = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
             let remote_path: String = arg(&args, "remotePath")?;

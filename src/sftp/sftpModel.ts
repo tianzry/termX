@@ -275,3 +275,42 @@ export function pickerItemToTarget(item: PickerItem): SftpConnectTarget {
       return { kind: "profile", profile: item.profile };
   }
 }
+
+// ── 权限位（chmod 对话框）─────────────────────────────────
+
+export interface PermGroup {
+  read: boolean;
+  write: boolean;
+  execute: boolean;
+}
+
+/** 3×3 权限矩阵：owner/group/others × read/write/execute。 */
+export interface PermMatrix {
+  owner: PermGroup;
+  group: PermGroup;
+  others: PermGroup;
+}
+
+/** u32 权限位 → 3×3 矩阵（取低 9 位；P4：FileStat.permissions 是 u32）。 */
+export function permsFromMode(mode: number): PermMatrix {
+  const g = (shift: number): PermGroup => ({
+    read: ((mode >> shift) & 0b100) !== 0,
+    write: ((mode >> shift) & 0b010) !== 0,
+    execute: ((mode >> shift) & 0b001) !== 0,
+  });
+  return { owner: g(6), group: g(3), others: g(0) };
+}
+
+const permBits = (g: PermGroup): number =>
+  (g.read ? 4 : 0) | (g.write ? 2 : 0) | (g.execute ? 1 : 0);
+
+/** 矩阵 → 八进制字符串（如 "640"，Netcatty 权限对话框的实时展示形态）。 */
+export function permsToOctal(m: PermMatrix): string {
+  return `${permBits(m.owner)}${permBits(m.group)}${permBits(m.others)}`;
+}
+
+/** 八进制字符串 → 供 sftpChmod 使用的 mode 数值；非法输入返回 null。 */
+export function octalToMode(octal: string): number | null {
+  if (!/^[0-7]{3,4}$/.test(octal)) return null;
+  return Number.parseInt(octal, 8);
+}
