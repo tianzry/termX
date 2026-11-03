@@ -2496,6 +2496,7 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 验证与门禁
 
 - 复现证据 + 修复后点击：`串口` → 弹窗；`连接` → 仅新增 `串口 COM1` 标签，不再出现 `本地终端 1`。
+- Esc 实测通过（弹窗关闭回到 Vault，未创建任何标签）：[serial-esc-closed.png](g:\AiCode\termX\evidence\serial-esc-closed.png)；点遮罩关闭走同一回调，未单独截图。
 - `npm run test:run` 296✓（新增 workspaceModel 串口标题 2 例、workspaceStore 串口持久化 1 例）；`npm run build` ✓；`cargo check --features server` ✓；`cargo test --lib` 836✓（本轮无 Rust 改动）。
 - 本地 commit，未 push；调试实例保持运行（PID 23056，停留在串口弹窗）供继续手测。
 
