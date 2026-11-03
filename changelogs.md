@@ -3108,7 +3108,7 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 
 ### 提交 / 推送
 
-- 本地 commit 后 push `HEAD:main`，`ls-remote` 复核；完成后进入「笔记（Notes）」阶段。
+- 本地 commit `be07732`；核对远端 `0b9adf3` 为 HEAD 祖先（快进）后 push `HEAD:main`，`ls-remote` 复核远端 main=`be07732`；完成后进入「笔记（Notes）」阶段。
 
 
 

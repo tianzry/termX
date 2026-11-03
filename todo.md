@@ -179,7 +179,7 @@
   - 依据：netcatty `domain/models/connection.ts` Host 约 30 字段；termX 表单仅 11 个（名称/地址/端口/凭据/分组/标签/登录方式/用户名/密码/密钥文件/启动命令）。
 - [x] ✅ **35. 串口 1:1 重做**
   - ✅ 阶段 A（2026-11-03）：`serialFormConfig.ts` 对照表 + `serialInput.ts` 输入语义 + `SerialPanel` 常量表驱动重构；本地 commit `7a29ed3`。
-  - ✅ 阶段 B（2026-11-03）：间距/标签/主按钮视觉复检并修正；补卸载时串口句柄释放与 `serial_not_found` 文案；本机 COM1 真实打开 + 行模式/本地回显/退格手测通过；门禁 294✓/build✓/cargo check(server)✓/836✓；已 review + push。
+  - ✅ 阶段 B（2026-11-03）：间距/标签/主按钮视觉复检并修正；补卸载时串口句柄释放与 `serial_not_found` 文案；本机 COM1 真实打开 + 行模式/本地回显/退格手测通过；门禁 294✓/build✓/cargo check(server)✓/836✓；commit `be07732` 已 push（远端 main=`be07732`）。
   - 留档（待人工）：ymodem（后端未实现且无设备验证，未加假按钮）；命名管道（crate 不支持，明确报错）；保存配置为主机（无 host 模型）。
 - [ ] ⬜ **36. SFTP 细节交互**
   - 面包屑导航、覆盖冲突对话框、同主机复制（与 #24 归档解压联动）。
