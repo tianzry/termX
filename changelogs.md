@@ -2428,3 +2428,32 @@ select_application/open_with_application；⑤ 临时文件注册表
 
 - npm run test:run 136/136 ✓（+10：client 8 例 + sftpModel OS 判定 2 例）；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check ✓（仅既有 6 条 dead_code 警告）；cargo check --features server ✓；cargo test --lib 793✓ / 0✗（本轮无 Rust 改动）。
 - 本地 commit 未推送；实机比对（保活切换验证 + OS 图标目检）留到下一轮。
+
+---
+
+## 2026-11-03 SFTP 实现③·实机比对（CU 验证受阻，延后）
+
+### 目标
+
+对实现③（35e988a）做实机比对：Vaults ↔ SFTP ↔ 终端来回切换后标签/双栏/聚焦状态保留、本地标签 OS 图标正确、复用 129 会话后远端标签显示 linux 图标、切走时无残留可见面板；并与 Netcatty 对照同名场景。
+
+### 已确认项
+
+- build-debug 构建成功，rssh.exe 正常启动（最大化）；SFTP 双栏空态渲染正确（聚焦三角、「先选择一个主机」文案、「+ 选择主机」按钮均在位）。
+- 源码核查：`SftpPaneEmptyState` 按钮接线正常（`onSelectHost` → 打开 picker）；`.nc-sftp-picker-overlay` 为 `position:fixed; inset:0`，picker 若 open 必可见 → 无 CSS 回归。
+- 保活逻辑源码核查：`sftpMounted` sticky 挂载 + `.hidden`（display:none），切换不卸载，状态保留为设计必然。
+
+### 阻塞证据（CU 环境 artifact，非应用缺陷）
+
+- WebView2 内容无 UIA 名称，只能坐标点击；element 坐标原点的多种映射假设（(40,48)/(40,32)/(0,32)/(30,48)、窗口原点、最大化后 identity 映射）逐一被证伪。
+- 点「选择主机」按钮 7 次（左/右栏、纵向扫描 y=505~565、Escape 间隔）：焦点三角有变化（点击到达窗口）但 picker 从不弹出（overlay 为 fixed，若 open 必可见 → 确认未 open）。
+- 最大化后点 Vaults/SFTP 顶标签也不切换。
+- 绘制光标 glyph 偏移不一致（(+40,+48)/(+72,+132)/(+72,+100)/(+188,+297)/(+42,+21)），光标 glyph 不可信；element_id 每次观察重新编号，陈旧 id 原点漂移。
+- 最后手段：对 rssh 控制台窗口 set_focus + type_text 注入 JS 点击亦未生效（该控制台可能并非应用 webview 的 devtools）。
+- 无键盘捷径可绕过（grep ctrlKey/metaKey/altKey 仅 settings/keyBindings 与 vault 选择逻辑）。
+
+### 结论
+
+- 本轮未发现代码缺陷、无修复；实机比对（建标签 / OS 图标目检 / 保活实证 / 无残留 / Netcatty 对照）延后，留待后续轮重试（更换 CU 会话或改人工操作）。
+- 门禁沿用 35e988a 全绿：136/136 + build✓ + cargo check×2✓ + cargo test --lib 793✓（本轮无代码改动，未重跑）。
+- 本轮仅文档提交（changelogs/todo）；轮末结束 rssh.exe，防止下轮构建锁（上轮遗留实例曾致 os error 5）。
