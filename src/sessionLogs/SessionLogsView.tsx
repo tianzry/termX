@@ -1,11 +1,18 @@
-// Vault「日志」页（会话日志阶段 A）。
+// Vault「日志」页（会话日志阶段 A + B）。
 // 对照 Netcatty：日志本体是 recordings 目录里的 .cast 文件，反过来索引到本页列表；
-// 本页只做浏览 / 查看 / 删除，导出落盘属于阶段 B，因此详情头不放导出按钮。
+// 本页做浏览 / 彩色查看 / 导出落盘（Asciicast · 纯文本 · HTML）/ 删除。
 // 左栏 300px（刷新 / 搜索 / 主机 / 格式 / 列表）+ 右侧详情，布局对齐 NotesView。
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import * as api from "../backend/client";
 import type { SessionLog, SessionLogDetail } from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
+import { getSettings } from "../settings/settingsStore";
 import { Icon } from "../ui/icons";
 import {
   collectLogHosts,
@@ -14,8 +21,35 @@ import {
   formatLogSize,
   formatLogTime,
   parseAsciicast,
+  sessionLogExportName,
 } from "./sessionLogsModel";
+import { parseAnsi, type AnsiSpan } from "./ansi";
 import "./sessionLogs.css";
+
+type ExportFormat = "cast" | "txt" | "html";
+
+/** 设置里的默认导出格式：raw / txt → txt，html → html。 */
+function defaultExportFormat(): "txt" | "html" {
+  return getSettings().sessionLogs.format === "html" ? "html" : "txt";
+}
+
+/** AnsiSpan → 内联样式；inverse 交换前景 / 背景（缺省时用主题色兜底）。 */
+function ansiStyle(span: AnsiSpan): CSSProperties {
+  const color = span.inverse
+    ? span.bg ?? "hsl(var(--nc-bg))"
+    : span.fg;
+  const backgroundColor = span.inverse
+    ? span.fg ?? "hsl(var(--nc-fg))"
+    : span.bg;
+  return {
+    color,
+    backgroundColor,
+    fontWeight: span.bold ? 600 : undefined,
+    fontStyle: span.italic ? "italic" : undefined,
+    textDecoration: span.underline ? "underline" : undefined,
+    opacity: span.dim ? 0.6 : undefined,
+  };
+}
 
 function formatDateTime(ms: number | null | undefined): string {
   if (!ms) return "—";
@@ -41,6 +75,12 @@ export function SessionLogsView() {
   const [err, setErr] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SessionLog | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** 彩色（默认）/ 原文视图切换。 */
+  const [rawView, setRawView] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  /** 导出成功提示（错误走左侧 err 条）。 */
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,6 +107,8 @@ export function SessionLogsView() {
     setActiveId(log.id);
     setDetailLoading(true);
     setErr("");
+    setNotice("");
+    setExportMenuOpen(false);
     try {
       setDetail(await api.getSessionLog(log.id));
     } catch (e) {
@@ -93,6 +135,32 @@ export function SessionLogsView() {
     }
   }, [deleteTarget, load]);
 
+  /**
+   * 导出落盘：先选目标文件（取消即止），再让后端生成内容，
+   * 最后写本地文件。格式菜单三项齐全；主按钮用设置里的默认格式。
+   */
+  const exportLog = useCallback(
+    async (log: SessionLog, format: ExportFormat) => {
+      setExportMenuOpen(false);
+      setExporting(true);
+      setNotice("");
+      try {
+        const name = sessionLogExportName(log, format);
+        const path = await api.pickSessionLogExportFile(name, format);
+        if (!path) return;
+        const content = await api.exportSessionLog(log.id, format);
+        await api.localWriteFile(path, new TextEncoder().encode(content));
+        setErr("");
+        setNotice(`已导出到 ${path}`);
+      } catch (e) {
+        setErr(userVisibleError(String(e)));
+      } finally {
+        setExporting(false);
+      }
+    },
+    [],
+  );
+
   const hosts = useMemo(() => collectLogHosts(logs), [logs]);
   const formats = useMemo(
     () => Array.from(new Set(logs.map((log) => log.format))).sort(),
@@ -105,6 +173,11 @@ export function SessionLogsView() {
   const summary = useMemo(
     () => (detail ? parseAsciicast(detail.content) : null),
     [detail],
+  );
+  /** 彩色视图的 span 列表；解析成本只在详情变化时付一次。 */
+  const colored = useMemo(
+    () => (summary ? parseAnsi(summary.text) : []),
+    [summary],
   );
 
   return (
@@ -222,6 +295,53 @@ export function SessionLogsView() {
                 <h2>{detail.log.title || detail.log.path}</h2>
                 <p>{detail.log.host_name || "—"}</p>
               </div>
+              <div className="session-logs-view-toggle">
+                <button
+                  className={rawView ? "" : "active"}
+                  onClick={() => setRawView(false)}
+                >
+                  彩色
+                </button>
+                <button
+                  className={rawView ? "active" : ""}
+                  onClick={() => setRawView(true)}
+                >
+                  原文
+                </button>
+              </div>
+              <div className="session-logs-export">
+                <button
+                  className="session-logs-action"
+                  title={`导出（默认 ${defaultExportFormat().toUpperCase()}）`}
+                  disabled={exporting}
+                  onClick={() =>
+                    void exportLog(detail.log, defaultExportFormat())
+                  }
+                >
+                  <Icon name="download" size={14} />
+                </button>
+                <button
+                  className="session-logs-action session-logs-export-toggle"
+                  title="选择导出格式"
+                  disabled={exporting}
+                  onClick={() => setExportMenuOpen((v) => !v)}
+                >
+                  <Icon name="chevron-down" size={12} />
+                </button>
+                {exportMenuOpen && (
+                  <div className="session-logs-export-menu">
+                    <button onClick={() => void exportLog(detail.log, "cast")}>
+                      Asciicast（.cast）
+                    </button>
+                    <button onClick={() => void exportLog(detail.log, "txt")}>
+                      纯文本（.txt）
+                    </button>
+                    <button onClick={() => void exportLog(detail.log, "html")}>
+                      HTML（.html）
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 className="session-logs-action session-logs-danger"
                 title="删除"
@@ -230,6 +350,8 @@ export function SessionLogsView() {
                 <Icon name="trash" size={14} />
               </button>
             </header>
+
+            {notice && <p className="session-logs-notice">{notice}</p>}
 
             <div className="session-logs-stats">
               <div className="session-logs-stat">
@@ -259,7 +381,15 @@ export function SessionLogsView() {
             </div>
 
             <div className="session-logs-content-wrap">
-              <pre className="session-logs-content">{summary.text}</pre>
+              <pre className="session-logs-content">
+                {rawView
+                  ? summary.text
+                  : colored.map((span, index) => (
+                      <span key={index} style={ansiStyle(span)}>
+                        {span.text}
+                      </span>
+                    ))}
+              </pre>
             </div>
           </>
         ) : (

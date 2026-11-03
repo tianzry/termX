@@ -28,6 +28,9 @@ import {
   sftpLstat,
   sftpRealpath,
   sftpResolveConflict,
+  sessionLogStatus,
+  startSessionLog,
+  stopSessionLog,
   sftpTransferEnqueue,
   sftpTransferPause,
   sftpTransferSetConcurrency,
@@ -335,5 +338,37 @@ describe("SFTP 传输队列命令与事件", () => {
       "sftp:transfer_updated:t9",
       expect.any(Function),
     );
+  });
+});
+
+describe("会话日志录制命令", () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset();
+    mockedInvoke.mockResolvedValue(undefined);
+  });
+
+  it("start_session_log 传 sessionId / title / cols / rows", async () => {
+    await startSessionLog("s1", "prod", 120, 30);
+    expect(mockedInvoke).toHaveBeenLastCalledWith("start_session_log", {
+      sessionId: "s1",
+      title: "prod",
+      cols: 120,
+      rows: 30,
+    });
+  });
+
+  it("stop_session_log 只传 sessionId", async () => {
+    await stopSessionLog("s1");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("stop_session_log", {
+      sessionId: "s1",
+    });
+  });
+
+  it("session_log_status 拒绝时向上抛出（由调用方静默处理）", async () => {
+    mockedInvoke.mockRejectedValueOnce("session_not_found");
+    await expect(sessionLogStatus("s1")).rejects.toBe("session_not_found");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("session_log_status", {
+      sessionId: "s1",
+    });
   });
 });

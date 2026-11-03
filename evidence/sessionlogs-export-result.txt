@@ -1,0 +1,11 @@
+﻿dialog edits: 1
+  edit '' w=992
+save button: 保存(&S)
+prod-web export bytes=449
+prod-web content: FAIL
+prod-web ANSI ESC: FAIL
+dialog edits: 1
+  edit '' w=992
+save button: 保存(&S)
+129 export bytes=40
+129 content marker: FAIL

@@ -362,9 +362,18 @@ fn remove_owned_waiter<T>(
     Ok(())
 }
 
-fn get_session(state: &State<'_, AppState>, session_id: &str) -> AppResult<client::SessionHandle> {
+/// 供其它命令模块（会话日志等）按 session_id 取 SSH 句柄。
+/// 与 `get_session` 同源，只是接收 `&AppState` 以便 `*_impl`（headless 复用）。
+pub(crate) fn session_handle(
+    state: &AppState,
+    session_id: &str,
+) -> AppResult<client::SessionHandle> {
     locked(&state.sessions)?
         .get(session_id)
         .cloned()
         .ok_or_else(|| AppError::not_found("session_not_found", json!({})))
+}
+
+fn get_session(state: &State<'_, AppState>, session_id: &str) -> AppResult<client::SessionHandle> {
+    session_handle(state, session_id)
 }

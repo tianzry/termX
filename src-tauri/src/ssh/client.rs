@@ -11,7 +11,6 @@ use tokio::time::{timeout, Duration};
 
 use crate::error::{locked, AppError, AppResult};
 use crate::models::{Credential, Profile};
-use crate::terminal::recorder::Recorder;
 
 use super::prompt::prompt_host_key;
 
@@ -1017,6 +1016,19 @@ mod tests {
     use super::*;
     use base64::{engine::general_purpose::STANDARD, Engine};
 
+    #[test]
+    fn recording_title_strips_timestamp_suffix() {
+        assert_eq!(
+            recording_title_from_path(Path::new("prod_web_20261103_215000.cast")),
+            "prod web"
+        );
+        // 只剩时间戳 → 空标题回退 "session"。
+        assert_eq!(
+            recording_title_from_path(Path::new("_20261103_215000.cast")),
+            "session"
+        );
+    }
+
     #[tokio::test]
     async fn connection_log_uses_base64_stream_payload() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1601,6 +1613,10 @@ pub struct SessionHandle {
     /// 本次连接对应的 Profile.id。AI 模块用它作 remote_shell_cache 的 key ——
     /// 同一 profile 多次重连共享一份探测结果，不重发 probe。
     profile_id: String,
+    /// 会话级录制槽。session_task 只在此处短暂持锁写一帧，
+    /// 命令层（开始 / 停止 / 状态查询）通过同一个 Arc 读写，
+    /// 因此不会出现"session_task 独占 recorder、命令拿不到"的分叉。
+    recorder_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveRecording>>>,
 }
 
 impl SessionHandle {
@@ -1619,6 +1635,12 @@ impl SessionHandle {
     }
     pub fn profile_id(&self) -> &str {
         &self.profile_id
+    }
+    /// 录制槽的共享句柄（clone 出 Arc，调用方离开 session map 锁后再使用）。
+    pub fn recorder_slot(
+        &self,
+    ) -> Arc<StdMutex<Option<crate::terminal::recorder::ActiveRecording>>> {
+        self.recorder_slot.clone()
     }
 
     /// 强制断开整条 SSH 连接 —— 不只是 shell channel，连 TCP 一起切。
@@ -1846,12 +1868,28 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
 
     let (tx, rx) = mpsc::unbounded_channel();
 
-    let recorder = recording_path.and_then(|p| Recorder::new(p, cols, rows).ok());
+    // 录制槽：自动录制（settings 的 recording_enabled）与手动录制共用同一条链路。
+    // 手动开始 / 停止由命令层通过 handle.recorder_slot() 读写，session_task
+    // 只负责把输出字节写进当前槽里的 recorder。
+    let recorder_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveRecording>>> =
+        Arc::new(StdMutex::new(None));
+    if let Some(path) = recording_path {
+        let title = recording_title_from_path(&path);
+        // 录制是 best-effort：建文件失败不能阻断连接（与阶段 A 一致）。
+        if let Ok(active) =
+            crate::terminal::recorder::ActiveRecording::new(path, cols, rows, title)
+        {
+            if let Ok(mut guard) = recorder_slot.lock() {
+                *guard = Some(active);
+            }
+        }
+    }
 
     let data_event = format!("ssh:data:{session_id}");
     let close_event = format!("ssh:close:{session_id}");
+    let task_slot = recorder_slot.clone();
     tauri::async_runtime::spawn(async move {
-        session_task(data_event, close_event, channel, rx, app, recorder).await;
+        session_task(data_event, close_event, channel, rx, app, task_slot).await;
     });
 
     Ok(ConnectResult {
@@ -1860,8 +1898,29 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
             tx,
             ssh_handle,
             profile_id: profile.id.clone(),
+            recorder_slot,
         },
     })
+}
+
+/// 自动录制的标题：文件名 stem 去掉末尾 `_YYYYmmdd_HHMMSS`（16 字符），
+/// 下划线还原为空格；空标题回退 "session"。
+fn recording_title_from_path(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    let base = match stem.len().checked_sub(16) {
+        // 时间戳后缀 `_YYYYmmdd_HHMMSS` 固定 16 字节；非 ASCII 名称退化为整段。
+        Some(cut) if stem.is_char_boundary(cut) => &stem[..cut],
+        _ => stem,
+    };
+    let title = base.replace('_', " ").trim().to_string();
+    if title.is_empty() {
+        "session".to_owned()
+    } else {
+        title
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1898,8 +1957,21 @@ async fn session_task(
     mut channel: russh::Channel<client::Msg>,
     mut rx: mpsc::UnboundedReceiver<SessionCmd>,
     app: crate::emitter::Host,
-    mut recorder: Option<Recorder>,
+    recorder_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveRecording>>>,
 ) {
+    /// 写一帧到当前录制槽；持锁范围只覆盖 `record`（同步 IO 缓冲写），
+    /// 绝不跨 await，避免与命令层的 start/stop 互锁。
+    fn record_output(
+        slot: &StdMutex<Option<crate::terminal::recorder::ActiveRecording>>,
+        data: &[u8],
+    ) {
+        if let Ok(mut guard) = slot.lock() {
+            if let Some(active) = guard.as_mut() {
+                let _ = active.recorder.record(data);
+            }
+        }
+    }
+
     let mut exit_code: Option<i32> = None;
     let mut signal: Option<String> = None;
     loop {
@@ -1910,15 +1982,11 @@ async fn session_task(
 
         match event {
             Event::Ssh(Some(ChannelMsg::Data { data })) => {
-                if let Some(ref mut rec) = recorder {
-                    let _ = rec.record(&data);
-                }
+                record_output(&recorder_slot, &data);
                 let _ = app.emit_bytes(&data_event, &data);
             }
             Event::Ssh(Some(ChannelMsg::ExtendedData { data, .. })) => {
-                if let Some(ref mut rec) = recorder {
-                    let _ = rec.record(&data);
-                }
+                record_output(&recorder_slot, &data);
                 let _ = app.emit_bytes(&data_event, &data);
             }
             Event::Ssh(Some(ChannelMsg::ExitStatus { exit_status })) => {
@@ -1946,8 +2014,12 @@ async fn session_task(
             _ => {}
         }
     }
-    if let Some(rec) = recorder {
-        let _ = rec.finish();
+    // 会话结束：取走并关闭录制器（无论是自动录制还是手动录制），
+    // 之后命令层的 status 查询自然会看到 None。
+    if let Ok(mut guard) = recorder_slot.lock() {
+        if let Some(active) = guard.take() {
+            let _ = active.recorder.finish();
+        }
     }
     let _ = app.emit(
         &close_event,

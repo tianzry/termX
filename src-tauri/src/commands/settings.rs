@@ -198,6 +198,25 @@ fn ensure_recordings_dir(dir: &std::path::Path) {
     }
 }
 
+/// 用固定 recordings 目录 + 安全文件名 + 本地时间戳生成一次新录制路径，
+/// 并确保目录存在（Unix 上为 0700）。自动录制与手动录制共用这一处逻辑，
+/// 两条入口不会把 `.cast` 生在不同位置。
+pub fn build_recording_path(state: &AppState, name: &str) -> std::path::PathBuf {
+    let dir = recording_dir(state);
+    ensure_recordings_dir(&dir);
+    let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let stem = safe_recording_stem(name);
+    let mut path = dir.join(format!("{stem}_{stamp}.cast"));
+    // 同一秒内同名档案可能开多个会话（自动 + 手动）。Recorder 以 truncate
+    // 打开文件，重名会静默覆盖上一段日志，因此先探测再在后面加序号。
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("{stem}-{n}_{stamp}.cast"));
+        n += 1;
+    }
+    path
+}
+
 /// Compute the asciicast recording path for a new SSH session: honors
 /// `recording_enabled`, ensures the fixed recordings dir exists (owner-only on
 /// Unix), and stamps the file with a path-safe profile name + timestamp.
@@ -214,14 +233,13 @@ pub fn recording_path_for(
     if !enabled {
         return Ok(None);
     }
-    let dir = recording_dir(state);
-    ensure_recordings_dir(&dir);
-    let name = format!(
-        "{}_{}.cast",
-        safe_recording_stem(profile_name),
-        chrono::Local::now().format("%Y%m%d_%H%M%S")
-    );
-    Ok(Some(dir.join(name)))
+    Ok(Some(build_recording_path(state, profile_name)))
+}
+
+/// 手动录制的路径：不受 `recording_enabled` 影响 —— 用户点了「开始录制」，
+/// 就应当开始，而不是被自动录制开关挡住。
+pub fn recording_path_for_manual(state: &AppState, name: &str) -> AppResult<std::path::PathBuf> {
+    Ok(build_recording_path(state, name))
 }
 
 // ── 开机自启动（设置中心 · 系统 tab）──────────────────────
@@ -357,7 +375,78 @@ pub fn set_auto_launch(enabled: bool) -> Result<AutoLaunchStatus, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_safe_recording_name, safe_recording_stem};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use super::{
+        build_recording_path, is_safe_recording_name, recording_dir, safe_recording_stem,
+    };
+
+    /// AppState without a real Tauri app: enough for path construction.
+    fn test_state(data_dir: PathBuf) -> crate::state::AppState {
+        let db = Arc::new(crate::db::Db::open_in_memory().unwrap());
+        let secret_store: Arc<dyn crate::secret::SecretStore> =
+            Arc::new(crate::secret::DbStore::new(db.clone()));
+        crate::state::AppState {
+            transfer_center: Arc::new(crate::sftp::transfer_center::TransferCenter::new(
+                db.clone(),
+            )),
+            db,
+            secret_store,
+            lifecycle_sessions: Default::default(),
+            sessions: Default::default(),
+            #[cfg(desktop)]
+            pty_sessions: Default::default(),
+            #[cfg(desktop)]
+            serial_sessions: Default::default(),
+            telnet_sessions: Default::default(),
+            sftp_sessions: Default::default(),
+            transfer_cancels: Default::default(),
+            active_forwards: Default::default(),
+            auth_waiters: Default::default(),
+            passphrase_waiters: Default::default(),
+            host_key_waiters: Default::default(),
+            passphrase_cache: Default::default(),
+            ai_sessions: Default::default(),
+            ai_session_owners: Default::default(),
+            ai_remote_shell_cache: Default::default(),
+            data_dir,
+        }
+    }
+
+    #[test]
+    fn build_recording_path_creates_missing_recordings_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        // data_dir 本身也不存在：build 必须自己把 recordings 目录建出来。
+        let state = test_state(temp.path().join("fresh"));
+        let path = build_recording_path(&state, "prod web");
+
+        let dir = recording_dir(&state);
+        assert!(dir.is_dir(), "recordings dir should be created: {dir:?}");
+        assert_eq!(path.parent(), Some(dir.as_path()));
+        let file = path.file_name().unwrap().to_str().unwrap();
+        assert!(
+            file.starts_with("prod_web_"),
+            "unsafe chars should be neutralized: {file}"
+        );
+        assert!(is_safe_recording_name(file), "unsafe filename: {file}");
+        assert_eq!(path.extension().unwrap(), "cast");
+    }
+
+    #[test]
+    fn build_recording_path_never_overwrites_existing_cast() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path().join("fresh"));
+        let first = build_recording_path(&state, "prod web");
+        std::fs::write(&first, b"existing log").unwrap();
+
+        let second = build_recording_path(&state, "prod web");
+        assert_ne!(first, second, "second recording must not reuse a path");
+        assert!(!second.exists(), "second path must be free: {second:?}");
+        let file = second.file_name().unwrap().to_str().unwrap();
+        assert!(file.starts_with("prod_web-"), "suffix expected: {file}");
+        assert!(is_safe_recording_name(file), "unsafe filename: {file}");
+    }
 
     #[test]
     fn accepts_bare_recording_filenames() {

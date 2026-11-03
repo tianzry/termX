@@ -6,6 +6,29 @@ use std::time::Instant;
 use crate::error::AppResult;
 use crate::models::CastHeader;
 
+/// 会话级手动录制（阶段 B）：写句柄与元数据放在同一个值里，由
+/// `SessionHandle.recorder_slot` 共享给 SSH session_task 与命令层。
+/// 自动录制同样走这个结构，因此"开始 / 停止"对两种来源一视同仁。
+pub struct ActiveRecording {
+    pub recorder: Recorder,
+    pub path: PathBuf,
+    /// 开始时刻（Unix 毫秒），供前端工具栏状态提示。
+    pub started_at_ms: i64,
+    pub title: String,
+}
+
+impl ActiveRecording {
+    pub fn new(path: PathBuf, cols: u32, rows: u32, title: String) -> AppResult<Self> {
+        let recorder = Recorder::new(path.clone(), cols, rows)?;
+        Ok(Self {
+            recorder,
+            path,
+            started_at_ms: chrono::Utc::now().timestamp_millis(),
+            title,
+        })
+    }
+}
+
 /// asciicast v2 录制器。
 ///
 /// PTY/SSH 把字节流按内核缓冲随便切，多字节 UTF-8 字符可能横跨 chunk。
@@ -116,6 +139,19 @@ mod tests {
             .filter(|e| e[1] == "o")
             .map(|e| e[2].as_str().unwrap().to_string())
             .collect()
+    }
+
+    #[test]
+    fn active_recording_carries_path_title_and_start_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("manual.cast");
+        let started = chrono::Utc::now().timestamp_millis();
+        let mut active = ActiveRecording::new(p.clone(), 100, 30, "prod".into()).unwrap();
+        assert_eq!(active.path, p);
+        assert_eq!(active.title, "prod");
+        assert!(active.started_at_ms >= started);
+        active.recorder.record(b"hi").unwrap();
+        active.recorder.finish().unwrap();
     }
 
     #[test]

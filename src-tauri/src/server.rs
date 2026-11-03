@@ -738,6 +738,28 @@ fn dispatch(
             .map_err(err_value)?;
             Ok(Value::Null)
         }
+        "start_session_log" => {
+            let sid: String = arg(&args, "sessionId")?;
+            let title: String = arg(&args, "title")?;
+            // 缺省 / null 由 serde 解析成 None，impl 里再 clamp 到合理区间。
+            let cols: Option<u32> = arg(&args, "cols")?;
+            let rows: Option<u32> = arg(&args, "rows")?;
+            ok(crate::commands::session_logs::start_session_log_impl(
+                state, &sid, &title, cols, rows,
+            ))
+        }
+        "stop_session_log" => {
+            let sid: String = arg(&args, "sessionId")?;
+            ok(crate::commands::session_logs::stop_session_log_impl(
+                state, &sid,
+            ))
+        }
+        "session_log_status" => {
+            let sid: String = arg(&args, "sessionId")?;
+            ok(crate::commands::session_logs::session_log_status_impl(
+                state, &sid,
+            ))
+        }
 
         // ---- serial profiles (CRUD; peer of forwards) ----
         "list_serial_profiles" => ok(crate::db::serial_profile::list(&state.db)),

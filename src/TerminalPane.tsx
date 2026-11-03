@@ -126,6 +126,11 @@ export function TerminalPane({
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /** 会话级录制状态（阶段 B）：null = 未录制，区别于"还没查到"。 */
+  const [sessionLog, setSessionLog] = useState<api.SessionLogRecording | null>(
+    null,
+  );
+  const [logBusy, setLogBusy] = useState(false);
   /** 片段 / 脚本列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
   const [snippets, setSnippets] = useState<api.Snippet[]>([]);
   useEffect(() => {
@@ -145,6 +150,30 @@ export function TerminalPane({
       window.removeEventListener(SNIPPETS_CHANGED_EVENT, load);
     };
   }, []);
+
+  /**
+   * 连接建立后拉取一次录制状态：自动录制（settings.recording_enabled）也走
+   * 同一个 slot，所以工具栏能显示"正在录制"并允许用户停止。断开即清空。
+   */
+  useEffect(() => {
+    const sid = status === "connected" && isSsh ? sidRef.current : null;
+    if (!sid) {
+      setSessionLog(null);
+      return;
+    }
+    let alive = true;
+    api
+      .sessionLogStatus(sid)
+      .then((rec) => {
+        if (alive) setSessionLog(rec);
+      })
+      .catch(() => {
+        // 状态查询失败不应打断终端使用，静默即可。
+      });
+    return () => {
+      alive = false;
+    };
+  }, [status, isSsh]);
 
   /** 逐行发送的待执行定时器（断开 / 卸载时必须清掉，避免写入错误会话）。 */
   const pendingWritesRef = useRef<number[]>([]);
@@ -184,6 +213,35 @@ export function TerminalPane({
       );
     });
   };
+
+  /** 工具栏「会话日志」开关：开始 / 停止会话级录制（阶段 B）。 */
+  async function toggleSessionLog() {
+    const sid = sidRef.current;
+    if (logBusy || !sid) return;
+    setLogBusy(true);
+    try {
+      if (sessionLog) {
+        await api.stopSessionLog(sid);
+        setSessionLog(null);
+        onStatus("会话日志已停止并保存到「日志」页");
+      } else {
+        const term = controllerRef.current?.term;
+        const rec = await api.startSessionLog(
+          sid,
+          tab.title,
+          term?.cols,
+          term?.rows,
+        );
+        setSessionLog(rec);
+        onStatus("开始录制会话日志");
+      }
+    } catch (e) {
+      // 与终端其它错误一致：走用户可见文案（error code → 中文）。
+      onStatus(userVisibleError(String(e)));
+    } finally {
+      setLogBusy(false);
+    }
+  }
 
   /** 脚本下拉菜单（终端工具栏「脚本」按钮）。 */
   const [scriptMenuOpen, setScriptMenuOpen] = useState(false);
@@ -1040,6 +1098,11 @@ export function TerminalPane({
           <span className="term-toolbar-title" title={tab.title}>
             {tab.title}
           </span>
+          {sessionLog && (
+            <span className="term-recording-badge" title={sessionLog.path}>
+              REC
+            </span>
+          )}
           <button
             className="term-tool-btn"
             disabled
@@ -1138,9 +1201,14 @@ export function TerminalPane({
             <Icon name="search" size={12} />
           </button>
           <button
-            className="term-tool-btn"
-            disabled
-            title="会话日志（尚未实现）"
+            className={`term-tool-btn${sessionLog ? " recording" : ""}`}
+            disabled={!isSsh || status !== "connected" || logBusy}
+            title={
+              sessionLog
+                ? `会话日志录制中：${sessionLog.path}（点击停止）`
+                : "开始录制会话日志"
+            }
+            onClick={() => void toggleSessionLog()}
           >
             <Icon name="file-text" size={12} />
           </button>
@@ -1203,9 +1271,20 @@ export function TerminalPane({
                   <Icon name="palette" size={12} />
                   终端设置
                 </button>
-                <button disabled title="开始录制（尚未实现）">
+                <button
+                  title={
+                    sessionLog
+                      ? "停止录制会话日志"
+                      : "开始录制会话日志"
+                  }
+                  disabled={!isSsh || status !== "connected" || logBusy}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    void toggleSessionLog();
+                  }}
+                >
                   <Icon name="circle" size={12} className="term-record-dot" />
-                  开始录制
+                  {sessionLog ? "停止录制" : "开始录制"}
                 </button>
                 {systemEligible && (
                   <button disabled title="终端编码（尚未实现）">

@@ -471,6 +471,59 @@ export interface SessionLogDetail {
   content: string;
 }
 
+/** 进行中的会话日志录制（阶段 B；path 是 recordings 目录内的裸文件名）。 */
+export interface SessionLogRecording {
+  path: string;
+  /** Unix 毫秒。 */
+  started_at: number;
+  title: string;
+}
+
+/** 会话级手动录制开始。cols / rows 缺省由后端按 120×30 处理。 */
+export function startSessionLog(
+  sessionId: string,
+  title: string,
+  cols?: number,
+  rows?: number,
+): Promise<SessionLogRecording> {
+  return invoke<SessionLogRecording>("start_session_log", {
+    sessionId,
+    title,
+    cols,
+    rows,
+  });
+}
+
+/** 停止录制并落库索引，返回可直接展示的 SessionLog。 */
+export function stopSessionLog(sessionId: string): Promise<SessionLog> {
+  return invoke<SessionLog>("stop_session_log", { sessionId });
+}
+
+/** 当前会话的录制状态；未录制或会话已不存在返回 null。 */
+export function sessionLogStatus(
+  sessionId: string,
+): Promise<SessionLogRecording | null> {
+  return invoke<SessionLogRecording | null>("session_log_status", { sessionId });
+}
+
+/** 导出会话日志：选目标文件；取消返回 null。 */
+export function pickSessionLogExportFile(
+  defaultName: string,
+  format: "cast" | "txt" | "html",
+): Promise<string | null> {
+  const filters =
+    format === "cast"
+      ? [{ name: "Asciicast", extensions: ["cast"] }]
+      : format === "html"
+        ? [{ name: "HTML", extensions: ["html"] }]
+        : [{ name: "Text", extensions: ["txt"] }];
+  return saveFileDialog({
+    title: "导出会话日志",
+    defaultPath: defaultName,
+    filters,
+  }).then((path) => path ?? null);
+}
+
 export function listSessionLogs(): Promise<SessionLog[]> {
   return invoke<SessionLog[]>("list_session_logs");
 }

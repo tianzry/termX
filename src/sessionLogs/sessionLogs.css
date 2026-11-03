@@ -248,6 +248,91 @@
   color: #e5534b;
 }
 
+/* 彩色 / 原文视图切换（阶段 B）。 */
+.session-logs-view-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.session-logs-view-toggle button {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--nc-muted));
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.session-logs-view-toggle button + button {
+  border-left: 1px solid hsl(var(--nc-border));
+}
+
+.session-logs-view-toggle button.active {
+  background: hsl(var(--nc-hover));
+  color: inherit;
+}
+
+/* 导出按钮 + 格式菜单（阶段 B）。 */
+.session-logs-export {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.session-logs-export-toggle {
+  width: 20px;
+}
+
+.session-logs-export .session-logs-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.session-logs-export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 8px;
+  background: hsl(var(--nc-bg-elev));
+  box-shadow: 0 8px 24px hsl(220 40% 10% / 0.35);
+}
+
+.session-logs-export-menu button {
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.session-logs-export-menu button:hover {
+  background: hsl(var(--nc-hover));
+}
+
+.session-logs-notice {
+  margin: 0;
+  padding: 5px 12px;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.3);
+  color: hsl(var(--nc-muted));
+  font-size: 11px;
+}
+
 .session-logs-stats {
   display: flex;
   flex-wrap: wrap;

@@ -3309,3 +3309,39 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 - 扫描允许坏行：asciicast 单行损坏只跳过该行，不能让整页 500；文件缺失时详情按 `session_log_read_failed` 报错而不是静默打开别的文件。
 - `recording_enabled` 旧键从未接线，当前页面只索引已有 `.cast`；录制开关、ANSI 渲染/回放、导出落盘留阶段 B。
 - 63 个工具点内完成：门禁 336✓（27 文件）/ build✓ / cargo check(server)✓ / cargo test --lib 853✓；实机截图 `evidence/sessionlogs-page.png`（3 条样例 cast，列表排序、筛选、详情统计与 ANSI 原文可见）。
+
+---
+
+## 2026-11-03 — 会话日志阶段 B（录制 / 查看 / 导出收官）
+
+### 修改点
+
+1. **会话级录制**
+   - `SessionHandle` 增加 `Arc<Mutex<Option<ActiveRecording>>>`；自动录制与手动录制共用同一槽，`session_task` 每帧短暂加锁写入，不跨 await。
+   - 新增 `start_session_log` / `stop_session_log` / `session_log_status` 三命令，lib.rs + server.rs 双注册；停止时 finish → 解析 cast → 写索引表。
+   - 终端工具栏 `file-text` 按钮与 More「开始/停止录制」由禁用占位改为真实可用，录制中显示 REC 徽标与「点击停止」；设置页已有 `recording_enabled` 继续控制自动录制。
+   - 手动录制不受自动开关限制；同名同秒路径自动加 `-2` 序号，避免 `Recorder` truncate 覆盖旧日志（review 中危修复）。
+2. **ANSI 渲染**
+   - 新增 `src/sessionLogs/ansi.ts`：SGR 16 色/粗体/斜体/下划线/反显、CRLF 归一、裸 `\r` 行覆盖、未知 CSI/OSC 丢弃；React span 渲染，无 innerHTML；详情支持「彩色 / 原文」切换，原文保留 ANSI。
+   - 10 个解析单测；时间轴回放明确留档不做。
+3. **导出落盘**
+   - 详情「导出（默认 TXT）」+「选择格式」菜单，走 Tauri `save` 对话框；cast/txt/html 三种，txt 保留 ANSI 原样；写入复用 localfs。
+   - 新增 `pickSessionLogExportFile`；错误码补 `session_log_already_recording` / `session_log_not_recording`。
+
+### 实测（129）
+
+- 连接 129 → 工具栏开始录制（REC）→ 停止：`129_20261103_222403.cast` 645B 落盘，Vault 日志页出现 3 条 129 记录，详情打开正常。
+- 导出 `prod-web` 样例为 TXT：449B，内容含 `Last login` 与 ESC 颜色序列（ANSI 保留）。
+- 导出 129 手动日志为 TXT：40B，内容含 `TERMX_LOG_LIVE`。
+- 证据：`evidence/sessionlogs-live-129.png`（列表 + 详情 + 彩色/原文/导出按钮）；导出文件位于 `%TEMP%`（termx-prod-web-log.txt / termx-129-log.txt）。
+
+### 与 Netcatty 差异 / 待人工
+
+- **一致**：录制与打开分离；自动/手动录制的文件在停止后仍可打开；txt/raw/html 三格式与时间戳语义对齐；入口都在终端 More actions。
+- **差异**：Netcatty 无 Vault 日志列表页，只有终端菜单打开文件；termX 新增索引页，并支持 ANSI 彩色渲染与页面内导出。Netcatty 运行实例未捕获，入口比对基于 `docs/session-logs.md` 与 `Terminal.tsx` 源码取证（截图比对转人工）。
+- **待人工**：Netcatty 实机菜单并排截图；回放（时间轴）；ANSI 256 色/真彩色；断线时索引要等下次扫描才收录（文件不丢）。
+
+### 门禁 / review
+
+- `test:run` 28 文件 349✓、`build`✓、`cargo check --features server`✓、`cargo test --lib` 856✓、debug 构建✓。
+- 自审：路径穿越（手动路径复用 safe stem）、坏 cast（跳过/报读失败）、索引与文件（停止即 upsert，扫描幂等）、删除确认、导出路径（系统对话框）、i18n、双注册均通过；同秒覆盖中危已修，无高危。

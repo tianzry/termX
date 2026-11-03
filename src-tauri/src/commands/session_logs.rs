@@ -4,8 +4,8 @@ use std::time::UNIX_EPOCH;
 
 use tauri::State;
 
-use crate::error::{AppError, AppResult};
-use crate::models::{SessionLog, SessionLogDetail};
+use crate::error::{locked, AppError, AppResult};
+use crate::models::{SessionLog, SessionLogDetail, SessionLogRecording};
 use crate::state::AppState;
 
 // ── 会话日志索引（阶段 A）────────────────────────────────────────
@@ -103,6 +103,40 @@ fn mtime_ms(path: &Path) -> i64 {
         .unwrap_or(0)
 }
 
+/// 从 recordings 目录里的单个 `.cast` 文件构造索引行。
+/// 文件读不到（不存在 / 元数据失败）返回 None，扫描与"停止录制"共用同一逻辑。
+pub(crate) fn log_from_file(dir: &Path, filename: &str) -> Option<SessionLog> {
+    let path = dir.join(filename);
+    let size_bytes = std::fs::metadata(&path).ok()?.len() as i64;
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(filename);
+    let title = title_from_stem(stem, filename);
+    let stats = read_cast_stats(&path);
+    let started_at = stats
+        .header_timestamp
+        .map(|timestamp| timestamp.saturating_mul(1000))
+        .unwrap_or_else(|| mtime_ms(&path));
+    let duration_ms = (stats.last_elapsed.max(0.0) * 1000.0) as i64;
+
+    Some(SessionLog {
+        id: format!("cast:{filename}"),
+        session_id: String::new(),
+        host_id: None,
+        host_name: title.clone(),
+        title,
+        format: "asciicast".into(),
+        path: filename.to_string(),
+        started_at,
+        ended_at: Some(started_at + duration_ms),
+        duration_ms,
+        size_bytes,
+        event_count: stats.event_count,
+        status: "completed".into(),
+    })
+}
+
 /// 扫描 recordings 目录并 upsert 索引。目录不存在返回空列表（首次使用即空态）。
 pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
     let dir = crate::commands::settings::recording_dir(state);
@@ -115,8 +149,8 @@ pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
         let Ok(entry) = entry else {
             continue;
         };
-        let path = entry.path();
-        if !path
+        if !entry
+            .path()
             .extension()
             .map(|ext| ext == "cast")
             .unwrap_or(false)
@@ -126,36 +160,8 @@ pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
         let Ok(file_name) = entry.file_name().into_string() else {
             continue;
         };
-        let stem = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or(file_name.as_str());
-        let title = title_from_stem(stem, &file_name);
-        let size_bytes = entry
-            .metadata()
-            .map(|meta| meta.len() as i64)
-            .unwrap_or(0);
-        let stats = read_cast_stats(&path);
-        let started_at = stats
-            .header_timestamp
-            .map(|timestamp| timestamp.saturating_mul(1000))
-            .unwrap_or_else(|| mtime_ms(&path));
-        let duration_ms = (stats.last_elapsed.max(0.0) * 1000.0) as i64;
-
-        let log = SessionLog {
-            id: format!("cast:{file_name}"),
-            session_id: String::new(),
-            host_id: None,
-            host_name: title.clone(),
-            title,
-            format: "asciicast".into(),
-            path: file_name,
-            started_at,
-            ended_at: Some(started_at + duration_ms),
-            duration_ms,
-            size_bytes,
-            event_count: stats.event_count,
-            status: "completed".into(),
+        let Some(log) = log_from_file(&dir, &file_name) else {
+            continue;
         };
         crate::db::session_logs::upsert(&state.db, &log)?;
         logs.push(log);
@@ -266,6 +272,94 @@ pub fn delete_session_log_impl(state: &AppState, id: &str) -> AppResult<()> {
     crate::db::session_logs::delete(&state.db, id)
 }
 
+// ── 会话级手动录制（阶段 B）──────────────────────────────────────
+//
+// 录制器挂在 SessionHandle 的共享 slot 上：session_task 持续写入，命令层
+// 负责开 / 停 / 查。三者共用同一个 Arc<Mutex<Option<ActiveRecording>>>，
+// 因此自动录制（settings.recording_enabled）也能被手动"停止"接管。
+
+fn recording_filename(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn recording_view(active: &crate::terminal::recorder::ActiveRecording) -> SessionLogRecording {
+    SessionLogRecording {
+        path: recording_filename(&active.path),
+        started_at: active.started_at_ms,
+        title: active.title.clone(),
+    }
+}
+
+pub fn start_session_log_impl(
+    state: &AppState,
+    session_id: &str,
+    title: &str,
+    cols: Option<u32>,
+    rows: Option<u32>,
+) -> AppResult<SessionLogRecording> {
+    let handle = crate::commands::session::session_handle(state, session_id)?;
+    let slot = handle.recorder_slot();
+    let mut guard = locked(&slot)?;
+    if guard.is_some() {
+        return Err(AppError::config(
+            "session_log_already_recording",
+            serde_json::json!({ "session_id": session_id }),
+        ));
+    }
+
+    let path = crate::commands::settings::recording_path_for_manual(state, title)?;
+    let active = crate::terminal::recorder::ActiveRecording::new(
+        path,
+        cols.unwrap_or(120).clamp(2, 500),
+        rows.unwrap_or(30).clamp(2, 500),
+        title.to_string(),
+    )?;
+    let view = recording_view(&active);
+    *guard = Some(active);
+    Ok(view)
+}
+
+pub fn stop_session_log_impl(state: &AppState, session_id: &str) -> AppResult<SessionLog> {
+    let handle = crate::commands::session::session_handle(state, session_id)?;
+    let slot = handle.recorder_slot();
+    // 立刻释放 map 锁；take 之后 session_task 看到 None 就不再写。
+    let active = locked(&slot)?.take().ok_or_else(|| {
+        AppError::config(
+            "session_log_not_recording",
+            serde_json::json!({ "session_id": session_id }),
+        )
+    })?;
+
+    let filename = recording_filename(&active.path);
+    active.recorder.finish()?;
+
+    let dir = crate::commands::settings::recording_dir(state);
+    let log = log_from_file(&dir, &filename).ok_or_else(|| {
+        AppError::other(
+            "session_log_read_failed",
+            serde_json::json!({ "err": "cast file unreadable" }),
+        )
+    })?;
+    crate::db::session_logs::upsert(&state.db, &log)?;
+    Ok(log)
+}
+
+/// 会话不存在时返回 None（前端轮询 / 重连期间不应被错误弹窗打扰）。
+pub fn session_log_status_impl(
+    state: &AppState,
+    session_id: &str,
+) -> AppResult<Option<SessionLogRecording>> {
+    let Ok(handle) = crate::commands::session::session_handle(state, session_id) else {
+        return Ok(None);
+    };
+    let slot = handle.recorder_slot();
+    let guard = locked(&slot)?;
+    Ok(guard.as_ref().map(recording_view))
+}
+
 // ── Tauri commands（薄包装，headless 直接调上面的 `*_impl`）─────────
 
 #[tauri::command]
@@ -290,6 +384,30 @@ pub fn export_session_log(
 #[tauri::command]
 pub fn delete_session_log(state: State<'_, AppState>, id: String) -> AppResult<()> {
     delete_session_log_impl(&state, &id)
+}
+
+#[tauri::command]
+pub fn start_session_log(
+    state: State<'_, AppState>,
+    session_id: String,
+    title: String,
+    cols: Option<u32>,
+    rows: Option<u32>,
+) -> AppResult<SessionLogRecording> {
+    start_session_log_impl(&state, &session_id, &title, cols, rows)
+}
+
+#[tauri::command]
+pub fn stop_session_log(state: State<'_, AppState>, session_id: String) -> AppResult<SessionLog> {
+    stop_session_log_impl(&state, &session_id)
+}
+
+#[tauri::command]
+pub fn session_log_status(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<Option<SessionLogRecording>> {
+    session_log_status_impl(&state, &session_id)
 }
 
 #[cfg(test)]

@@ -4254,6 +4254,34 @@ button:disabled {
   color: hsl(var(--foreground));
 }
 
+.term-tool-btn.recording {
+  color: hsl(var(--destructive));
+}
+
+/* 录制中徽标（对照 netcatty 工具栏 REC 提示；不做闪烁动画）。 */
+.term-recording-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+.term-recording-badge::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: hsl(var(--destructive));
+}
+
 .term-tool-more {
   position: relative;
   display: inline-flex;

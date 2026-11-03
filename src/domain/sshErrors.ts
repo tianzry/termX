@@ -162,6 +162,8 @@ const ERROR_MESSAGES: Record<
   session_log_read_failed: (p) => `读取会话日志失败：${str(p, "err")}`,
   session_log_format_invalid: (p) => `不支持的导出格式：${str(p, "format")}`,
   session_log_delete_failed: (p) => `删除会话日志失败：${str(p, "err")}`,
+  session_log_already_recording: () => "当前会话已在录制中。",
+  session_log_not_recording: () => "当前会话没有进行中的录制。",
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,

@@ -699,6 +699,16 @@ pub struct SessionLogDetail {
     pub content: String,
 }
 
+/// 进行中的会话日志录制（阶段 B）。`path` 与 `SessionLog.path` 一样是
+/// recordings 目录内的裸文件名，前端只用于状态提示。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionLogRecording {
+    pub path: String,
+    /// Unix 毫秒。
+    pub started_at: i64,
+    pub title: String,
+}
+
 // --- Plugin ---
 
 /// A third-party plugin package installed on this machine. `id` doubles as the
