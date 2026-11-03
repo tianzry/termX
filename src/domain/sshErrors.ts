@@ -164,6 +164,21 @@ const ERROR_MESSAGES: Record<
   session_log_delete_failed: (p) => `删除会话日志失败：${str(p, "err")}`,
   session_log_already_recording: () => "当前会话已在录制中。",
   session_log_not_recording: () => "当前会话没有进行中的录制。",
+  // ── 主机连接代理（阶段 A）──
+  proxy_type_invalid: (p) => `不支持的代理类型：${str(p, "value")}`,
+  proxy_url_invalid: (p) => `代理地址格式不正确：${str(p, "url")}（示例 http://127.0.0.1:7890）`,
+  proxy_host_required: () => "请填写代理主机。",
+  proxy_host_invalid: (p) => `代理主机非法：${str(p, "host")}`,
+  proxy_port_invalid: (p) => `代理端口非法：${str(p, "port")}`,
+  proxy_connect_failed: (p) =>
+    `连接代理 ${str(p, "host")}:${str(p, "port")} 失败：${str(p, "err")}`,
+  proxy_connect_timeout: (p) =>
+    `连接代理 ${str(p, "host")}:${str(p, "port")} 超时（${str(p, "secs")}s）。`,
+  proxy_handshake_failed: (p) => `代理握手失败：${str(p, "err")}`,
+  proxy_auth_required: () => "代理需要认证：请检查用户名 / 密码。",
+  proxy_auth_failed: (p) => `代理认证失败（SOCKS5 状态 ${str(p, "status")}）。`,
+  proxy_http_status: (p) => `代理拒绝了连接请求（HTTP ${str(p, "status")}）。`,
+  proxy_socks5_failed: (p) => `SOCKS5 代理连接失败：${str(p, "err")}`,
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
   io_error: (p) => `读写错误：${str(p, "err")}`,

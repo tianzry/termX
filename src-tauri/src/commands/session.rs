@@ -91,6 +91,12 @@ pub async fn ssh_connect(
 
     // 解析整条堡垒机链 + 给每一跳加载凭证（含 secret）
     let chain_profiles = crate::ssh::bastion::resolve_chain(&state.db, &profile)?;
+    // 目标 + 每一跳的代理配置（档案自带优先，系统代理兜底），连接层按 id 查表。
+    let proxy_configs = {
+        let mut all: Vec<&Profile> = vec![&profile];
+        all.extend(chain_profiles.iter());
+        resolve_proxy_configs(&state, &all)?
+    };
     let mut chain: Vec<(Profile, Credential)> = Vec::with_capacity(chain_profiles.len());
     for hop in chain_profiles {
         let mut bc =
@@ -132,6 +138,7 @@ pub async fn ssh_connect(
             profile,
             credential,
             bastion_chain: chain,
+            proxy_configs,
             cols,
             rows,
             app: crate::emitter::Host::Tauri(app),
@@ -376,4 +383,40 @@ pub(crate) fn session_handle(
 
 fn get_session(state: &State<'_, AppState>, session_id: &str) -> AppResult<client::SessionHandle> {
     session_handle(state, session_id)
+}
+
+/// 目标 + 堡垒每一跳的代理配置。档案自带（type/host/port/username + SecretStore
+/// 里的密码）优先；没有档案级配置时退回设置中心的系统代理（仅 custom 模式）。
+/// 结果按 `profile_id` 建表，连接层逐跳查表，堡垒链不会和张贴的代理错位。
+pub(crate) fn resolve_proxy_configs(
+    state: &AppState,
+    profiles: &[&Profile],
+) -> AppResult<std::collections::HashMap<String, crate::ssh::proxy::ProxyConfig>> {
+    let fallback = crate::commands::settings::system_proxy_config(state);
+    let mut map = std::collections::HashMap::new();
+    for profile in profiles {
+        let Some(kind) = profile
+            .proxy_type
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        else {
+            if let Some(cfg) = &fallback {
+                map.insert(profile.id.clone(), cfg.clone());
+            }
+            continue;
+        };
+        let password = state
+            .secret_store
+            .get(&crate::secret::proxy_secret_key(&profile.id))?;
+        let cfg = crate::ssh::proxy::ProxyConfig::from_parts(
+            kind,
+            profile.proxy_host.as_deref().unwrap_or(""),
+            profile.proxy_port.unwrap_or(0),
+            profile.proxy_username.as_deref(),
+            password.as_deref(),
+            profile.proxy_no_proxy.as_deref().unwrap_or(""),
+        )?;
+        map.insert(profile.id.clone(), cfg);
+    }
+    Ok(map)
 }

@@ -814,6 +814,19 @@ fn dispatch(
             &arg::<String>(&args, "profileId")?,
             args.get("secret").and_then(|v| v.as_str()),
         )),
+        "profile_proxy_password_get" => ok(
+            crate::commands::profile::profile_proxy_password_get_impl(
+                state,
+                &arg::<String>(&args, "profileId")?,
+            ),
+        ),
+        "profile_proxy_password_set" => ok(
+            crate::commands::profile::profile_proxy_password_set_impl(
+                state,
+                &arg::<String>(&args, "profileId")?,
+                args.get("secret").and_then(|v| v.as_str()),
+            ),
+        ),
         "keychain_generate_key" => ok(crate::commands::keychain::keychain_generate_key_impl(
             state,
             &arg::<String>(&args, "label")?,
@@ -1847,6 +1860,11 @@ async fn ssh_connect(
 
     let chain_profiles =
         crate::ssh::bastion::resolve_chain(&state.db, &profile).map_err(err_value)?;
+    let proxy_configs = {
+        let mut all: Vec<&crate::models::Profile> = vec![&profile];
+        all.extend(chain_profiles.iter());
+        crate::commands::session::resolve_proxy_configs(state, &all).map_err(err_value)?
+    };
     let mut chain = Vec::with_capacity(chain_profiles.len());
     for hop in chain_profiles {
         let mut bc =
@@ -1887,6 +1905,7 @@ async fn ssh_connect(
             profile,
             credential,
             bastion_chain: chain,
+            proxy_configs,
             cols,
             rows,
             app: emitter,

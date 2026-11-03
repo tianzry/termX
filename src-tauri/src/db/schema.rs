@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 38;
+const SCHEMA_VERSION: u32 = 39;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -818,6 +818,22 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
              );
              CREATE INDEX IF NOT EXISTS idx_session_logs_started ON session_logs(started_at);",
         )?;
+    }
+
+    if version < 39 && table_exists(conn, "profiles")? {
+        // 代理阶段 A：主机级连接代理字段（对齐 Netcatty proxyConfig 的
+        // type/host/port/username）。密码不入表，走 SecretStore `proxy:<id>`。
+        for (col, decl) in [
+            ("proxy_type", "TEXT"),
+            ("proxy_host", "TEXT"),
+            ("proxy_port", "INTEGER"),
+            ("proxy_username", "TEXT"),
+            ("proxy_no_proxy", "TEXT"),
+        ] {
+            if !column_exists(conn, "profiles", col)? {
+                conn.execute_batch(&format!("ALTER TABLE profiles ADD COLUMN {col} {decl};"))?;
+            }
+        }
     }
 
     if version < SCHEMA_VERSION {

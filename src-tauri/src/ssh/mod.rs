@@ -5,6 +5,7 @@ pub mod client;
 pub mod forward;
 pub mod known_hosts;
 pub mod prompt;
+pub mod proxy;
 pub mod sftp;
 
 #[cfg(test)]

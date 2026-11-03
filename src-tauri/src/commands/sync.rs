@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::State;
 
@@ -686,6 +686,11 @@ mod tests {
             local_shell_icon: None,
             local_start_dir: None,
             agent_forwarding: false,
+            proxy_type: None,
+            proxy_host: None,
+            proxy_port: None,
+            proxy_username: None,
+            proxy_no_proxy: None,
         }
     }
 

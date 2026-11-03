@@ -242,6 +242,26 @@ pub fn recording_path_for_manual(state: &AppState, name: &str) -> AppResult<std:
     Ok(build_recording_path(state, name))
 }
 
+/// 设置中心的系统代理（`settings.center.v1` 里的 `networkProxy`）。
+/// 只有 `custom` 且有 URL 才生效；`system` / `direct` 对 SSH 视为直连
+/// （SSH 没有操作系统级代理概念）。主机档案自带代理时优先用档案的。
+pub fn system_proxy_config(state: &AppState) -> Option<crate::ssh::proxy::ProxyConfig> {
+    const SETTINGS_KEY: &str = "settings.center.v1";
+    let raw = crate::db::settings::get(&state.db, SETTINGS_KEY)
+        .ok()
+        .flatten()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let proxy = &value["networkProxy"];
+    if proxy["mode"].as_str()? != "custom" {
+        return None;
+    }
+    crate::ssh::proxy::ProxyConfig::from_url(
+        proxy["url"].as_str().unwrap_or(""),
+        proxy["bypass"].as_str().unwrap_or(""),
+    )
+    .ok()
+}
+
 // ── 开机自启动（设置中心 · 系统 tab）──────────────────────
 //
 // Windows：写 HKCU\Software\Microsoft\Windows\CurrentVersion\Run（reg.exe，

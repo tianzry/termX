@@ -175,6 +175,8 @@ impl SftpHandle {
             progress: None,
             // SFTP 后台连接不参与 agent 转发（转发只由终端会话按档案开关发起）。
             agent_forwarding: false,
+            // SFTP 后台连接暂不走主机代理（阶段 B 补齐）。
+            proxy: None,
         };
         let mut handle = client::ssh_connect(dial, host, port).await?;
 

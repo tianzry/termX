@@ -249,6 +249,12 @@ pub fn totp_secret_key(profile_id: &str) -> String {
     format!("totp:{profile_id}")
 }
 
+/// 主机级连接代理密码：`proxy:<profile_id>`。密码不进 profiles 表，
+/// 档案删除时与 TOTP 一起清掉，避免孤儿密文。
+pub fn proxy_secret_key(profile_id: &str) -> String {
+    format!("proxy:{profile_id}")
+}
+
 pub fn setting_key(name: &str) -> String {
     format!("setting:{name}")
 }

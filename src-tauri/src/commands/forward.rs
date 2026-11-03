@@ -93,12 +93,19 @@ pub async fn forward_start_impl(
         chain.push((hop, bc));
     }
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
+    // 转发连接与终端连接共用同一套代理解析（目标 + 堡垒逐跳）。
+    let proxy_configs = {
+        let mut all: Vec<&crate::models::Profile> = vec![&p];
+        all.extend(chain.iter().map(|(hop, _)| hop));
+        crate::commands::session::resolve_proxy_configs(&state, &all)?
+    };
     let target = fwd::ConnTarget {
         profile: p,
         credential: c,
         bastion_chain: chain,
         known_hosts_path,
         timeout_secs,
+        proxy_configs,
     };
     let handle =
         crate::ssh::client::run_blocking_ssh(move || async move { fwd::start(f, target).await })

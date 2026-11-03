@@ -94,6 +94,20 @@ pub struct Profile {
     /// 转发会让远端能借用本机所有已加载身份，属安全敏感开关。
     #[serde(default)]
     pub agent_forwarding: bool,
+    // ── 代理阶段 A 新增字段（schema v39，对齐 Netcatty proxyConfig）──
+    /// 主机级连接代理：`http` / `socks5`；None = 该主机不使用代理。
+    /// 代理密码不在此结构里（走 SecretStore `proxy:<profile_id>`）。
+    #[serde(default)]
+    pub proxy_type: Option<String>,
+    #[serde(default)]
+    pub proxy_host: Option<String>,
+    #[serde(default)]
+    pub proxy_port: Option<u16>,
+    #[serde(default)]
+    pub proxy_username: Option<String>,
+    /// 不走代理的主机列表（逗号分隔，语义见 `ssh::proxy::no_proxy_matches`）。
+    #[serde(default)]
+    pub proxy_no_proxy: Option<String>,
 }
 
 /// `protocol` 的 serde 默认值：历史数据全是 SSH 主机。

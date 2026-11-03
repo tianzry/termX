@@ -1,4 +1,4 @@
-//! Config sync — one import path, two merge tiers.
+﻿//! Config sync — one import path, two merge tiers.
 //!
 //! **merge_import** is the single import entry point for every path — file
 //! `import` / `rssh config import` AND `github_pull` / `webdav_pull` /
@@ -854,6 +854,11 @@ mod tests {
             local_shell_icon: None,
             local_start_dir: None,
             agent_forwarding: false,
+            proxy_type: None,
+            proxy_host: None,
+            proxy_port: None,
+            proxy_username: None,
+            proxy_no_proxy: None,
         }
     }
 

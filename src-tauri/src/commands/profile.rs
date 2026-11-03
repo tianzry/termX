@@ -28,7 +28,11 @@ pub fn update_profile(state: State<AppState>, profile: Profile) -> Result<(), Ap
 
 #[tauri::command]
 pub fn delete_profile(state: State<AppState>, id: String) -> Result<(), AppError> {
-    crate::db::profile::delete(&state.db, &id)
+    crate::db::profile::delete(&state.db, &id)?;
+    // 档案级 secret 与 metadata 同生命周期：档案没了就清掉，避免孤儿密文。
+    state.secret_store.delete(&crate::secret::totp_secret_key(&id))?;
+    state.secret_store.delete(&crate::secret::proxy_secret_key(&id))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -266,6 +270,50 @@ pub fn profile_totp_set(
     secret: Option<String>,
 ) -> Result<(), AppError> {
     profile_totp_set_impl(&state, &profile_id, secret.as_deref())
+}
+
+// ---------------------------------------------------------------------------
+// 主机连接代理密码 — 同样走 SecretStore（key `proxy:<profile_id>`），
+// profiles 表只存 type/host/port/username/no_proxy（schema v39）。
+// ---------------------------------------------------------------------------
+
+pub fn profile_proxy_password_get_impl(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<Option<String>, AppError> {
+    state
+        .secret_store
+        .get(&crate::secret::proxy_secret_key(profile_id))
+}
+
+#[tauri::command]
+pub fn profile_proxy_password_get(
+    state: State<AppState>,
+    profile_id: String,
+) -> Result<Option<String>, AppError> {
+    profile_proxy_password_get_impl(&state, &profile_id)
+}
+
+/// secret 为 None / 空白 = 清除代理密码。
+pub fn profile_proxy_password_set_impl(
+    state: &AppState,
+    profile_id: &str,
+    secret: Option<&str>,
+) -> Result<(), AppError> {
+    let key = crate::secret::proxy_secret_key(profile_id);
+    match secret.filter(|s| !s.is_empty()) {
+        Some(s) => state.secret_store.set(&key, s),
+        None => state.secret_store.delete(&key),
+    }
+}
+
+#[tauri::command]
+pub fn profile_proxy_password_set(
+    state: State<AppState>,
+    profile_id: String,
+    secret: Option<String>,
+) -> Result<(), AppError> {
+    profile_proxy_password_set_impl(&state, &profile_id, secret.as_deref())
 }
 
 /// Read a key file's text. Split out from the command so the cap / not-found

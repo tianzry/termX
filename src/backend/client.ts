@@ -73,6 +73,13 @@ export interface Profile {
   local_shell_icon?: string | null;
   /** 本地主机：启动目录（`~` 由后端展开为主目录） */
   local_start_dir?: string | null;
+  /** 主机级连接代理：`http` / `socks5`；null = 该主机不走代理 */
+  proxy_type?: "http" | "socks5" | null;
+  proxy_host?: string | null;
+  proxy_port?: number | null;
+  proxy_username?: string | null;
+  /** 不走代理的域名 / IP（逗号分隔） */
+  proxy_no_proxy?: string | null;
 }
 
 /** 本机发现的可用 shell（后端 `discover_shells`，对齐 Netcatty 形状）。 */
@@ -1562,4 +1569,19 @@ export function setProfileTotp(
   secret: string | null,
 ): Promise<void> {
   return invoke("profile_totp_set", { profileId, secret });
+}
+
+/** 读取主机连接代理密码（SecretStore，`proxy:<profile_id>`）；未设置 → null。 */
+export function getProfileProxyPassword(
+  profileId: string,
+): Promise<string | null> {
+  return invoke<string | null>("profile_proxy_password_get", { profileId });
+}
+
+/** 写入 / 移除主机连接代理密码；secret 传 null 或空串 = 清除。 */
+export function setProfileProxyPassword(
+  profileId: string,
+  secret: string | null,
+): Promise<void> {
+  return invoke("profile_proxy_password_set", { profileId, secret });
 }

@@ -1,4 +1,4 @@
-//! 堡垒机链解析。
+﻿//! 堡垒机链解析。
 //!
 //! `Profile.bastion_profile_id` 指向**上一跳**（更外层、更靠近入口的那一跳）。
 //! `resolve_chain(target)` 返回从入口到目标前一跳的完整链——
@@ -101,6 +101,11 @@ mod tests {
             local_shell_icon: None,
             local_start_dir: None,
             agent_forwarding: false,
+            proxy_type: None,
+            proxy_host: None,
+            proxy_port: None,
+            proxy_username: None,
+            proxy_no_proxy: None,
         }
     }
 

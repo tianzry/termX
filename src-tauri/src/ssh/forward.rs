@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,6 +26,8 @@ pub struct ConnTarget {
     pub bastion_chain: Vec<(Profile, Credential)>,
     pub known_hosts_path: PathBuf,
     pub timeout_secs: u64,
+    /// profile_id → 代理配置（目标 + 堡垒逐跳查表）。
+    pub proxy_configs: std::collections::HashMap<String, crate::ssh::proxy::ProxyConfig>,
 }
 
 pub struct ForwardHandle {
@@ -296,11 +298,13 @@ async fn connect_authed(
         bastion_chain,
         known_hosts_path,
         timeout_secs,
+        proxy_configs,
     } = target;
     let log: LogFn = StdArc::new(|_: String| ());
     let (mut handle, fwd_sender) = client::establish_via_chain(
         bastion_chain,
         profile,
+        proxy_configs,
         known_hosts_path,
         timeout_secs,
         log,
@@ -1318,6 +1322,7 @@ mod tests {
             }],
         };
         let target = ConnTarget {
+            proxy_configs: Default::default(),
             profile: crate::models::Profile {
                 id: "smoke-profile".into(),
                 name: "smoke".into(),
@@ -1342,6 +1347,11 @@ mod tests {
                 local_shell_icon: None,
                 local_start_dir: None,
                 agent_forwarding: false,
+                proxy_type: None,
+                proxy_host: None,
+                proxy_port: None,
+                proxy_username: None,
+                proxy_no_proxy: None,
             },
             credential: crate::models::Credential {
                 id: "smoke-credential".into(),

@@ -160,6 +160,8 @@ pub fn run() {
             commands::profile::known_hosts_import_file,
             commands::profile::profile_totp_get,
             commands::profile::profile_totp_set,
+            commands::profile::profile_proxy_password_get,
+            commands::profile::profile_proxy_password_set,
             commands::keychain::keychain_generate_key,
             commands::keychain::keychain_list_file_keys,
             commands::keychain::ssh_agent_status,

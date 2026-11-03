@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
@@ -567,6 +567,8 @@ pub struct DialCtx {
     pub progress: Option<ProgressEmitter>,
     /// 该端点是否接受 agent 转发通道（按档案逐跳设置；堡垒跳默认各自档案决定）。
     pub agent_forwarding: bool,
+    /// 主机级连接代理（已解析密码）。None = 直连；目标在 no_proxy 内也会直连。
+    pub proxy: Option<crate::ssh::proxy::ProxyConfig>,
 }
 
 fn new_handler(
@@ -639,6 +641,26 @@ pub async fn ssh_connect(
     host: String,
     port: u16,
 ) -> AppResult<client::Handle<SshHandler>> {
+    let (handle, _fwd) = establish_connection(ctx, host, port).await?;
+    Ok(handle)
+}
+
+/// SSH connect that also returns the forwarded channel sender (for remote forwarding).
+pub async fn ssh_connect_with_forward(
+    ctx: DialCtx,
+    host: String,
+    port: u16,
+) -> AppResult<(client::Handle<SshHandler>, ForwardedChannelRouter)> {
+    establish_connection(ctx, host, port).await
+}
+
+/// 统一拨号：主机配了代理且目标不在 no_proxy 内 → 先完成代理握手，再在
+/// 已连通的流上跑 SSH 握手；否则保持原来的直连路径（行为零变化）。
+async fn establish_connection(
+    ctx: DialCtx,
+    host: String,
+    port: u16,
+) -> AppResult<(client::Handle<SshHandler>, ForwardedChannelRouter)> {
     let DialCtx {
         config,
         known_hosts_path,
@@ -647,23 +669,48 @@ pub async fn ssh_connect(
         prompt_ctx,
         progress,
         agent_forwarding,
+        proxy,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
         p.emit("connecting", None);
     }
-    let (handler, mismatch, _fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
-    let result = match timeout(
-        connect_timeout,
-        client::connect(config, (host.as_str(), port), handler),
-    )
-    .await
-    {
-        Ok(result) => result.map_err(|e| map_connect_error(e, &host, port, &mismatch)),
-        Err(_) => Err(AppError::ssh(
-            "ssh_connect_timeout",
-            json!({ "host": host, "port": port, "secs": timeout_secs }),
-        )),
+    let (handler, mismatch, fwd) =
+        new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
+
+    let result = match proxy.filter(|p| !p.should_bypass(&host, port)) {
+        Some(proxy) => {
+            let stream = match crate::ssh::proxy::connect_via_proxy(&proxy, &host, port, connect_timeout)
+                .await
+            {
+                Ok(stream) => stream,
+                Err(e) => {
+                    if let Some(p) = &progress {
+                        p.emit("error", Some(e.to_string()));
+                    }
+                    return Err(e);
+                }
+            };
+            match timeout(connect_timeout, client::connect_stream(config, stream, handler)).await {
+                Ok(Ok(handle)) => Ok(handle),
+                Ok(Err(e)) => Err(map_connect_error(e, &host, port, &mismatch)),
+                Err(_) => Err(AppError::ssh(
+                    "ssh_handshake_timeout",
+                    json!({ "host": &host, "port": port }),
+                )),
+            }
+        }
+        None => {
+            match timeout(connect_timeout, client::connect(config, (host.as_str(), port), handler))
+                .await
+            {
+                Ok(result) => result.map_err(|e| map_connect_error(e, &host, port, &mismatch)),
+                Err(_) => Err(AppError::ssh(
+                    "ssh_connect_timeout",
+                    json!({ "host": &host, "port": port, "secs": timeout_secs }),
+                )),
+            }
+        }
     };
     match &result {
         Ok(_) => {
@@ -677,60 +724,7 @@ pub async fn ssh_connect(
             }
         }
     }
-    result
-}
-
-/// SSH connect that also returns the forwarded channel sender (for remote forwarding).
-pub async fn ssh_connect_with_forward(
-    ctx: DialCtx,
-    host: String,
-    port: u16,
-) -> AppResult<(client::Handle<SshHandler>, ForwardedChannelRouter)> {
-    let DialCtx {
-        config,
-        known_hosts_path,
-        timeout_secs,
-        log,
-        prompt_ctx,
-        progress,
-        agent_forwarding,
-    } = ctx;
-    let connect_timeout = Duration::from_secs(timeout_secs);
-    if let Some(p) = &progress {
-        p.emit("connecting", None);
-    }
-    let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
-    let handle = match timeout(
-        connect_timeout,
-        client::connect(config, (host.as_str(), port), handler),
-    )
-    .await
-    {
-        Ok(Ok(handle)) => {
-            if let Some(p) = &progress {
-                p.emit("tcp-connected", None);
-            }
-            handle
-        }
-        Ok(Err(e)) => {
-            let err = map_connect_error(e, &host, port, &mismatch);
-            if let Some(p) = &progress {
-                p.emit("error", Some(err.to_string()));
-            }
-            return Err(err);
-        }
-        Err(_) => {
-            let err = AppError::ssh(
-                "ssh_connect_timeout",
-                json!({ "host": host, "port": port, "secs": timeout_secs }),
-            );
-            if let Some(p) = &progress {
-                p.emit("error", Some(err.to_string()));
-            }
-            return Err(err);
-        }
-    };
-    Ok((handle, fwd))
+    result.map(|handle| (handle, fwd))
 }
 
 /// 在已有 stream 上建立 SSH 连接（用于堡垒机隧道）。同时返回 forward channel sender，
@@ -752,6 +746,7 @@ where
         prompt_ctx,
         progress,
         agent_forwarding,
+        proxy: _,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
@@ -801,6 +796,7 @@ where
 pub async fn establish_via_chain(
     bastion_chain: Vec<(Profile, Credential)>,
     target_profile: Profile,
+    proxy_configs: std::collections::HashMap<String, crate::ssh::proxy::ProxyConfig>,
     known_hosts_path: PathBuf,
     timeout_secs: u64,
     log: LogFn,
@@ -826,6 +822,7 @@ pub async fn establish_via_chain(
                 &log,
                 ctx,
                 hop_progress,
+                proxy_configs.get(&target_profile.id).cloned(),
             ),
             target_host,
             target_port,
@@ -870,6 +867,7 @@ pub async fn establish_via_chain(
                     &log,
                     ctx,
                     hop_progress.clone(),
+                    proxy_configs.get(&next_p.id).cloned(),
                 ),
                 tunnel.into_stream(),
                 next_host,
@@ -889,6 +887,7 @@ pub async fn establish_via_chain(
                     &log,
                     ctx,
                     hop_progress.clone(),
+                    proxy_configs.get(&next_p.id).cloned(),
                 ),
                 next_host,
                 next_port,
@@ -941,6 +940,7 @@ pub async fn establish_via_chain(
             &log,
             ctx,
             target_progress,
+            proxy_configs.get(&target_profile.id).cloned(),
         ),
         tunnel.into_stream(),
         target_host,
@@ -964,6 +964,7 @@ fn dial_ctx_for_profile(
     log: &LogFn,
     ctx: Option<&AuthCtx>,
     progress: Option<ProgressEmitter>,
+    proxy: Option<crate::ssh::proxy::ProxyConfig>,
 ) -> DialCtx {
     DialCtx {
         config: client_config_for_profile(profile),
@@ -973,6 +974,7 @@ fn dial_ctx_for_profile(
         prompt_ctx: ctx.cloned(),
         progress,
         agent_forwarding: profile.agent_forwarding,
+        proxy,
     }
 }
 
@@ -1071,6 +1073,11 @@ mod tests {
                 local_shell_icon: None,
                 local_start_dir: None,
                 agent_forwarding: false,
+                proxy_type: None,
+                proxy_host: None,
+                proxy_port: None,
+                proxy_username: None,
+                proxy_no_proxy: None,
             },
             credential: Credential {
                 id: "credential".into(),
@@ -1081,6 +1088,7 @@ mod tests {
                 save_to_remote: false,
             },
             bastion_chain: Vec::new(),
+        proxy_configs: Default::default(),
             cols: 80,
             rows: 24,
             app: app.clone(),
@@ -1213,6 +1221,11 @@ mod tests {
                 local_shell_icon: None,
                 local_start_dir: None,
                 agent_forwarding: false,
+                proxy_type: None,
+                proxy_host: None,
+                proxy_port: None,
+                proxy_username: None,
+                proxy_no_proxy: None,
             },
             credential: Credential {
                 id: "smoke-credential".into(),
@@ -1223,6 +1236,7 @@ mod tests {
                 save_to_remote: false,
             },
             bastion_chain: Vec::new(),
+        proxy_configs: Default::default(),
             cols: 80,
             rows: 24,
             app: app.clone(),
@@ -1344,9 +1358,15 @@ mod tests {
                 local_shell_icon: None,
                 local_start_dir: None,
                 agent_forwarding: false,
+                proxy_type: None,
+                proxy_host: None,
+                proxy_port: None,
+                proxy_username: None,
+                proxy_no_proxy: None,
             },
             credential,
             bastion_chain: Vec::new(),
+        proxy_configs: Default::default(),
             cols: 80,
             rows: 24,
             app: app.clone(),
@@ -1438,9 +1458,15 @@ mod tests {
                 local_shell_icon: None,
                 local_start_dir: None,
                 agent_forwarding: false,
+                proxy_type: None,
+                proxy_host: None,
+                proxy_port: None,
+                proxy_username: None,
+                proxy_no_proxy: None,
             },
             credential,
             bastion_chain: Vec::new(),
+        proxy_configs: Default::default(),
             cols: 80,
             rows: 24,
             app: app.clone(),
@@ -1753,6 +1779,8 @@ pub struct ConnectParams {
     pub profile: Profile,
     pub credential: Credential,
     pub bastion_chain: Vec<(Profile, Credential)>,
+    /// profile_id → 已解析密码的连接代理；堡垒跳 / 目标各自查表。
+    pub proxy_configs: std::collections::HashMap<String, crate::ssh::proxy::ProxyConfig>,
     pub cols: u32,
     pub rows: u32,
     pub app: crate::emitter::Host,
@@ -1772,6 +1800,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         profile,
         credential,
         bastion_chain,
+        proxy_configs,
         cols,
         rows,
         app,
@@ -1810,6 +1839,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
     let (mut handle, _fwd) = establish_via_chain(
         bastion_chain,
         profile.clone(),
+        proxy_configs,
         known_hosts_path,
         timeout_secs,
         log.clone(),
