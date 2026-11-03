@@ -3248,3 +3248,41 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 - 与 Netcatty 富文本编辑体验逐项对齐（预览、格式工具栏）。
 - 关联主机跳转、导出/导入、分组文件夹。
 - 大量笔记（>500）时列表滚动与搜索性能。
+
+---
+
+## 2026-11-03 笔记（Notes）阶段 B
+
+### 编辑体验（对照 Netcatty 实际做法取舍）
+- 正文保持「Markdown 原文 textarea + 原文/预览切换」，不引入 MDXEditor/react-markdown 重依赖；预览由自研 `markdownModel.ts` 解析块/行内 token，再渲染 React 元素（不走 `dangerouslySetInnerHTML`，笔记正文不会变成可执行 HTML）。
+- 支持语法：标题 1-3、加粗、斜体、行内代码、链接、无序/有序列表、引用、围栏代码块、分隔线；不支持 Netcatty MDXEditor 的表格/图片/公式/下划线/删除线（记为差异）。
+- 最小格式工具栏（真能用、可切换）：H1/H2/B/I/无序/有序/引用/代码；标题再次点击同级不会误删标题（与 Netcatty 的 set-heading 语义一致），列表/引用二次点击取消前缀；有选区时包裹，无选区插入占位词并把光标放进标记内。
+- 关联主机：按 Netcatty 实际模型复用 `[名称](ssh://user@host:port)` 链接（不是单独的 hostId 字段，Netcatty 的 VaultNote.linkedHostIds 无编辑 UI）。工具栏「主机」从主机档案插入链接（用户名取凭据），预览里 `ssh://` / `telnet://` 链接可点击，按 host+port（有用户名再按名称）匹配档案后调用 Vault 的 `onConnect` 打开会话；匹配失败给「未找到匹配的主机」提示（悬空引用不崩）。
+- 分组：编辑器「分组」输入（`/` 分隔路径），左侧分组过滤列表含父路径（`ops` 命中 `ops/db`），层级缩进；导出按分组落目录。
+- 排序/置顶沿用阶段 A（置顶 → 更新时间），分组过滤后同序。
+
+### 导入 / 导出（对齐 Netcatty domain/notes.ts）
+- 单条导出：`sanitizeNoteFileName`（非法字符/控制符/结尾点号/Windows 保留名，120 字符）生成 `<标题>.md`，正文原样（与 Netcatty 一致，无 frontmatter）。
+- 全部导出：Netcatty 打包 ZIP 且按分组建目录；termX 不引 zip 依赖，改为选目录后按 `<分组>/<标题>.md` 逐条写入（重名自动 `-2`），能力等价、容器不同（已在差异表记录）。
+- 导入：多选 `.md/.markdown/.txt`，标题取 `title:` frontmatter > 首个 `# H1` > 文件名（同 Netcatty `deriveNoteImportTitle` 顺序），导入到当前分组过滤；全部走 termX DB。
+- 文件对话框用 `tauri-plugin-dialog`（`dialog:default` 已在 capabilities），读写复用既有 `local_read_file` / `local_write_file` / `local_mkdir`（不新开 fs scope、无新后端命令、无裸 invoke）。
+
+### 自审（review）
+- 中危 2 已修：①`patchDraft` 原在 setState updater 内做排程/写列表（副作用入 updater，且保存/导出可能读到少一个字符的旧内容）→ 改 `draftRef` 先行同步更新 ref，再 setState；②全部导出用 `notes` 快照可能与正在编辑的正文不一致 → 导出前用 `activeNoteRef` 覆盖当前条。
+- 低危记录：分组匹配为路径前缀（大小写不敏感）；`window.confirm` 删除确认（与阶段 A 一致）；导出落盘全流程的对话框自动化受 UIA 超时限制，仅截到对话框与默认文件名；Markdown 语法覆盖非全量。
+
+### Netcatty 对照（运行版 1.1.90，evidence/netcatty-notes.png）
+- 一致：左侧 300px 笔记树 + 搜索 + 新建/导入/导出图标；右侧标题、标签行、正文；编辑/预览双模式；`ssh://` 链接点击开会话；单条 Markdown 导出与「全部导出」；置顶/删除/时间/搜索覆盖标题正文标签分组。
+- 差异：Netcatty 用 MDXEditor 所见即所得（live/source/preview 三模式）+ 完整工具栏（含表格/图片/公式/链接/下划线/删除线）；termX 为原文 + 预览 + 8 个按钮。分组 Netcatty 是文件夹树，termX 是过滤列表 + 输入框。全部导出 ZIP vs 目录。termX 额外提供「插入主机链接」按钮。
+- 待人工：导出文件落盘全流程（原生对话框自动化不可靠）、富文本（表格/图片/公式）、>500 条笔记列表性能。
+
+### 验证证据
+- `evidence/notes-b-list.png`：新实例笔记页（左树含 DB check + `#ssh/#db` 筛选；右标题/标签/分组/模式/工具栏/原文）。
+- `evidence/notes-b-preview.png`：原文→预览切换后正文按 Markdown 渲染，`129` 链接显示为可点击链接，状态「已保存 · 21:23」。
+- `evidence/notes-b-hostlink-open.png`：点击预览里的 129 主机链接后，新建 `129` 会话标签并连上 `tianzry@tianzry-VMware-Virtual-Platform`（关联主机跳转闭环，129 实测）。
+- 单条导出实测（首轮截图，因后续同名覆盖未保留）：弹出原生「导出笔记」对话框，默认文件名 `DB check.md`，过滤项 Markdown。
+- 注：导出对话框的保存动作未自动化完成（UIA ValuePattern 在 WebView2 原生对话框上超时），文件内容生成由 4 例单测覆盖（文件名清洗/保留名/分组目录/重名去重）；确认对话框与默认名正确，落盘转人工点测。
+
+### 门禁
+- `npm run test:run` 325✓（新增 10 例 markdown/分组/主机链接）；`npm run build` ✓；`cargo check --features server` ✓（仅 3 条既有 warning，本轮无 Rust 改动）；`cargo test --lib` 842✓。
+- 本轮新增依赖 `@tauri-apps/plugin-dialog@2.7.1`（与 Rust crate 2.7.1 版本校验一致；capabilities 原已授予 `dialog:default`）。

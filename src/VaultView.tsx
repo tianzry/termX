@@ -3748,7 +3748,11 @@ export function VaultView({
           ) : activeNav === "snippets" ? (
             <SnippetsView />
           ) : activeNav === "notes" ? (
-            <NotesView />
+            <NotesView
+              profiles={profiles}
+              credentials={credentials}
+              onOpenHost={onConnect}
+            />
           ) : null}
         </div>
 

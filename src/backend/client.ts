@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 
 /**
  * termX 前端 ↔ Tauri Rust 后端的统一桥接层（NFC 契约）。
@@ -405,6 +406,42 @@ export function saveNote(note: Note): Promise<void> {
 
 export function deleteNote(id: string): Promise<void> {
   return invoke("delete_note", { id });
+}
+
+// Notes 导入导出走系统文件对话框（tauri-plugin-dialog，能力已在 default.json 授予），
+// 文件读写复用 localfs 的 local_read_file / local_write_file，不额外开 fs scope。
+
+/** 导出单条笔记：选保存路径；取消返回 null。 */
+export async function pickNoteExportFile(
+  defaultName: string,
+): Promise<string | null> {
+  const path = await saveFileDialog({
+    title: "导出笔记",
+    defaultPath: defaultName,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  return path ?? null;
+}
+
+/** 导出全部笔记：选目标目录；取消返回 null。 */
+export async function pickNoteExportFolder(): Promise<string | null> {
+  const path = await openFileDialog({
+    title: "选择导出目录",
+    directory: true,
+    multiple: false,
+  });
+  return typeof path === "string" ? path : null;
+}
+
+/** 导入笔记：多选 .md / .markdown / .txt；取消返回空数组。 */
+export async function pickNoteImportFiles(): Promise<string[]> {
+  const picked = await openFileDialog({
+    title: "导入笔记",
+    multiple: true,
+    filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
+  });
+  if (!picked) return [];
+  return Array.isArray(picked) ? picked : [picked];
 }
 
 export function listFonts(): Promise<FontInfo[]> {
