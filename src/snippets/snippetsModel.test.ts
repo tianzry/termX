@@ -4,9 +4,13 @@ import {
   ensureSnippetIds,
   filterSnippets,
   groupSnippets,
+  isScriptSnippet,
+  normalizeLineEndings,
   parseShortkey,
+  resolveMultiLineRunMode,
   shortkeyMatches,
-  snippetPayload,
+  SNIPPET_LINE_DELAY_MS,
+  snippetWritePlan,
 } from "./snippetsModel";
 
 function snip(over: Partial<Snippet> = {}): Snippet {
@@ -19,6 +23,8 @@ function snip(over: Partial<Snippet> = {}): Snippet {
     tags: [],
     shortkey: "",
     no_auto_run: false,
+    kind: "",
+    multi_line_run_mode: "",
     ...over,
   };
 }
@@ -152,13 +158,82 @@ describe("shortkeyMatches", () => {
   });
 });
 
-describe("snippetPayload", () => {
-  it("默认追加回车自动执行", () => {
-    expect(snippetPayload("df -h", false)).toBe("df -h\r");
+describe("normalizeLineEndings / resolveMultiLineRunMode", () => {
+  it("CRLF 与 CR 统一为 LF", () => {
+    expect(normalizeLineEndings("a\r\nb\rc")).toBe("a\nb\nc");
   });
 
-  it("noAutoRun 原样插入", () => {
-    expect(snippetPayload("df -h", true)).toBe("df -h");
+  it("仅 lineDelay 生效，其余回落 paste", () => {
+    expect(resolveMultiLineRunMode("lineDelay")).toBe("lineDelay");
+    expect(resolveMultiLineRunMode("paste")).toBe("paste");
+    expect(resolveMultiLineRunMode("")).toBe("paste");
+    expect(resolveMultiLineRunMode(undefined)).toBe("paste");
+    expect(resolveMultiLineRunMode("bogus")).toBe("paste");
+  });
+});
+
+describe("isScriptSnippet", () => {
+  it("kind=script 才算脚本", () => {
+    expect(isScriptSnippet({ kind: "script" })).toBe(true);
+    expect(isScriptSnippet({ kind: "" })).toBe(false);
+  });
+});
+
+describe("snippetWritePlan", () => {
+  it("单行默认：一次写入 + 末尾单回车", () => {
+    expect(snippetWritePlan("df -h", false)).toEqual({
+      chunks: ["df -h\r"],
+      delayMs: 0,
+    });
+  });
+
+  it("noAutoRun：原样插入，不追加回车", () => {
+    expect(snippetWritePlan("df -h", true)).toEqual({
+      chunks: ["df -h"],
+      delayMs: 0,
+    });
+  });
+
+  it("多行 paste：整体一次写入，行间 CR，末尾单回车", () => {
+    expect(snippetWritePlan("a\nb\nc", false, "paste")).toEqual({
+      chunks: ["a\rb\rc\r"],
+      delayMs: 0,
+    });
+  });
+
+  it("多行 lineDelay：逐行发送，每行一个回车、250ms 间隔", () => {
+    expect(snippetWritePlan("a\nb\nc", false, "lineDelay")).toEqual({
+      chunks: ["a\r", "b\r", "c\r"],
+      delayMs: SNIPPET_LINE_DELAY_MS,
+    });
+  });
+
+  it("lineDelay 但只有一行：退化为整段写入", () => {
+    expect(snippetWritePlan("uptime", false, "lineDelay")).toEqual({
+      chunks: ["uptime\r"],
+      delayMs: 0,
+    });
+  });
+
+  it("lineDelay + noAutoRun：不逐行、不追加回车", () => {
+    expect(snippetWritePlan("a\nb", true, "lineDelay")).toEqual({
+      chunks: ["a\rb"],
+      delayMs: 0,
+    });
+  });
+
+  it("去掉末尾换行后不产生空行（末尾单回车）", () => {
+    expect(snippetWritePlan("a\nb\n", false, "lineDelay")).toEqual({
+      chunks: ["a\r", "b\r"],
+      delayMs: SNIPPET_LINE_DELAY_MS,
+    });
+  });
+
+  it("CRLF 输入按多行处理", () => {
+    expect(snippetWritePlan("a\r\nb", false, "lineDelay").chunks).toEqual([
+      "a\r",
+      "b\r",
+    ]);
   });
 });
 

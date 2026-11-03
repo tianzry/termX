@@ -357,6 +357,10 @@ export interface Snippet {
   shortkey: string;
   /** true = 仅插入、不追加回车执行。 */
   no_auto_run: boolean;
+  /** "snippet" | "script"（对齐 Netcatty snippet.kind）；空 = 片段。 */
+  kind: string;
+  /** 多行发送方式："paste"（默认一次性）| "lineDelay"（逐行）。 */
+  multi_line_run_mode: string;
 }
 
 export function loadSnippets(): Promise<Snippet[]> {

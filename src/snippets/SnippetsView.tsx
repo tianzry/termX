@@ -3,7 +3,7 @@
 // 新建 / 编辑 / 删除 + 快捷键 + 自动执行开关。
 // 「插入到终端」在终端侧完成（TerminalPane 右键菜单与逐片段快捷键），
 // 仅写入当前活动窗格的会话，不做跨会话发送。
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../backend/client";
 import type { Snippet } from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
@@ -14,7 +14,16 @@ import {
   groupSnippets,
   parseShortkey,
 } from "./snippetsModel";
+import {
+  buildSnippetExportPayload,
+  describeImportStats,
+  mergeSnippetImport,
+  parseSnippetImportPayload,
+} from "./snippetsTransfer";
 import "./snippets.css";
+
+type SnippetKind = "" | "script";
+type RunMode = "" | "paste" | "lineDelay";
 
 type Draft = {
   id: string;
@@ -25,6 +34,8 @@ type Draft = {
   tagsText: string;
   shortkey: string;
   noAutoRun: boolean;
+  kind: SnippetKind;
+  multiLineRunMode: RunMode;
 };
 
 function toDraft(s: Snippet): Draft {
@@ -37,6 +48,11 @@ function toDraft(s: Snippet): Draft {
     tagsText: s.tags.join(", "),
     shortkey: s.shortkey,
     noAutoRun: s.no_auto_run,
+    kind: s.kind === "script" ? "script" : "",
+    multiLineRunMode:
+      s.multi_line_run_mode === "lineDelay" || s.multi_line_run_mode === "paste"
+        ? s.multi_line_run_mode
+        : "",
   };
 }
 
@@ -50,6 +66,8 @@ function emptyDraft(): Draft {
     tagsText: "",
     shortkey: "",
     noAutoRun: false,
+    kind: "",
+    multiLineRunMode: "",
   };
 }
 
@@ -59,8 +77,11 @@ export function SnippetsView() {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [pkgFilter, setPkgFilter] = useState(""); // "" = 全部分组
+  const [kindFilter, setKindFilter] = useState<"" | "snippet" | "script">("");
+  const [notice, setNotice] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [isNew, setIsNew] = useState(false);
+  const importRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -105,8 +126,10 @@ export function SnippetsView() {
   const groups = useMemo(() => {
     let list = filterSnippets(snippets, query);
     if (pkgFilter) list = list.filter((s) => (s.package || "").trim() === pkgFilter);
+    if (kindFilter === "script") list = list.filter((s) => s.kind === "script");
+    else if (kindFilter === "snippet") list = list.filter((s) => s.kind !== "script");
     return groupSnippets(list);
-  }, [snippets, query, pkgFilter]);
+  }, [snippets, query, pkgFilter, kindFilter]);
 
   const openNew = () => {
     setIsNew(true);
@@ -147,6 +170,8 @@ export function SnippetsView() {
         .filter(Boolean),
       shortkey: draft.shortkey.trim(),
       no_auto_run: draft.noAutoRun,
+      kind: draft.kind === "script" ? "script" : "",
+      multi_line_run_mode: draft.multiLineRunMode,
     };
     const list = isNew
       ? [...snippets, next]
@@ -157,6 +182,53 @@ export function SnippetsView() {
   const removeSnippet = (s: Snippet) => {
     if (!window.confirm(`删除片段「${s.name}」？不可恢复。`)) return;
     void persist(snippets.filter((x) => x.id !== s.id));
+  };
+
+  /** 导出为 Netcatty snippet 传输格式（kind=netcatty.snippets / version 3）。 */
+  const exportSnippets = () => {
+    try {
+      const payload = buildSnippetExportPayload(snippets);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `termx-snippets-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setNotice(`已导出 ${snippets.length} 条`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /** 导入：解析 → 按命令判冲突（覆盖 / 跳过）→ 全量保存并通知终端刷新。 */
+  const importSnippets = async (file: File) => {
+    setBusy(true);
+    setErr("");
+    setNotice("");
+    try {
+      const payload = parseSnippetImportPayload(await file.text());
+      if (payload.snippets.length === 0) throw new Error("导入文件没有可用条目");
+      const overwrite = window.confirm(
+        `共 ${payload.snippets.length} 条。命令相同的条目是否覆盖本地？\n确定 = 覆盖，取消 = 跳过`,
+      );
+      const merged = mergeSnippetImport({
+        existing: snippets,
+        payload,
+        conflictAction: overwrite ? "overwrite" : "skip",
+        createId: () => crypto.randomUUID(),
+      });
+      await api.saveSnippets(merged.snippets);
+      setSnippets(merged.snippets);
+      window.dispatchEvent(new Event(SNIPPETS_CHANGED_EVENT));
+      setNotice(`导入完成：${describeImportStats(merged.stats)}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : userVisibleError(String(e)));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -181,13 +253,40 @@ export function SnippetsView() {
             </option>
           ))}
         </select>
+        <select
+          value={kindFilter}
+          title="按类型筛选"
+          onChange={(e) => setKindFilter(e.target.value as "" | "snippet" | "script")}
+        >
+          <option value="">全部类型</option>
+          <option value="snippet">片段</option>
+          <option value="script">脚本</option>
+        </select>
         <div className="snippets-toolbar-spacer" />
+        <input
+          ref={importRef}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) void importSnippets(f);
+          }}
+        />
+        <button onClick={() => importRef.current?.click()} disabled={busy}>
+          导入
+        </button>
+        <button onClick={exportSnippets} disabled={busy || snippets.length === 0}>
+          导出
+        </button>
         <button className="snippets-primary" onClick={openNew} disabled={busy}>
           新建片段
         </button>
       </div>
 
       {err && <div className="snippets-error">{err}</div>}
+      {notice && <div className="snippets-notice">{notice}</div>}
 
       <div className="snippets-body">
         {snippets.length === 0 ? (
@@ -213,8 +312,14 @@ export function SnippetsView() {
                     <div className="snippets-row-main">
                       <div className="snippets-row-title">
                         <span className="snippets-row-name">{s.name}</span>
+                        {s.kind === "script" && (
+                          <span className="snippets-flag-badge">脚本</span>
+                        )}
                         {s.shortkey && (
                           <span className="snippets-shortkey-badge">{s.shortkey}</span>
+                        )}
+                        {s.multi_line_run_mode === "lineDelay" && (
+                          <span className="snippets-flag-badge">逐行</span>
                         )}
                         {s.no_auto_run && <span className="snippets-flag-badge">仅插入</span>}
                       </div>
@@ -252,6 +357,23 @@ export function SnippetsView() {
           </header>
           <div className="snippets-aside-body">
             <label>
+              <span>类型</span>
+              <select
+                value={draft.kind}
+                onChange={(e) =>
+                  setDraft({ ...draft, kind: e.target.value as SnippetKind })
+                }
+              >
+                <option value="">片段（插入到终端）</option>
+                <option value="script">脚本（发送到活动终端执行）</option>
+              </select>
+              <em>
+                {draft.kind === "script"
+                  ? "执行时把内容发送给当前会话的 shell，输出直接回显；Netcatty 的 nct.* JS 运行时未移植。"
+                  : "片段在终端右键菜单或按快捷键插入到当前会话。"}
+              </em>
+            </label>
+            <label>
               <span>名称 *</span>
               <input
                 value={draft.name}
@@ -260,14 +382,35 @@ export function SnippetsView() {
               />
             </label>
             <label>
-              <span>命令 *</span>
+              <span>{draft.kind === "script" ? "脚本内容 *" : "命令 *"}</span>
               <textarea
                 value={draft.command}
                 onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-                placeholder="如：df -h"
+                placeholder={
+                  draft.kind === "script"
+                    ? "如：\nset -e\necho start\nuptime"
+                    : "如：df -h"
+                }
                 rows={5}
                 spellCheck={false}
               />
+            </label>
+            <label>
+              <span>多行运行方式</span>
+              <select
+                value={draft.multiLineRunMode || "paste"}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    multiLineRunMode:
+                      e.target.value === "lineDelay" ? "lineDelay" : "",
+                  })
+                }
+              >
+                <option value="paste">一次性发送</option>
+                <option value="lineDelay">逐行发送（每行 250ms）</option>
+              </select>
+              <em>仅多行且自动执行时生效；登录提示、网络设备宏等场景可用逐行发送。</em>
             </label>
             <label>
               <span>描述</span>

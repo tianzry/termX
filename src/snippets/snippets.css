@@ -72,6 +72,11 @@ button.snippets-primary:disabled {
   font-size: 12px;
 }
 
+.snippets-notice {
+  color: hsl(var(--nc-muted));
+  font-size: 12px;
+}
+
 .snippets-body {
   display: flex;
   flex-direction: column;
@@ -264,7 +269,8 @@ button.snippets-primary:disabled {
 }
 
 .snippets-aside-body input,
-.snippets-aside-body textarea {
+.snippets-aside-body textarea,
+.snippets-aside-body select {
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid hsl(var(--nc-border));
@@ -305,5 +311,12 @@ button.snippets-primary:disabled {
   display: flex;
   flex-direction: column;
   max-height: 220px;
+  overflow-y: auto;
+}
+
+/* 终端工具栏「脚本」下拉（复用 term-tool-menu 定位）。 */
+.term-snippet-menu {
+  min-width: 180px;
+  max-height: 260px;
   overflow-y: auto;
 }

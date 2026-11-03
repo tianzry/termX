@@ -630,6 +630,12 @@ pub struct Snippet {
     /// true = 仅插入、不追加回车执行（对应 Netcatty noAutoRun）。
     #[serde(default)]
     pub no_auto_run: bool,
+    /// "snippet" | "script"（对应 Netcatty snippet.kind）；空 = 片段。
+    #[serde(default)]
+    pub kind: String,
+    /// 多行发送方式："paste"（默认一次性）| "lineDelay"（逐行）；空 = paste。
+    #[serde(default)]
+    pub multi_line_run_mode: String,
 }
 
 // --- Plugin ---

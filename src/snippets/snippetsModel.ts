@@ -114,9 +114,54 @@ export function shortkeyMatches(binding: ShortkeyBinding, ev: KeyEventLike): boo
   );
 }
 
-/** 插入载荷：默认追加回车（\r）自动执行；noAutoRun 时原样插入。 */
-export function snippetPayload(command: string, noAutoRun: boolean): string {
-  return noAutoRun ? command : `${command}\r`;
+// ── 多行发送方式（对照 Netcatty multiLineRunMode / AUTO_RUN_SNIPPET_LINE_DELAY_MS）──
+
+export type MultiLineRunMode = "paste" | "lineDelay";
+
+/** 逐行发送时每行间隔，对齐 Netcatty terminalHelpers.ts 的 250ms。 */
+export const SNIPPET_LINE_DELAY_MS = 250;
+
+/** 归一化为 "\n"（对照 Netcatty lib/utils.ts normalizeLineEndings）。 */
+export function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/** 非法 / 空值回落到默认 paste。 */
+export function resolveMultiLineRunMode(raw: string | undefined | null): MultiLineRunMode {
+  return raw === "lineDelay" ? "lineDelay" : "paste";
+}
+
+/** 片段是否按脚本处理（对齐 Netcatty isScriptSnippet）。 */
+export function isScriptSnippet(s: Pick<Snippet, "kind">): boolean {
+  return s.kind === "script";
+}
+
+export interface SnippetWritePlan {
+  /** 依次写入终端的片段（每段之间间隔 delayMs）。 */
+  chunks: string[];
+  /** 0 = 一次性连续写入。 */
+  delayMs: number;
+}
+
+/**
+ * 计算写入计划，语义对齐 Netcatty shouldDelayAutoRunSnippetInput：
+ * - noAutoRun：原样插入，不追加回车、不逐行（无论模式）；
+ * - paste（默认）：整段一次写入，末尾一个回车；
+ * - lineDelay：仅当「自动执行 + 去掉末尾回车后仍有多行」时逐行发送，每行一个回车。
+ */
+export function snippetWritePlan(
+  command: string,
+  noAutoRun: boolean,
+  rawMode?: string | null,
+): SnippetWritePlan {
+  const text = normalizeLineEndings(command).replace(/\n/g, "\r");
+  if (noAutoRun) return { chunks: [text], delayMs: 0 };
+  if (resolveMultiLineRunMode(rawMode) === "paste") {
+    return { chunks: [`${text}\r`], delayMs: 0 };
+  }
+  const body = text.endsWith("\r") ? text.slice(0, -1) : text;
+  if (!body.includes("\r")) return { chunks: [`${body}\r`], delayMs: 0 };
+  return { chunks: body.split("\r").map((line) => `${line}\r`), delayMs: SNIPPET_LINE_DELAY_MS };
 }
 
 /** 为缺少 id 的旧数据补稳定 id（并对重复 id 去重）。 */

@@ -21,9 +21,10 @@ import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import {
   SNIPPETS_CHANGED_EVENT,
+  isScriptSnippet,
   parseShortkey,
   shortkeyMatches,
-  snippetPayload,
+  snippetWritePlan,
 } from "./snippets/snippetsModel";
 import "./snippets/snippets.css";
 import type {
@@ -129,7 +130,7 @@ export function TerminalPane({
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  /** 片段列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
+  /** 片段 / 脚本列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
   const [snippets, setSnippets] = useState<api.Snippet[]>([]);
   useEffect(() => {
     let alive = true;
@@ -149,13 +150,48 @@ export function TerminalPane({
     };
   }, []);
 
-  /** 插入片段：仅当前窗格会话，禁止跨会话发送；未连接时不动作。 */
+  /** 逐行发送的待执行定时器（断开 / 卸载时必须清掉，避免写入错误会话）。 */
+  const pendingWritesRef = useRef<number[]>([]);
+  function clearPendingWrites() {
+    pendingWritesRef.current.forEach((id) => window.clearTimeout(id));
+    pendingWritesRef.current = [];
+  }
+
+  function writeToPane(text: string) {
+    (externalRef.current ?? transportRef.current)?.write(text);
+  }
+
+  /**
+   * 插入片段 / 运行脚本：仅当前窗格会话，禁止跨会话发送；未连接时不动作。
+   * 多行方式对齐 Netcatty：paste 整段 + 末尾单回车；lineDelay 逐行 250ms。
+   * 脚本（kind=script）走同一链路——把脚本文本发送到活动 shell，输出在本终端回显。
+   * （Netcatty 的 nct.* JS 运行时未移植，见 todo/changelogs 留档。）
+   */
   const insertSnippet = (s: api.Snippet) => {
     if (status !== "connected") return;
-    (externalRef.current ?? transportRef.current)?.write(
-      snippetPayload(s.command, s.no_auto_run),
-    );
+    clearPendingWrites();
+    const plan = snippetWritePlan(s.command, s.no_auto_run, s.multi_line_run_mode);
+    if (plan.delayMs <= 0 || plan.chunks.length === 1) {
+      writeToPane(plan.chunks[0] ?? "");
+      return;
+    }
+    plan.chunks.forEach((chunk, i) => {
+      if (i === 0) {
+        writeToPane(chunk);
+        return;
+      }
+      pendingWritesRef.current.push(
+        window.setTimeout(() => {
+          // 会话已断开时不再续写（transport 为空即丢弃）。
+          if (aliveRef.current) writeToPane(chunk);
+        }, plan.delayMs * i),
+      );
+    });
   };
+
+  /** 脚本下拉菜单（终端工具栏「脚本」按钮）。 */
+  const [scriptMenuOpen, setScriptMenuOpen] = useState(false);
+  const scriptSnippets = snippets.filter(isScriptSnippet);
 
   /** 右键菜单（位置相对窗格左上角）。 */
   const [menu, setMenu] = useState<{
@@ -218,6 +254,7 @@ export function TerminalPane({
 
   /** 拆掉本窗格会话的事件监听与传输（不重连）。 */
   function teardown() {
+    clearPendingWrites();
     unsubRef.current.forEach((u) => u());
     unsubRef.current = [];
     promptUnsubRef.current.forEach((u) => u());
@@ -230,6 +267,7 @@ export function TerminalPane({
     return () => {
       aliveRef.current = false;
       attemptRef.current += 1;
+      clearPendingWrites();
       if (pendingPromptRef.current) cancelPromptApi(pendingPromptRef.current);
       pendingPromptRef.current = null;
       if (hostKeySessionRef.current) void api.sshHostKeyCancel(hostKeySessionRef.current);
@@ -969,13 +1007,39 @@ export function TerminalPane({
           >
             <Icon name="file-text" size={12} />
           </button>
-          <button
-            className="term-tool-btn"
-            disabled
-            title="脚本（尚未实现）"
-          >
-            <Icon name="zap" size={12} />
-          </button>
+          <div className="term-tool-more">
+            <button
+              className="term-tool-btn"
+              title={
+                scriptSnippets.length > 0
+                  ? "运行脚本（发送到当前会话）"
+                  : "暂无脚本（到「脚本」页新建，类型选脚本）"
+              }
+              disabled={scriptSnippets.length === 0}
+              onClick={() => setScriptMenuOpen((v) => !v)}
+            >
+              <Icon name="zap" size={12} />
+            </button>
+            {scriptMenuOpen && (
+              <div className="term-tool-menu term-snippet-menu">
+                <div className="term-menu-label">运行脚本</div>
+                {scriptSnippets.map((s) => (
+                  <button
+                    key={s.id || s.name}
+                    title={s.description || s.command.split(/\r?\n/)[0]}
+                    disabled={status !== "connected"}
+                    onClick={() => {
+                      insertSnippet(s);
+                      setScriptMenuOpen(false);
+                    }}
+                  >
+                    <Icon name="play" size={12} />
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="term-tool-more">
             <button
               className="term-tool-btn"
@@ -1166,24 +1230,52 @@ export function TerminalPane({
             </button>
             {snippets.length > 0 && (
               <>
-                <div className="term-menu-sep" />
-                <div className="term-menu-label">插入片段</div>
-                <div className="term-snippet-list">
-                  {snippets.map((s) => (
-                    <button
-                      key={s.id || s.name}
-                      disabled={status !== "connected"}
-                      title={s.shortkey ? `快捷键：${s.shortkey}` : s.command}
-                      onClick={() => {
-                        insertSnippet(s);
-                        closeMenu();
-                      }}
-                    >
-                      <Icon name="file-code" size={14} />
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
+                {snippets.some((s) => !isScriptSnippet(s)) && (
+                  <>
+                    <div className="term-menu-sep" />
+                    <div className="term-menu-label">插入片段</div>
+                    <div className="term-snippet-list">
+                      {snippets
+                        .filter((s) => !isScriptSnippet(s))
+                        .map((s) => (
+                          <button
+                            key={s.id || s.name}
+                            disabled={status !== "connected"}
+                            title={s.shortkey ? `快捷键：${s.shortkey}` : s.command}
+                            onClick={() => {
+                              insertSnippet(s);
+                              closeMenu();
+                            }}
+                          >
+                            <Icon name="file-code" size={14} />
+                            {s.name}
+                          </button>
+                        ))}
+                    </div>
+                  </>
+                )}
+                {scriptSnippets.length > 0 && (
+                  <>
+                    <div className="term-menu-sep" />
+                    <div className="term-menu-label">运行脚本</div>
+                    <div className="term-snippet-list">
+                      {scriptSnippets.map((s) => (
+                        <button
+                          key={s.id || s.name}
+                          disabled={status !== "connected"}
+                          title={s.shortkey ? `快捷键：${s.shortkey}` : s.command}
+                          onClick={() => {
+                            insertSnippet(s);
+                            closeMenu();
+                          }}
+                        >
+                          <Icon name="play" size={14} />
+                          {s.name}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </>
             )}
             <div className="term-menu-sep" />

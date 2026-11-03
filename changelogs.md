@@ -2349,6 +2349,8 @@ select_application/open_with_application；⑤ 临时文件注册表
 6. CU 坐标点击原点 = webview viewport（窗口 y −72）；选择器行坐标随分区数漂移，按当次截图现测。
 7. `list_credentials` 不含 secret；凡连接路径需要 secret 必须走 `get_credential`（SftpView 独立连接踩坑，空密码表现为「认证被服务器拒绝。」）。
 
+
+
 ### 门禁
 
 - npm run test:run 126/126 ✓；tauri debug 重编 ✓（含前端 vite build 与 cargo 编译，覆盖 npm run build / cargo check 门禁，详见构建输出）。
@@ -2930,3 +2932,76 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本地 commit（不 push，随阶段 B 一起推）。
+
+---
+
+## 2026-11-03 · 脚本与 Snippets 阶段 B（P0 #5 收尾）
+
+### 背景与范围
+
+- 对齐 Netcatty `domain/snippetScript.ts` + `types/global/netcatty-bridge-script.d.ts`：其脚本是运行在 Electron 主进程 JS 沙箱里的 `nct.*` 自动化 API（scriptRun/Stop/Pause/Resume/GetRuns、屏幕等待、对话框、录制回放），依赖 608 方法桥与 Electron 能力目录；termX 无对应运行时。
+- 裁定：**不假实现 `nct.*`**。本轮做最小闭环——脚本 = `kind:"script"` 的片段条目（与片段共用存储/编辑器），「执行」= 把内容按 `multiLineRunMode` 发送到当前活动会话的 shell，输出直接在本终端回显；`nct.*` 运行时与暂停/终止、跨主机批量、触发器（trigger/triggerPattern/targets）留档 P1 #13。
+- 脚本「CRUD」复用 Snippets 页面（类型下拉 + 类型筛选 + 列表徽章），无独立编辑器组件（Netcatty 为 `ScriptsSidePanel` + 独立运行面板，差异记录在取舍）。
+
+### 修改点
+
+后端（`src-tauri`）：
+
+1. **`src/models.rs` Snippet** 新增 `kind`（"snippet"|"script"，空=片段）与 `multi_line_run_mode`（"paste"|"lineDelay"，空=paste），均 `serde default`，旧数据与同步文件向后兼容。无新增命令（`load_snippets`/`save_snippets` 已双注册），R4 不受影响。
+
+前端（`src`）：
+
+2. **`src/snippets/snippetsModel.ts`**：`MultiLineRunMode`、`SNIPPET_LINE_DELAY_MS=250`（对齐 Netcatty）、`normalizeLineEndings`、`resolveMultiLineRunMode`、`isScriptSnippet`、`snippetWritePlan`——paste=整段 + 末尾单回车；lineDelay=去掉末尾换行后逐行发送、每行一个回车、250ms；noAutoRun 一律原样插入不逐行。删除旧 `snippetPayload`（被 writePlan 取代）。
+3. **`src/snippets/snippetsTransfer.ts`（新增）**：Netcatty snippet 传输格式（`kind:"netcatty.snippets"`、导出 version 3、接受 1/2/3）；`label↔name` 映射；导入支持完整对象 / 裸数组 / 多导出对象数组；严格校验 kind/version/snippets 列表、command 必填、未知字段（targets/trigger 等）忽略不报错；按 **command** 判冲突（skip/overwrite，覆盖沿用本地 id）；`collectPackages` 展开父级分组；`describeImportStats` 统一提示文案。
+4. **`src/snippets/SnippetsView.tsx`**：工具栏加「按类型筛选」「导入」「导出」；编辑面板加「类型」「多行运行方式」（含说明文案）并随类型切换命令标签；行徽章加「脚本」「逐行」；导入走文件选择 + 覆盖/跳过询问 + 结果提示；导出 JSON 直下（`termx-snippets-YYYY-MM-DD.json`）。
+5. **`src/TerminalPane.tsx`**：`insertSnippet` 改用 `snippetWritePlan`，逐行模式用定时器队列写入；`clearPendingWrites()` 在 `teardown()` 与卸载时清理，断开后写空即丢弃（禁止跨会话/断开后续写）；工具栏「脚本」按钮从 disabled「尚未实现」改为真实下拉（仅列 `kind=script`，未连接禁用）；右键菜单拆「插入片段 / 运行脚本」两段。
+6. **`src/snippets/snippets.css`**：新增 `.snippets-notice`、aside `select` 样式、`.term-snippet-menu`（复用既有 `.term-tool-menu` 定位）。
+
+### 门禁
+
+- `npm run test:run` **263 passed**（新增 snippetsModel 9 + snippetsTransfer 13，共 21；旧 `snippetPayload` 2 例移除）。
+- `npm run build` 通过。
+- `cargo check --features server` 通过（既有 warning 不变）。
+- `cargo test --lib` **836 passed**。
+
+### 实机验证（debug 构建 + 129）
+
+CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`），改用 PowerShell UI Automation（UIA InvokePattern）+ 窗口截图，规避了「Explorer 遮挡窗口导致坐标点击落空」的问题。
+
+- 编辑面板：类型 / 多行运行方式两个下拉 + 提示文案渲染正常（截图核对）。
+- 导入：导入 `netcatty.snippets` v3 文件 → 提示「导入完成：新增 1」，行显示「巡检脚本-标准 · 脚本 · F5 · 逐行 · echo STEP-A」。
+- 129 实跑：连接 129 后，快捷键 F5 与工具栏「运行脚本」菜单各执行一轮，终端依次回显 `echo STEP-A/STEP-A`、`uptime` 输出、`echo STEP-B/STEP-B`（逐行模式生效，三轮均正常）。
+- 跨会话隔离：另开干净「本地终端 4」，129 执行三轮脚本后回切，仍只有 Windows 横幅与空提示符，无任何 STEP 输出。
+- 清理：输入法干扰产生的脏片段行已通过 UI 删除；当前保留「磁盘用量」与「巡检脚本-标准」两项。
+
+### 比对结论（三类）
+
+- **一致**：字段（kind/multiLineRunMode/noAutoRun/shortkey/package/tags/description）、列表分组与徽章、导入导出格式（kind/version/label）、终端插入语义（末尾单回车、逐行间隔）。
+- **已修**：终端工具栏脚本入口（原为禁用占位按钮）→ 真实脚本下拉；多行模式从「未实现」→ paste/lineDelay 落地；Snippets 页新增类型筛选/导入/导出。
+- **待人工**：右键菜单「插入片段 / 运行脚本」的视觉与点击（自动化合成右键无法触发 WebView2 contextmenu）；Netcatty 的网格/文件夹式 package 视图未复刻（termX 为分组行列表 + 导出保留 `snippetPackages`，功能等价、布局取舍已留档）。
+
+### 取舍 / 留档
+
+- Netcatty package 卡片/网格布局、`ScriptsSidePanel` 独立侧栏与运行日志面板未复刻（P1 #13 范围）；`targets*`/`trigger`/`triggerPattern`/`language` 不迁移，导入时忽略。
+- 脚本执行不隔离 shell 环境，也不做逐行回显等待/超时；退出码与失败检测依赖用户 shell 输出判断。
+
+### review 自审
+
+- 注入面：写入仅由用户显式操作（快捷键/右键/工具栏菜单/脚本下拉）触发；导入只落库不执行；脚本与片段走同一 `write`，无 `eval`/shell 拼接新增面。
+- 隔离：写入固定走当前窗格 `externalRef ?? transportRef`；逐行定时器在 teardown/卸载清理，断开后 transport 为空丢弃；无跨会话广播。
+- 导入校验：kind/version/列表类型硬校验，条目 command 必填、其余字段宽松回落；不覆盖未知字段，避免脏写入。
+- i18n：新增文案统一中文，错误信息可直接展示；无新增错误码。
+- 双注册：无新增后端命令，无需改 `lib.rs`/`server.rs`。
+- 判定：无高/中危问题。
+
+### 踩坑
+
+108. CU 扩展本轮缺失（Extension not found），改用 PowerShell UIA + `InvokePattern`；WebView2 的 `Edit`/`textarea` 不支持 ValuePattern，文本只能聚焦后键入或粘贴。
+109. 窗口被资源管理器遮挡时坐标点击会落到 Explorer；UIA `InvokePattern` 不受层叠影响，保存/导航优先用它。
+110. SendKeys 键入英文会被中文输入法组合成「恶臭」等词；文本输入改用剪贴板 `^v`，且确认目标窗口确实在前台。
+111. 自动化点击「Terminal input」取到的是 DOM 中第一个输入框（可能属于非活动窗格），F5 会写进该窗格会话——这是按窗格语义的正确行为，非跨会话泄漏；人工点测时以可见活动窗格为准。
+
+### 提交状态
+
+- 本轮改动本地 commit（未推送），随后 push `HEAD:main`（fast-forward 自 `a41ca88`）。
+
