@@ -10,9 +10,21 @@ import { listen } from "@tauri-apps/api/event";
 import {
   bytesToText,
   decodeBase64,
+  localHome,
+  localListDir,
+  localListDrives,
+  localMkdir,
+  localReadFile,
+  localRealpath,
+  localRemove,
+  localRename,
+  localStat,
+  localWriteFile,
   onAuthPrompt,
   onTerminalData,
   ptySpawn,
+  sftpLstat,
+  sftpRealpath,
   sshConnect,
   sshDisconnect,
   sshWrite,
@@ -146,5 +158,97 @@ describe("事件订阅", () => {
     };
     handler({ payload });
     expect(prompts).toEqual([payload]);
+  });
+});
+
+describe("本地文件系统 / SFTP 新封装的参数形状", () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset();
+    mockedInvoke.mockResolvedValue(undefined);
+  });
+
+  it("localHome / localListDrives 无参", async () => {
+    await localHome();
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_home");
+    await localListDrives();
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_list_drives");
+  });
+
+  it("localListDir / localRealpath / localMkdir 传 path", async () => {
+    await localListDir("C:\\tmp");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_list_dir", {
+      path: "C:\\tmp",
+    });
+    await localRealpath("/a");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_realpath", {
+      path: "/a",
+    });
+    await localMkdir("/a/b");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_mkdir", {
+      path: "/a/b",
+    });
+  });
+
+  it("localStat follow 缺省传 null，显式 false 透传", async () => {
+    await localStat("/a");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_stat", {
+      path: "/a",
+      follow: null,
+    });
+    await localStat("/a", false);
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_stat", {
+      path: "/a",
+      follow: false,
+    });
+  });
+
+  it("localRename 传 oldPath / newPath", async () => {
+    await localRename("/a", "/b");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_rename", {
+      oldPath: "/a",
+      newPath: "/b",
+    });
+  });
+
+  it("localRemove 守卫 expectedType 恒传", async () => {
+    await localRemove("/a", "file");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_remove", {
+      path: "/a",
+      expectedType: "file",
+    });
+  });
+
+  it("localReadFile maxBytes 缺省传 null，给值透传", async () => {
+    await localReadFile("/a");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_read_file", {
+      path: "/a",
+      maxBytes: null,
+    });
+    await localReadFile("/a", 1024);
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_read_file", {
+      path: "/a",
+      maxBytes: 1024,
+    });
+  });
+
+  it("localWriteFile 把 Uint8Array 转成 number 数组", async () => {
+    await localWriteFile("/a", Uint8Array.from([1, 2]));
+    expect(mockedInvoke).toHaveBeenLastCalledWith("local_write_file", {
+      path: "/a",
+      data: [1, 2],
+    });
+  });
+
+  it("sftpLstat / sftpRealpath 传 sftpId + path", async () => {
+    await sftpLstat("s1", "/x");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("sftp_lstat", {
+      sftpId: "s1",
+      path: "/x",
+    });
+    await sftpRealpath("s1", ".");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("sftp_realpath", {
+      sftpId: "s1",
+      path: ".",
+    });
   });
 });

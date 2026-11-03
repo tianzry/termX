@@ -97,6 +97,12 @@ export default function App() {
 
   const [status, setStatus] = useState("就绪");
   const [surface, setSurface] = useState<RootSurface>("vault");
+  // SFTP 视图首次进入后常驻挂载，切走仅 CSS 隐藏（对齐 Netcatty SftpViewMount
+  // 的 sticky 保活）：pane 标签 / 双栏状态不因 surface 切换丢失。
+  const [sftpMounted, setSftpMounted] = useState(false);
+  useEffect(() => {
+    if (surface === "sftp") setSftpMounted(true);
+  }, [surface]);
   const [activeSshSid, setActiveSshSid] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>(null);
   const [showManager, setShowManager] = useState(false);
@@ -359,12 +365,16 @@ export default function App() {
             />
           )}
 
-          {surface === "sftp" && (
-            <SftpView
-              profiles={profiles}
-              credentials={credentials}
-              connectedHosts={sftpConnectedHosts}
-            />
+          {sftpMounted && (
+            <div
+              className={`nc-sftp-mount${surface === "sftp" ? "" : " hidden"}`}
+            >
+              <SftpView
+                profiles={profiles}
+                credentials={credentials}
+                connectedHosts={sftpConnectedHosts}
+              />
+            </div>
           )}
 
           <div className={`nc-workspace${terminalActive ? "" : " hidden"}`}>

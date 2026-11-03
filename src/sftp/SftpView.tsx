@@ -18,8 +18,11 @@ import { SftpTabBar } from "./SftpTabBar";
 import {
   buildPickerSections,
   connectBranch,
+  detectLocalOs,
+  osFromUname,
   pickerItemToTarget,
   type ConnectedHostEntry,
+  type HostOs,
   type PaneConnection,
   type PickerItem,
   type SftpConnectTarget,
@@ -75,6 +78,21 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
     [setSide],
   );
 
+  /** 远端 OS 探测结果回写对应标签（按 sftpId 匹配）。 */
+  const updateTabOs = useCallback(
+    (side: SftpSide, sftpId: string, os: HostOs) => {
+      setSide(side, (prev) => ({
+        ...prev,
+        tabs: prev.tabs.map((t) =>
+          t.connection.kind === "remote" && t.connection.sftpId === sftpId
+            ? { ...t, connection: { ...t.connection, os } }
+            : t,
+        ),
+      }));
+    },
+    [setSide],
+  );
+
   const connectTarget = useCallback(
     async (side: SftpSide, target: SftpConnectTarget) => {
       setBusySide(side);
@@ -82,7 +100,12 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
       try {
         if (connectBranch(target) === "local") {
           const home = await api.localHome();
-          addTab(side, { kind: "local", label: "本地", path: home });
+          addTab(side, {
+            kind: "local",
+            label: "本地",
+            path: home,
+            os: detectLocalOs(),
+          });
           return;
         }
         if (target.kind === "session") {
@@ -96,7 +119,18 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
               label: entry.label,
               meta: entry.meta,
               path: home,
+              os: entry.os ?? "unknown",
             });
+            // best-effort 远端 OS 探测：复用会话上跑 uname -s，不阻塞连接流；
+            // 失败 / 无 uname 保持 unknown（标签回落服务器图标）。
+            void api
+              .sshExec(entry.sessionId, "uname -s", 3000)
+              .then((r) => {
+                if (r.exit_code !== 0) return;
+                const os = osFromUname(r.stdout);
+                if (os !== "unknown") updateTabOs(side, sftpId, os);
+              })
+              .catch(() => {});
           } catch (e) {
             await api.sftpClose(sftpId).catch(() => {});
             throw e;
@@ -129,6 +163,7 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
             label: profile.name,
             meta: `${credential.username}@${profile.host}`,
             path: home,
+            os: "unknown",
           });
         } catch (e) {
           await api.sftpClose(sftpId).catch(() => {});
@@ -140,7 +175,7 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
         setBusySide(null);
       }
     },
-    [addTab, credentials],
+    [addTab, credentials, updateTabOs],
   );
 
   // ── 标签操作 ───────────────────────────────────────────

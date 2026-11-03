@@ -2395,3 +2395,36 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 推送
 
 - 推送前核对远端 main=1f5af63 且为本地 HEAD 祖先（快进）；3 个未推送提交 + 本轮修复提交经 `git push git@github.com:tianzry/termX.git HEAD:main` 推送，ls-remote 核对结果见汇报与下一轮记录。
+
+---
+
+## 2026-11-03 SFTP 实现③：状态保活 + OS 图标 + 低危收尾
+
+### 状态保活（切 surface 不丢 pane tab / 双栏状态）
+
+- 调研结论：Netcatty `SftpViewMount`（AppMounts.tsx:L147-164）为「首次激活后 sticky 挂载」——`shouldMount` 一旦为 true 不再回落；非激活时 `SftpViewInner` 以 `visibility:hidden + pointerEvents:none + position:absolute` 自隐藏（SftpView.tsx:L513-520）。
+- termX 实现：App.tsx 新增 `sftpMounted`（surface==="sftp" 过一次即恒 true），SftpView 常驻挂载于 `.nc-sftp-mount` 容器，切走加 `.hidden`（display:none）；styles.css 新增对应样式。
+- 效果：Vaults↔SFTP↔终端来回切换，标签/双栏/聚焦状态保留；SftpView 的卸载清理（sftpClose 全部远端会话）仅在应用退出时触发，切换不再误关会话。
+
+### OS 图标（已连接行与远端标签）
+
+- 调研结论：Netcatty 的 OS 图标为 `DistroAvatar` + `/distro/*.svg` 资产（GPL-3.0，按既有约定不复制）；判定依赖主机记录的持久化字段（`os/osOverride/distro/deviceType`，domain/host.ts `resolveHostOs`），另有 SSH 服务标识串的厂商检测。termX 的 Profile 无 OS/distro 字段、后端未暴露 SSH 服务标识串 → **资产与判定方式均不可复用，采用最接近的通用映射**。
+- 通用映射（sftpModel.ts 新增 `HostOs` / `detectLocalOs` / `osFromUname` / `osIconName`，纯函数带单测）：
+  - 本地标签：userAgent 判定本机 OS（Windows / macOS / Linux）。
+  - 复用会话连接：best-effort 经 sshExec 跑 `uname -s`（3s 超时、不阻塞连接流），Linux/Darwin/Windows 直映、BSD 近似归 linux；失败保持 unknown 回落服务器图标。
+  - 独立连接：无 OS 信息来源（仅 SFTP 子系统），保持 unknown → 通用服务器图标。
+  - 选择器已连接行：`entry.os` 已知时显示 OS 图标，否则回落绿点（当前连接时刻尚未探测，实际均回落绿点）。
+- 图标：icons.tsx 新增 os-windows（四格窗）/ os-macos（⌘ 环形符）/ os-linux（企鹅轮廓），lucide 风格原创路径，不复制 GPL 资产。
+- 已知局限（记录待后续）：独立连接的远端标签要显示 OS，需引入 profile.os 字段或 SSH 服务标识串检测；选择器已连接行的 OS 显示需会话曾被探测过。
+
+### 低危收尾（上轮 review 记录的 4 项闭环）
+
+1. TS `FileStat` 补 `is_symlink: boolean` 声明（Rust 侧已有该字段）。
+2. `localRemove` 的 `expectedType` 改为必传（守卫恒传；当前无前端调用点，先以类型强制）。
+3. client.test.ts 补 12 个新封装（10 local_* + sftp_lstat/sftp_realpath）的 mock 参数形状覆盖（+8 例）。
+4. styles.css 删除孤儿 `.nc-sftp-page*` 旧样式（约 44 行）。
+
+### 门禁
+
+- npm run test:run 136/136 ✓（+10：client 8 例 + sftpModel OS 判定 2 例）；npm run build ✓（仅既有 chunk>500kB 提示）；cargo check ✓（仅既有 6 条 dead_code 警告）；cargo check --features server ✓；cargo test --lib 793✓ / 0✗（本轮无 Rust 改动）。
+- 本地 commit 未推送；实机比对（保活切换验证 + OS 图标目检）留到下一轮。

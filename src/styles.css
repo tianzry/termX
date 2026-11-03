@@ -3072,52 +3072,19 @@ button:disabled {
   font-size: 12px;
 }
 
-/* ── SFTP 独立页 ─────────────────────────────────────────── */
-
-.nc-sftp-page {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: hsl(var(--background));
-}
-
-.nc-sftp-page-header {
-  height: 56px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-  border-bottom: 1px solid hsl(var(--border) / 0.6);
-}
-
-.nc-sftp-page-header h1 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.nc-sftp-page-header p {
-  margin: 2px 0 0;
-  font-size: 11.5px;
-  color: hsl(var(--muted-foreground));
-}
-
-.nc-sftp-page-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-
-.nc-sftp-page .sftp-panel {
-  width: 100%;
-  min-width: 0;
-  border-left: none;
-  background: transparent;
-}
-
 /* ── SFTP 双栏视图（src/sftp/，对齐 Netcatty 布局）────────── */
+
+/* 常驻挂载容器：切走仅 display:none 隐藏，视图状态保活。 */
+.nc-sftp-mount {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.nc-sftp-mount.hidden {
+  display: none;
+}
 
 .nc-sftp-view {
   flex: 1;

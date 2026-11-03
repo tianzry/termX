@@ -16,7 +16,7 @@
 | P0 日常可用性 | 7 / 14 | 不补齐难以日常使用 |
 | P1 差异化能力 | 0 / 19 | 拉开与普通 SSH 客户端差距（含 1 项 ⏸ 不移植；#39 为范围修正新增） |
 | P2 大工程 | 0 / 6 | 需单独立项（含 4 项 ⏸ 暂缓移植，见 plan.md） |
-| **合计** | **7 / 39** | 2026-11-03：SFTP 实现①②推送前子 agent review（无高危；中危 2 已修=local_read_file 缺省 16MiB 尾部读上限、3 个本地错误码 i18n；低危 4 记录待后续），门禁全绿（126✓/build✓/cargo check×2✓/test --lib 793✓），核对远端 main=1f5af63（本地祖先，快进）后经 SSH 推送；下一起点=实现③（SFTP 状态保活 + OS 图标） |
+| **合计** | **7 / 39** | 2026-11-03：SFTP 实现③（状态保活 + OS 图标 + 低危收尾）：SftpView 改首次激活后常驻挂载 + `.nc-sftp-mount.hidden` 隐藏（对齐 Netcatty SftpViewMount sticky 保活，切 surface 不丢 pane tab/双栏状态）；新增 HostOs 判定（本地 userAgent / 复用会话 uname -s best-effort）与 os-* 原创图标（Netcatty GPL 资产与 host.os 字段判定不可复用，通用映射并说明）；低危 4 项闭环（FileStat.is_symlink、localRemove 守卫恒传、12 封装测试覆盖、孤儿 CSS）；门禁全绿（136✓/build✓/cargo check×2✓/test --lib 793✓），本地 commit 未推送；下一起点=实现③实机比对 |
 
 ---
 
@@ -256,3 +256,4 @@
 | 2026-11-03 | 研究文档单独提交 `078b35a`（docs）。SFTP 实现①（后端）完成：新建 commands/localfs.rs 10 个本地 FS 命令（LocalEntry 含 hidden/link_target；Win 盘符探测；realpath 去 \\?\ 前缀；remove 类型守卫 local_type_stale；read_file 超限读尾）+ sftp_lstat/sftp_realpath（FileStat 增量加 is_symlink）；lib.rs + server.rs 双注册；单测 +3（792✓）；cargo check ×2 ✓；client.ts 封装与前端留②。 |
 | 2026-11-03 | SFTP 实现②（前端骨架）完成：新建 src/sftp/（sftpModel 纯逻辑 + SftpView 双栏/聚焦三角 + SftpTabBar + SftpPaneEmptyState + SftpHostPicker 三分区/键盘导航 + SftpPaneView 骨架列表）；连接流三分支（本地/复用 SSH 会话/独立连接）；client.ts 封装实现①全部命令（不裸 invoke）；App.tsx surface==="sftp" 挂载切换为全幅双栏；单测 +14（126✓）；门禁 test/build/cargo check 全绿；实机比对与推送留下一轮。 |
 | 2026-11-03 | SFTP 实现①②推送前 review + push：子 agent review 无高危（八大重点：路径边界/大文件/类型守卫/错误映射/凭据安全/双注册/无裸 invoke/测试可信度）；中危 2 已修（local_read_file 缺省 16MiB 尾部读上限 + read_skip 纯函数与用例、3 个本地错误码 i18n 映射），低危 4 记录待后续；门禁全绿（126✓ + build✓ + cargo check×2✓ + cargo test --lib 793✓）；核对远端 main=1f5af63（本地祖先）后经 SSH 推送，远端 HEAD 以 ls-remote 核对。 |
+| 2026-11-03 | SFTP 实现③完成（状态保活 + OS 图标 + 低危收尾）：App.tsx SftpView 改首次激活后常驻挂载 + `.nc-sftp-mount.hidden` 隐藏（对齐 Netcatty SftpViewMount sticky 保活，切 surface 不丢 pane tab/双栏状态）；sftpModel 新增 HostOs/detectLocalOs/osFromUname/osIconName（纯函数 + 单测），本地标签图标随本机 OS、复用会话远端标签 uname -s best-effort 探测、独立连接回落服务器图标（Netcatty GPL 资产与 host.os 字段判定不可复用，采原创通用映射并落 changelogs）；低危 4 项闭环（FileStat.is_symlink 声明、localRemove expectedType 必传、client.test.ts +8 例覆盖 12 封装、孤儿 .nc-sftp-page CSS 删除）；门禁全绿（136/136 + build✓ + cargo check×2✓ + cargo test --lib 793✓）；本地 commit 未推送，实机比对留下一轮。 |

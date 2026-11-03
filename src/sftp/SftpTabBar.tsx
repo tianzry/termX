@@ -6,7 +6,7 @@
  */
 
 import { Icon } from "../ui/icons";
-import type { SftpPaneTab, SftpSide } from "./sftpModel";
+import { osIconName, type SftpPaneTab, type SftpSide } from "./sftpModel";
 
 interface Props {
   side: SftpSide;
@@ -50,7 +50,10 @@ export function SftpTabBar({
             }}
           >
             <Icon
-              name={tab.connection.kind === "local" ? "monitor" : "server"}
+              name={
+                osIconName(tab.connection.os) ??
+                (tab.connection.kind === "local" ? "monitor" : "server")
+              }
               size={12}
             />
             <span className="nc-sftp-tab-label">{tab.connection.label}</span>

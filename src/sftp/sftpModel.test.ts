@@ -7,6 +7,8 @@ import {
   joinLocalPath,
   joinRemotePath,
   localParent,
+  osFromUname,
+  osIconName,
   pickerItemToTarget,
   remoteParent,
   type ConnectedHostEntry,
@@ -171,5 +173,22 @@ describe("连接流分支", () => {
       profile: profile({ id: "p" }),
     });
     expect(hostTarget.kind).toBe("profile");
+  });
+});
+
+describe("主机 OS 判定（图标用）", () => {
+  it("osFromUname 识别 Linux / Darwin / Windows，BSD 近似 linux", () => {
+    expect(osFromUname("Linux")).toBe("linux");
+    expect(osFromUname("Darwin")).toBe("macos");
+    expect(osFromUname("Windows_NT")).toBe("windows");
+    expect(osFromUname("FreeBSD")).toBe("linux");
+    expect(osFromUname("  ")).toBe("unknown");
+  });
+
+  it("osIconName 映射 os-* 图标名，unknown 返回 null", () => {
+    expect(osIconName("windows")).toBe("os-windows");
+    expect(osIconName("macos")).toBe("os-macos");
+    expect(osIconName("linux")).toBe("os-linux");
+    expect(osIconName("unknown")).toBeNull();
   });
 });

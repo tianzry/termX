@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../ui/icons";
 import {
   flattenPickerItems,
+  osIconName,
   PICKER_LABELS,
   type PickerItem,
   type PickerSection,
@@ -149,6 +150,9 @@ export function SftpHostPicker({
                   );
                 }
                 if (item.type === "connected") {
+                  const osIcon = item.entry.os
+                    ? osIconName(item.entry.os)
+                    : null;
                   return (
                     <div
                       key={item.id}
@@ -157,7 +161,11 @@ export function SftpHostPicker({
                       onMouseEnter={() => setSelected(flatIndex)}
                     >
                       <span className="nc-sftp-picker-row-main">
-                        <span className="nc-sftp-picker-status-dot" />
+                        {osIcon ? (
+                          <Icon name={osIcon} size={16} />
+                        ) : (
+                          <span className="nc-sftp-picker-status-dot" />
+                        )}
                         <span className="nc-sftp-picker-row-title">
                           {item.entry.label}
                         </span>

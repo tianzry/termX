@@ -14,6 +14,46 @@ import type { Profile } from "../backend/client";
 
 export type SftpSide = "left" | "right";
 
+// ── 主机 OS 判定（SFTP 标签 / 选择器图标用）────────────────
+
+/** 主机操作系统。 */
+export type HostOs = "windows" | "macos" | "linux" | "unknown";
+
+/** 本机 OS 判定（Tauri webview 的 userAgent 含真实平台信息）。 */
+export function detectLocalOs(): HostOs {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  if (/Windows/i.test(ua)) return "windows";
+  if (/Mac OS X|Macintosh/i.test(ua)) return "macos";
+  if (/Linux/i.test(ua)) return "linux";
+  return "unknown";
+}
+
+/** `uname -s` 输出 → OS；BSD 近似归 linux（最接近的通用映射）。 */
+export function osFromUname(output: string): HostOs {
+  const s = output.trim().toLowerCase();
+  if (s.startsWith("linux")) return "linux";
+  if (s.startsWith("darwin")) return "macos";
+  if (s.includes("windows")) return "windows";
+  if (s.includes("bsd")) return "linux";
+  return "unknown";
+}
+
+/** OS → 图标名（icons.tsx 的 os-* 系列）；unknown 返回 null 走通用图标。 */
+export function osIconName(
+  os: HostOs,
+): "os-windows" | "os-macos" | "os-linux" | null {
+  switch (os) {
+    case "windows":
+      return "os-windows";
+    case "macos":
+      return "os-macos";
+    case "linux":
+      return "os-linux";
+    default:
+      return null;
+  }
+}
+
 // ── 路径拼接 ─────────────────────────────────────────────
 
 /** 远端（POSIX）路径拼接：根目录 "/" 特殊处理，去掉目录末尾多余 "/"。 */
@@ -60,6 +100,8 @@ export interface LocalConnection {
   label: string;
   /** 当前路径（初始为主目录）。 */
   path: string;
+  /** 本机 OS（标签图标用）。 */
+  os: HostOs;
 }
 
 /** 远端侧连接（持有一个 sftp 会话 id）。 */
@@ -72,6 +114,8 @@ export interface RemoteConnection {
   meta: string;
   /** 当前路径（初始为主目录）。 */
   path: string;
+  /** 远端 OS；未探测成功为 unknown（标签回落服务器图标）。 */
+  os: HostOs;
 }
 
 export type PaneConnection = LocalConnection | RemoteConnection;
@@ -93,6 +137,8 @@ export interface ConnectedHostEntry {
   meta: string;
   /** 若由保存主机连出，为其 profile id（用于「主机」分区去重）。 */
   profileId?: string;
+  /** 已知的主机 OS（未知则缺省，行内回落到绿点）。 */
+  os?: HostOs;
 }
 
 export type PickerItem =

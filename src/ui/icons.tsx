@@ -80,7 +80,10 @@ export type IconName =
   | "save"
   | "keyboard"
   | "hard-drive"
-  | "file-type";
+  | "file-type"
+  | "os-windows"
+  | "os-macos"
+  | "os-linux";
 
 const paths: Record<IconName, ReactElement> = {
   terminal: (
@@ -113,6 +116,27 @@ const paths: Record<IconName, ReactElement> = {
       <rect width="20" height="8" x="2" y="14" rx="2" />
       <path d="M6 6h.01" />
       <path d="M6 18h.01" />
+    </>
+  ),
+  // OS 图标（通用映射，原创路径：Netcatty 的 /distro 资产为 GPL 不复制）。
+  // windows = 四格窗；macos = ⌘ 环形符号；linux = 企鹅轮廓。
+  "os-windows": (
+    <>
+      <rect x="3" y="3" width="7.5" height="7.5" rx="1" />
+      <rect x="13.5" y="3" width="7.5" height="7.5" rx="1" />
+      <rect x="3" y="13.5" width="7.5" height="7.5" rx="1" />
+      <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1" />
+    </>
+  ),
+  "os-macos": (
+    <path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3" />
+  ),
+  "os-linux": (
+    <>
+      <path d="M12 3a3.5 3.5 0 0 1 3.5 3.5c0 1.1.4 2.1 1.1 3.3.8 1.3 1.2 2.5 1.2 3.7 0 3.6-2.6 5.5-5.8 5.5s-5.8-1.9-5.8-5.5c0-1.2.4-2.4 1.2-3.7.7-1.2 1.1-2.2 1.1-3.3A3.5 3.5 0 0 1 12 3Z" />
+      <path d="M10.5 6.5h.01" />
+      <path d="M13.5 6.5h.01" />
+      <path d="M9.5 12c.5 2.4 1.4 3.6 2.5 3.6s2-1.2 2.5-3.6" />
     </>
   ),
   sliders: (

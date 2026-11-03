@@ -94,6 +94,7 @@ export interface RemoteEntry {
 export interface FileStat {
   name: string;
   is_dir: boolean;
+  is_symlink: boolean;
   size: number;
   mtime: number;
   uid?: number;
@@ -560,14 +561,14 @@ export function localRename(oldPath: string, newPath: string): Promise<void> {
 }
 
 /**
- * 删除文件 / 目录树。`expectedType` 传前端列表里的类型，与后端 lstat 不符
- * 时报 `local_type_stale`（列表过期，刷新后重试），避免误删。
+ * 删除文件 / 目录树。`expectedType` 必传（守卫恒传）：前端列表里的类型与
+ * 后端 lstat 不符时报 `local_type_stale`（列表过期，刷新后重试），避免误删。
  */
 export function localRemove(
   path: string,
-  expectedType?: "file" | "directory" | "symlink",
+  expectedType: "file" | "directory" | "symlink",
 ): Promise<void> {
-  return invoke("local_remove", { path, expectedType: expectedType ?? null });
+  return invoke("local_remove", { path, expectedType });
 }
 
 /** 读本地文件；`maxBytes` 缺省读全文，给值时读文件尾部（大文件预览）。 */
