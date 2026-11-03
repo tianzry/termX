@@ -610,10 +610,26 @@ pub struct HighlightRule {
 
 // --- Snippet ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Snippet {
+    /// 稳定 id（UUID）。旧数据文件可能没有，前端加载时补齐后回写。
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub command: String,
+    #[serde(default)]
+    pub description: String,
+    /// 分组（package 路径，如 "ops/db"）；空 = 未分组。对应 Netcatty snippet.package。
+    #[serde(default)]
+    pub package: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// 快捷键（如 "F1" / "Ctrl + Shift + F1"）；空 = 未绑定。
+    #[serde(default)]
+    pub shortkey: String,
+    /// true = 仅插入、不追加回车执行（对应 Netcatty noAutoRun）。
+    #[serde(default)]
+    pub no_auto_run: bool,
 }
 
 // --- Plugin ---

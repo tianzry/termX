@@ -19,6 +19,13 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
+import {
+  SNIPPETS_CHANGED_EVENT,
+  parseShortkey,
+  shortkeyMatches,
+  snippetPayload,
+} from "./snippets/snippetsModel";
+import "./snippets/snippets.css";
 import type {
   AuthOverride,
   AuthPrompt,
@@ -122,6 +129,34 @@ export function TerminalPane({
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /** 片段列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
+  const [snippets, setSnippets] = useState<api.Snippet[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      api
+        .loadSnippets()
+        .then((list) => {
+          if (alive) setSnippets(list);
+        })
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener(SNIPPETS_CHANGED_EVENT, load);
+    return () => {
+      alive = false;
+      window.removeEventListener(SNIPPETS_CHANGED_EVENT, load);
+    };
+  }, []);
+
+  /** 插入片段：仅当前窗格会话，禁止跨会话发送；未连接时不动作。 */
+  const insertSnippet = (s: api.Snippet) => {
+    if (status !== "connected") return;
+    (externalRef.current ?? transportRef.current)?.write(
+      snippetPayload(s.command, s.no_auto_run),
+    );
+  };
+
   /** 右键菜单（位置相对窗格左上角）。 */
   const [menu, setMenu] = useState<{
     x: number;
@@ -810,6 +845,19 @@ export function TerminalPane({
         controllerRef.current?.term.focus();
       }}
       onContextMenu={openContextMenu}
+      onKeyDownCapture={(e) => {
+        // 逐片段快捷键（对照 Netcatty Snippet.shortkey）：仅命中本窗格焦点终端。
+        if (status !== "connected" || snippets.length === 0) return;
+        const hit = snippets.find((s) => {
+          if (!s.shortkey.trim()) return false;
+          const binding = parseShortkey(s.shortkey);
+          return binding !== null && shortkeyMatches(binding, e);
+        });
+        if (!hit) return;
+        e.preventDefault();
+        e.stopPropagation();
+        insertSnippet(hit);
+      }}
     >
       {/* 终端顶部工具栏（对照 netcatty TerminalToolbar / TerminalView 状态栏） */}
       <div className="term-toolbar" data-section="terminal-toolbar">
@@ -1116,6 +1164,28 @@ export function TerminalPane({
               <Icon name="terminal" size={14} />
               全选
             </button>
+            {snippets.length > 0 && (
+              <>
+                <div className="term-menu-sep" />
+                <div className="term-menu-label">插入片段</div>
+                <div className="term-snippet-list">
+                  {snippets.map((s) => (
+                    <button
+                      key={s.id || s.name}
+                      disabled={status !== "connected"}
+                      title={s.shortkey ? `快捷键：${s.shortkey}` : s.command}
+                      onClick={() => {
+                        insertSnippet(s);
+                        closeMenu();
+                      }}
+                    >
+                      <Icon name="file-code" size={14} />
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             <div className="term-menu-sep" />
             <button disabled title="主机浏览器（尚未实现）">
               <Icon name="globe" size={14} />

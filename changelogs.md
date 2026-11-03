@@ -2876,3 +2876,57 @@ select_application/open_with_application；⑤ 临时文件注册表
 ### 提交状态
 
 - 本轮 commit（含阶段 A fc5e93e）push 至 origin/main，快进 7c53f39 → 新 HEAD，ls-remote 复核一致。
+
+---
+
+## 2026-11-03 · 脚本与 Snippets 阶段 A：Snippets 页面与终端插入（todo P0 #7）
+
+### 背景与范围
+
+- 阶段 A 只做 Snippets：字段补齐 + Vault「脚本」页（列表/搜索/分组/新建/编辑/删除）+ 终端插入（右键菜单 + 逐片段快捷键）；脚本系统执行链路、导入导出、129 验证留阶段 B。
+- 调研结论（Netcatty）：Snippet 统一模型在 `domain/models/connection.ts`（id/label/command/tags/package/targets*/shortkey/noAutoRun/multiLineRunMode/kind/language/description/trigger*）；UI = ScriptsSidePanel 树（package 层级 + 搜索扁平化）+ SnippetsManager 右编辑面板；插入语义 = shortkey/右键，自动执行追加回车（noAutoRun 原样插入）；脚本系统独立存在（nct.* 自动化 API、scriptRun/Stop/Pause/Resume 桥，见 netcatty-bridge-script.d.ts），与 snippets 经 kind 关联。
+- termX 缺口：后端 `Snippet` 仅 {name, command}；无前端页（Vault 导航「脚本」禁用）；无插入链路。
+
+### 修改点
+
+- 后端 `models.rs`：Snippet 补 id/description/package/tags/shortkey/no_auto_run 六字段（全 serde(default)，旧 snippets.json 与同步 payload 向后兼容）；derive Default 并修 sync/config.rs 测试结构字面量。
+- `src/backend/client.ts`：新增 Snippet 类型 + loadSnippets/saveSnippets 封装（R1）。
+- 新增 `src/snippets/`：snippetsModel.ts 纯逻辑（filterSnippets 搜索 / groupSnippets 分组 / parseShortkey+shortkeyMatches 快捷键解析 / snippetPayload 插入载荷 / ensureSnippetIds 旧数据补 id）+ SnippetsView 页（工具条搜索 + 分组筛选 + 新建；分组列表行含名称/快捷键徽章/仅插入徽章/命令预览/描述/标签；右侧 380px 编辑面板对照 Netcatty AsidePanel）+ snippets.css（--nc-* 主题变量）。
+- `VaultView.tsx`：「脚本」导航启用 + surface 分支挂载。
+- `TerminalPane.tsx`：右键菜单「插入片段」区（可滚动、未连接禁用）；逐片段快捷键 onKeyDownCapture（捕获阶段 preventDefault+stopPropagation，仅命中本窗格焦点终端）；插入走 `(externalRef ?? transportRef).write`，只写本窗格会话、禁止跨会话发送；监听 `termx:snippets-changed` 刷新列表。
+- 测试：snippetsModel.test.ts 15 用例（搜索/分组/快捷键解析与匹配/载荷/id 补齐）。
+
+### 门禁
+
+- test:run 242✓（新增 15）/ build✓ / cargo check --features server✓ / cargo test --lib 836✓。
+
+### 比对结论（三类）
+
+- **一致项（截图确认）**：分组列表 + 搜索 + 快捷键徽章 + 编辑面板字段（名称/命令/描述/分组/标签/快捷键/仅插入）与 Netcatty 字段语义一致；快捷键插入自动执行（F2 → `df -h` 进入当前会话并执行，截图为证）；noAutoRun 原样插入。
+- **已修项**：① 后端字段 {name,command} → 八字段（向后兼容）；② Vault 导航「脚本」禁用 → 启用并挂页；③ 终端插入链路 0 → 右键菜单 + 快捷键双入口。
+- **待人工项**：① CU 合成右键未触发 WebView2 contextmenu（疑工具限制），右键菜单插入需人工点测；② Netcatty SnippetsManager 为 package 卡片 + 面包屑下钻布局，termX 阶段 A 用分组平铺列表 + 右面板，视觉差异记阶段 B 对齐候选；③ multiLineRunMode（多行执行模式）未实现，多行当前整体发送 + 末尾单个回车，留阶段 B。
+
+### 人工点测步骤
+
+1. 终端右键 → 「插入片段」→ 点「磁盘用量」→ 当前窗格插入并执行 df -h。
+2. 分屏两窗格，焦点在另一窗格按 F2 → 仅焦点窗格收到插入（不跨会话）。
+3. 片段勾选「仅插入」→ 右键插入 → 文本进入但不发回车。
+4. 编辑面板改分组/快捷键保存 → 分组头、筛选与徽章即时更新。
+5. 重启应用 → 片段持久化（snippets.json）。
+
+### review 自审
+
+- 无新增后端命令（复用 load/save_snippets 双注册 lib.rs+server.rs），无新错误码；前端错误走 userVisibleError 信封。
+- 插入边界：status!=="connected" 直接 return；只写本窗格 transport、无广播事件；快捷键仅本窗格终端聚焦时命中（捕获阶段拦截，未连接不拦截）。
+- 数据兼容：新字段全 serde(default)，旧文件/同步 payload 原样可读；id 前端加载补齐、下次保存回写。
+- R11：纯逻辑 15 测试；client.ts 封装为直通包装，wrapper 测试留阶段 B 补（记录）。
+
+### 踩坑经验
+
+- UIA 树不暴露 DOM input 的 placeholder，元素名是标签文本（`edit "名称 *"`）；按 placeholder 定位会命中 text 标签导致 set_value 失败，需按 edit/combo-box 名称定位。
+- CU 合成右键不触发 WebView2 的 contextmenu 事件（菜单未出现在 UIA 树），右键路径转人工点测；快捷键路径可用 press_key + 截图端到端验证。
+- xterm canvas 内容对 UIA 不可见，终端插入结果只能靠截图确认。
+
+### 提交状态
+
+- 本地 commit（不 push，随阶段 B 一起推）。

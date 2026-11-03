@@ -1602,10 +1602,12 @@ mod tests {
                 Snippet {
                     name: "a".into(),
                     command: "old".into(),
+                    ..Default::default()
                 },
                 Snippet {
                     name: "local-only".into(),
                     command: "gone".into(),
+                    ..Default::default()
                 },
             ],
         )

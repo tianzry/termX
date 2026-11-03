@@ -33,6 +33,7 @@ import { newId } from "./workspaceModel";
 import { userVisibleError } from "./domain/sshErrors";
 import { shellDisplayName } from "./domain/shellName";
 import { KeychainView } from "./keychain/KeychainView";
+import { SnippetsView } from "./snippets/SnippetsView";
 import {
   getVaultHostRowSubtitle,
   LOCAL_SHELL_HOST_TAG,
@@ -208,7 +209,7 @@ const navItems: Array<{
   { id: "keys", label: "钥匙串", icon: "key", enabled: true },
   { id: "proxies", label: "代理", icon: "network" },
   { id: "port", label: "端口转发", icon: "transfer" },
-  { id: "snippets", label: "脚本", icon: "file-code" },
+  { id: "snippets", label: "脚本", icon: "file-code", enabled: true },
   { id: "notes", label: "笔记", icon: "file-text" },
   { id: "known-hosts", label: "已知主机", icon: "shield", enabled: true },
   { id: "logs", label: "日志", icon: "history" },
@@ -3737,6 +3738,8 @@ export function VaultView({
               </div>
               {kcTab === "system" ? <KeychainView /> : keysPanel()}
             </div>
+          ) : activeNav === "snippets" ? (
+            <SnippetsView />
           ) : null}
         </div>
 

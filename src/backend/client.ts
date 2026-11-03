@@ -341,6 +341,32 @@ export interface FontInfo {
   monospaced: boolean;
 }
 
+// --- Snippets（P0 #5 阶段 A；字段对齐 Netcatty Snippet 子集，snake_case 镜像 serde） ---
+
+export interface Snippet {
+  /** 稳定 id；旧数据可能为空，前端用 ensureSnippetIds 补齐。 */
+  id: string;
+  name: string;
+  /** 命令内容（可多行）。 */
+  command: string;
+  description: string;
+  /** 分组（package 路径，如 "ops/db"）；空 = 未分组。 */
+  package: string;
+  tags: string[];
+  /** 快捷键，如 "F1" / "Ctrl + Shift + F1"；空 = 未绑定。 */
+  shortkey: string;
+  /** true = 仅插入、不追加回车执行。 */
+  no_auto_run: boolean;
+}
+
+export function loadSnippets(): Promise<Snippet[]> {
+  return invoke<Snippet[]>("load_snippets");
+}
+
+export function saveSnippets(snippets: Snippet[]): Promise<void> {
+  return invoke("save_snippets", { snippets });
+}
+
 export function listFonts(): Promise<FontInfo[]> {
   return invoke<FontInfo[]>("list_fonts");
 }
