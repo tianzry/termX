@@ -4068,3 +4068,29 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `formatBytes` 整数需去掉 `.0`（`5.0 MB` → `5 MB`），否则统计行观感不一致。
 - `userVisibleError` 只接收 `string`，catch 分支要 `String(e)`。
 - 构建 debug 时旧 `rssh.exe` 若仍在运行会 `failed to remove file`，先停止进程再重编。
+
+---
+
+## 2026-11-04 · 端口转发：条目编辑 / 复制（终端侧栏）
+
+### 修改点
+
+1. `ForwardPanel` 新增编辑态（`editingId`）：表单区标题在「新建转发 / 编辑转发」间切换，保存走既有 `update_forward`（保留原 `group_id`），并提供「取消编辑」。
+2. 运行中的条目禁止编辑：点击「编辑」给出「该转发正在运行，请先停止再编辑。」，避免改库后旧会话继续跑、看起来“改了不生效”的假象。
+3. 新增「复制」：以原条目 `profile_id/group_id/rules` 生成「<原名> 副本」，规则深拷贝，复制后自动刷新列表。
+4. 删除当前正在编辑的条目时同步退出编辑态，避免保存指向已删除 id。
+5. 按钮布局对齐 Netcatty RuleCard 的 编辑 / 复制 / 删除 / 启动 / 停止 操作集合。
+
+### 验证（debug 重编 + CDP 实机）
+
+- 新建 `编辑前条目`（local 18023→127.0.0.1:22）→ 编辑改名 `编辑后条目` → `list_forwards` 名称与规则保留，`evidence/fwd-edit-before.png`、`fwd-edit-after.png`。
+- 复制后得到 `编辑后条目 副本`（同 profile、同 18023 规则），`job-fwd13` 输出确认。
+- 启动后点「编辑」出现行内提示「该转发正在运行，请先停止再编辑。」，`evidence/fwd-edit-guard.png`。
+- 停止 → 删除两条 → `list_forwards=0`，测试数据已清理，`evidence/fwd-edit-cleaned.png`。
+
+### 门禁
+
+- `npm run test:run`：33 文件 / 401 用例 ✓
+- `npm run build` ✓
+- 仅前端改动，Rust 未变（`cargo check/test --lib` 沿用上一轮通过结果）
+- debug `npm run tauri build -- --debug` ✓（先停止 rssh）

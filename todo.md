@@ -55,7 +55,7 @@
 | 全应用逐功能比对·第一轮（Vault 首页与分组、主机新建/编辑/连接） | ✅ | `src/VaultView.tsx`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
 | 全应用逐功能比对·第二轮（终端标签与分屏、工具栏与更多菜单） | ✅ | `src/TopTabs.tsx`、`src/Workspace.tsx`、`src/TerminalPane.tsx`、`src/Terminal.tsx`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
 | 全应用逐功能比对·第四轮（SFTP） | ✅ | `src/sftp/SftpPaneView.tsx`、`src/sftp/sftpModel.ts`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
-| 端口转发 Vault 总览（P1 #16 之一） | ✅ | `src/ForwardOverview.tsx`、`src/domain/forwardOverview.ts`、`forward_active_list`（lib.rs + server.rs 双注册）、`ForwardPanel` 运行态恢复；托盘/自动启动/重连/监听地址置灰写明原因。 |
+| 端口转发 Vault 总览（P1 #16 之一） | ✅ | `src/ForwardOverview.tsx`、`src/domain/forwardOverview.ts`、`forward_active_list`（lib.rs + server.rs 双注册）、`ForwardPanel` 运行态恢复 + 条目编辑/复制；托盘/自动启动/重连/监听地址置灰写明原因。 |
 
 ---
 
@@ -156,7 +156,7 @@
   - 参考：`components/cloud-sync/`、`components/sync/`。
 - [ ] 🟨 **16. 端口转发可视化 + 托盘开关**
   - 规则总览页（按主机分组、运行状态）、托盘快捷启停。
-  - 进度（2026-11-04）：Vault「端口转发」总览 ✅（按主机分组、条目/规则级启停、2s 统计轮询、终端工具栏入口、跨界面运行态恢复）；托盘快捷开关 ⬜（`lib.rs` 无 TrayIcon，已在页面行内置灰写明原因）；自动启动 / 断线重连 / 自定义监听地址同样置灰。
+  - 进度（2026-11-04）：Vault「端口转发」总览 ✅（按主机分组、条目/规则级启停、2s 统计轮询、终端工具栏入口、跨界面运行态恢复）；终端侧栏条目编辑/复制 ✅（运行中禁编辑并给出行内原因）；托盘快捷开关 ⬜（`lib.rs` 无 TrayIcon，已在页面行内置灰写明原因）；自动启动 / 断线重连 / 自定义监听地址同样置灰。
   - 参考：`components/port-forwarding/`、`onTrayTogglePortForward`。
 - [ ] ⬜ **17. 内嵌图片（Kitty / SIXEL / iTerm）**
   - 远端程序输出的图形直接在终端渲染。

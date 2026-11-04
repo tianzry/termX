@@ -31,6 +31,8 @@ export function ForwardPanel() {
   const [name, setName] = useState("");
   const [profileId, setProfileId] = useState("");
   const [rules, setRules] = useState<ForwardRule[]>([]);
+  /** 非空 = 正在编辑该条目（表单复用新建区，保存走 updateForward）。 */
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // 已启动的转发：forward.id -> 活跃 session + 最近一次统计
   const [active, setActive] = useState<Record<string, ActiveInfo>>({});
@@ -91,15 +93,66 @@ export function ForwardPanel() {
     setBusy(true);
     setErr("");
     try {
-      await api.createForward({
-        id: crypto.randomUUID(),
-        name: name.trim(),
-        profile_id: profileId,
-        group_id: null,
-        rules,
-      });
+      if (editingId) {
+        const existing = forwards.find((f) => f.id === editingId);
+        await api.updateForward({
+          id: editingId,
+          name: name.trim(),
+          profile_id: profileId,
+          group_id: existing?.group_id ?? null,
+          rules,
+        });
+      } else {
+        await api.createForward({
+          id: crypto.randomUUID(),
+          name: name.trim(),
+          profile_id: profileId,
+          group_id: null,
+          rules,
+        });
+      }
       setName("");
       setRules([]);
+      setEditingId(null);
+      await refresh();
+    } catch (e) {
+      setErr(userVisibleError(String(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** 编辑运行中的条目会与旧会话脱节，先要求停止（避免“改了不生效”的假象）。 */
+  function beginEdit(f: Forward) {
+    if (active[f.id]) {
+      setErr("该转发正在运行，请先停止再编辑。");
+      return;
+    }
+    setEditingId(f.id);
+    setName(f.name);
+    setProfileId(f.profile_id);
+    setRules(f.rules.map((r) => ({ ...r })));
+    setErr("");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setName("");
+    setRules([]);
+    setErr("");
+  }
+
+  async function duplicate(f: Forward) {
+    setBusy(true);
+    setErr("");
+    try {
+      await api.createForward({
+        id: crypto.randomUUID(),
+        name: `${f.name} 副本`,
+        profile_id: f.profile_id,
+        group_id: f.group_id,
+        rules: f.rules.map((r) => ({ ...r })),
+      });
       await refresh();
     } catch (e) {
       setErr(userVisibleError(String(e)));
@@ -121,6 +174,7 @@ export function ForwardPanel() {
         }
       }
       await api.deleteForward(f.id);
+      if (editingId === f.id) cancelEdit();
       setActive((a) => {
         const next = { ...a };
         delete next[f.id];
@@ -205,8 +259,9 @@ export function ForwardPanel() {
         </button>
       </div>
 
-      {/* 新建转发 */}
+      {/* 新建 / 编辑转发 */}
       <div className="fwd-form">
+        <div className="fwd-name">{editingId ? "编辑转发" : "新建转发"}</div>
         <input
           placeholder="转发名称"
           value={name}
@@ -275,8 +330,9 @@ export function ForwardPanel() {
         <div className="sftp-row">
           <button onClick={addRule}>添加规则</button>
           <button onClick={create} disabled={busy || !name.trim() || !rules.length}>
-            新建转发
+            {editingId ? "保存修改" : "新建转发"}
           </button>
+          {editingId && <button onClick={cancelEdit} disabled={busy}>取消编辑</button>}
         </div>
       </div>
 
@@ -306,6 +362,16 @@ export function ForwardPanel() {
                     </button>
                   </>
                 )}
+                <button
+                  onClick={() => beginEdit(f)}
+                  disabled={busy}
+                  title={info ? "请先停止该转发再编辑" : "编辑名称、主机与规则"}
+                >
+                  编辑
+                </button>
+                <button onClick={() => duplicate(f)} disabled={busy} title="复制为新条目">
+                  复制
+                </button>
                 <button onClick={() => remove(f)} disabled={busy}>
                   删除
                 </button>
