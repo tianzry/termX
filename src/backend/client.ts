@@ -200,6 +200,12 @@ export function bytesToText(data: number[]): string {
   );
 }
 
+/** 拼接绝对目录与文件名（按目录风格选择分隔符，Windows 兼容）。 */
+function joinPath(dir: string, name: string): string {
+  const sep = dir.includes("\\") ? "\\" : "/";
+  return `${dir.replace(/[\\/]+$/, "")}${sep}${name}`;
+}
+
 // ── 凭据 / 主机档案 ───────────────────────────────────────
 
 export function createCredential(credential: Credential): Promise<void> {
@@ -598,6 +604,29 @@ export async function pickNoteImportFiles(): Promise<string[]> {
   return Array.isArray(picked) ? picked : [picked];
 }
 
+// Vault 主机导入 / 导出（JSON）：对话框走 tauri-plugin-dialog，
+// 读写复用 local_read_file / local_write_file，不额外开 fs scope。
+
+/** 导出主机库：选保存路径；取消返回 null。 */
+export function pickVaultExportFile(
+  defaultName: string,
+): Promise<string | null> {
+  return saveFileDialog({
+    title: "导出主机",
+    defaultPath: defaultName,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  }).then((path) => path ?? null);
+}
+
+/** 导入主机库：选单个 .json；取消返回 null。 */
+export function pickVaultImportFile(): Promise<string | null> {
+  return openFileDialog({
+    title: "导入主机",
+    multiple: false,
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  }).then((path) => (typeof path === "string" ? path : null));
+}
+
 // --- Session Logs（Vault 日志页；扫描 recordings 目录并落库索引） ---
 
 export interface SessionLog {
@@ -698,6 +727,11 @@ export function manualSessionLogStatus(
   });
 }
 
+/** 应用固定的 recordings 目录绝对路径（会话日志默认保存位置）。 */
+export function recordingsDir(): Promise<string> {
+  return invoke<string>("recordings_dir");
+}
+
 /** 会话日志（文本）保存路径：对齐 Netcatty 的 chooseManualSessionLogPath。 */
 export async function pickManualSessionLogPath(
   defaultName: string,
@@ -709,17 +743,22 @@ export async function pickManualSessionLogPath(
       : format === "txt"
         ? [{ name: "Text", extensions: ["txt"] }]
         : [{ name: "Log", extensions: ["log", "txt"] }];
-  // Netcatty 默认落在用户主目录（无首选目录时）；只给文件名会让对话框
-  // 停在进程 cwd（debug 构建下是 target/debug），与 Netcatty 明显不同。
+  // 默认落在应用 recordings 目录（与「日志」页同源）；拿不到时退回主目录，
+  // 再退到仅文件名，避免对话框停在进程 cwd（debug 构建下是 target/debug）。
   let defaultPath = defaultName;
   try {
-    const home = await localHome();
-    if (home) {
-      const sep = home.includes("\\") ? "\\" : "/";
-      defaultPath = `${home.replace(/[\\/]+$/, "")}${sep}${defaultName}`;
-    }
+    const dir = await recordingsDir();
+    if (!dir) throw new Error("recordings_dir_empty");
+    // 确保目录存在，否则保存对话框在部分平台会忽略不存在的 defaultPath。
+    await localMkdir(dir);
+    defaultPath = joinPath(dir, defaultName);
   } catch {
-    // 主目录不可用时退回仅文件名，由对话框按系统默认目录处理。
+    try {
+      const home = await localHome();
+      if (home) defaultPath = joinPath(home, defaultName);
+    } catch {
+      // 主目录也不可用：由对话框按系统默认目录处理。
+    }
   }
   return saveFileDialog({
     title: "保存会话日志",

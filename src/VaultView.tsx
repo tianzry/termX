@@ -63,6 +63,20 @@ import { MonitorView } from "./monitor/MonitorView";
 import { SyncView } from "./sync/SyncView";
 import { ProxyProfilesView } from "./ProxyProfilesView";
 import { useVaultHostMarquee } from "./useVaultHostMarquee";
+import {
+  applyImportedHost,
+  buildVaultExport,
+  credentialFromImportedHost,
+  findConflicts,
+  hostConflictKey,
+  importedHostToProfile,
+  parseVaultImport,
+  type VaultImportHost,
+} from "./vault/vaultTransfer";
+import {
+  VAULT_TAGS_KEY,
+  readHostTags,
+} from "./vault/vaultTags";
 
 interface Props {
   profiles: Profile[];
@@ -78,6 +92,10 @@ interface Props {
   onDataChanged: () => void;
   /** 当前活动终端窗格（脚本页运行链路使用；Vault 态下终端仍常驻隐藏挂载）。 */
   activeHandle?: PaneHandle | null;
+  /** 外部入口（顶栏「云端同步」/ 设置中心）请求定位到的 Vault 子页。 */
+  focusView?: string | null;
+  /** 与 focusView 配套的自增序号，保证重复点击也能重新定位。 */
+  focusNonce?: number;
 }
 
 type ViewMode = "grid" | "list" | "tree";
@@ -96,7 +114,7 @@ const SORT_KEY = "termx.vault.sort.v1";
 const PINNED_KEY = "termx.pinned.v1";
 const SIDEBAR_W_KEY = "termx.vault.sidebar.v1";
 const ORDER_KEY = "termx.vault.order.v1";
-const TAGS_KEY = "termx.vault.tags.v1";
+const TAGS_KEY = VAULT_TAGS_KEY;
 const HOST_PANEL_W_KEY = "termx.vault.hostpanel.v1";
 const KH_VIEW_KEY = "termx.vault.khView.v1";
 const KC_VIEW_KEY = "termx.vault.kcView.v1";
@@ -250,13 +268,12 @@ const navItems: Array<{
   { id: "logs", label: "日志", icon: "history", enabled: true },
 ];
 
-/** 新建主机下拉（对齐 Netcatty：本地终端 (CMD)/新建分组/导入/导出）。
- * 本地终端、分组可用；导入 / 导出需后端支持，暂置灰。 */
+/** 新建主机下拉（对齐 Netcatty：本地终端 (CMD)/新建分组/导入/导出）。 */
 const newHostMenu: Array<{ label: string; icon: IconName; enabled?: boolean }> = [
   { label: "本地终端 (CMD)", icon: "terminal-square", enabled: true },
   { label: "新建分组", icon: "folder", enabled: true },
-  { label: "导入", icon: "upload" },
-  { label: "导出", icon: "download" },
+  { label: "导入", icon: "upload", enabled: true },
+  { label: "导出", icon: "download", enabled: true },
 ];
 
 /** 主机编辑器里的轻量文本按钮（环境变量增删）。 */
@@ -414,24 +431,6 @@ function readOrder(): string[] {
 
 type TagMap = Record<string, string[]>;
 
-function readTags(): TagMap {
-  try {
-    const raw = localStorage.getItem(TAGS_KEY);
-    if (!raw) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    const out: TagMap = {};
-    for (const [id, tags] of Object.entries(parsed as Record<string, unknown>)) {
-      if (Array.isArray(tags)) {
-        out[id] = tags.filter((t): t is string => typeof t === "string");
-      }
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
 // 单击行为由设置中心「外观 · 主机库」统一管理（settings.center.v1）。
 
 function clampPanelWidth(n: number): number {
@@ -577,6 +576,8 @@ export function VaultView({
   onTelnet,
   onDataChanged,
   activeHandle,
+  focusView,
+  focusNonce,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(readWidth);
@@ -606,7 +607,7 @@ export function VaultView({
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [pinnedIds, setPinnedIds] = useState<string[]>(readPinned);
   const [order, setOrder] = useState<string[]>(readOrder);
-  const [tags, setTags] = useState<TagMap>(readTags);
+  const [tags, setTags] = useState<TagMap>(() => readHostTags());
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
@@ -785,6 +786,15 @@ export function VaultView({
   useEffect(() => {
     persist(TAGS_KEY, JSON.stringify(tags));
   }, [tags]);
+
+  // 顶栏 / 设置中心的「打开同步页」入口：定位到 Vault 子页后清掉浮层。
+  useEffect(() => {
+    if (!focusView) return;
+    setActiveNav(focusView);
+    setComposer(null);
+    setCtxMenu(null);
+    setNewMenu(false);
+  }, [focusView, focusNonce]);
 
 
 
@@ -2134,6 +2144,128 @@ export function VaultView({
         showToast("已转换为主机档案");
       })
       .catch((e) => setKhErr(userVisibleError(String(e))));
+  }
+
+  // ── 主机库导入 / 导出 ─────────────────────────────────────
+
+  /** 导出主机库：版本化 JSON；密码 / 私钥 / 凭据 secret 永不写入。 */
+  async function exportVaultHosts() {
+    try {
+      const text = buildVaultExport(profiles, groups, { credentials, tags });
+      const stamp = new Date().toISOString().slice(0, 10);
+      const path = await api.pickVaultExportFile(`termx-vault-${stamp}.json`);
+      if (!path) return;
+      await api.localWriteFile(path, new TextEncoder().encode(text));
+      showToast(`已导出 ${profiles.length} 台主机`);
+    } catch (e) {
+      showToast(`导出失败：${userVisibleError(String(e))}`);
+    }
+  }
+
+  /** 导入主机库：分组按名称去重；冲突统一选择覆盖或跳过（apply-to-all）。 */
+  async function importVaultHosts() {
+    try {
+      const path = await api.pickVaultImportFile();
+      if (!path) return;
+      const bytes = await api.localReadFile(path, 8 * 1024 * 1024);
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(
+        Uint8Array.from(bytes),
+      );
+      const parsed = parseVaultImport(text);
+      if (!parsed.ok) {
+        showToast(`导入失败：${parsed.errors[0] ?? "文件内容无效"}`);
+        return;
+      }
+
+      // 分组按 name 去重：已有分组直接复用，缺失的创建。
+      const groupIdByName = new Map(
+        groups.map((g) => [g.name.trim().toLowerCase(), g.id]),
+      );
+      const importedGroupId = new Map<string, string>();
+      let createdGroups = 0;
+      for (const g of parsed.groups) {
+        const key = g.name.trim().toLowerCase();
+        const existing = groupIdByName.get(key);
+        if (existing) {
+          importedGroupId.set(g.id, existing);
+          continue;
+        }
+        const id = newId();
+        await api.createGroup({
+          id,
+          name: g.name,
+          color: g.color,
+          sort_order: groups.length + createdGroups,
+        });
+        importedGroupId.set(g.id, id);
+        groupIdByName.set(key, id);
+        createdGroups += 1;
+      }
+      const resolveGroup = (host: VaultImportHost): string | null =>
+        host.group_id ? importedGroupId.get(host.group_id) ?? null : null;
+
+      const conflicts = findConflicts(parsed.hosts, profiles);
+      let overwrite = false;
+      if (conflicts.length > 0) {
+        overwrite = window.confirm(
+          `发现 ${conflicts.length} 台冲突主机（同名 / 同地址 / 同端口）。\n确定：全部覆盖；取消：全部跳过。`,
+        );
+      }
+      const existingByKey = new Map(
+        conflicts.map((c) => [hostConflictKey(c.host), c.existing]),
+      );
+
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+      let failed = 0;
+      const nextTags = { ...tags };
+      for (const host of parsed.hosts) {
+        const existing = existingByKey.get(hostConflictKey(host));
+        if (existing) {
+          if (!overwrite) {
+            skipped += 1;
+            continue;
+          }
+          try {
+            await api.updateProfile(
+              applyImportedHost(existing, host, resolveGroup(host)),
+            );
+            if (host.tags.length) nextTags[existing.id] = host.tags;
+            updated += 1;
+          } catch {
+            failed += 1;
+          }
+          continue;
+        }
+        try {
+          let credentialId = "";
+          if (host.protocol !== "local") {
+            credentialId = newId();
+            await api.createCredential(
+              credentialFromImportedHost(host, credentialId),
+            );
+          }
+          const profileId = newId();
+          await api.createProfile(
+            importedHostToProfile(host, credentialId, resolveGroup(host), profileId),
+          );
+          if (host.tags.length) nextTags[profileId] = host.tags;
+          created += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      if (created + updated > 0) setTags(nextTags);
+      onDataChanged();
+      showToast(
+        `导入完成：新增 ${created}，覆盖 ${updated}，跳过 ${skipped}${
+          failed ? `，失败 ${failed}` : ""
+        }`,
+      );
+    } catch (e) {
+      showToast(`导入失败：${userVisibleError(String(e))}`);
+    }
   }
 
   // ── 钥匙串页动作（对齐 netcatty KeychainManager） ─────────
@@ -3607,6 +3739,10 @@ export function VaultView({
                             setGroupDialog({ id: null, name: "" });
                           } else if (item.label === "本地终端 (CMD)") {
                             setLocalPanel("new");
+                          } else if (item.label === "导入") {
+                            void importVaultHosts();
+                          } else if (item.label === "导出") {
+                            void exportVaultHosts();
                           } else {
                             onLocal();
                           }

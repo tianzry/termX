@@ -654,7 +654,8 @@ export function TerminalPane({
 
   /**
    * 工具栏「会话日志」（file-text）：Netcatty 语义 = 手动文本日志。
-   * 未录制时先弹保存对话框选目标路径，再开始写；录制中点击则停止。
+   * 未录制时先弹保存对话框（默认目录为应用 recordings），再开始写；
+   * 录制中点击则停止。取消选择不产生错误态。
    * 与「开始录制」（脚本录制）完全独立，不再共享录制槽。
    */
   async function toggleManualSessionLog() {
@@ -673,6 +674,7 @@ export function TerminalPane({
       // Netcatty 默认：格式 txt（去 ANSI）、时间戳关闭、扩展名 .txt。
       const defaultName = `${safeFileStem(tab.title)}_${timestampSuffix(new Date())}.txt`;
       const path = await api.pickManualSessionLogPath(defaultName, "txt");
+      // 用户取消选择：直接结束，不进入错误态。
       if (!path) return;
       const rec = await api.startManualSessionLog(sid, path, "txt", false);
       setSessionLog(rec);
@@ -2252,13 +2254,18 @@ export function TerminalPane({
           >
             <Icon name="search" size={12} />
           </button>
+          {/* 后端 start_manual_session_log_impl 目前只接 SSH SessionHandle；
+              pty/local/telnet/serial 尚无文本日志槽，因此保持仅 SSH 可用。 */}
           <button
             className={`term-tool-btn${sessionLog ? " recording" : ""}`}
             disabled={!isSsh || status !== "connected" || logBusy}
             title={
               sessionLog
-                ? `会话日志录制中：${sessionLog.path}（点击停止）`
-                : "开始记录会话日志（先选择保存路径）"
+                ? "停止记录会话日志"
+                : "开始记录会话日志"
+            }
+            aria-label={
+              sessionLog ? "停止记录会话日志" : "开始记录会话日志"
             }
             onClick={() => void toggleManualSessionLog()}
           >

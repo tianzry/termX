@@ -6,9 +6,14 @@
  * 与 netcatty `TERMINAL_HOST_TREE_DEFAULT_WIDTH` 一致。
  */
 
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { Group, Profile } from "./backend/client";
 import { Icon } from "./ui/icons";
+import {
+  collectHostTags,
+  matchesHostTags,
+  readHostTags,
+} from "./vault/vaultTags";
 
 interface Props {
   profiles: Profile[];
@@ -17,6 +22,8 @@ interface Props {
   onLocal: () => void;
   onOpenManager: () => void;
   onClose?: () => void;
+  /** 「更多 → 刷新列表」：由 App 传入 loadData。 */
+  onRefresh?: () => void;
 }
 
 function avatarText(profile: Profile): string {
@@ -36,20 +43,42 @@ export function HostSidebar({
   onLocal,
   onOpenManager,
   onClose,
+  onRefresh,
 }: Props) {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [tagMenu, setTagMenu] = useState(false);
+  const [moreMenu, setMoreMenu] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!tagMenu && !moreMenu) return;
+    const close = () => {
+      setTagMenu(false);
+      setMoreMenu(false);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [tagMenu, moreMenu]);
+
+  // 与 Vault 主机页共用同一份 localStorage 标签表。
+  const hostTags = readHostTags();
+  const availableTags = collectHostTags(
+    hostTags,
+    profiles.map((p) => p.id),
+  );
 
   const keyword = query.trim().toLowerCase();
-  const filtered = keyword
-    ? profiles.filter(
-        (p) =>
-          p.name.toLowerCase().includes(keyword) ||
-          p.host.toLowerCase().includes(keyword) ||
-          String(p.port).includes(keyword),
-      )
-    : profiles;
+  const filtered = profiles.filter((p) => {
+    if (!matchesHostTags(hostTags, p.id, selectedTags)) return false;
+    if (!keyword) return true;
+    return (
+      p.name.toLowerCase().includes(keyword) ||
+      p.host.toLowerCase().includes(keyword) ||
+      String(p.port).includes(keyword)
+    );
+  });
 
   const groupById = new Map(groups.map((g) => [g.id, g]));
   const sections: Array<{ id: string; name: string; hosts: Profile[] }> = [];
@@ -78,15 +107,109 @@ export function HostSidebar({
         >
           <Icon name="search" size={14} />
         </button>
-        <button className="nc-tree-tool" title="标签筛选（尚未实现）" disabled>
-          <Icon name="tag" size={14} />
-        </button>
+        <div className="nc-tree-tool-wrap">
+          <button
+            className={`nc-tree-tool${selectedTags.length > 0 ? " active" : ""}`}
+            title="标签筛选"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              setMoreMenu(false);
+              setTagMenu((v) => !v);
+            }}
+          >
+            <Icon name="tag" size={14} />
+          </button>
+          {tagMenu && (
+            <div
+              className="vault-view-menu vault-tag-menu"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              {availableTags.length === 0 ? (
+                <div className="vault-tag-empty">当前主机还没有标签</div>
+              ) : (
+                availableTags.map((tag) => (
+                  <div className="vault-tag-row" key={tag}>
+                    <label className="vault-tag-check">
+                      <input
+                        type="checkbox"
+                        checked={selectedTags.includes(tag)}
+                        onChange={() =>
+                          setSelectedTags((prev) =>
+                            prev.includes(tag)
+                              ? prev.filter((t) => t !== tag)
+                              : [...prev, tag],
+                          )
+                        }
+                      />
+                      <span>{tag}</span>
+                    </label>
+                  </div>
+                ))
+              )}
+              {selectedTags.length > 0 && (
+                <button
+                  className="vault-tag-clear"
+                  onClick={() => setSelectedTags([])}
+                >
+                  <Icon name="x" size={12} />
+                  清空筛选
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <button className="nc-tree-tool" title="本地终端" onClick={onLocal}>
           <Icon name="terminal" size={14} />
         </button>
-        <button className="nc-tree-tool" title="更多（尚未实现）" disabled>
-          <Icon name="chevron-down" size={14} />
-        </button>
+        <div className="nc-tree-tool-wrap">
+          <button
+            className={`nc-tree-tool${moreMenu ? " active" : ""}`}
+            title="更多"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              setTagMenu(false);
+              setMoreMenu((v) => !v);
+            }}
+          >
+            <Icon name="chevron-down" size={14} />
+          </button>
+          {moreMenu && (
+            <div
+              className="vault-view-menu nc-tree-more-menu"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => {
+                  setMoreMenu(false);
+                  onOpenManager();
+                }}
+              >
+                <Icon name="server" size={14} />
+                管理主机
+              </button>
+              <button
+                onClick={() => {
+                  setMoreMenu(false);
+                  onRefresh?.();
+                }}
+              >
+                <Icon name="refresh" size={14} />
+                刷新列表
+              </button>
+              {onClose && (
+                <button
+                  onClick={() => {
+                    setMoreMenu(false);
+                    onClose();
+                  }}
+                >
+                  <Icon name="x" size={14} />
+                  收起侧栏
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <span className="nc-tree-tool-spacer" />
         {onClose && (
           <button className="nc-tree-tool" title="收起主机侧栏" onClick={onClose}>

@@ -395,17 +395,27 @@ describe("手动会话日志保存路径", () => {
     mockedSave.mockResolvedValue("C:\\Users\\x\\a.txt");
   });
 
-  it("默认路径落在用户主目录（对齐 Netcatty，而非进程 cwd）", async () => {
-    mockedInvoke.mockResolvedValue("C:\\Users\\x");
+  it("默认路径落在应用 recordings 目录", async () => {
+    mockedInvoke.mockResolvedValueOnce("C:\\Users\\x\\.rssh\\recordings");
     await pickManualSessionLogPath("129_2026-11-03T23-43-06.txt", "txt");
     expect(mockedSave).toHaveBeenLastCalledWith({
       title: "保存会话日志",
-      defaultPath: "C:\\Users\\x\\129_2026-11-03T23-43-06.txt",
+      defaultPath: "C:\\Users\\x\\.rssh\\recordings\\129_2026-11-03T23-43-06.txt",
       filters: [{ name: "Text", extensions: ["txt"] }],
     });
   });
 
-  it("主目录不可用时退回仅文件名", async () => {
+  it("recordings 目录不可用时退回主目录", async () => {
+    mockedInvoke
+      .mockRejectedValueOnce("recordings_dir_unavailable")
+      .mockResolvedValueOnce("C:\\Users\\x");
+    await pickManualSessionLogPath("a.txt", "txt");
+    expect(mockedSave).toHaveBeenLastCalledWith(
+      expect.objectContaining({ defaultPath: "C:\\Users\\x\\a.txt" }),
+    );
+  });
+
+  it("两个目录都不可用时退回仅文件名", async () => {
     mockedInvoke.mockRejectedValue("home_dir_unavailable");
     await pickManualSessionLogPath("a.txt", "txt");
     expect(mockedSave).toHaveBeenLastCalledWith(

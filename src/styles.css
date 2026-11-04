@@ -3005,6 +3005,15 @@ button:disabled {
   flex: 1;
 }
 
+/* 侧栏工具条弹出层锚点（标签筛选 / 更多菜单复用 vault-view-menu 样式）。 */
+.nc-tree-tool-wrap {
+  position: relative;
+}
+
+.nc-tree-more-menu {
+  width: 148px;
+}
+
 .nc-sidebar-search-panel {
   height: 36px;
   flex-shrink: 0;

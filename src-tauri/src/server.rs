@@ -841,6 +841,7 @@ fn dispatch(
             state,
             arg(&args, "name")?,
         )),
+        "recordings_dir" => ok(crate::commands::settings::recordings_dir_impl(state)),
 
         "read_default_key_file" => ok(crate::commands::profile::read_default_key_file(arg(
             &args, "name",

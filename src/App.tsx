@@ -112,6 +112,15 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 设置中心打开时定位的 tab（终端工具栏「终端设置」→ 外观）。 */
   const [settingsTab, setSettingsTab] = useState<SettingsTabId>("application");
+  /** 顶栏 / 设置中心「打开同步页」：Vault 子页定位请求（nonce 保证重复点击生效）。 */
+  const [vaultFocus, setVaultFocus] = useState<string | null>(null);
+  const [vaultFocusNonce, setVaultFocusNonce] = useState(0);
+  const openVaultSync = useCallback(() => {
+    setSettingsOpen(false);
+    setSurface("vault");
+    setVaultFocus("sync");
+    setVaultFocusNonce((n) => n + 1);
+  }, []);
   useEffect(() => {
     void loadSettings();
   }, []);
@@ -415,11 +424,22 @@ export default function App() {
           setSettingsTab("application");
           setSettingsOpen(true);
         }}
+        onOpenSync={openVaultSync}
+        onOpenLock={() => {
+          // 应用锁在设置中心「系统」tab（无独立「应用」tab）。
+          setSettingsTab("system");
+          setSettingsOpen(true);
+        }}
+        onOpenAppearance={() => {
+          setSettingsTab("appearance");
+          setSettingsOpen(true);
+        }}
       />
       {settingsOpen && (
         <SettingsDialog
           onClose={() => setSettingsOpen(false)}
           initialTab={settingsTab}
+          onOpenSync={openVaultSync}
         />
       )}
 
@@ -441,6 +461,7 @@ export default function App() {
             onLocal={openLocal}
             onOpenManager={openManager}
             onClose={() => setSideOpen(false)}
+            onRefresh={() => void loadData()}
           />
         )}
 
@@ -457,6 +478,8 @@ export default function App() {
               onTelnet={openTelnet}
               onDataChanged={() => void loadData()}
               activeHandle={activeHandle}
+              focusView={vaultFocus}
+              focusNonce={vaultFocusNonce}
             />
           )}
 

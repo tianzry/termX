@@ -4,6 +4,61 @@
 
 ---
 
+## 2026-11-05 — 收尾审计 P1 五项修复（顶栏/导入导出/同步 tab/侧栏/录制）
+
+对照审计清单（本文件上一节）逐项落地，均保持前端小改动；仅新增一个只读 Rust 命令。
+
+### 1 顶栏快捷按钮
+- `src/TopTabs.tsx`：AI 保持 disabled，文案「AI 助手（未移植）」；「云端同步」「应用锁」「外观与窗口」
+  启用并新增 `onOpenSync` / `onOpenLock` / `onOpenAppearance`。
+- `src/App.tsx`：同步 → `setSurface("vault")` + `VaultView` 的 `focusView="sync"`（`focusNonce` 保证重复点击
+  也重新定位）；应用锁 → 设置中心「系统」tab（审计时误记为「应用」tab，实际应用锁在系统 tab）；
+  外观 → 设置中心「外观」tab。
+- 验证：debug 版 + CDP（`evidence/p1-fix-verify.json`、`evidence/p1-top-buttons.png`）：4 按钮中仅 AI
+  `disabled:true`；点云端同步后 Vault 激活页 =「同步」且出现 GitHub/WebDAV 文案；应用锁点开系统 tab
+  且含「应用锁定」；外观点开外观 tab。
+
+### 2 主机库 JSON 导入 / 导出
+- 新增 `src/vault/vaultTransfer.ts`：版本化 `termx.vault` JSON，导出白名单字段（无密码/私钥/凭据 secret），
+  `parseVaultImport` 校验 version / hosts 数组 / 名称 / 端口 1–65535，`findConflicts` 按 name+host+port
+  识别冲突；新增 8 例单测。
+- `src/VaultView.tsx`：新建菜单「导入/导出」启用（`newHostMenu` enabled）；导出走 save + `localWriteFile`，
+  导入走 open + `localReadFile`（8 MiB 上限）；分组按名称去重；冲突用 `window.confirm` 统一覆盖/跳过，
+  覆盖用 `updateProfile`、新增用 `createProfile`（非 local 主机同时创建空 secret 凭据），标签写入同一
+  `termx.vault.tags.v1`；完成后 `onDataChanged`。
+- 补齐 `applyImportedHost`：覆盖时同步 sftp/totp/agent/ssh 输入兼容字段（原先只覆盖基础字段）。
+- 验证：`npm run test:run` 49 文件 / 510 用例（含 vaultTransfer 8 例）。原生文件对话框无法自动化，
+  因此端到端只验证到「菜单启用 + 逻辑单测」，导入导出落盘留人工点测。
+
+### 3 设置「同步与云」tab
+- `src/settings/SettingsDialog.tsx` 启用该 tab；`SettingsTabs.tsx` 新增 `SyncTab`（说明 + 「打开同步页」），
+  回调经 App 复用第 1 项的 `onOpenSync`；AI tab 保持 disabled（title=未移植）。
+- 验证：CDP 实测 tab `disabled:false`，内容含「GitHub / WebDAV」与「打开同步页」按钮（`p1-settings-sync-tab.png`）；
+  AI tab 仍 `disabled:true`。
+
+### 4 终端侧栏「标签筛选」「更多」
+- 新增 `src/vault/vaultTags.ts` + 4 例单测：与 Vault 共用 `termx.vault.tags.v1`，收集标签、多选过滤
+  （需全部命中）。
+- `src/HostSidebar.tsx`：标签按钮启用 + popover（多选/清空），与搜索框组合；「更多」菜单含
+  管理主机 / 刷新列表（新增 `onRefresh`，App 传 `loadData`）/ 收起侧栏。
+- 验证：CDP 实测两按钮 `disabled:false`，popover 出现，更多菜单三项均可读（`p1-sidebar-more.png`）。
+
+### 5 录制按钮默认目录
+- `src/TerminalPane.tsx`：去掉「先选择保存路径」措辞，title/aria 统一「开始/停止记录会话日志」。
+- 新增只读命令 `recordings_dir`（`src-tauri/src/commands/settings.rs`，`lib.rs` 与 `server.rs` 双注册）；
+  `src/backend/client.ts` 的 `pickManualSessionLogPath` 默认到 `<appdata>/recordings`（必要时先 mkdir），
+  失败回落主目录。
+- 后端 `start_manual_session_log_impl` 只认 `state.sessions`（SSH），pty/local/telnet/serial 无文本日志槽，
+  故本地终端按钮仍禁用（已确认不是前端死路）。
+- 验证：`cargo build --no-default-features` 通过；CDP 调 `invoke("recordings_dir")` 返回
+  `C:\Users\tianzry\.rssh\recordings`；SSH 标签页录制按钮 `disabled:false`，title 无「先选择保存路径」。
+
+### 门禁
+- `npm run test:run`：49 文件 / 510 用例全绿；`npm run build` 通过；`cargo check --all-targets` 与
+  `cargo build --no-default-features` 通过（仅既有 warning）。
+
+---
+
 ## 2026-11-05 — 收尾比对审计（termX vs Netcatty，16 模块，只读）
 
 > 方式：Netcatty 运行实例 + 源码逐模块核对（清单 `evidence/audit-netcatty.md`）；termX debug 版

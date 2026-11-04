@@ -136,6 +136,18 @@ pub fn read_recording(state: State<AppState>, name: String) -> AppResult<String>
     read_recording_impl(&state, name)
 }
 
+/// 前端「手动会话日志」保存对话框的默认目录（与自动录制同源的 recordings 目录）。
+#[tauri::command]
+pub fn recordings_dir(state: State<AppState>) -> String {
+    recordings_dir_impl(&state)
+}
+
+/// Transport-agnostic body shared by the Tauri command and the headless server.
+/// 只读：不创建目录，调用方仍可自行选择其它路径。
+pub fn recordings_dir_impl(state: &AppState) -> String {
+    recording_dir(state).to_string_lossy().into_owned()
+}
+
 /// A valid recording name is exactly what `list_recordings_impl` hands back: a
 /// bare filename living directly in the recordings dir. Anything carrying path
 /// separators, `..`, or an absolute prefix differs from its own `file_name()`,

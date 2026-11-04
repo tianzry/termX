@@ -4,7 +4,7 @@
  * （搜索控件 + 纵向 TabsList）、右侧内容区。
  *
  * plugins tab 在 Netcatty 里仅当 pluginRuntimeAvailable 时渲染；termX 无
- * 插件运行时，等价于不渲染。file-associations / ai / sync 为占位 tab。
+ * 插件运行时，等价于不渲染。ai 为占位 tab；sync 已实现（跳 Vault 同步页）。
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -18,6 +18,7 @@ import {
   ShortcutsTab,
   SystemTab,
   SftpTab,
+  SyncTab,
   TerminalTab,
 } from "./SettingsTabs";
 
@@ -45,17 +46,20 @@ const TABS: TabDef[] = [
   { id: "shortcuts", icon: "keyboard" },
   { id: "file-associations", icon: "file-type" },
   { id: "ai", icon: "sparkles", disabled: true },
-  { id: "sync", icon: "cloud", disabled: true },
+  { id: "sync", icon: "cloud" },
   { id: "system", icon: "hard-drive" },
 ];
 
 export function SettingsDialog({
   onClose,
   initialTab = "application",
+  onOpenSync,
 }: {
   onClose: () => void;
   /** 打开时定位到某个 tab（终端工具栏「终端设置」用 appearance）。 */
   initialTab?: SettingsTabId;
+  /** 「同步与云」tab 的跳转：关闭设置中心并打开 Vault 同步页。 */
+  onOpenSync?: () => void;
 }) {
   const s = useSettings();
   const t = (k: string, p?: Record<string, string | number>) => settingsT(s.language, k, p);
@@ -155,7 +159,8 @@ export function SettingsDialog({
           {tab === "shortcuts" && <ShortcutsTab />}
           {tab === "file-associations" && <SftpTab />}
           {tab === "system" && <SystemTab />}
-          {(tab === "ai" || tab === "sync") && <PlaceholderTab tab={tab} />}
+          {(tab === "ai") && <PlaceholderTab tab={tab} />}
+          {tab === "sync" && <SyncTab onOpenSync={onOpenSync} />}
         </div>
       </div>
     </div>

@@ -486,6 +486,9 @@ const zhCN: Record<string, string> = {
   "settings.placeholder.file-associations": "SFTP 设置（双击行为、默认视图模式、隐藏文件、自动同步、压缩传输、追随终端目录）随 SFTP 增强功能移植，暂未移植。",
   "settings.placeholder.ai": "AI 功能未移植（todo #27 暂缓）。",
   "settings.placeholder.sync": "云同步未移植（todo #15）。",
+  // 同步与云（本体在 Vault「同步」页）
+  "settings.sync.desc": "主机库同步（GitHub / WebDAV 备份与自动拉取）在 Vault 的「同步」页；这里可快速打开。",
+  "settings.sync.open": "打开同步页",
 
   // 应用锁定（#23）
   "settings.appLock.title": "应用锁定",
@@ -826,6 +829,9 @@ const en: Record<string, string> = {
   "settings.sftpFileAssociations.desc": "Assign an opener to specific file extensions.",
   "settings.sftpFileAssociations.noAssociations": "No file associations yet.",
   "settings.sftp.unsupported": "Not implemented in termX; control is disabled.",
+  // Sync & cloud (actual controls live on the Vault "Sync" page)
+  "settings.sync.desc": "Vault sync (GitHub / WebDAV backups and automatic pull) lives on the Vault Sync page; open it from here.",
+  "settings.sync.open": "Open Sync page",
 
   // App lock (#23)
   "settings.appLock.title": "App Lock",

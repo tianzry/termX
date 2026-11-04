@@ -2066,9 +2066,25 @@ export function SystemTab() {
   );
 }
 
+// ── 同步与云 ──────────────────────────────────────────────
+
+/** 同步能力本体在 Vault「同步」页；设置中心只做说明与跳转。 */
+export function SyncTab({ onOpenSync }: { onOpenSync?: () => void }) {
+  const t = useT();
+  return (
+    <div className="nc-set-placeholder">
+      <p>{t("settings.sync.desc")}</p>
+      <button className="nc-set-btn" disabled={!onOpenSync} onClick={onOpenSync}>
+        <Icon name="cloud" size={14} />
+        {t("settings.sync.open")}
+      </button>
+    </div>
+  );
+}
+
 // ── 占位 ──────────────────────────────────────────────────
 
-export function PlaceholderTab({ tab }: { tab: "file-associations" | "ai" | "sync" }) {
+export function PlaceholderTab({ tab }: { tab: "ai" }) {
   const t = useT();
   return (
     <div className="nc-set-placeholder">

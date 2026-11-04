@@ -30,6 +30,12 @@ interface Props {
   onOpenSftp: () => void;
   onToggleHostTree: () => void;
   onOpenSettings: () => void;
+  /** 右侧快捷入口：云端同步跳 Vault「同步」页。 */
+  onOpenSync: () => void;
+  /** 右侧快捷入口：应用锁（设置中心「系统」tab）。 */
+  onOpenLock: () => void;
+  /** 右侧快捷入口：外观与窗口（设置中心「外观」tab）。 */
+  onOpenAppearance: () => void;
   /** 标签右键菜单：重命名 / 复制标签 / 重连 / 批量关闭 / 拖拽排序（对齐 Netcatty 会话标签菜单）。 */
   onRenameTab: (id: string, title: string) => void;
   /** 用同连接参数在独立窗口打开（后端 `open_tab_in_new_window`）。 */
@@ -42,17 +48,12 @@ interface Props {
   onMoveTab: (id: string, toIndex: number) => void;
 }
 
-/** 尚未实现的后端能力：入口保留，禁用点击。 */
-const disabledUtilities: Array<{
+/** 后端能力尚未移植：入口保留，禁用点击。 */
+const notPortedUtilities: Array<{
   id: string;
   label: string;
-  icon: "sparkles" | "cloud" | "lock" | "sliders" | "gear";
-}> = [
-  { id: "ai", label: "AI 助手（尚未实现）", icon: "sparkles" },
-  { id: "sync", label: "云端同步（尚未实现）", icon: "cloud" },
-  { id: "lock", label: "应用锁（尚未实现）", icon: "lock" },
-  { id: "quick", label: "外观与窗口（尚未实现）", icon: "sliders" },
-];
+  icon: "sparkles";
+}> = [{ id: "ai", label: "AI 助手（未移植）", icon: "sparkles" }];
 
 export function TopTabs({
   tabs,
@@ -68,6 +69,9 @@ export function TopTabs({
   onOpenSftp,
   onToggleHostTree,
   onOpenSettings,
+  onOpenSync,
+  onOpenLock,
+  onOpenAppearance,
   onRenameTab,
   onOpenInNewWindow,
   onCloseOthers,
@@ -195,16 +199,37 @@ export function TopTabs({
         </div>
 
         <div className="nc-chrome">
-          {disabledUtilities.map((u) => (
+          {notPortedUtilities.map((u) => (
             <button
               key={u.id}
               className="nc-icon-btn nc-utility-btn"
-              title={u.id === "sync" ? `${u.label} · ${status}` : u.label}
+              title={u.label}
               disabled
             >
               <Icon name={u.icon} size={16} />
             </button>
           ))}
+          <button
+            className="nc-icon-btn nc-utility-btn"
+            title={`云端同步 · ${status}`}
+            onClick={onOpenSync}
+          >
+            <Icon name="cloud" size={16} />
+          </button>
+          <button
+            className="nc-icon-btn nc-utility-btn"
+            title="应用锁"
+            onClick={onOpenLock}
+          >
+            <Icon name="lock" size={16} />
+          </button>
+          <button
+            className="nc-icon-btn nc-utility-btn"
+            title="外观与窗口"
+            onClick={onOpenAppearance}
+          >
+            <Icon name="sliders" size={16} />
+          </button>
           <button
             className="nc-icon-btn nc-utility-btn"
             title="设置中心"
