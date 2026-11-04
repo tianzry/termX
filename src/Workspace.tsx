@@ -42,6 +42,13 @@ export interface WorkspaceHandle {
   newTab: (connector: Connector) => void;
   activateTab: (tabId: string) => void;
   closeTab: (tabId: string) => void;
+  /** 对齐 Netcatty 标签右键菜单：关闭其他 / 关闭左侧 / 关闭右侧 / 关闭全部 / 拖拽排序 / 重连。 */
+  closeOthers: (tabId: string) => void;
+  closeLeft: (tabId: string) => void;
+  closeRight: (tabId: string) => void;
+  closeAll: () => void;
+  reconnectTab: (tabId: string) => void;
+  moveTab: (tabId: string, toIndex: number) => void;
   renameTab: (tabId: string, title: string) => void;
   split: (dir: SplitDir) => void;
   closePane: () => void;
@@ -197,6 +204,8 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
     activeTabIdRef.current = activeTabId;
     const paneMapRef = useRef<Record<string, string>>({});
     paneMapRef.current = activePaneByTab;
+    const handlesRef = useRef<Record<string, PaneHandle>>({});
+    handlesRef.current = handles;
     const seqRef = useRef(0);
 
     const newTab = useCallback((connector: Connector) => {
@@ -263,6 +272,70 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
         const rest = { ...m };
         delete rest[tabId];
         return rest;
+      });
+    }, []);
+
+    const closeOthers = useCallback((tabId: string) => {
+      const cur = tabsRef.current;
+      const keep = cur.find((t) => t.id === tabId);
+      if (!keep) return;
+      setTabs([keep]);
+      setActiveTabId(tabId);
+      setActivePaneByTab((m) => ({
+        [tabId]: m[tabId] ?? firstLeafId(keep.layout),
+      }));
+    }, []);
+
+    const closeRight = useCallback((tabId: string) => {
+      const cur = tabsRef.current;
+      const idx = cur.findIndex((t) => t.id === tabId);
+      if (idx < 0) return;
+      const next = cur.slice(0, idx + 1);
+      setTabs(next);
+      setActiveTabId(tabId);
+      setActivePaneByTab((m) =>
+        Object.fromEntries(
+          next.map((t) => [t.id, m[t.id] ?? firstLeafId(t.layout)]),
+        ),
+      );
+    }, []);
+
+    const closeLeft = useCallback((tabId: string) => {
+      const cur = tabsRef.current;
+      const idx = cur.findIndex((t) => t.id === tabId);
+      if (idx < 0) return;
+      const next = cur.slice(idx);
+      setTabs(next);
+      setActiveTabId(tabId);
+      setActivePaneByTab((m) =>
+        Object.fromEntries(
+          next.map((t) => [t.id, m[t.id] ?? firstLeafId(t.layout)]),
+        ),
+      );
+    }, []);
+
+    const closeAll = useCallback(() => {
+      setTabs([]);
+      setActiveTabId(null);
+      setActivePaneByTab({});
+    }, []);
+
+    const reconnectTab = useCallback((tabId: string) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab) return;
+      const paneId = resolveActivePane(tab, paneMapRef.current);
+      handlesRef.current[paneId]?.reconnect();
+    }, []);
+
+    const moveTab = useCallback((tabId: string, toIndex: number) => {
+      setTabs((cur) => {
+        const from = cur.findIndex((t) => t.id === tabId);
+        if (from < 0) return cur;
+        const next = [...cur];
+        const [moved] = next.splice(from, 1);
+        const clamped = Math.max(0, Math.min(toIndex, next.length));
+        next.splice(clamped, 0, moved);
+        return next;
       });
     }, []);
 
@@ -347,6 +420,12 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
         newTab,
         activateTab: (tabId: string) => setActiveTabId(tabId),
         closeTab,
+        closeOthers,
+        closeLeft,
+        closeRight,
+        closeAll,
+        reconnectTab,
+        moveTab,
         renameTab: (tabId: string, title: string) =>
           setTabs((cur) =>
             cur.map((t) => (t.id === tabId ? { ...t, title } : t)),
@@ -356,7 +435,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
         acceptRestore,
         skipRestore,
       }),
-      [newTab, closeTab, splitActive, closeActivePane],
+      [newTab, closeTab, closeOthers, closeLeft, closeRight, closeAll, reconnectTab, moveTab, splitActive, closeActivePane],
     );
 
     // 启动时没有旧记录 → 立即进入可落盘状态

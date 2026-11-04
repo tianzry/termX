@@ -8,6 +8,7 @@
  * 这里只展示快照并回调。
  */
 
+import { useEffect, useRef, useState } from "react";
 import { useSettings } from "./settings/settingsStore";
 import type { Tab } from "./workspaceModel";
 import { Icon } from "./ui/icons";
@@ -29,6 +30,14 @@ interface Props {
   onOpenSftp: () => void;
   onToggleHostTree: () => void;
   onOpenSettings: () => void;
+  /** 标签右键菜单：重命名 / 复制标签 / 重连 / 批量关闭 / 拖拽排序（对齐 Netcatty 会话标签菜单）。 */
+  onRenameTab: (id: string, title: string) => void;
+  onCloseOthers: (id: string) => void;
+  onCloseLeft: (id: string) => void;
+  onCloseRight: (id: string) => void;
+  onCloseAll: () => void;
+  onReconnectTab: (id: string) => void;
+  onMoveTab: (id: string, toIndex: number) => void;
 }
 
 /** 尚未实现的后端能力：入口保留，禁用点击。 */
@@ -57,10 +66,34 @@ export function TopTabs({
   onOpenSftp,
   onToggleHostTree,
   onOpenSettings,
+  onRenameTab,
+  onCloseOthers,
+  onCloseLeft,
+  onCloseRight,
+  onCloseAll,
+  onReconnectTab,
+  onMoveTab,
 }: Props) {
   // 设置中心「外观 · 主机库」两个显示开关（对照 Netcatty showSftpTab /
   // showHostTreeSidebar）。
   const settings = useSettings();
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [rename, setRename] = useState<{ id: string; value: string } | null>(null);
+  const dragId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
+
+  // 批量关闭项按「右键锚点」的位置判定可用性（对齐 Netcatty renderBulkCloseItems）。
+  const menuIndex = menu ? tabs.findIndex((t) => t.id === menu.id) : -1;
 
   return (
     <header className="nc-topbar" data-section="top-tabs">
@@ -96,7 +129,7 @@ export function TopTabs({
         )}
 
         <div className="nc-tabs" role="tablist">
-          {tabs.map((tab) => {
+          {tabs.map((tab, index) => {
             const active = surface === null && tab.id === activeTabId;
             return (
               <div
@@ -105,7 +138,30 @@ export function TopTabs({
                 aria-selected={active}
                 title={tab.title}
                 className={`nc-session-tab${active ? " active" : ""}`}
-                onMouseDown={() => onActivate(tab.id)}
+                draggable
+                onDragStart={() => {
+                  dragId.current = tab.id;
+                }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragId.current && dragId.current !== tab.id) {
+                    onMoveTab(dragId.current, index);
+                  }
+                  dragId.current = null;
+                }}
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return;
+                  onActivate(tab.id);
+                }}
+                onAuxClick={(e) => {
+                  // 对齐 Netcatty：中键点击关闭会话标签。
+                  if (e.button === 1) onClose(tab.id);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenu({ id: tab.id, x: e.clientX, y: e.clientY });
+                }}
                 onDoubleClick={() => {
                   // 行为区「标签页双击行为」（Netcatty tabDoubleClickBehavior）：
                   // duplicate / copy 都新建同连接标签（termX 尚无会话复用通道）。
@@ -155,6 +211,121 @@ export function TopTabs({
           </button>
         </div>
       </div>
+
+      {menu && (
+        <div
+          className="term-context-menu vault-context-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              onDuplicateTab(menu.id);
+              setMenu(null);
+            }}
+          >
+            复制标签页
+          </button>
+          <button
+            onClick={() => {
+              const tab = tabs.find((t) => t.id === menu.id);
+              setRename({ id: menu.id, value: tab?.title ?? "" });
+              setMenu(null);
+            }}
+          >
+            重命名
+          </button>
+          <button
+            onClick={() => {
+              onReconnectTab(menu.id);
+              setMenu(null);
+            }}
+          >
+            重新连接
+          </button>
+          <button
+            className="danger"
+            onClick={() => {
+              onClose(menu.id);
+              setMenu(null);
+            }}
+          >
+            关闭
+          </button>
+          <div className="term-menu-sep" />
+          <button
+            disabled={tabs.length <= 1}
+            onClick={() => {
+              onCloseOthers(menu.id);
+              setMenu(null);
+            }}
+          >
+            关闭其他标签
+          </button>
+          <button
+            disabled={menuIndex <= 0}
+            onClick={() => {
+              onCloseLeft(menu.id);
+              setMenu(null);
+            }}
+          >
+            关闭左侧标签
+          </button>
+          <button
+            disabled={menuIndex < 0 || menuIndex >= tabs.length - 1}
+            onClick={() => {
+              onCloseRight(menu.id);
+              setMenu(null);
+            }}
+          >
+            关闭右侧标签
+          </button>
+          <button
+            className="danger"
+            onClick={() => {
+              onCloseAll();
+              setMenu(null);
+            }}
+          >
+            关闭所有标签
+          </button>
+        </div>
+      )}
+
+      {rename && (
+        <div className="modal-mask" onMouseDown={() => setRename(null)}>
+          <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+            <h3>重命名标签</h3>
+            <label>
+              名称
+              <input
+                autoFocus
+                value={rename.value}
+                onChange={(e) => setRename({ id: rename.id, value: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setRename(null);
+                  if (e.key === "Enter" && rename.value.trim()) {
+                    onRenameTab(rename.id, rename.value.trim());
+                    setRename(null);
+                  }
+                }}
+              />
+            </label>
+            <div className="modal-actions">
+              <button onClick={() => setRename(null)}>取消</button>
+              <button
+                disabled={!rename.value.trim()}
+                onClick={() => {
+                  onRenameTab(rename.id, rename.value.trim());
+                  setRename(null);
+                }}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

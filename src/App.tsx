@@ -315,6 +315,13 @@ export default function App() {
           if (tab) workspaceRef.current?.newTab(tab.connector);
         }}
         onNewTab={openLocal}
+        onRenameTab={(id, title) => workspaceRef.current?.renameTab(id, title)}
+        onCloseOthers={(id) => workspaceRef.current?.closeOthers(id)}
+        onCloseLeft={(id) => workspaceRef.current?.closeLeft(id)}
+        onCloseRight={(id) => workspaceRef.current?.closeRight(id)}
+        onCloseAll={() => workspaceRef.current?.closeAll()}
+        onReconnectTab={(id) => workspaceRef.current?.reconnectTab(id)}
+        onMoveTab={(id, index) => workspaceRef.current?.moveTab(id, index)}
         onOpenVault={() => setSurface("vault")}
         onOpenSftp={() => setSurface("sftp")}
         onToggleHostTree={() => setSideOpen((v) => !v)}

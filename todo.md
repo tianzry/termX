@@ -50,6 +50,7 @@
 | 本地终端（shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel + local 头像体系） | ✅ | `src/LocalShellPanel.tsx`、`src/domain/localShellHost.ts`、`src-tauri/src/terminal/shell_discovery.rs` |
 | 设置中心（5 tab 1:1 + 3 占位 + 自启动命令 + 实机比对 + review 修复） | ✅ | `src/settings/`（model/store/i18n/keyBindings/Dialog/Tabs）、`src-tauri/src/commands/settings.rs` |
 | 全应用逐功能比对·第一轮（Vault 首页与分组、主机新建/编辑/连接） | ✅ | `src/VaultView.tsx`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
+| 全应用逐功能比对·第二轮（终端标签与分屏、工具栏与更多菜单） | ✅ | `src/TopTabs.tsx`、`src/Workspace.tsx`、`src/TerminalPane.tsx`、`src/Terminal.tsx`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
 
 ---
 
@@ -298,3 +299,4 @@
 | 2026-11-04 | 外观 tab review 修复完成：原生 IPC 去重 + 串行（相同值跳过/连续变更只发最终态）、persist 200ms 去抖、系统主题监听补 emit、FontCombo 外部点击与 Esc 关闭、appIconVariant 白名单（非法回落 original）、autoImport known_hosts 按实际能力置灰 + 行内原因、清理死代码与死键；复跑门禁 378✓/build✓/cargo check✓/874✓。 |
 | 2026-11-04 | 设置中心「终端」tab 1:1 复刻完成：主题跟随（含系统明暗监听）、字体 9 项、光标 4 项、键盘 3 项（置灰 + 行内原因）、行为 30 行全量（右键/中键/选词/长按/全屏菜单、选择即复制与规范化、括号粘贴、多行确认、Shift+Enter 自定义序列、标签双击、OSC 52 四态、滚动五项、断开提示模式、回滚 0–100000）、侧边栏 2 组（SFTP 已接通、其余置灰）、verifyHostKeys 下发后端；默认值逐键对齐 Netcatty，旧值迁移（右键 menu/none、中键 copy/none、disconnectPrompt）；全部落地 xterm options / CSS / 事件路径并即时生效 + 重启保留。真机 CDP：字号 15、字重 300、竖线光标、行高亮 decoration、行距 36.8、右键菜单；门禁 379✓/build✓/cargo check(server)✓/874✓。缺口：Netcatty 实例不可用（像素并排待复核）、侧栏仅 SFTP、本地 PTY TERM 固定、12 项保留置灰。 |
 | 2026-11-04 | **后续任务登记（下一轮执行，本轮未动）**：进入「全应用逐功能比对第一轮」——termX debug 与 Netcatty 同场景并排，每轮 2~3 模块（≤40 工具），覆盖 Vault 首页与分组 / 主机新建编辑连接 / 终端（标签/分屏/工具栏/右键/更多菜单）/ SFTP / 串口 / Telnet / 本地终端 / 设置中心 / 钥匙串 / 脚本片段 / 笔记 / 日志 / 已知主机；每项分「功能点 + UI 点」，差异三级（逻辑必改/交互必改/视觉按像素标准），每轮门禁 + changelogs + todo + review + push。全部完成后再恢复代理与端口转发（WIP `d633866` / `60d8deb` 不得触碰）。 |
+| 2026-11-04 | 全应用逐功能比对·第二轮完成（终端标签与分屏 + 工具栏与更多菜单）：标签右键菜单补齐 9 项（复制标签页/重命名/重新连接/关闭/分隔线/关闭其他/关闭左侧/关闭右侧/关闭所有）+ 批量项按锚点置灰 + 关闭危险色；中键关闭；HTML5 拖拽排序；重命名模态（Enter/Esc/空值禁用）；`PaneHandle.reconnect` + `Workspace.reconnectTab`（最新 connect 闭包）；`closeLeft`/`closeAll`；分屏右窗格标题保留（`.term-toolbar-left min-width`）；浅色主题终端底部黑条修复（容器底色跟随主题 + `.xterm-viewport` 透明，设置变更实时同步）。工具栏项/顺序/24×24/12px 与 Netcatty 一致。129 CDP 逐项验证；门禁 379✓/build✓/cargo check(server)✓/874✓。缺口：YMODEM 发送/接收、工具栏「打开会话日志」、工具栏自定义布局（show/collapse/hide + 右键定制）未实现，未加假按钮；下一起点=SFTP 模块。 |

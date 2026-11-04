@@ -97,6 +97,8 @@ export interface PaneHandle {
   sshSessionId: () => string | null;
   /** 订阅 SSH 会话变化（连接 / 断开时回调）。 */
   subscribeSession: (cb: (sid: string | null) => void) => () => void;
+  /** 重新连接当前窗格（对齐 Netcatty 标签右键「重连」）。 */
+  reconnect: () => void;
   focus: () => void;
 }
 
@@ -626,6 +628,8 @@ export function TerminalPane({
   const pendingPromptRef = useRef<Prompt | null>(null);
   const aliveRef = useRef(true);
   const startedRef = useRef(false);
+  /** 供标签右键「重连」使用的最新 connect 闭包（避免注册句柄时捕获旧实现）。 */
+  const connectRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   function notifySession(sid: string | null) {
     sidRef.current = sid;
@@ -693,6 +697,9 @@ export function TerminalPane({
         return () => {
           listenersRef.current.delete(cb);
         };
+      },
+      reconnect: () => {
+        if (aliveRef.current) void connectRef.current();
       },
       focus: () => {
         if (aliveRef.current) controllerRef.current?.term.focus();
@@ -902,6 +909,9 @@ export function TerminalPane({
     if (!s.sidePanelAutoOpen) return;
     if (s.sidePanelAutoOpenPane === "sftp") onOpenTool?.("sftp");
   }
+
+  // 每次渲染都刷新引用，句柄里的 reconnect 永远调用最新闭包。
+  connectRef.current = () => connect();
 
   async function connect(authOverride?: AuthOverride) {
     const c = controllerRef.current;

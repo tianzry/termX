@@ -97,6 +97,16 @@ function applyFontVisuals(container: HTMLDivElement, s: AppSettings): void {
 }
 
 /**
+ * 终端底色跟随当前主题：fit 计算会留出不足一行的余量，
+ * xterm 的 viewport 默认底色是黑色，浅色主题下会在底部露一条黑边。
+ * viewport 在 styles.css 里改为透明，这里把容器底色设为主题背景。
+ */
+function applyTermBackground(container: HTMLDivElement, s: AppSettings): void {
+  const theme = isDarkTerminal(s) ? TERM_THEME_DARK : TERM_THEME_LIGHT;
+  container.style.backgroundColor = theme.background ?? "";
+}
+
+/**
  * 高亮光标所在行（对照 Netcatty cursorLineHighlight.ts）：
  * 用 decoration 给默认背景单元格铺一层淡色底，保留 ANSI 背景与前景。
  */
@@ -296,6 +306,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
     term.open(containerRef.current!);
     const container = containerRef.current!;
     applyFontVisuals(container, initial);
+    applyTermBackground(container, initial);
     fit.fit();
     term.focus();
 
@@ -424,6 +435,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
       const s = getSettings();
       term.options = buildXtermOptions(s);
       applyFontVisuals(container, s);
+      applyTermBackground(container, s);
       // 字号 / 字重 / 行间距会改变单元格尺寸，xterm 只重算 cell 不重排列数，
       // 必须重新 fit 并通过 onResize 同步远端 PTY 尺寸。
       fit.fit();

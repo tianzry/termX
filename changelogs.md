@@ -3728,3 +3728,43 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `npm run test:run` 31 文件 / **379✓**、`npm run build` ✓。
 - `cargo check --features server` ✓、`cargo test --lib` **874✓**（本轮无 Rust 改动）。
 - 代理 WIP `d633866` / `60d8deb` 与端口转发未触碰。
+
+---
+
+## 2026-11-04 — 全应用逐功能比对第一轮（终端标签与分屏 + 工具栏与更多菜单）
+
+对照基准：`Netcatty/components/TopTabs.tsx`、`components/top-tabs/SessionTabContextMenuContent.tsx`、`components/terminal/TerminalToolbar.tsx`、`components/terminal/TerminalView.tsx`（TerminalToolbar 位于顶部信息栏右侧，非底部状态栏）。
+
+### 差异清单与修复
+
+| 项 | 功能逻辑 | UI | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 标签右键菜单 | 缺「重新连接」、关闭左侧/全部、禁用态 | 无分隔线、危险项无红色 | 行为 + 交互 | 已补齐：复制标签页/重命名/重新连接/关闭/分隔线/关闭其他/关闭左侧/关闭右侧/关闭所有；按锚点位置置灰批量项；关闭为危险色 |
+| 标签中键关闭 | 缺 | — | 交互 | 已加 `onAuxClick`（button 1） |
+| 标签拖拽排序 | 缺 | — | 交互 | 已加 `draggable` + `onMoveTab` |
+| 标签重命名 | 缺（`renameTab` 未接线） | — | 行为 | 已加重命名模态（Enter 保存 / Esc 取消 / 空值禁用） |
+| 重新连接 | 缺标签级入口（仅断线面板重连） | — | 行为 | `PaneHandle.reconnect` + `Workspace.reconnectTab`，始终调用最新 connect 闭包 |
+| 关闭左侧 / 关闭全部 | 缺 | — | 行为 | `Workspace.closeLeft` / `closeAll`，关闭全部回到 Vaults |
+| 分屏后右窗格标题 | 标题被右侧图标组挤成 0 宽 | — | 视觉 | `.term-toolbar-left` 加 `min-width: 3rem`，标题保留并省略 |
+| 终端底部黑条 | — | 浅色主题下底部露 1 行黑色（`xterm-viewport` 默认黑） | 视觉 | 容器底色跟随主题（`applyTermBackground`，设置变更实时同步）+ `.xterm-viewport` 透明 |
+| 工具栏项与顺序 | 与 Netcatty 一致（highlight/sftp/browser/compose/search/sessionLog/scripts + ⋮） | 按钮 24×24、图标 12px 一致 | 无差异 | — |
+| YMODEM 发送/接收 | 未实现（串口专属） | — | 行为 | 未加假按钮，登记 todo |
+| 打开会话日志（openSessionLog） | 未实现（日志视图无终端入口） | — | 行为 | 未加假按钮，登记 todo |
+| 工具栏自定义布局（show/collapse/hide、右键定制） | 未实现 | — | 交互 | 登记 todo（默认折叠项已按 Netcatty 顺序放在 ⋮ 内） |
+
+### 实机验证（129 CDP，debug 重编后）
+
+- 三个本地标签：右键菜单项顺序/文案/禁用态正确，分隔线与危险色生效（截图 `r2-menu2.png`）。
+- 重命名：改为「生产跳板」后标签标题即时更新（`r2-renamed.png`）。
+- 中键关闭：3 → 2 个标签。
+- 拖拽：首标签拖到第二位，顺序互换。
+- 关闭左侧：仅保留右键锚点及其右侧标签；关闭全部：标签清空并回到 Vaults。
+- 重新连接：本地标签执行后 PTY 重启并重新输出 shell 横幅。
+- 分屏：右键「水平分屏」→ 2 窗格；拖动分隔条 `flexGrow` 变化；两格标题均可见。
+- 终端底色：`viewport` 透明 + 容器 `#ffffff`，底部黑条消失（`r2-final2.png`）。
+
+### 门禁
+
+- `npm run test:run` 31 文件 / **379✓**、`npm run build` ✓。
+- `cargo check --features server` ✓、`cargo test --lib` **874✓**。
+- 代理 WIP `d633866` / `60d8deb` 与端口转发未触碰。
