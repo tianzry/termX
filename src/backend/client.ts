@@ -1000,6 +1000,73 @@ export function monitorSample(
   return invoke("monitor_sample", { sessionId, timeoutMs });
 }
 
+/** 云同步：一次发布 / 拉取使用的元数据（版本 + 配置摘要）。 */
+export interface SyncMetadata {
+  version: number;
+  config_digest: string;
+}
+
+/** 云同步：单个 provider 的探测结果。 */
+export interface SyncProviderObservation {
+  remote: SyncMetadata | null;
+  error: string | null;
+  pulled: boolean;
+}
+
+/** 云同步：本地 + GitHub + WebDAV 三方探测结果。 */
+export interface SyncCheckResult {
+  local: SyncMetadata;
+  github: SyncProviderObservation;
+  webdav: SyncProviderObservation;
+}
+
+export interface SyncAutoPullStatus {
+  github: boolean;
+  webdav: boolean;
+}
+
+export type SyncProviderKey = "github" | "webdav";
+
+export function syncCheckRemotes(): Promise<SyncCheckResult> {
+  return invoke("sync_check_remotes");
+}
+
+export function syncCheck(): Promise<SyncCheckResult> {
+  return invoke("sync_check");
+}
+
+export function syncRefreshLocalMetadata(): Promise<SyncMetadata> {
+  return invoke("sync_refresh_local_metadata");
+}
+
+export function githubPush(password: string): Promise<void> {
+  return invoke("github_push", { password });
+}
+
+export function githubPull(password: string): Promise<void> {
+  return invoke("github_pull", { password });
+}
+
+export function webdavPush(password: string): Promise<void> {
+  return invoke("webdav_push", { password });
+}
+
+export function webdavPull(password: string): Promise<void> {
+  return invoke("webdav_pull", { password });
+}
+
+export function getSyncAutoPullStatus(): Promise<SyncAutoPullStatus> {
+  return invoke("get_sync_auto_pull_status");
+}
+
+export function setSyncAutoPull(
+  provider: SyncProviderKey,
+  enabled: boolean,
+  password?: string,
+): Promise<void> {
+  return invoke("set_sync_auto_pull", { provider, enabled, password });
+}
+
 /** 修改远端文件权限位（`mode` 传十进制，如 0o755 → 493）。 */
 export function sftpChmod(
   sftpId: string,

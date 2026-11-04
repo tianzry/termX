@@ -4311,3 +4311,27 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 会话 ID 必须是 UUID；自定义 `mon-...` 会被后端拒绝为 `session_id_invalid`。
 - CDP 长 async 链异常会被包成无信息的 `Uncaught`；拆步 + catch 才能拿到真实错误。
 - `formatRate` 不能用于累计流量（会显示 "237 MB/s"）；累计改用 `formatBytes`，本轮截图复核已修正。
+
+---
+
+## 2026-11-04 — P1 #15 云端同步阶段 A（Vault 同步页 + GitHub / WebDAV）
+
+对照 Netcatty `components/CloudSyncSettings.tsx` / `components/cloud-sync/`。termX 后端 `commands/sync.rs` 早已具备 9 个命令但零 UI（todo #15 审计结论），本轮补前端闭环。
+
+### 修改点
+
+1. `src/backend/client.ts`：补 `SyncMetadata` / `SyncProviderObservation` / `SyncCheckResult` / `SyncAutoPullStatus` 类型与 9 个包装（`syncCheck` / `syncCheckRemotes` / `syncRefreshLocalMetadata` / `githubPush|Pull` / `webdavPush|Pull` / `getSyncAutoPullStatus` / `setSyncAutoPull`）。
+2. `src/sync/SyncView.tsx` + `src/domain/syncModel.ts`：Vault「同步」导航启用；GitHub（owner/repo 规范化、分支、PAT 存 SecretStore）与 WebDAV（URL 补 https、用户名、密码存 SecretStore）双卡片；保存 / 推送 / 拉取 / 检查远端 / 刷新本地版本；启动时自动拉取开关（密码存 SecretStore，关闭即删除）；同步加密密码仅会话内输入。
+3. 自动拉取后（`pulled=true`）回调 `onDataChanged` 重新加载 Vault，避免主机/分组列表滞后。
+4. 置灰并写明原因：Google Drive / OneDrive / S3、OAuth 设备码、逐类目开关与交互式冲突合并策略；本地快照备份入口未做。
+
+### 验证
+
+- 422 前端单测 ✓（37 文件，新增 syncModel 5 例）、`npm run build` ✓。
+- debug 实机（`evidence/sync-page.png`）：导航进入「同步」；空密码点「推送」显示「请先填写同步加密密码。」；后端 `sync_check_remotes` 返回本地 **v1**，GitHub/WebDAV 均未配置（remote=null，无错误）；置灰说明可见。
+- 未实测：真实 GitHub PAT / WebDAV 账号的推拉（无凭据）；冲突提示与快照备份待后续阶段。
+
+### 踩坑
+
+- 自动拉取是否开启由 SecretStore 中是否存在 `sync_*_auto_pull_password` 决定，不存在单独的 enabled 键；UI 必须从 `get_sync_auto_pull_status` 读，不能写普通设置键。
+- GitHub Token / WebDAV 密码必须走 `set_setting` 的 `is_secret_setting` 白名单（`github_token` / `webdav_password`），否则会落到明文设置表。

@@ -53,6 +53,7 @@ import { Icon, type IconName } from "./ui/icons";
 import { LocalShellPanel } from "./LocalShellPanel";
 import { ForwardOverview } from "./ForwardOverview";
 import { MonitorView } from "./monitor/MonitorView";
+import { SyncView } from "./sync/SyncView";
 import { ProxyProfilesView } from "./ProxyProfilesView";
 import { useVaultHostMarquee } from "./useVaultHostMarquee";
 
@@ -223,7 +224,8 @@ const navItems: Array<{
   enabled?: boolean;
 }> = [
   { id: "hosts", label: "主机", icon: "grid", enabled: true },
-  { id: "monitor", label: "监控", icon: "activity", enabled: true },
+  { id: "monitor", label: "监控", icon: "monitor", enabled: true },
+  { id: "sync", label: "同步", icon: "cloud", enabled: true },
   { id: "keys", label: "钥匙串", icon: "key", enabled: true },
   { id: "proxies", label: "代理", icon: "network", enabled: true },
   { id: "port", label: "端口转发", icon: "transfer", enabled: true },
@@ -3900,6 +3902,8 @@ export function VaultView({
               </div>
               {kcTab === "system" ? <KeychainView /> : keysPanel()}
             </div>
+          ) : activeNav === "sync" ? (
+            <SyncView onAfterPull={onDataChanged} />
           ) : activeNav === "monitor" ? (
             <MonitorView profiles={profiles} onOpenHost={onConnect} />
           ) : activeNav === "port" ? (
