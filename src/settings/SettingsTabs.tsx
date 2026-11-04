@@ -35,6 +35,14 @@ import {
   clampScrollback,
 } from "./settingsModel";
 import { resolvedThemeMode, updateSettings, useSettings } from "./settingsStore";
+import {
+  INLINE_IMAGE_MAX_MEGAPIXELS_MAX,
+  INLINE_IMAGE_MAX_MEGAPIXELS_MIN,
+  INLINE_IMAGE_SEQUENCE_LIMIT_MB_MAX,
+  INLINE_IMAGE_SEQUENCE_LIMIT_MB_MIN,
+  INLINE_IMAGE_STORAGE_LIMIT_MB_MAX,
+  INLINE_IMAGE_STORAGE_LIMIT_MB_MIN,
+} from "../terminal/inlineImages";
 import { UI_FONTS } from "./uiFonts";
 import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "./uiThemes";
 
@@ -740,6 +748,87 @@ export function TerminalTab() {
           <Toggle checked={term.followAppTheme} onChange={(v) => patch({ followAppTheme: v })} />
         </Row>
         {!term.followAppTheme && <Row title={t("settings.terminal.theme.fixedDarkHint")} />}
+      </Section>
+
+      {/* 内嵌图片（对照 Netcatty inlineImages：Kitty / SIXEL / iTerm IIP） */}
+      <Section title={t("settings.terminal.section.inlineImages")}>
+        <Row
+          title={t("settings.terminal.inlineImages.enabled")}
+          desc={t("settings.terminal.inlineImages.enabled.desc")}
+        >
+          <Toggle
+            checked={term.inlineImagesEnabled}
+            onChange={(v) => patch({ inlineImagesEnabled: v })}
+          />
+        </Row>
+        {term.inlineImagesEnabled && (
+          <>
+            <Row
+              title={t("settings.terminal.inlineImages.kitty")}
+              desc={t("settings.terminal.inlineImages.kitty.desc")}
+            >
+              <Toggle
+                checked={term.inlineImageKittyEnabled}
+                onChange={(v) => patch({ inlineImageKittyEnabled: v })}
+              />
+            </Row>
+            <Row
+              title={t("settings.terminal.inlineImages.sixel")}
+              desc={t("settings.terminal.inlineImages.sixel.desc")}
+            >
+              <Toggle
+                checked={term.inlineImageSixelEnabled}
+                onChange={(v) => patch({ inlineImageSixelEnabled: v })}
+              />
+            </Row>
+            <Row
+              title={t("settings.terminal.inlineImages.iip")}
+              desc={t("settings.terminal.inlineImages.iip.desc")}
+            >
+              <Toggle
+                checked={term.inlineImageIipEnabled}
+                onChange={(v) => patch({ inlineImageIipEnabled: v })}
+              />
+            </Row>
+            <Row
+              title={t("settings.terminal.inlineImages.storageLimit")}
+              desc={t("settings.terminal.inlineImages.storageLimit.desc")}
+            >
+              <Stepper
+                value={term.inlineImageStorageLimitMb}
+                onChange={(v) => patch({ inlineImageStorageLimitMb: v })}
+                min={INLINE_IMAGE_STORAGE_LIMIT_MB_MIN}
+                max={INLINE_IMAGE_STORAGE_LIMIT_MB_MAX}
+                suffix="MB"
+              />
+            </Row>
+            <Row
+              title={t("settings.terminal.inlineImages.maxMegapixels")}
+              desc={t("settings.terminal.inlineImages.maxMegapixels.desc")}
+            >
+              <Stepper
+                value={term.inlineImageMaxMegapixels}
+                onChange={(v) => patch({ inlineImageMaxMegapixels: v })}
+                min={INLINE_IMAGE_MAX_MEGAPIXELS_MIN}
+                max={INLINE_IMAGE_MAX_MEGAPIXELS_MAX}
+                suffix="MP"
+              />
+            </Row>
+            <Row
+              title={t("settings.terminal.inlineImages.sequenceLimit")}
+              desc={t("settings.terminal.inlineImages.sequenceLimit.desc")}
+            >
+              <Stepper
+                value={term.inlineImageSequenceLimitMb}
+                onChange={(v) => patch({ inlineImageSequenceLimitMb: v })}
+                min={INLINE_IMAGE_SEQUENCE_LIMIT_MB_MIN}
+                max={INLINE_IMAGE_SEQUENCE_LIMIT_MB_MAX}
+                suffix="MB"
+              />
+            </Row>
+            <Row title={t("settings.terminal.inlineImages.hibernateNote")} />
+          </>
+        )}
       </Section>
 
       <Section title={t("settings.terminal.section.font")}>

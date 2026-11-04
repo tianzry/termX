@@ -10,6 +10,8 @@ import {
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { ImageAddon } from "@xterm/addon-image";
+import { resolveInlineImageAddonOptions } from "./terminal/inlineImages";
 import "@xterm/xterm/css/xterm.css";
 import * as api from "./backend/client";
 import { isFindShortcut, linkModifierAllows } from "./terminal/linkActivation";
@@ -324,6 +326,35 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       }),
     );
     term.open(containerRef.current!);
+    // 内嵌图片：SIXEL / Kitty / iTerm IIP（@xterm/addon-image，对照 Netcatty）。
+    // 总开关关闭或三个协议全关时不加载 addon，避免向远端声明图形能力。
+    let imageAddon: ImageAddon | null = null;
+    let imageOptionsKey = "";
+    const syncInlineImages = (settings: AppSettings) => {
+      const options = resolveInlineImageAddonOptions(settings.terminal);
+      const key = options ? JSON.stringify(options) : "";
+      if (key === imageOptionsKey) return;
+      imageOptionsKey = key;
+      if (imageAddon) {
+        try {
+          imageAddon.dispose();
+        } catch {
+          /* 已释放 */
+        }
+        imageAddon = null;
+      }
+      if (options) {
+        try {
+          imageAddon = new ImageAddon(options);
+          term.loadAddon(imageAddon);
+        } catch (e) {
+          // 可选能力：addon 不可用时只关闭图片渲染，不影响终端本身。
+          imageAddon = null;
+          console.warn("[termX] 内嵌图片加载失败", e);
+        }
+      }
+    };
+    syncInlineImages(initial);
     const container = containerRef.current!;
     applyFontVisuals(container, initial);
     applyTermBackground(container, initial);
@@ -459,6 +490,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
     // 设置变更（字体 / 光标 / 主题等）实时同步到已打开的终端。
     const unsubSettings = subscribeSettings(() => {
       const s = getSettings();
+      syncInlineImages(s);
       term.options = buildXtermOptions(s);
       applyFontVisuals(container, s);
       applyTermBackground(container, s);

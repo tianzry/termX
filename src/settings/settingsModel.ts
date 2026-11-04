@@ -12,6 +12,15 @@ export type CursorShape = "block" | "bar" | "underline";
 export type RightClickBehavior = "context-menu" | "paste" | "select-word";
 export type MiddleClickBehavior = "context-menu" | "paste" | "disabled";
 export type DisconnectedNoticeMode = "terminal" | "dialog";
+
+import {
+  INLINE_IMAGE_MAX_MEGAPIXELS_DEFAULT,
+  INLINE_IMAGE_SEQUENCE_LIMIT_MB_DEFAULT,
+  INLINE_IMAGE_STORAGE_LIMIT_MB_DEFAULT,
+  normalizeInlineImageMaxMegapixels,
+  normalizeInlineImageSequenceLimitMb,
+  normalizeInlineImageStorageLimitMb,
+} from "../terminal/inlineImages";
 export type TabDoubleClickBehavior = "duplicate" | "copy" | "disabled";
 export type DynamicTabTitleMode = "off" | "agent" | "all";
 export type OscNotificationMode = "always" | "unfocused" | "off";
@@ -89,6 +98,20 @@ export interface TerminalSettings {
   linkBrowser: LinkBrowser;
   /** 终端主题跟随应用主题；关闭后终端固定深色（Netcatty settings.terminal.theme.followApp）。 */
   followAppTheme: boolean;
+  /** 内嵌图片总开关（Netcatty inlineImagesEnabled，默认关闭）。 */
+  inlineImagesEnabled: boolean;
+  /** Kitty graphics protocol（APC G）；需 inlineImagesEnabled。 */
+  inlineImageKittyEnabled: boolean;
+  /** SIXEL（DCS q）；需 inlineImagesEnabled。 */
+  inlineImageSixelEnabled: boolean;
+  /** iTerm 内嵌图片协议（OSC 1337 File=）；需 inlineImagesEnabled。 */
+  inlineImageIipEnabled: boolean;
+  /** 单终端图片缓存上限（MB）。 */
+  inlineImageStorageLimitMb: number;
+  /** 单张图解码像素上限（MP）。 */
+  inlineImageMaxMegapixels: number;
+  /** 单条图片转义序列上限（MB）。 */
+  inlineImageSequenceLimitMb: number;
 }
 
 export interface NetworkProxySettings {
@@ -222,6 +245,14 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   linkModifier: "none",
   linkBrowser: "netcatty",
   followAppTheme: true,
+  // 对齐 Netcatty：图片默认关闭；开启后三类协议默认全开。
+  inlineImagesEnabled: false,
+  inlineImageKittyEnabled: true,
+  inlineImageSixelEnabled: true,
+  inlineImageIipEnabled: true,
+  inlineImageStorageLimitMb: INLINE_IMAGE_STORAGE_LIMIT_MB_DEFAULT,
+  inlineImageMaxMegapixels: INLINE_IMAGE_MAX_MEGAPIXELS_DEFAULT,
+  inlineImageSequenceLimitMb: INLINE_IMAGE_SEQUENCE_LIMIT_MB_DEFAULT,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -428,6 +459,13 @@ function normalizeTerminal(raw: unknown): TerminalSettings {
     ),
     linkBrowser: pickOne(r.linkBrowser, ["netcatty", "system"] as const, d.linkBrowser),
     followAppTheme: pickBool(r.followAppTheme, d.followAppTheme),
+    inlineImagesEnabled: pickBool(r.inlineImagesEnabled, d.inlineImagesEnabled),
+    inlineImageKittyEnabled: pickBool(r.inlineImageKittyEnabled, d.inlineImageKittyEnabled),
+    inlineImageSixelEnabled: pickBool(r.inlineImageSixelEnabled, d.inlineImageSixelEnabled),
+    inlineImageIipEnabled: pickBool(r.inlineImageIipEnabled, d.inlineImageIipEnabled),
+    inlineImageStorageLimitMb: normalizeInlineImageStorageLimitMb(r.inlineImageStorageLimitMb),
+    inlineImageMaxMegapixels: normalizeInlineImageMaxMegapixels(r.inlineImageMaxMegapixels),
+    inlineImageSequenceLimitMb: normalizeInlineImageSequenceLimitMb(r.inlineImageSequenceLimitMb),
   };
 }
 

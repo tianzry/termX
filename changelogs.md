@@ -4484,3 +4484,25 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 页面 reload 后若恢复的是已在连接的会话，shell 可能仍在校验/初始化阶段：一次复跑出现 `#@wait-text` 5s 超时（日志如实记为「失败」）；onConnect 脚本等待窗口应按主机初始化耗时留足（默认 30s），不要依赖 5s 级短超时。
 - xterm 的 `write()` 是异步的，写命令与读缓冲判断要给远端回显留时间；等待逻辑必须轮询而非一次读取。
 
+---
+
+## 2026-11-05 — P1 #17 内嵌图片（Kitty / SIXEL / iTerm）
+
+### 修改点
+
+1. 新增依赖 `@xterm/addon-image@0.10.0-beta.331`（Netcatty 同款实现），并把 `@xterm/xterm` 升到 `6.1.0-beta.336`：addon 依赖新版解析器的 `registerApcHandler`，6.0.0 会抛 `TypeError` 直接打空整页。
+2. 新增 `src/terminal/inlineImages.ts`：总开关（默认关闭，对齐 Netcatty `inlineImagesEnabled`）、Kitty / SIXEL / iTerm IIP 三个协议开关、缓存上限 8-512MB、单图像素上限 1-64MP、单条序列上限 1-64MB；越界值夹紧，非法值回落默认。6 例单测。
+3. `Terminal.tsx`：创建终端时按设置加载 addon，`subscribeSettings` 变更即时重载（先 dispose 旧实例）；addon 不可用时 try/catch 只关闭图片渲染，不影响终端本身。
+4. 设置中心「终端 → 内嵌图片」：总开关 + 三协议开关 + 三项上限 Stepper + 生命周期提示，中英文案齐备。
+
+### 验证
+
+- 门禁：`npm run test:run` 447 ✓、`npm run build`（tsc + vite）✓。
+- 129 真机（CDP，`evidence/inline-images-129.js`）：开启开关并持久化后重载生效；独立 SSH 会话把三段真实序列写入远端文件（SIXEL DCS、Kitty `f=32` RGBA、iTerm `OSC 1337 File=` PNG），终端依次 `cat` 后均出现 `.xterm-image-layer-top` canvas 并实际绘制像素：SIXEL 2368、Kitty 3072、IIP 3072。证据 `evidence/inline-images-129.json` + `inline-sixel.png` / `inline-kitty.png` / `inline-iip.png`。
+
+### 踩坑
+
+- addon-image 的 beta 版本强依赖 xterm 6.1 beta 的新解析器 API，仅升级 addon 不够，必须同步升级 xterm 核心；否则 `loadAddon` 抛异常会把 React 树整个打断（页面空白）。
+- Vite dev server 在新增依赖后必须重启重新 optimize，否则 WebView 里加载的是旧依赖快照，表现为整页空白。
+- 三类协议都能真渲染，无需置灰；限制只有生命周期（休眠/重连后图片不保留，需重新输出）。
+
