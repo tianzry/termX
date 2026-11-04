@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Snippet } from "../backend/client";
 import {
+  deleteSnippetPackage,
   ensureSnippetIds,
   filterSnippets,
+  findShortkeyConflict,
   groupSnippets,
   isScriptSnippet,
   normalizeLineEndings,
   parseShortkey,
+  renameSnippetPackage,
   resolveMultiLineRunMode,
   shortkeyMatches,
   SNIPPET_LINE_DELAY_MS,
@@ -250,5 +253,56 @@ describe("ensureSnippetIds", () => {
   it("已有合法 id 保持不变", () => {
     const list = [snip({ id: "a" }), snip({ id: "b" })];
     expect(ensureSnippetIds(list).map((s) => s.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("findShortkeyConflict", () => {
+  const list = [
+    snip({ id: "a", shortkey: "F1" }),
+    snip({ id: "b", shortkey: "Ctrl + Shift + F2" }),
+  ];
+
+  it("忽略大小写与修饰键顺序命中原片段", () => {
+    expect(findShortkeyConflict(list, "shift + ctrl + f2")?.id).toBe("b");
+    expect(findShortkeyConflict(list, "f1")?.id).toBe("a");
+  });
+
+  it("排除自身", () => {
+    expect(findShortkeyConflict(list, "F1", "a")).toBeNull();
+  });
+
+  it("空值与非法格式不冲突", () => {
+    expect(findShortkeyConflict(list, "")).toBeNull();
+    expect(findShortkeyConflict(list, "Ctrl")).toBeNull();
+  });
+});
+
+describe("renameSnippetPackage", () => {
+  it("级联重命名子分组", () => {
+    const list = [
+      snip({ id: "a", package: "ops" }),
+      snip({ id: "b", package: "ops/db" }),
+      snip({ id: "c", package: "other" }),
+    ];
+    const out = renameSnippetPackage(list, "ops", "prod");
+    expect(out.map((s) => s.package)).toEqual(["prod", "prod/db", "other"]);
+  });
+
+  it("空名 / 同名保持不变", () => {
+    const list = [snip({ id: "a", package: "ops" })];
+    expect(renameSnippetPackage(list, "ops", "  ")).toBe(list);
+    expect(renameSnippetPackage(list, "ops", "ops")).toBe(list);
+  });
+});
+
+describe("deleteSnippetPackage", () => {
+  it("删除分组及其子分组下的片段，保留其他分组", () => {
+    const list = [
+      snip({ id: "a", package: "ops" }),
+      snip({ id: "b", package: "ops/db" }),
+      snip({ id: "c", package: "ops2" }),
+      snip({ id: "d", package: "" }),
+    ];
+    expect(deleteSnippetPackage(list, "ops").map((s) => s.id)).toEqual(["c", "d"]);
   });
 });

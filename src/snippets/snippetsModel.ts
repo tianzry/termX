@@ -183,3 +183,57 @@ export function ensureSnippetIds(snippets: Snippet[]): Snippet[] {
     return { ...s, id };
   });
 }
+
+/** 快捷键冲突检测（排除自身）；命中返回冲突片段，否则 null。对齐 Netcatty shortkey 冲突校验。 */
+export function findShortkeyConflict(
+  snippets: Snippet[],
+  shortkey: string,
+  selfId?: string,
+): Snippet | null {
+  const binding = parseShortkey(shortkey);
+  if (!binding) return null;
+  for (const s of snippets) {
+    if (s.id === selfId || !s.shortkey) continue;
+    const other = parseShortkey(s.shortkey);
+    if (
+      other &&
+      other.ctrl === binding.ctrl &&
+      other.shift === binding.shift &&
+      other.alt === binding.alt &&
+      other.meta === binding.meta &&
+      other.key === binding.key
+    ) {
+      return s;
+    }
+  }
+  return null;
+}
+
+/** 重命名分组并级联子分组（ops → prod 时 ops/db → prod/db）；空名或同名不处理。 */
+export function renameSnippetPackage(
+  snippets: Snippet[],
+  from: string,
+  to: string,
+): Snippet[] {
+  const fromPath = from.trim();
+  const toPath = to.trim();
+  if (!fromPath || !toPath || fromPath === toPath) return snippets;
+  return snippets.map((s) => {
+    const pkg = (s.package || "").trim();
+    if (pkg === fromPath) return { ...s, package: toPath };
+    if (pkg.startsWith(`${fromPath}/`)) {
+      return { ...s, package: toPath + pkg.slice(fromPath.length) };
+    }
+    return s;
+  });
+}
+
+/** 删除分组（含子分组）及其下全部片段。 */
+export function deleteSnippetPackage(snippets: Snippet[], pkg: string): Snippet[] {
+  const path = pkg.trim();
+  if (!path) return snippets;
+  return snippets.filter((s) => {
+    const p = (s.package || "").trim();
+    return !(p === path || p.startsWith(`${path}/`));
+  });
+}

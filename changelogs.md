@@ -3867,3 +3867,28 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `cargo check --features server` ✓（4 个既有 warning）
 - `cargo test --lib`：874 ✓
 - debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：进入钥匙串 → 网格模式 1 张卡片、标题「共 1 项」→ 点击卡片详情面板显示 类型 Ed25519 / 指纹 SHA256:… / 路径 ~/.ssh/id_ed25519 / 公钥全文 → 搜索 `zzz` 后 0 行并显示「没有匹配的密钥。」✓
+
+## 2026-11-04 — 全应用逐功能比对第七轮（脚本与片段）
+
+对照 `Netcatty/components/SnippetsManager.tsx`、`SnippetsRightPanel.tsx`、`snippets/SnippetTargetsSection.tsx`、`snippets/SnippetScriptEditor.tsx`、`QuickAddSnippetDialog.tsx`、`ScriptsSidePanel.tsx`、`scripts/ScriptEditorPanel.tsx`、`ScriptRunLogDialog.tsx` 与本项目 `src/snippets/SnippetsView.tsx`、`snippetsModel.ts`、`snippetsTransfer.ts`、`TerminalPane.tsx` 比对。
+
+| 项 | Netcatty | termX 本轮前 | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 分组（package）级重命名，级联子分组 | 有（`applySnippetPackagePathChange`，ops→prod 时 ops/db→prod/db） | 仅片段上的文本输入 | 行为 | 分组头新增「重命名」，应用内模态输入新路径；`renameSnippetPackage` 级联改名，单测覆盖 |
+| 分组级删除（含子分组） | 有（删除 package 及其片段，模态确认） | 无 | 行为 | 分组头新增「删除分组」，确认后 `deleteSnippetPackage` 级联删除，单测覆盖 |
+| 快捷键冲突检测 | 有（`systemConflict` / `snippetConflict`，且绑定系统快捷键） | 只校验格式 | 行为 | 保存时用 `findShortkeyConflict` 检测与其他片段重复，命中报「已被片段 X 占用」 |
+| 导入预览模态（条目数/包数/跳过/覆盖） | 有（含示例下载） | `window.confirm` 覆盖/跳过 | 交互 | 未实现，登记待人工 |
+| 目标主机 / 分组（targets、allHosts）、多目标执行 | 有（SnippetTargetsSection + 执行面板） | 无（后端 Snippet 无 targets 字段） | 行为 | 未实现，需后端模型扩展，登记待人工 |
+| 执行历史（history 面板、运行日志对话框） | 有 | 无 | 行为 | 未实现，登记待人工 |
+| 终端内快速添加（QuickAddSnippetDialog） | 有 | 无 | 交互 | 未实现，登记待人工 |
+| 录制保存为脚本（ScriptSaveRecordingDialog / 录制指示） | 有 | 无（`scriptRecording.ts` 仅有解析） | 行为 | 未实现，登记待人工 |
+| 包导入/导出含 snippetPackages | 传输格式 v3 支持 | 已支持 v1~3，仅迁移片段字段 | — | 复核通过（targets/trigger/language 留档不导入） |
+| 搜索/分组筛选/类型筛选/CRUD/多行发送模式 | 有 | 有 | — | 复核通过 |
+
+### 门禁
+
+- `npm run test:run`：31 文件 / 388 用例 ✓（新增 6 条：快捷键冲突 3、分组重命名 2、分组删除 1）
+- `npm run build` ✓
+- `cargo check --features server` ✓（4 个既有 warning）
+- `cargo test --lib`：874 ✓
+- debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：脚本页 5 条 / 2 个分组 / 1 个命名分组显示「重命名 / 删除分组」→ 新建片段侧栏标题与 9 个字段 → 点击「重命名」弹出模态，标题「重命名分组」，输入预填 `ops` ✓

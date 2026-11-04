@@ -320,3 +320,94 @@ button.snippets-primary:disabled {
   max-height: 260px;
   overflow-y: auto;
 }
+
+/* 分组操作 + 重命名分组的应用内模态（对齐 Netcatty 分组级重命名/删除）。 */
+.snippets-group-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.snippets-group-actions button {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.snippets-group-actions button:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.snippets-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.snippets-modal {
+  width: min(420px, 92vw);
+  background: #1b1f27;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.snippets-modal h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.snippets-modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.snippets-modal input {
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 6px;
+  color: inherit;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.snippets-modal-hint {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.snippets-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.snippets-modal-actions button {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.snippets-modal-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

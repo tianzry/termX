@@ -9,10 +9,13 @@ import type { Snippet } from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import {
   SNIPPETS_CHANGED_EVENT,
+  deleteSnippetPackage,
   ensureSnippetIds,
   filterSnippets,
+  findShortkeyConflict,
   groupSnippets,
   parseShortkey,
+  renameSnippetPackage,
 } from "./snippetsModel";
 import {
   buildSnippetExportPayload,
@@ -81,6 +84,7 @@ export function SnippetsView() {
   const [notice, setNotice] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [isNew, setIsNew] = useState(false);
+  const [pkgRename, setPkgRename] = useState<{ from: string; to: string } | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -158,6 +162,11 @@ export function SnippetsView() {
       setErr(`快捷键格式无效：${draft.shortkey}（示例：F1 或 Ctrl + Shift + F1）`);
       return;
     }
+    const conflict = findShortkeyConflict(snippets, draft.shortkey, draft.id || undefined);
+    if (conflict) {
+      setErr(`快捷键 ${draft.shortkey.trim()} 已被片段「${conflict.name}」占用`);
+      return;
+    }
     const next: Snippet = {
       id: draft.id || crypto.randomUUID(),
       name,
@@ -182,6 +191,24 @@ export function SnippetsView() {
   const removeSnippet = (s: Snippet) => {
     if (!window.confirm(`删除片段「${s.name}」？不可恢复。`)) return;
     void persist(snippets.filter((x) => x.id !== s.id));
+  };
+
+  const removePackage = (pkg: string) => {
+    const count = snippets.filter(
+      (s) => s.package === pkg || s.package.startsWith(`${pkg}/`),
+    ).length;
+    if (!window.confirm(`删除分组「${pkg}」及其下 ${count} 条片段？不可恢复。`)) return;
+    void persist(deleteSnippetPackage(snippets, pkg));
+  };
+
+  const applyPkgRename = () => {
+    if (!pkgRename) return;
+    const to = pkgRename.to.trim();
+    if (!to || to === pkgRename.from) return;
+    void persist(renameSnippetPackage(snippets, pkgRename.from, to), () =>
+      setPkgRename(null),
+    );
+    if (pkgFilter === pkgRename.from) setPkgFilter(to);
   };
 
   /** 导出为 Netcatty snippet 传输格式（kind=netcatty.snippets / version 3）。 */
@@ -305,6 +332,14 @@ export function SnippetsView() {
               <header className="snippets-group-head">
                 <span className="snippets-group-name">{g.pkg || "未分组"}</span>
                 <span className="snippets-group-count">{g.items.length}</span>
+                {g.pkg && (
+                  <div className="snippets-group-actions">
+                    <button onClick={() => setPkgRename({ from: g.pkg, to: g.pkg })}>
+                      重命名
+                    </button>
+                    <button onClick={() => removePackage(g.pkg)}>删除分组</button>
+                  </div>
+                )}
               </header>
               <div className="snippets-rows">
                 {g.items.map((s) => (
@@ -346,6 +381,40 @@ export function SnippetsView() {
           ))
         )}
       </div>
+
+      {pkgRename && (
+        <div className="snippets-modal-backdrop">
+          <div className="snippets-modal">
+            <h3>重命名分组</h3>
+            <label>
+              <span>分组路径</span>
+              <input
+                autoFocus
+                value={pkgRename.to}
+                onChange={(e) => setPkgRename({ ...pkgRename, to: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") applyPkgRename();
+                  if (e.key === "Escape") setPkgRename(null);
+                }}
+              />
+            </label>
+            <p className="snippets-modal-hint">
+              子分组会一并改名（如 {pkgRename.from}/db →{" "}
+              {pkgRename.to.trim() || "<新名>"}/db）。
+            </p>
+            <div className="snippets-modal-actions">
+              <button onClick={() => setPkgRename(null)}>取消</button>
+              <button
+                className="snippets-primary"
+                disabled={!pkgRename.to.trim() || pkgRename.to.trim() === pkgRename.from}
+                onClick={applyPkgRename}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {draft && (
         <aside className="snippets-aside">
