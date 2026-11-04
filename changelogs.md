@@ -4415,3 +4415,25 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 自动重连必须区分“手动停止”和“意外断开”；仅靠 `forward_active_list` 轮询无法区分，所有 UI 停止入口都要先 `noteForwardStopped`，否则用户停掉的条目会被监督器拉回。
 - 启动进程若由一次性 shell 会话 `Start-Process` 启动，会被工具回收；debug 应用必须用后台 shell 前台运行才能保住 WebView2 + CDP 9222。
 - 自定义 `0.0.0.0` 时不要再尝试 `::1` 二次绑定（否则 IPv6 监听会与 v4 通配地址冲突或产生误导性的第二条监听）。
+
+---
+
+## 2026-11-04 — P1 #34 补字符集字段（主机编辑面板）
+
+上一轮 #34 已落环境变量 + 启动命令；本轮按 Netcatty `Host.charset` 补齐主机表单“字符集 / 终端编码”。
+
+### 修改点
+
+1. `VaultView` 主机编辑面板新增「字符集 / 终端编码」区块：UTF-8 / GB18030 下拉，复用 `terminal/terminalEncoding` 的按主机 localStorage 偏好（与终端「更多 → 终端编码」同键），保存主机时写入、打开编辑时回读；新建主机默认 UTF-8。
+2. 更新置灰清单，剔除已支持的字符集，并补充真实原因：主题/字体/字号覆盖仅全局设置；启动命令运行模式后端只发一次换行；脚本/触发器依赖 #13；Mosh/ET/X11、设备类型/OS、系统 SSH Agent 路径/IdentitiesOnly 后端未实现；SSH 算法字段已有但编辑器未暴露；Keepalive/超时无主机级字段。
+3. 无 Rust 改动、无 schema 变更。
+
+### 验证
+
+- 门禁：`npm run test:run` 433 ✓、`npm run build` ✓。
+- 129 真机（CDP）：环境变量 `LC_ALL=C` + `init_command` 连接成功，标记文件输出 `TERMX-INIT-OK / LC_ALL=C`，exec 对照通道 `BASELINE_LC_ALL=` 为空；主机面板含字符集下拉（`utf-8`/`gb18030`）、环境变量、启动命令与置灰清单；选择 GB18030 保存后 `termx.terminalEncoding.<id>` 回读一致，随后恢复 UTF-8。证据：`evidence/host-advanced-verify.json`、`host-advanced-env.png`。
+
+### 踩坑
+
+- 主机编辑面板里 `document.querySelector('select')` 会命中登录方式等更早的下拉；脚本必须按「字符集 / 终端编码」section 作用域取 `select`。
+- 字符集偏好存 localStorage 而非 DB（既有终端编码设计），因此“保存主机”才会写；新建主机在没有 id 前的选择不落盘，统一在保存时写。

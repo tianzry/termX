@@ -32,6 +32,11 @@ import type {
   Profile,
 } from "./backend/client";
 import { newId } from "./workspaceModel";
+import {
+  loadTerminalEncoding,
+  saveTerminalEncoding,
+  type TerminalEncoding,
+} from "./terminal/terminalEncoding";
 import { userVisibleError } from "./domain/sshErrors";
 import { shellDisplayName } from "./domain/shellName";
 import {
@@ -173,6 +178,8 @@ type ComposerDraft = {
   key_file: string;
   /** 主机级环境变量（SSH SetEnv，需远端 AcceptEnv 放行）。 */
   env_vars: EnvVar[];
+  /** 终端编码 / 字符集（对齐 Netcatty Host.charset）；按主机存本机偏好。 */
+  terminal_encoding: TerminalEncoding;
   init_command: string;
   /** 转发本机 SSH Agent（对齐 Netcatty agentForwarding）。 */
   agent_forwarding: boolean;
@@ -1574,6 +1581,7 @@ export function VaultView({
       mfa: false,
       key_file: "",
       env_vars: [],
+      terminal_encoding: "utf-8",
       init_command: "",
       agent_forwarding: false,
       sftp_protocol: "auto",
@@ -1618,6 +1626,7 @@ export function VaultView({
       mfa,
       key_file: "",
       env_vars: [],
+      terminal_encoding: loadTerminalEncoding(p.id),
       init_command: p.init_command ?? "",
       agent_forwarding: p.agent_forwarding ?? false,
       sftp_protocol:
@@ -1839,6 +1848,8 @@ export function VaultView({
         base.id,
         d.env_vars.filter((v) => v.name.trim()),
       );
+      // 终端编码与终端「更多 → 编码」共用同一份按主机偏好（Netcatty Host.charset）。
+      saveTerminalEncoding(base.id, d.terminal_encoding);
       setHostTags(base.id, parsedTags);
       return base;
     } catch (e) {
@@ -4599,6 +4610,31 @@ export function VaultView({
               <section className="host-details-section">
                 <div className="host-details-section-head">
                   <Icon name="terminal-square" size={13} />
+                  <span>字符集 / 终端编码</span>
+                </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">终端编码</span>
+                  <select
+                    value={composer.terminal_encoding}
+                    onChange={(e) =>
+                      setComposer({
+                        ...composer,
+                        terminal_encoding: e.target.value as TerminalEncoding,
+                      })
+                    }
+                  >
+                    <option value="utf-8">UTF-8（默认）</option>
+                    <option value="gb18030">GB18030（GBK / GB2312）</option>
+                  </select>
+                </div>
+                <p className="host-setting-hint">
+                  按主机保存在本机，与终端「更多 → 终端编码」共用；输出用对应字符集解码，输入交给后端重新编码。
+                </p>
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="terminal-square" size={13} />
                   <span>环境变量</span>
                   <span className="host-setting-hint" style={{ marginLeft: "auto" }}>
                     {composer.env_vars.length} 项
@@ -4685,11 +4721,13 @@ export function VaultView({
                   className="host-setting-hint"
                   style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.8 }}
                 >
-                  <li>字符集 / 主题 / 字体 / 字号：终端解码与外观目前是全局设置，主机档案无对应后端字段。</li>
+                  <li>主题 / 字体 / 字号覆盖：终端外观目前只有全局设置，主机档案无对应后端字段（字符集已在上方支持）。</li>
                   <li>启动命令运行模式（逐行 / 等待提示符）：后端只按换行一次发送。</li>
                   <li>登录脚本 / 连接脚本 / 输出触发器：依赖脚本引擎（#13）。</li>
                   <li>Mosh / EternalTerminal / X11 转发：后端未实现对应传输。</li>
                   <li>设备类型 / OS 覆盖：仅影响 Netcatty 的展示与网络设备原始命令模式。</li>
+                  <li>SSH 算法偏好：档案已有 `algorithms` 字段但编辑器未暴露；Keepalive / 连接与认证超时无主机级字段，沿用默认（30s / 3 次 + 全局超时）。</li>
+                  <li>系统 SSH Agent 路径 / IdentitiesOnly：后端未实现对应开关（已支持 Agent 转发本身）。</li>
                 </ul>
               </section>
             </div>
