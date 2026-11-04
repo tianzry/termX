@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-11-05 — #24 尾巴（解压菜单按连接类型隐藏）+ P1 #25 文件名编码（置灰）
+
+### 对照（Netcatty）
+
+- `domain/models/sftp.ts`：`SftpFilenameEncoding = "auto" | "utf-8" | "gb18030"`。
+- `electron/bridges/sftpBridge.cjs` L103-L189：`iconv.encode(path, encoding)` 把非 ASCII
+  路径编成目标字符集字节再发给 SFTP；`iconv.decode(rawName)` 解码远端返回的原始文件名；
+  `auto` 靠「列表出现非 UTF-8 字节」判定 gb18030，否则沿用上一次结果。
+
+### 修改点
+
+1. #24 尾巴：`RemoteConnection` 增加 `canExec`（终端会话派生 = true，独立 SFTP 连接 = false），
+   新增纯函数 `canExtractArchive(connection, name)`；右键菜单改为「远端 + 有 exec 通道 +
+   归档后缀」三条件才显示「解压到当前目录」，独立连接不再出现该入口（不再点了才报
+   `sftp_extract_no_ssh`）。`archive.test.ts` 补 3 例（会话派生显示 / 独立连接隐藏 / 本地与非归档隐藏）。
+2. #25 **未实现，保持置灰**：后端 SFTP 用 `russh-sftp 2.1.1`，协议层把路径与文件名固定成
+   Rust `String`（`client/session.rs` 一路 `Into<String>`），解码处 `try_get_string` 明确调用
+   `String::from_utf8_lossy`（`src/buf.rs:22-26`）——非 UTF-8 的 GBK 文件名在**列表阶段**
+   就已经被替换为 U+FFFD，原始字节不可恢复；发送侧也只能把 UTF-8 字符串再写成 UTF-8 字节，
+   无法构造 GBK 字节路径。`russh-sftp 3.0.1` 仍是同一 lossy 解码（`src/buf.rs:23`），升级无解。
+   要真实支持必须 fork/补丁协议层（路径按 `Vec<u8>` 透传），超出本轮范围。
+   主机档案的 `sftp_encoding` 字段与保存链路保留（schema 已有），主机表单不暴露该下拉，
+   避免留下不生效的假入口。
+
+### 门禁
+
+- vitest 464 ✓（新增 3 例）/ `npm run build` ✓；本轮无 Rust 改动，未跑 cargo check。
+
+### 踩坑
+
+1. **文件名字节不是字符串**：SFTP 协议里路径就是字节；crate 一旦 lossy 解码，GBK 原始字节即丢失，
+   在 termX 侧再做一次 `iconv` 也补不回来——判定可行性前先看协议层的类型，而不是看上层 API 名字。
+
+---
+
 ## 2026-11-05 — P1 #24 SFTP 归档解压
 
 ### 对照（Netcatty）
