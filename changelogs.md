@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-11-05 — P2 收尾状态（门禁 / 打包 / 遗留项）
+
+### 已完成并验证
+- **代理库**：列表/增删改、主机绑定、分组默认代理、钥匙串身份引用、拖拽排序、
+  ProxyCommand 全部落地；原「未移植能力」置灰行已全部解除。129 实机验证分组默认代理
+  真实经本地 HTTP CONNECT 代理登录成功（代理侧记录 `CONNECT 192.168.126.129:22`），
+  ProxyCommand 子进程 stdio 承载真实 SSH 握手成功。
+- **证书认证 + TOTP**：SSH 证书登录（用户证书 + CA 签名）与 keyboard-interactive
+  TOTP 自动填充（RFC 6238 向量 + mock 服务端实测）。
+- **监控扩项**：逐核 CPU、磁盘 I/O、Top 进程均从 `/proc` 真实采样并在 129 实测。
+- **终端设置 tab / 端口转发总览**：移植项已验证生效，剩余项已在界面写明原因。
+
+### 置灰 / 暂缓及原因
+- 代理页已无未移植置灰项。
+- 证书真实握手：代码路径已实现，但需真实 CA 签名服务器环境做人工验证。
+- Windows ssh-agent 启动与委托：需真实 agent 环境（ssh-agent 服务/页签）人工验证。
+- 安装包安装：MSI / NSIS 仅完成产出，需在干净 Windows 机器人工安装验证。
+- 文件对话框落盘：保存/导出/上传等原生对话框路径需人工在桌面环境确认。
+
+### 验证方式与结果
+- `npm run test:run`：50 文件 / 526 用例全绿；`npm run build`（tsc + vite）通过。
+- `cargo check --all-targets`、`cargo test --lib` 通过。
+- 完整 debug 打包（build-debug.bat 等效步骤，`CARGO_INCREMENTAL=0`）成功产出：
+  - `src-tauri/target/debug/rssh.exe`（57.93 MB）
+  - `src-tauri/target/debug/bundle/msi/termX_0.0.1_x64_en-US.msi`（24.52 MB）
+  - `src-tauri/target/debug/bundle/nsis/termX_0.0.1_x64-setup.exe`（12.26 MB）
+- **依赖对齐**：`@tauri-apps/api` 2.11.1 → 2.12.4（与 Rust `tauri` 2.12.5 同 minor），
+  修复 `tauri build` 的版本错配门禁。
+- git：工作区仅上述依赖变更待提交；本地 HEAD 与 `origin/main` 同步（0 ahead / 0 behind）。
+
+### 遗留待人工
+1. 证书在真实 CA 签名服务器的完整握手。
+2. Windows ssh-agent 启动/转发。
+3. MSI / NSIS 安装包在干净机安装与卸载。
+4. 文件对话框（保存/导出/上传）真实落盘路径。
+
+---
+
 ## 2026-11-05 — 代理库四项代理能力（分组默认 / 钥匙串身份 / 手动排序 / ProxyCommand）
 
 - **schema v45**（只新增迁移块，不改旧版本）：`groups.proxy_profile_id`、
