@@ -45,6 +45,19 @@ const mutedText: CSSProperties = {
   fontSize: 12,
 };
 
+/** 总览视图模式（对齐 Netcatty RuleCard 的 grid/list），持久化到 localStorage。 */
+const VIEW_KEY = "termx.forward.view.v1";
+
+type ViewMode = "list" | "grid";
+
+function readView(): ViewMode {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "grid" ? "grid" : "list";
+  } catch {
+    return "list";
+  }
+}
+
 /** Netcatty 有、termX 尚未具备的能力：置灰并写明原因，不做假按钮。 */
 const UNSUPPORTED = [
   {
@@ -79,6 +92,16 @@ export function ForwardOverview() {
   const [deleteTarget, setDeleteTarget] = useState<api.Forward | null>(null);
   const [search, setSearch] = useState("");
   const [bulk, setBulk] = useState<"start" | "stop" | null>(null);
+  const [view, setView] = useState<ViewMode>(readView);
+
+  function changeView(v: ViewMode) {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* 忽略隐私模式写入失败 */
+    }
+  }
 
   const refreshActive = useCallback(async () => {
     try {
@@ -337,6 +360,28 @@ export function ForwardOverview() {
         >
           新建转发
         </button>
+        <div style={{ display: "flex", border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
+          {(["list", "grid"] as const).map((v) => (
+            <button
+              key={v}
+              style={{
+                ...smallBtn(false),
+                border: "none",
+                borderRadius: 0,
+                background:
+                  view === v ? "hsl(var(--primary))" : "hsl(var(--secondary))",
+                color:
+                  view === v
+                    ? "hsl(var(--primary-foreground))"
+                    : "hsl(var(--foreground))",
+              }}
+              title={v === "list" ? "列表视图" : "卡片视图"}
+              onClick={() => changeView(v)}
+            >
+              {v === "list" ? "列表" : "卡片"}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error && (
@@ -411,7 +456,18 @@ export function ForwardOverview() {
                   {g.activeCount > 0 ? ` · ${g.activeCount} 运行中` : ""}
                 </span>
               </div>
-              <div style={{ padding: "4px 14px 10px" }}>
+              <div
+                style={{
+                  padding: "4px 14px 10px",
+                  ...(view === "grid"
+                    ? {
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+                        gap: 10,
+                      }
+                    : {}),
+                }}
+              >
                 {g.forwards.map((f) => {
                   const info = activeFor(active, f.id);
                   const pending =
@@ -422,11 +478,26 @@ export function ForwardOverview() {
                     <div
                       key={f.id}
                       style={{
-                        padding: "8px 0",
-                        borderBottom: "1px solid hsl(var(--border))",
+                        padding: view === "grid" ? "8px 10px" : "8px 0",
+                        borderBottom:
+                          view === "grid" ? undefined : "1px solid hsl(var(--border))",
+                        border:
+                          view === "grid"
+                            ? "1px solid hsl(var(--border))"
+                            : undefined,
+                        borderRadius: view === "grid" ? 8 : undefined,
+                        background:
+                          view === "grid" ? "hsl(var(--card))" : undefined,
                       }}
                     >
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
                         <span
                           style={{
                             width: 7,
@@ -487,6 +558,7 @@ export function ForwardOverview() {
                       {f.rules.map((rule, index) => {
                         const rs = info?.stats.rules.find((r) => r.index === index);
                         const activeRule = rs?.status === "active" || rs?.status === "starting";
+                        const ruleStatus = rs?.status ?? (info ? "starting" : "stopped");
                         const rulePending = busy === `r:${info?.active_id}:${index}`;
                         return (
                           <div
@@ -501,6 +573,20 @@ export function ForwardOverview() {
                               color: "hsl(var(--muted-foreground))",
                             }}
                           >
+                            <span
+                              style={{
+                                border: "1px solid hsl(var(--border))",
+                                borderRadius: 4,
+                                padding: "0 5px",
+                                fontSize: 11,
+                                color:
+                                  ruleStatus === "active"
+                                    ? "hsl(var(--primary))"
+                                    : "hsl(var(--muted-foreground))",
+                              }}
+                            >
+                              {ruleStatus === "stopped" ? "未启动" : ruleStatus}
+                            </span>
                             <span style={{ color: "hsl(var(--foreground))" }}>
                               {ruleLabel(rule)}
                             </span>

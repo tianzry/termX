@@ -67,6 +67,37 @@ export function ForwardPanel() {
     void refresh();
   }, []);
 
+  // 有运行中条目时 2s 轮询统计（对齐 Netcatty 的运行态自动刷新），不打断 busy。
+  const activeKey = Object.values(active)
+    .map((a) => a.activeId)
+    .join(",");
+  useEffect(() => {
+    if (!activeKey) return;
+    let cancelled = false;
+    const tick = async () => {
+      const snap = Object.entries(active);
+      for (const [fid, info] of snap) {
+        try {
+          const s = await api.forwardStats(info.activeId);
+          if (cancelled) return;
+          setActive((prev) =>
+            prev[fid]?.activeId === info.activeId
+              ? { ...prev, [fid]: { ...prev[fid], stats: s } }
+              : prev,
+          );
+        } catch {
+          /* 会话已断开时忽略，等待下一次 refresh */
+        }
+      }
+    };
+    const timer = setInterval(() => void tick(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKey]);
+
   /** 表单校验已在 ForwardForm 内完成，这里只落库并刷新。 */
   async function submitDraft(draft: ForwardDraft) {
     setBusy(true);
@@ -163,6 +194,8 @@ export function ForwardPanel() {
     try {
       const activeId = await api.forwardStart(f.id);
       setActive((a) => ({ ...a, [f.id]: { activeId, stats: null } }));
+      const s = await api.forwardStats(activeId);
+      setActive((a) => ({ ...a, [f.id]: { activeId, stats: s } }));
     } catch (e) {
       setErr(userVisibleError(String(e)));
     } finally {
@@ -240,31 +273,41 @@ export function ForwardPanel() {
         onCancel={cancelEdit}
       />
 
-      {/* 已有转发列表 */}
+      {/* 已有转发列表：条目头 + 逐规则行（对齐 Netcatty RuleCard 的信息密度） */}
       <ul className="sftp-list">
         {forwards.map((f) => {
           const info = active[f.id];
           const fstats = info?.stats ?? null;
+          const profileName =
+            profiles.find((p) => p.id === f.profile_id)?.name ?? f.profile_id;
           return (
             <li key={f.id} className="fwd-item">
-              <div className="fwd-name">{f.name}</div>
-              <div className="sftp-meta">
-                {f.rules.length} 条规则 · {profiles.find((p) => p.id === f.profile_id)?.name ?? f.profile_id}
-              </div>
-              <div className="fwd-actions">
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    flex: "0 0 auto",
+                    background: info
+                      ? "hsl(var(--primary))"
+                      : "hsl(var(--muted-foreground))",
+                  }}
+                  title={info ? "运行中" : "未运行"}
+                />
+                <span className="fwd-name">{f.name}</span>
+                <span className="sftp-meta">
+                  {f.rules.length} 条规则 · {profileName}
+                </span>
+                <div style={{ flex: 1 }} />
                 {!info ? (
                   <button onClick={() => start(f)} disabled={busy}>
                     启动
                   </button>
                 ) : (
-                  <>
-                    <button onClick={() => stop(f)} disabled={busy}>
-                      停止
-                    </button>
-                    <button onClick={() => stats(f)} disabled={busy}>
-                      统计
-                    </button>
-                  </>
+                  <button onClick={() => stop(f)} disabled={busy}>
+                    停止
+                  </button>
                 )}
                 <button
                   onClick={() => beginEdit(f)}
@@ -280,49 +323,75 @@ export function ForwardPanel() {
                   删除
                 </button>
               </div>
+
               {fstats && (
-                <div className="fwd-stats">
-                  <div>
-                    总流量 {formatBytes(fstats.bytes_rx)} ↓ /{" "}
-                    {formatBytes(fstats.bytes_tx)} ↑ · {fstats.connections}{" "}
-                    连接 · {fstats.connected ? "运行中" : "已断开"}
-                  </div>
-                  {fstats.rules.map((r) => (
-                    <div key={r.index} className="fwd-rule-stat">
-                      <span>
-                        [{r.index}] {RULE_TYPE_LABEL[r.rule.type]}{" "}
-                        {r.rule.type !== "dynamic"
-                          ? `${r.rule.local_port} → ${r.rule.remote_host}:${r.rule.remote_port}`
-                          : `绑本机 ${r.rule.local_port}`}
-                      </span>
-                      <span className="fwd-tag" data-status={r.status}>
-                        {r.status}
-                      </span>
-                      <div className="sftp-meta">
-                        {formatBytes(r.bytes_rx)} ↓ / {formatBytes(r.bytes_tx)} ↑ ·{" "}
-                        {r.connections} 连接
-                        {r.error ? ` · ${r.error}` : ""}
-                      </div>
-                      {fstats.connected && (
-                        <div className="fwd-rule-actions">
-                          <button
-                            onClick={() => ruleToggle(f, r.index, true)}
-                            disabled={busy || r.status === "active"}
-                          >
-                            启动规则
-                          </button>
-                          <button
-                            onClick={() => ruleToggle(f, r.index, false)}
-                            disabled={busy || r.status === "stopped"}
-                          >
-                            停止规则
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                <div className="sftp-meta" style={{ marginTop: 4 }}>
+                  总流量 {formatBytes(fstats.bytes_rx)} ↓ / {formatBytes(fstats.bytes_tx)} ↑ ·{" "}
+                  {fstats.connections} 连接 · {fstats.connected ? "运行中" : "已断开"}
                 </div>
               )}
+
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  marginTop: 6,
+                }}
+              >
+                {f.rules.map((r, index) => {
+                  const rs = fstats?.rules.find((x) => x.index === index);
+                  const status = rs?.status ?? (info ? "connecting" : "stopped");
+                  const ruleActive = status === "active" || status === "starting";
+                  const rulePending = busy;
+                  return (
+                    <div
+                      key={index}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        fontSize: 12,
+                        color: "hsl(var(--muted-foreground))",
+                      }}
+                    >
+                      <span className="fwd-tag" data-status={status}>
+                        {status === "stopped" ? "未启动" : status}
+                      </span>
+                      <span style={{ color: "hsl(var(--foreground))", fontWeight: 500 }}>
+                        {RULE_TYPE_LABEL[r.type]}
+                      </span>
+                      <span>
+                        {r.type !== "dynamic"
+                          ? `${r.local_port} → ${r.remote_host}:${r.remote_port}`
+                          : `SOCKS5 绑本机 ${r.local_port}`}
+                      </span>
+                      {rs && (
+                        <span>
+                          {formatBytes(rs.bytes_rx)} ↓ / {formatBytes(rs.bytes_tx)} ↑ ·{" "}
+                          {rs.connections} 连接
+                        </span>
+                      )}
+                      {rs?.error && (
+                        <span style={{ color: "hsl(var(--destructive))" }}>{rs.error}</span>
+                      )}
+                      {info && (
+                        <>
+                          <div style={{ flex: 1 }} />
+                          <button
+                            onClick={() => ruleToggle(f, index, !ruleActive)}
+                            disabled={rulePending}
+                            title={ruleActive ? "停止该规则" : "启动该规则"}
+                          >
+                            {ruleActive ? "停规则" : "启规则"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </li>
           );
         })}

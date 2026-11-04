@@ -4187,4 +4187,37 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 前端 `dist` 更新不会触发 Tauri 重编，必须 touch `src-tauri/src/lib.rs` 再 `cargo build`，否则实机仍是旧 UI。
 - 搜索过滤要同时作用于「分组命中」和「规则命中」，否则按主机搜索时会误隐藏同组其它条目。
 
+---
+
+## 2026-11-04 · 端口转发第二层（终端侧面板 + 视图切换 + 真实链路）
+
+### 修改点
+
+1. **总览页视图切换**：新增「列表 / 卡片」切换（localStorage `termx.forward.view.v1` 持久化）；卡片视图用 `repeat(auto-fill, minmax(300px,1fr))` 网格，条目为独立卡片，规则行与按钮自动换行。
+2. **规则行信息对齐 Netcatty RuleCard**：总览每条规则新增状态徽标（未启动 / starting / active 等），保留实际端口、错误、字节与连接数；运行中条目仍提供规则级启停。
+3. **终端侧面板（ForwardPanel）**：
+   - 规则行从「仅运行后展示」改为**始终展示**：类型徽标、`本地/远程/SOCKS5` 摘要、状态、字节↓↑、连接数、错误；
+   - 条目头增加运行态圆点、规则数、主机名；
+   - 运行中每 2s 自动轮询 `forward_stats`（会话断开时静默忽略），启动后立即拉一次统计，不再需要手点「统计」；
+   - 规则级启停按钮常驻（运行态下按规则状态禁用对应方向）。
+4. **托盘**：确认 `src-tauri/src/lib.rs` 无 `TrayIcon`/tray 构建代码，无法提供托盘快捷开关；总览页置灰行已写明「termX 未创建系统托盘（lib.rs 无 TrayIcon），无法提供托盘菜单」，不做假按钮。
+
+### 真实链路实测（192.168.126.129）
+
+- 应用内创建 `local 127.0.0.1:18422 → 127.0.0.1:22`（129 档案）并启动。
+- `Test-NetConnection 127.0.0.1 18422` → `TcpTestSucceeded=True`。
+- 本机 TCP 读 SSH banner → `SSH-2.0-OpenSSH_*`，证明流量经 SSH 隧道到达远端 sshd。
+- `forward_stats`：connections=2、bytes_rx>0、rule=active。
+- 证据：`evidence/fwd-r5-129-e2e.txt`、`fwd-r5-01-running.png`、`fwd-r5-02-list.png`、`fwd-r5-03-grid.png`；测试条目已删除（`list_forwards` 为空）。
+
+### 门禁
+
+- `npm run test:run` 407 ✓；`npm run build` ✓；`cargo check --features server` ✓；`cargo test --lib` 878 ✓。
+- debug 重编后 CDP 复核列表/卡片视图与规则行渲染。
+
+### 踩坑
+
+- 统计轮询必须用 `activeId` 快照比对后再写回，避免停止/重启后旧 stats 覆盖新会话。
+- 卡片视图的条目按钮较多，需 `flexWrap`，否则窄栏下会溢出卡片。
+
 
