@@ -56,6 +56,8 @@ interface Props {
   onSnapshot?: (tabs: Tab[], activeTabId: string | null, restorePending: boolean) => void;
   /** 终端工具栏里打开右侧工具面板。 */
   onOpenTool?: (tool: "sftp" | "forward") => void;
+  /** 终端工具栏「终端设置」→ 打开设置中心。 */
+  onOpenSettings?: () => void;
 }
 
 function resolveActivePane(
@@ -76,6 +78,7 @@ interface LayoutProps {
   onStatus: (paneId: string, text: string) => void;
   onRatio: (splitId: string, ratio: number) => void;
   onOpenTool?: (tool: "sftp" | "forward") => void;
+  onOpenSettings?: () => void;
   onClosePane: (paneId: string) => void;
   onSplit: (dir: SplitDir) => void;
 }
@@ -90,6 +93,7 @@ function LayoutView({
   onStatus,
   onRatio,
   onOpenTool,
+  onOpenSettings,
   onClosePane,
   onSplit,
 }: LayoutProps) {
@@ -105,6 +109,7 @@ function LayoutView({
         onRegister={onRegister}
         onStatus={(text) => onStatus(node.id, text)}
         onOpenTool={onOpenTool}
+        onOpenSettings={onOpenSettings}
         onClosePane={() => onClosePane(node.id)}
         onSplit={onSplit}
       />
@@ -143,6 +148,7 @@ function LayoutView({
     onStatus,
     onRatio,
     onOpenTool,
+    onOpenSettings,
     onClosePane,
     onSplit,
   };
@@ -164,7 +170,10 @@ function LayoutView({
 }
 
 export const Workspace = forwardRef<WorkspaceHandle, Props>(
-  function Workspace({ onActivePane, onStatus, onSnapshot, onOpenTool }, ref) {
+  function Workspace(
+    { onActivePane, onStatus, onSnapshot, onOpenTool, onOpenSettings },
+    ref,
+  ) {
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
     const [activePaneByTab, setActivePaneByTab] = useState<
@@ -407,6 +416,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
                 onStatus={reportPaneStatus}
                 onRatio={(splitId, ratio) => setRatio(tab.id, splitId, ratio)}
                 onOpenTool={onOpenTool}
+                onOpenSettings={onOpenSettings}
                 onClosePane={(paneId) => closePane(tab.id, paneId)}
                 onSplit={splitActive}
               />

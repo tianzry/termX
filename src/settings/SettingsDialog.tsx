@@ -48,10 +48,17 @@ const TABS: TabDef[] = [
   { id: "system", icon: "hard-drive" },
 ];
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
+export function SettingsDialog({
+  onClose,
+  initialTab = "application",
+}: {
+  onClose: () => void;
+  /** 打开时定位到某个 tab（终端工具栏「终端设置」用 appearance）。 */
+  initialTab?: SettingsTabId;
+}) {
   const s = useSettings();
   const t = (k: string, p?: Record<string, string | number>) => settingsT(s.language, k, p);
-  const [tab, setTab] = useState<SettingsTabId>("application");
+  const [tab, setTab] = useState<SettingsTabId>(initialTab);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
 

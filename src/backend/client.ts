@@ -226,8 +226,20 @@ export function sshConnect(
   });
 }
 
-export function sshWrite(sessionId: string, text: string): Promise<void> {
-  return invoke("ssh_write", { sessionId, data: toBytes(text) });
+/**
+ * 终端按键文本写入 SSH 通道。`encoding` 非 utf-8 时后端先做字节重编码
+ * （GB18030 会话的中文输入）。
+ */
+export function sshWrite(
+  sessionId: string,
+  text: string,
+  encoding?: string | null,
+): Promise<void> {
+  return invoke("ssh_write", {
+    sessionId,
+    data: toBytes(text),
+    encoding: encoding ?? null,
+  });
 }
 
 export function sshResize(
@@ -1062,9 +1074,20 @@ export function telnetOpen(
   });
 }
 
-/** 终端按键文本 → UTF-8 字节（Telnet NVT 原始字节流）。 */
-export function telnetWrite(sessionId: string, text: string): Promise<void> {
-  return invoke("telnet_write", { sessionId, data: toBytes(text) });
+/**
+ * 终端按键文本 → 字节（Telnet NVT 原始字节流）。
+ * 非 UTF-8 编码（如 GB18030）由后端按 `encoding` 重新编码后再写入。
+ */
+export function telnetWrite(
+  sessionId: string,
+  text: string,
+  encoding?: string | null,
+): Promise<void> {
+  return invoke("telnet_write", {
+    sessionId,
+    data: toBytes(text),
+    encoding: encoding ?? null,
+  });
 }
 
 /** 发送一行并附换行（换行风格由 open 时的 inputNewline 决定）。 */

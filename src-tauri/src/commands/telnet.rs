@@ -89,8 +89,10 @@ pub fn telnet_write(
     state: State<'_, AppState>,
     session_id: String,
     data: Vec<u8>,
+    encoding: Option<String>,
 ) -> AppResult<()> {
-    telnet_handle(&state, &session_id)?.write(&data)
+    let bytes = crate::terminal::encoding::encode_terminal_input(&data, encoding.as_deref());
+    telnet_handle(&state, &session_id)?.write(&bytes)
 }
 
 #[tauri::command]

@@ -14,6 +14,8 @@ interface Props {
   onReady: (controller: TerminalController) => void;
   onData?: (data: string) => void;
   onResize?: (cols: number, rows: number) => void;
+  /** OSC 7 上报的当前目录（`file://host/path`），用于目录追踪。 */
+  onOsc7?: (payload: string) => void;
 }
 
 const DEFAULT_FONT_STACK = "Menlo, Monaco, Consolas, 'Courier New', monospace";
@@ -68,8 +70,11 @@ export function buildXtermOptions(s: AppSettings): ITerminalOptions {
 }
 
 /** 单例 xterm 画布：创建即 fit + focus，销毁时 unmount 清理。 */
-export function TerminalView({ onReady, onData, onResize }: Props) {
+export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // 回调可能随状态更新而变化，用 ref 保证 xterm 只注册一次处理器。
+  const onOsc7Ref = useRef(onOsc7);
+  onOsc7Ref.current = onOsc7;
 
   useEffect(() => {
     const term = new Terminal(buildXtermOptions(getSettings()));
@@ -82,6 +87,13 @@ export function TerminalView({ onReady, onData, onResize }: Props) {
     const disposables: IDisposable[] = [];
     disposables.push(term.onData((s) => onData?.(s)));
     disposables.push(term.onResize(({ cols, rows }) => onResize?.(cols, rows)));
+    // OSC 7 = 当前目录；xterm 解析后回调负载（`file://host/path`）。
+    disposables.push(
+      term.parser.registerOscHandler(7, (payload) => {
+        onOsc7Ref.current?.(payload);
+        return true;
+      }),
+    );
     // 设置变更（字体 / 光标 / 主题等）实时同步到已打开的终端。
     const unsubSettings = subscribeSettings(() => {
       term.options = buildXtermOptions(getSettings());

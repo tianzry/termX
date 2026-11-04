@@ -66,6 +66,21 @@ import {
   type HostConnectionInfo,
 } from "./terminal/TerminalConnectionDialog";
 import type { AuthKeyOption, TerminalAuthMethod } from "./terminal/TerminalAuthDialog";
+import {
+  buildOsc7SetupPlan,
+  osc7ReloadCommand,
+  parseOsc7Cwd,
+  parseOsc7SetupResult,
+} from "./terminal/osc7";
+import {
+  createTerminalDecoder,
+  loadTerminalEncoding,
+  saveTerminalEncoding,
+  supportsEncodingSwitch,
+  terminalEncodingLabel,
+  type TerminalDecoder,
+  type TerminalEncoding,
+} from "./terminal/terminalEncoding";
 
 type PaneStatus = "connecting" | "connected" | "disconnected";
 
@@ -96,6 +111,8 @@ interface Props {
   onClosePane?: () => void;
   /** 分屏（在当前标签内）。 */
   onSplit?: (dir: "horizontal" | "vertical") => void;
+  /** 打开设置中心（「更多」→ 终端设置）。 */
+  onOpenSettings?: () => void;
 }
 
 const AUTH_RETRY_MESSAGE = "身份验证失败。请检查凭据后重试。";
@@ -131,6 +148,7 @@ export function TerminalPane({
   onOpenTool,
   onClosePane,
   onSplit,
+  onOpenSettings,
 }: Props) {
   const isSsh = tab.connector.kind === "ssh";
   const sshProfileId = tab.connector.kind === "ssh" ? tab.connector.profileId : null;
@@ -154,6 +172,25 @@ export function TerminalPane({
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /**
+   * 终端编码（Netcatty `encoding`）：按主机记住选择，输出用 TextDecoder
+   * 解码、输入交给后端重编码。与日志/录制无关，独立于会话生命周期。
+   */
+  const [encoding, setEncoding] = useState<TerminalEncoding>(() =>
+    loadTerminalEncoding(sshProfileId),
+  );
+  const encodingRef = useRef<TerminalEncoding>(encoding);
+  const decoderRef = useRef<TerminalDecoder>(createTerminalDecoder(encoding));
+  /** 终端编码子菜单（Netcatty 折叠项里的二级选择）。 */
+  const [encodingMenuOpen, setEncodingMenuOpen] = useState(false);
+  /**
+   * OSC 7 目录追踪：`cwd` 是最近一次上报的远端目录；`cwdTracked` 表示本轮
+   * 会话已经收到过上报（菜单里据此显示「已启用」）。
+   */
+  const [cwd, setCwd] = useState<string | null>(null);
+  const [cwdTracked, setCwdTracked] = useState(false);
+  const [osc7DialogOpen, setOsc7DialogOpen] = useState(false);
+  const [osc7Busy, setOsc7Busy] = useState(false);
   /**
    * 手动文本会话日志（Netcatty `sessionLog`）：后端把输出写进用户选的文本文件。
    * 与「开始录制」（脚本录制）是两套独立能力，互不共享状态与产物。
@@ -232,6 +269,37 @@ export function TerminalPane({
     };
   }, [status, isSsh]);
 
+  /**
+   * 编码切换即时生效：重建流式解码器（清掉半截多字节状态）并持久化到该主机。
+   * 输入方向由后端 `ssh_write` / `telnet_write` 的 encoding 参数处理。
+   */
+  useEffect(() => {
+    encodingRef.current = encoding;
+    decoderRef.current = createTerminalDecoder(encoding);
+    saveTerminalEncoding(sshProfileId, encoding);
+  }, [encoding, sshProfileId]);
+
+  /** 「更多」菜单点外部关闭（对齐 Netcatty Popover 的 dismiss 行为）。 */
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".term-tool-more")) return;
+      setMoreOpen(false);
+      setEncodingMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [moreOpen]);
+
+  /** 目录追踪只在活动 SSH 会话上有意义；断开后清空。 */
+  useEffect(() => {
+    if (status !== "connected") {
+      setCwd(null);
+      setCwdTracked(false);
+    }
+  }, [status]);
+
   /** 逐行发送的待执行定时器（断开 / 卸载时必须清掉，避免写入错误会话）。 */
   const pendingWritesRef = useRef<number[]>([]);
   function clearPendingWrites() {
@@ -241,6 +309,57 @@ export function TerminalPane({
 
   function writeToPane(text: string) {
     transportRef.current?.write(text);
+  }
+
+  /** OSC 7 上报：刷新当前目录，标记目录追踪已生效。 */
+  function handleOsc7(payload: string) {
+    const path = parseOsc7Cwd(payload);
+    if (!path) return;
+    setCwd(path);
+    setCwdTracked(true);
+  }
+
+  /**
+   * 「配置目录追踪」：通过 SSH exec 通道写入 shell 钩子，再向交互 shell 发送
+   * 一次重载命令；之后 shell 每次出提示符都会上报 OSC 7。
+   */
+  async function runOsc7Setup() {
+    const sid = sidRef.current;
+    if (osc7Busy) return;
+    if (!sid) {
+      setOsc7DialogOpen(false);
+      onStatus("目录追踪配置失败：会话未连接");
+      return;
+    }
+    setOsc7Busy(true);
+    try {
+      const { command } = buildOsc7SetupPlan();
+      const result = await api.sshExec(sid, command, 20_000);
+      if (result.exit_code !== 0) {
+        onStatus(`目录追踪配置失败：${result.stderr.trim() || result.stdout.trim()}`);
+        return;
+      }
+      const { shell } = parseOsc7SetupResult(result.stdout);
+      writeToPane(`${osc7ReloadCommand(shell)}\r`);
+      setOsc7DialogOpen(false);
+      onStatus("目录追踪配置已发送到终端");
+    } catch (e) {
+      onStatus(`目录追踪配置失败：${userVisibleError(String(e))}`);
+    } finally {
+      setOsc7Busy(false);
+    }
+  }
+
+  /** 下行字节 → 文本（按会话编码）；串口由后端按串口配置解码，走原字节流。 */
+  function writeTerminalOutput(bytes: Uint8Array) {
+    const term = controllerRef.current?.term;
+    if (!term) return;
+    if (transportRef.current?.kind === "serial") {
+      term.write(bytes);
+      return;
+    }
+    const text = decoderRef.current.decode(bytes);
+    if (text) term.write(text);
   }
 
   /**
@@ -718,7 +837,7 @@ export function TerminalPane({
       write: (text) =>
         void (domain === "pty"
           ? api.ptyWrite(sid, text)
-          : api.sshWrite(sid, text)),
+          : api.sshWrite(sid, text, encodingRef.current)),
       resize: (c, r) =>
         void (domain === "pty"
           ? api.ptyResize(sid, c, r)
@@ -736,9 +855,7 @@ export function TerminalPane({
     notifySession(sid);
 
     unsubRef.current = [
-      await api.onTerminalData(domain, sid, (bytes) =>
-        controllerRef.current?.term.write(bytes),
-      ),
+      await api.onTerminalData(domain, sid, writeTerminalOutput),
       await api.onTerminalClose(domain, sid, (info: CloseInfo) => {
         transportRef.current = null;
         notifySession(null);
@@ -865,9 +982,7 @@ export function TerminalPane({
         const unsubs: UnlistenFn[] = [];
         unsubRef.current = unsubs;
         unsubs.push(
-          await api.onTelnetData(sid, (bytes) =>
-            controllerRef.current?.term.write(bytes),
-          ),
+          await api.onTelnetData(sid, writeTerminalOutput),
         );
         unsubs.push(
           await api.onTelnetEcho(sid, (remoteEcho) => {
@@ -906,7 +1021,7 @@ export function TerminalPane({
                 controllerRef.current?.term.write(new TextEncoder().encode(echo));
               }
             }
-            void api.telnetWrite(actual, text);
+            void api.telnetWrite(actual, text, encodingRef.current);
           },
           resize: (nextCols, nextRows) => {
             void api.telnetResize(actual, nextCols, nextRows);
@@ -1257,6 +1372,33 @@ export function TerminalPane({
   // 系统监控只出现在远端 SSH 会话（netcatty isSystemSidebarEligible 排除本地 / 串口 / Telnet）
   const systemEligible = tab.connector.kind === "ssh";
 
+  /**
+   * 「更多」菜单的可用条件与置灰原因（对照 Netcatty TerminalToolbar）：
+   * - 命令历史：SSH 且已连接（Netcatty 排除本地 / 串口 / Telnet）；
+   * - 目录追踪：SSH 且已连接（依赖 OSC 7 + exec 通道）；
+   * - 终端设置：始终可用（设置中心入口）；
+   * - 录制：SSH 且已连接（脚本录制读取 SSH 会话输入）；
+   * - 终端编码：SSH / Telnet 且已连接；串口在连接表单中固定、本地沿用系统编码。
+   * 做不出的项不删除，只置灰并在行内 + 悬停写明原因。
+   */
+  const transportKind = tab.connector.kind;
+  const moreHistoryReason =
+    transportKind !== "ssh"
+      ? "仅 SSH 会话"
+      : status !== "connected"
+        ? "连接后可用"
+        : null;
+  const moreOsc7Reason = moreHistoryReason;
+  const moreRecordingReason = moreHistoryReason;
+  const moreEncodingReason =
+    !supportsEncodingSwitch(transportKind)
+      ? transportKind === "serial"
+        ? "连接表单内配置"
+        : "沿用系统编码"
+      : status !== "connected"
+        ? "连接后可用"
+        : null;
+
   const authValid =
     authUsername.trim().length > 0 &&
     (authMethod === "password" ? authPassword.length > 0 : Boolean(authKeyId));
@@ -1561,40 +1703,77 @@ export function TerminalPane({
             <button
               className="term-tool-btn"
               title="更多"
-              onClick={() => setMoreOpen((v) => !v)}
+              onClick={() =>
+                setMoreOpen((v) => {
+                  // 每次重新打开都收起二级菜单，和 Netcatty 的 Popover 一致。
+                  if (!v) setEncodingMenuOpen(false);
+                  return !v;
+                })
+              }
             >
               <Icon name="more-vertical" size={12} />
             </button>
             {moreOpen && (
-              <div className="term-tool-menu">
-                {systemEligible && (
-                  <>
-                    <button
-                      title="命令历史"
-                      disabled={status !== "connected"}
-                      onClick={() => {
-                        setMoreOpen(false);
-                        setHistoryOpen(true);
-                      }}
-                    >
-                      <Icon name="history" size={12} />
-                      命令历史
-                    </button>
-                    <button disabled title="配置目录追踪（尚未实现）">
-                      <Icon name="folder-sync" size={12} />
-                      配置目录追踪
-                    </button>
-                  </>
-                )}
-                <button disabled title="终端设置（尚未实现）">
-                  <Icon name="palette" size={12} />
-                  终端设置
+              <div className="term-tool-menu term-more-menu">
+                <button
+                  title={moreHistoryReason ?? "命令历史"}
+                  disabled={moreHistoryReason !== null}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setHistoryOpen(true);
+                  }}
+                >
+                  <Icon name="history" size={12} />
+                  <span className="term-menu-text">命令历史</span>
+                  {moreHistoryReason !== null && (
+                    <span className="term-menu-note">{moreHistoryReason}</span>
+                  )}
                 </button>
                 <button
                   title={
-                    scriptRec ? "停止脚本录制并保存到脚本库" : "开始录制脚本"
+                    moreOsc7Reason !== null
+                      ? `配置目录追踪 · ${moreOsc7Reason}`
+                      : cwdTracked
+                        ? `配置目录追踪（已启用：${cwd ?? "未知目录"}）`
+                        : "配置目录追踪"
                   }
-                  disabled={!isSsh || status !== "connected" || scriptRecBusy}
+                  disabled={moreOsc7Reason !== null}
+                  onClick={() => {
+                    setOsc7DialogOpen(true);
+                    setMoreOpen(false);
+                  }}
+                >
+                  <Icon name="folder-sync" size={12} />
+                  <span className="term-menu-text">配置目录追踪</span>
+                  {moreOsc7Reason !== null ? (
+                    <span className="term-menu-note">{moreOsc7Reason}</span>
+                  ) : (
+                    cwdTracked && <span className="term-menu-note">已启用</span>
+                  )}
+                </button>
+                <button
+                  title={
+                    onOpenSettings
+                      ? "终端设置（外观 / 字体 / 行为）"
+                      : "终端设置暂不可用"
+                  }
+                  disabled={!onOpenSettings}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    onOpenSettings?.();
+                  }}
+                >
+                  <Icon name="palette" size={12} />
+                  <span className="term-menu-text">终端设置</span>
+                </button>
+                <button
+                  title={
+                    moreRecordingReason ??
+                    (scriptRec ? "停止录制并保存到脚本库" : "开始录制脚本")
+                  }
+                  disabled={
+                    moreRecordingReason !== null || scriptRecBusy
+                  }
                   className={scriptRec ? "is-recording" : undefined}
                   onClick={() => {
                     setMoreOpen(false);
@@ -1602,19 +1781,72 @@ export function TerminalPane({
                   }}
                 >
                   <Icon name="circle" size={12} className="term-record-dot" />
-                  {scriptRec ? "停止录制" : "开始录制"}
+                  <span className="term-menu-text">
+                    {scriptRec ? "停止录制" : "开始录制"}
+                  </span>
+                  {moreRecordingReason !== null && (
+                    <span className="term-menu-note">{moreRecordingReason}</span>
+                  )}
                 </button>
-                {systemEligible && (
-                  <button disabled title="终端编码（尚未实现）">
+                <div
+                  className={`term-menu-sub${encodingMenuOpen ? " open" : ""}`}
+                >
+                  <button
+                    title={
+                      moreEncodingReason !== null
+                        ? `终端编码 · ${moreEncodingReason}`
+                        : `终端编码（当前 ${terminalEncodingLabel(encoding)}）`
+                    }
+                    disabled={moreEncodingReason !== null}
+                    className={encodingMenuOpen ? "open" : undefined}
+                    onClick={() => setEncodingMenuOpen((v) => !v)}
+                  >
                     <Icon name="languages" size={12} />
-                    终端编码
-                    <Icon
-                      name="chevron-right"
-                      size={12}
-                      className="term-menu-caret"
-                    />
+                    <span className="term-menu-text">终端编码</span>
+                    {moreEncodingReason !== null ? (
+                      <span className="term-menu-note">{moreEncodingReason}</span>
+                    ) : (
+                      <span className="term-menu-note">
+                        {encoding === "utf-8" ? "UTF-8" : "GB18030"}
+                      </span>
+                    )}
+                    {moreEncodingReason === null && (
+                      <Icon
+                        name={encodingMenuOpen ? "chevron-down" : "chevron-right"}
+                        size={12}
+                        className="term-menu-caret"
+                      />
+                    )}
                   </button>
-                )}
+                  {encodingMenuOpen && moreEncodingReason === null && (
+                    <div className="term-menu-sub-list">
+                      {(["utf-8", "gb18030"] as TerminalEncoding[]).map((value) => (
+                        <button
+                          key={value}
+                          className={encoding === value ? "active" : undefined}
+                          title={
+                            value === "utf-8"
+                              ? "UTF-8（默认）"
+                              : "GB18030（GBK / GB2312 兼容）"
+                          }
+                          onClick={() => {
+                            setEncoding(value);
+                            setEncodingMenuOpen(false);
+                            setMoreOpen(false);
+                            controllerRef.current?.term.focus();
+                          }}
+                        >
+                          <span className="term-menu-check">
+                            {encoding === value && <Icon name="check" size={12} />}
+                          </span>
+                          <span className="term-menu-text">
+                            {value === "utf-8" ? "UTF-8" : "GB18030"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1715,7 +1947,43 @@ export function TerminalPane({
           transportRef.current?.write(data);
         }}
         onResize={(cols, rows) => transportRef.current?.resize(cols, rows)}
+        onOsc7={handleOsc7}
       />
+
+      {osc7DialogOpen && (
+        <div className="modal-mask" onClick={() => setOsc7DialogOpen(false)}>
+          <div
+            className="modal term-osc7-modal"
+            role="dialog"
+            aria-label="配置目录追踪"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3>配置目录追踪</h3>
+            <p className="term-osc7-desc">
+              termX 会为当前远端用户添加 OSC 7 提示符配置，让终端持续上报当前目录。
+              与 Netcatty 一致，写入后会立即重载 shell 钩子。
+            </p>
+            <div className="term-menu-label">可能写入的文件</div>
+            <div className="term-osc7-targets">
+              <span>~/.bashrc</span>
+              <span>{"${ZDOTDIR:-~}/.zshrc"}</span>
+              <span>~/.config/fish/config.fish</span>
+            </div>
+            <div className="term-menu-label">将执行的命令</div>
+            <pre className="term-osc7-command">{buildOsc7SetupPlan().command}</pre>
+            <div className="modal-actions">
+              <button onClick={() => setOsc7DialogOpen(false)}>取消</button>
+              <button
+                className="term-osc7-run"
+                disabled={osc7Busy}
+                onClick={() => void runOsc7Setup()}
+              >
+                {osc7Busy ? "正在配置..." : "执行配置"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showConnectionDialog && (
         <TerminalConnectionDialog

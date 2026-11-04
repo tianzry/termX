@@ -628,12 +628,17 @@ fn dispatch(
         "telnet_write" => {
             let sid: String = arg(&args, "sessionId")?;
             let data: Vec<u8> = arg(&args, "data")?;
+            let encoding = args
+                .get("encoding")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let bytes = crate::terminal::encoding::encode_terminal_input(&data, encoding.as_deref());
             let handle = locked(&state.telnet_sessions)
                 .map_err(err_value)?
                 .get(&sid)
                 .cloned();
             match handle {
-                Some(h) => h.write(&data).map(|_| Value::Null).map_err(err_value),
+                Some(h) => h.write(&bytes).map(|_| Value::Null).map_err(err_value),
                 None => Err(json!("telnet_not_found")),
             }
         }
@@ -1072,8 +1077,13 @@ async fn dispatch_async(
         "ssh_write" => {
             let sid: String = arg(&args, "sessionId")?;
             let data: Vec<u8> = arg(&args, "data")?;
+            let encoding = args
+                .get("encoding")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let bytes = crate::terminal::encoding::encode_terminal_input(&data, encoding.as_deref());
             ssh_session(state, &sid)?
-                .write(&data)
+                .write(&bytes)
                 .map(|_| Value::Null)
                 .map_err(err_value)
         }

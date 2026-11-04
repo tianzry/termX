@@ -28,7 +28,10 @@ import { ConnectionManager } from "./ConnectionManager";
 import { SftpView } from "./sftp/SftpView";
 import type { ConnectedHostEntry } from "./sftp/sftpModel";
 import * as api from "./backend/client";
-import { SettingsDialog } from "./settings/SettingsDialog";
+import {
+  SettingsDialog,
+  type SettingsTabId,
+} from "./settings/SettingsDialog";
 import { loadSettings } from "./settings/settingsStore";
 import type {
   Credential,
@@ -98,6 +101,8 @@ export default function App() {
   const [tool, setTool] = useState<Tool>(null);
   const [showManager, setShowManager] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 设置中心打开时定位的 tab（终端工具栏「终端设置」→ 外观）。 */
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId>("application");
   useEffect(() => {
     void loadSettings();
   }, []);
@@ -305,9 +310,17 @@ export default function App() {
         onOpenVault={() => setSurface("vault")}
         onOpenSftp={() => setSurface("sftp")}
         onToggleHostTree={() => setSideOpen((v) => !v)}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          setSettingsTab("application");
+          setSettingsOpen(true);
+        }}
       />
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => setSettingsOpen(false)}
+          initialTab={settingsTab}
+        />
+      )}
 
       {restorePending && (
         <div className="nc-restore">
@@ -364,6 +377,12 @@ export default function App() {
               onStatus={setStatus}
               onSnapshot={onSnapshot}
               onOpenTool={toggleTool}
+              onOpenSettings={() => {
+                // 终端工具栏「终端设置」：对齐 Netcatty 的 theme 侧栏语义，
+                // termX 对应设置中心的外观 tab（主题 / 字体 / 图标）。
+                setSettingsTab("appearance");
+                setSettingsOpen(true);
+              }}
             />
           </div>
         </div>

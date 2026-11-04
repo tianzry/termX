@@ -87,11 +87,18 @@ describe("invoke 参数形状", () => {
     expect(args.authOverride).toBeNull();
   });
 
-  it("sshWrite 上行把文本转成 UTF-8 number 数组", async () => {
+  it("sshWrite 上行把文本转成 UTF-8 number 数组并透传编码", async () => {
     await sshWrite("sid-1", "AB中");
     expect(mockedInvoke).toHaveBeenCalledWith("ssh_write", {
       sessionId: "sid-1",
       data: [65, 66, 228, 184, 173],
+      encoding: null,
+    });
+    await sshWrite("sid-1", "AB中", "gb18030");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("ssh_write", {
+      sessionId: "sid-1",
+      data: [65, 66, 228, 184, 173],
+      encoding: "gb18030",
     });
   });
 

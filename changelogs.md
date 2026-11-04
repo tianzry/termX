@@ -3467,3 +3467,82 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 - **中危**：`strip_ansi` 仅识别 BEL 结尾的 OSC，ST（`ESC \`）结尾会吞掉后续全部输出 → 支持 ST 结束并新增单测。
 - **低危**：`session_log_path_invalid` 补 i18n；`format_invalid` 文案由「导出格式」改为「日志格式」；`already_recording/not_recording` 改为日志语义。
 - 未修（记录待后续）：session_logs 新命令错误分支缺单测；`let _ = record()` 吞 IO 错误且 BufWriter 无周期 flush；sudo/密码可能被录入命令历史与片段。
+
+## 2026-11-04 — 「更多」菜单逐项实现 + 工具栏/菜单像素级统一（本轮）
+
+目标：把终端工具栏右侧「更多」菜单从 3 项禁用占位，补齐为与 Netcatty 逐项等价；同时按同分辨率同缩放截图量对，统一工具栏与菜单的像素细节。
+
+### Netcatty「更多」菜单逐项对照表（源码 `components/terminal/` + zh-CN i18n）
+
+| # | 菜单项 | 图标 | 点击行为 | 可用 / 禁用条件 | 快捷键提示 | termX 现状（本轮后） | 差异 |
+|---|---|---|---|---|---|---|---|
+| 1 | 命令历史 | `clock` 12px | 直接弹出命令历史 popover，点选回填；不弹对话框 | 仅 SSH；未连接时文案变「连接后可用」并置灰 | 无 | 已实现，条件一致，禁用时行内备注同样显示「连接后可用」 | 一致 |
+| 2 | 配置目录追踪 | `compass` 类图标 12px | 先弹对话框：列出「可能写入的文件」+「将执行的命令」，确认后执行并 reload；非直接执行 | 仅 SSH 且已连接 | 无 | 已实现 `.term-osc7-modal`（目标文件 chips + 命令预览 + 取消/执行配置） | 一致；hook 为精简版（见缺口） |
+| 3 | 终端设置 | `settings` 12px | 打开设置中心对应面板，不直接改终端 | 始终可用 | 无 | 已接通：`onOpenSettings` → 设置中心（当前落在「外观」tab，对齐 `onOpenTheme` 语义） | 面板指向待设置页补齐后收敛 |
+| 4 | 开始录制 / 停止录制 | `circle-dot` 12px | 直接开始捕获输入（无对话框）；录制中同一行变为「停止录制」 | 仅 SSH 且已连接；全局单会话互斥，其它终端开启时提示「已有其他终端正在录制」 | 无 | 已实现，菜单标题随录制态切换，停止写入「脚本」片段 | 一致 |
+| 5 | 终端编码 | `languages` 12px | hover / 点击展开二级列表（UTF-8 / GB18030），当前项带 `check`；选择即生效并持久化 | SSH / Telnet 可切换；不支持切换的传输 Netcatty 直接隐藏该项 | 无 | 已实现二级列表 + check + 持久化；不支持的传输**保留条目并置灰**，行内与 `title` 写明原因（串口「连接表单内配置」、本地「沿用系统编码」） | 刻意差异：Netcatty 隐藏，termX 按用户要求保留 + 说明 |
+
+补充：Netcatty 该菜单**无分隔线分组、无快捷键提示、无快捷键列**，全部左对齐，弹出方向为 `align=end sideOffset=4`；termX 保持一致（没有为凑数增加分隔线）。
+
+### 像素级统一（同分辨率 1400×1140、scale 1.36 截图量对）
+
+| 属性 | Netcatty（源码 / 截图实测） | termX 本轮 |
+|---|---|---|
+| 工具按钮尺寸 | `h-6 w-6` = 24×24 | `.term-tool-btn` 20 → **24×24** |
+| 按钮圆角 | `rounded-md` = 6px | 4 → **6px** |
+| 按钮间距 | `gap-2` = 2px，步进 26px | `gap 6` → **4px 容器 gap + 2px 组内**，实测步进 26px |
+| 行内图标 | 12px | **12px**（More 触发与组内按钮一致） |
+| 悬停底色 | 显式 `hover:bg-transparent`（无填充） | 原 `--secondary` 填充 → **transparent**，150ms 过渡 |
+| 激活态 | `bg-secondary` + 图标变亮 | **`hsl(var(--secondary))`** |
+| 工具栏高度 / 内边距 | 28px / 4px 水平 | 30 → **28px**，`padding: 0 4px`，左组 gap 4px |
+| 菜单宽度 | `w-48` = 192px | **192px**（CDP 实测） |
+| 菜单内边距 / 圆角 | `p-1` 4px / `rounded-md` 6px | **4px / 6px** |
+| 菜单行高 | `px-2 py-1.5 text-xs` = 28px | 30 → **28px** |
+| 菜单行圆角 / 字号 / 间距 | 4px / 12px / 8px | **4px / 12px / 8px** |
+| 分隔线 | 无 | **无** |
+| 边框 | `border border-border/60` | **`hsl(var(--border)/0.6)`** |
+| 阴影 | `shadow-md` | **`0 4px 6px -1px rgb(0 0 0/.1), 0 2px 4px -2px rgb(0 0 0/.1)`** |
+| 弹出位置 | `align=end sideOffset=4` | `right:0; top: calc(100% + 4px)` |
+| 出现动画 | Radix zoom-fade 150ms | **`term-menu-in 150ms cubic-bezier(0.16,1,0.3,1)`**，scale .95→1 + fade，origin top right |
+| 禁用态 | 半透明 + 默认光标 | **`opacity:.5; cursor:default`**（保留 pointer-events 让 `title` 悬停说明可见） |
+
+顺带修复：`.term-history-menu` 之前沿用 `right:0` 端对齐，popover 会横跨到主机侧栏上方（实测 x≈0）；改为 `left:0; right:auto` 锚定时钟按钮正下方。
+
+### 实现要点
+
+1. **命令历史**沿用上一轮实现（200 条上限、点选回填），本轮只随菜单语义统一禁用条件与行内备注。
+2. **配置目录追踪**（新）：
+   - `src/terminal/osc7.ts`：bash `PROMPT_COMMAND` / zsh `add-zsh-hook precmd` / fish `fish_prompt` 三种 hook，幂等（`grep -Fq` 后才 append），按 `$SHELL` 选 rc 文件，执行后打印 `__TERMX_OSC7_SHELL__` / `__TERMX_OSC7_CONFIG__` 供前端解析并 reload。
+   - `Terminal.tsx` 新增 `onOsc7` prop，`term.parser.registerOscHandler(7, payload)` 上抛；`TerminalPane` 用 `parseOsc7Cwd` 解析 `file://host/path`（含 `decodeURIComponent` 兜底），菜单项标题变为「配置目录追踪（已启用：<cwd>）」。
+   - 对话框 `.term-osc7-modal`：说明文案、目标文件 chips、`pre` 命令预览（可滚动）、取消 / 执行配置、busy 文案。
+3. **终端设置**：`App.tsx` 新增 `settingsTab` 状态 + `SettingsDialog initialTab`，`Workspace` / `TerminalPane` 透传 `onOpenSettings`；点「更多 → 终端设置」直接打开设置中心。
+4. **终端编码**：
+   - 前端 `src/terminal/terminalEncoding.ts`：`utf-8 | gb18030`，按 hostId 持久化 `termx.terminalEncoding.<hostId>`；`supportsEncodingSwitch`（ssh/telnet true，serial/pty false）；`createTerminalDecoder` 返回流式 `TextDecoder`（跨 chunk 多字节安全）。
+   - 后端 `src-tauri/src/terminal/encoding.rs`：`is_gb18030` 归一化别名（gbk/gb2312/cp936/ms936）；`encode_terminal_input` 用 `encoding_rs::GB18030` 重编码输入；接入 `ssh_write` / `telnet_write` 与 `server.rs` 无头分发（浏览器无 gb18030 encoder，故输入侧必须后端做）。
+   - 输出侧 `TerminalPane.writeTerminalOutput` 按当前编码解码，`decoderRef` 随编码切换重建。
+5. **样式**：上表全部落到 `src/styles.css`；新增 `.term-menu-text`（flex:1 + ellipsis）、`.term-menu-note`（11px 备注）、`.term-menu-check`、`.term-menu-sub-list`、`.term-menu-label`、`.term-osc7-modal` 系列。
+
+### 真机验证（129 `tianzry@192.168.126.129`，WebView2 CDP + 原生截图）
+
+- 菜单几何：CDP 实测宽度 192px、padding 4px、圆角 6px、5 行 × 28px、阴影与 Netcatty 一致；行内备注与禁用不透明度正确。
+- 命令历史：popover 列出 `echo recorded-cmd`、`echo termx-history-test`，点选可回填。
+- 终端设置：点击后设置中心打开并落在「外观」tab（截图确认）。
+- 配置目录追踪：对话框显示目标文件与命令 → 执行配置 → 自动 reload → 重开「更多」显示「配置目录追踪已启用：/home/tianzry」，证明 OSC 7 hook 已生效且 cwd 已回传。
+- 终端编码：二级列表打开、UTF-8 带 check；切 GB18030 后 `localStorage["termx.terminalEncoding.<hostId>"] = "gb18030"`，切回 UTF-8 亦持久化；输入转码由 Rust 单测覆盖，输出解码由前端单测覆盖。
+- 开始录制 / 停止录制：激活后行标题变「停止录制」，停止时 toast「脚本录制已停止，已保存到「脚本」：录制 08:45:08」。
+
+### 差异 / 已知缺口（记录待后续，不删项）
+
+- **终端编码项在不支持的传输上**：Netcatty 隐藏，termX 置灰 + 原因（用户硬性要求不删条目）。
+- **OSC 7 hook 未做 percent-encoding**：含空格 / 中文目录写出的 URI 可能不严格合规，解析侧已做 `decodeURIComponent` 兜底；后续可补。
+- **cwd 仅用于菜单标题**：尚未接入 SFTP 跟随目录 / 状态栏显示（Netcatty 的 OSC 7 主要目的之一是 sudo/su 后 SFTP 跟随）。
+- **终端设置指向**：当前打开「外观」tab（对齐 Netcatty `onOpenTheme`），设置中心「终端」tab 的完整移植已登记为下一轮。
+- **会话日志按钮下拉**（Netcatty 的「打开 / 在文件夹中显示 / 打开方式…」）仍未实现，仍为「点击=开/停」；登记待后续。
+- **GB18030 会话日志**：日志落盘未按终端编码转码，gb18030 会话的 txt 日志可能出现乱码，待后续。
+- 串口编码固定（表单内配置），编码切换只覆盖 SSH / Telnet。
+
+### 门禁
+
+- `npx tsc --noEmit` ✓、`npm run test:run` **31 文件 / 373✓**、`npm run build` ✓（2.09s）。
+- `cargo check --features server` ✓、`cargo test --lib` **874✓**、debug `cargo build` ✓。
+- 代理 WIP `d633866` / `60d8deb` 未触碰。

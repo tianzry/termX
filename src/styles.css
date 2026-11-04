@@ -4197,12 +4197,12 @@ button:disabled {
 
 .term-toolbar {
   flex-shrink: 0;
-  height: 30px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 0 4px 0 10px;
+  gap: 4px;
+  padding: 0 4px;
   border-bottom: 1px solid hsl(var(--border) / 0.5);
   background: hsl(var(--background));
   color: hsl(var(--muted-foreground));
@@ -4215,7 +4215,7 @@ button:disabled {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .term-toolbar-right {
@@ -4235,23 +4235,27 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* 工具栏图标按钮：对照 Netcatty Button size="icon"（h-6 w-6 rounded-md），
+ * 常态透明、无悬停底色（Netcatty 的 buttonBase 显式 hover:bg-transparent），
+ * 只保留激活态底色与录制态颜色。 */
 .term-tool-btn {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   color: hsl(var(--muted-foreground));
+  transition: background-color 150ms ease;
+  cursor: pointer;
 }
 
 .term-tool-btn:hover:not(:disabled) {
-  background: hsl(var(--secondary));
-  color: hsl(var(--foreground));
+  background: transparent;
 }
 
 .term-tool-btn.recording {
@@ -4292,6 +4296,8 @@ button:disabled {
   display: inline-flex;
 }
 
+/* 弹出菜单：对照 Netcatty PopoverContent（w-48 p-1 rounded-md border/60
+ * shadow-md sideOffset=4 align=end + fade/zoom 入场动画）。 */
 .term-tool-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -4300,38 +4306,109 @@ button:disabled {
   width: 192px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
   padding: 4px;
-  border: 1px solid hsl(var(--border) / 0.8);
-  border-radius: 8px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 6px;
   background: hsl(var(--popover));
   box-shadow:
-    0 8px 24px hsl(220 40% 20% / 0.12),
-    0 1px 2px hsl(220 40% 20% / 0.08);
+    0 4px 6px -1px rgb(0 0 0 / 0.1),
+    0 2px 4px -2px rgb(0 0 0 / 0.1);
+  animation: term-menu-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top right;
 }
 
+@keyframes term-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 菜单行：对照 Netcatty menuItemClass（px-2 py-1.5 text-xs rounded-sm gap-2，
+ * 行高 = 6+16+6 = 28px；rounded-sm = calc(--radius - 4px) = 4px）。 */
 .term-menu-caret {
-  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .term-tool-menu button {
-  height: 30px;
+  height: 28px;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
   border: none;
-  border-radius: 5px;
+  border-radius: 4px;
   background: transparent;
   color: hsl(var(--foreground));
   font: inherit;
   font-size: 12px;
   text-align: left;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms ease;
 }
 
 .term-tool-menu button:hover:not(:disabled) {
   background: hsl(var(--secondary));
+}
+
+/* 禁用项：置灰但保留行内说明与 title 悬停原因（不删除条目）。 */
+.term-tool-menu button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.term-menu-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.term-menu-note {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-menu-check {
+  width: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--primary));
+}
+
+/* 二级菜单（终端编码）：缩进、行高略低于父项。 */
+.term-menu-sub {
+  display: flex;
+  flex-direction: column;
+}
+
+.term-menu-sub-list {
+  display: flex;
+  flex-direction: column;
+  padding: 1px 0 2px 14px;
+}
+
+.term-menu-sub-list button {
+  height: 26px;
+}
+
+.term-menu-sub-list button.active {
+  font-weight: 600;
+}
+
+.term-menu-label {
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
 }
 
 .term-record-dot {
@@ -4354,9 +4431,75 @@ button:disabled {
 }
 
 .term-history-menu {
+  left: 0;
+  right: auto;
   width: 260px;
   max-height: 320px;
   overflow-y: auto;
+}
+
+/* 目录追踪配置对话框（对照 Netcatty terminal.osc7Setup） */
+.term-osc7-modal {
+  width: 560px;
+  max-width: calc(100vw - 40px);
+  max-height: 86vh;
+  overflow: auto;
+}
+
+.term-osc7-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-osc7-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.term-osc7-targets span {
+  padding: 2px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-osc7-command {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--muted) / 0.4);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.term-osc7-run {
+  background: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.term-osc7-run:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.term-osc7-run:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .term-history-cmd {

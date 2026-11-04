@@ -1,3 +1,4 @@
+pub mod encoding;
 #[cfg(desktop)]
 pub mod pty;
 pub mod recorder;
