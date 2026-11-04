@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-11-05 — P1 #26 CLI（片段 CRUD + 直连 SFTP 传输；会话操作置灰）
+
+### 对照（Netcatty）
+
+- `electron/cli/netcatty-tool-cli.cjs`：命令是「运行中应用」的 RPC 客户端
+  （`netcattyRpcClient.cjs`）；`sftp <op>` 必须 `--session <id>`，会话与传输都依赖
+  Electron 主进程里的活动会话；vault/forward/snippet/notes 由 capability catalog 派发，输出 `--json`。
+- termX 已有 `rssh` CLI（`rssh-cli`，`--features cli`）：profile / credential / forward /
+  group / config / `profile open`，但无片段、无传输。
+
+### 修改点
+
+1. `commands/snippet.rs`：`rssh snippet list|show|add|rm`，直接读写 `~/.rssh/snippets.json`
+   （与 GUI 同一份数据）。`filter_snippets` 纯函数覆盖 name / command / package / tags，
+   大小写不敏感；`add` 非交互（`--description` / `--package`），重名报 `snippet_exists`。
+2. `commands/sftp.rs`：`rssh sftp ls|get|put`，复用 lib `SftpHandle::connect`（密码/私钥均从
+   SecretStore 取，非交互；下载走 `download_to_path` 流式落盘，上传走 `upload` 覆盖写），
+   支持档案内联代理字段。`lib.rs` 的 `ssh` 模块改 `pub` —— bin 是独立 crate，必须经 lib 公共面取。
+3. 129 实测：`sftp ls 129 /tmp` 正确列出 33 项；`put` 33B → `get` 回本地，两端 SHA256
+   完全一致（`37468CC2…59F42`）。
+
+### 置灰（未做，写明原因）
+
+- **会话级操作**（`session list/read/write/send`）：Netcatty CLI 靠 `netcattyRpcClient.cjs`
+  连运行中应用的 TCP 桥；termX 桌面端没有对外 RPC 桥（只有 `--features server` 的 headless
+  WS，需另起进程并共享 DB/SecretStore），本轮不伪造入口。
+- **`--json` 输出 / `--session` 语义**：与上一条绑定，单独做没有意义。
+- **跳板链与代理库条目**：`SftpHandle::connect` 只收单一代理配置；CLI 传输只应用档案内联代理字段，
+  `proxy_profile_id` 与 bastion 链未接（GUI 的 SFTP 面板走的是另一条连接路径）。
+
+### 门禁
+
+- `cargo build --features cli --bin rssh-cli` ✓；`cargo test --features cli --bin rssh-cli` 7/7 ✓
+  （新增 1 例）；`cargo check --features server --bin rssh-server` ✓。前端未改，未跑 vitest/build。
+
+### 踩坑
+
+1. PowerShell 的 `$home` 是只读自动变量，用它赋临时 HOME 会静默失败，实测写进了真实
+   `~/.rssh/snippets.json`；已 `snippet rm` 清理，并用 `$u` 在隔离目录重测写入路径。
+2. bin 是独立 crate，`lib.rs` 的 `mod ssh` 私有 → `SftpHandle` / `ProxyConfig` 不可达
+   （E0603 连带报出 E0282 类型推断错误）；改 `pub mod ssh` 后一次通过。
+
+---
+
 ## 2026-11-05 — #24 尾巴（解压菜单按连接类型隐藏）+ P1 #25 文件名编码（置灰）
 
 ### 对照（Netcatty）

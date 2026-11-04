@@ -6,3 +6,5 @@ pub mod group;
 pub mod ls;
 pub mod open;
 pub mod rm;
+pub mod sftp;
+pub mod snippet;

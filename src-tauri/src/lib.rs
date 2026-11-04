@@ -12,7 +12,9 @@ pub mod models;
 mod redaction;
 pub mod secret;
 mod sftp;
-mod ssh;
+// pub：`rssh-cli`（`--features cli`）的 `sftp` 子命令直接复用 `SftpHandle` /
+// `ProxyConfig` / known_hosts 路径，bin 是独立 crate，必须经 lib 公共面拿到它们。
+pub mod ssh;
 pub use ssh::bastion;
 #[cfg(all(feature = "server", desktop))]
 pub mod server;

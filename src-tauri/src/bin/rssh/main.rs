@@ -60,6 +60,19 @@ enum Cmd {
         #[command(subcommand)]
         action: GroupCmd,
     },
+    /// Manage snippets (snippets.json)
+    Snippet {
+        #[command(subcommand)]
+        action: SnippetCmd,
+    },
+    /// Direct SFTP transfers (list / get / put)
+    #[command(after_help = "\
+Direct connections only: bastion chains and proxy-library entries are not applied; \
+inline proxy fields on the profile are honored.")]
+    Sftp {
+        #[command(subcommand)]
+        action: SftpCmd,
+    },
     /// Configuration: export, import, remote sync (GitHub / WebDAV)
     Config {
         #[command(subcommand)]
@@ -134,6 +147,50 @@ enum ForwardCmd {
     Rm {
         #[arg(add = ArgValueCompleter::new(commands::completions::complete_forwards))]
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum SnippetCmd {
+    /// List snippets, optionally filtered by name / command / package / tag
+    List { query: Option<String> },
+    /// Show one snippet in full
+    Show { name: String },
+    /// Add a snippet non-interactively
+    Add {
+        name: String,
+        /// Shell command to run
+        command: String,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long, default_value = "")]
+        package: String,
+    },
+    /// Remove a snippet by name
+    Rm { name: String },
+}
+
+#[derive(Subcommand)]
+enum SftpCmd {
+    /// List a remote directory
+    Ls {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+        path: Option<String>,
+    },
+    /// Download a remote file
+    Get {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+        remote: String,
+        local: String,
+    },
+    /// Upload a local file
+    Put {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+        local: String,
+        remote: String,
     },
 }
 
@@ -295,6 +352,32 @@ fn main() {
             GroupCmd::Add => commands::group::cmd_add_group(&conn),
             GroupCmd::Edit { name } => commands::group::cmd_edit_group(&conn, &name),
             GroupCmd::Rm { name } => commands::group::cmd_rm_group(&conn, &name),
+        },
+        Some(Cmd::Snippet { action }) => match action {
+            SnippetCmd::List { query } => commands::snippet::cmd_list(&conn, query.as_deref()),
+            SnippetCmd::Show { name } => commands::snippet::cmd_show(&conn, &name),
+            SnippetCmd::Add {
+                name,
+                command,
+                description,
+                package,
+            } => commands::snippet::cmd_add(&conn, &name, &command, &description, &package),
+            SnippetCmd::Rm { name } => commands::snippet::cmd_rm(&conn, &name),
+        },
+        Some(Cmd::Sftp { action }) => match action {
+            SftpCmd::Ls { profile, path } => {
+                commands::sftp::cmd_ls(&conn, &profile, path.as_deref())
+            }
+            SftpCmd::Get {
+                profile,
+                remote,
+                local,
+            } => commands::sftp::cmd_get(&conn, &profile, &remote, &local),
+            SftpCmd::Put {
+                profile,
+                local,
+                remote,
+            } => commands::sftp::cmd_put(&conn, &profile, &local, &remote),
         },
         Some(Cmd::Config { action }) => commands::config::cmd_config(&conn, action),
         Some(Cmd::Completions { .. }) => unreachable!("handled before database initialization"),
