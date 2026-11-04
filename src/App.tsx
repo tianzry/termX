@@ -206,6 +206,7 @@ export default function App() {
   }, [tabs.length, surface]);
 
   const [activeHandle, setActiveHandle] = useState<PaneHandle | null>(null);
+  const [activeCwd, setActiveCwd] = useState<string | null>(null);
   const onActivePane = useCallback((handle: PaneHandle | null) => {
     setActiveHandle(handle);
   }, []);
@@ -217,6 +218,15 @@ export default function App() {
     }
     setActiveSshSid(activeHandle.sshSessionId());
     return activeHandle.subscribeSession(setActiveSshSid);
+  }, [activeHandle]);
+
+  useEffect(() => {
+    if (!activeHandle) {
+      setActiveCwd(null);
+      return;
+    }
+    setActiveCwd(activeHandle.cwd());
+    return activeHandle.subscribeCwd(setActiveCwd);
   }, [activeHandle]);
 
   function openLocal() {
@@ -490,7 +500,9 @@ export default function App() {
             subtitle="工具面板"
             onClose={() => setTool(null)}
           >
-            {tool === "sftp" && <SftpPanel sshSessionId={activeSshSid} />}
+            {tool === "sftp" && (
+              <SftpPanel sshSessionId={activeSshSid} terminalCwd={activeCwd} />
+            )}
             {tool === "forward" && <ForwardPanel />}
           </AsidePanel>
         )}

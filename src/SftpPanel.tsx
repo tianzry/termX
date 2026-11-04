@@ -1,11 +1,19 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as api from "./backend/client";
 import { userVisibleError } from "./domain/sshErrors";
+import {
+  isSftpFollowTargetPath,
+  resolveTerminalCwdForSftp,
+  shouldFollowTerminalCwdNavigate,
+} from "./domain/sftpFollowCwd";
+import { getSettings, subscribeSettings } from "./settings/settingsStore";
 import type { CredentialType, FileStat, RemoteEntry } from "./backend/client";
 
 interface Props {
   /** 当前已建连的 SSH 会话 id，用于「复用 SSH 会话」建 SFTP。 */
   sshSessionId: string | null;
+  /** 活动终端窗格 OSC 7 上报的目录；跟随开启时作为起始 / 跟随目标。 */
+  terminalCwd?: string | null;
 }
 
 type Direction = "up" | "down";
@@ -50,9 +58,15 @@ function formatSize(bytes: number): string {
  * SFTP 文件浏览面板：独立连接 / 复用 SSH 会话。
  * 支持 list/下载/上传/目录/重命名/删除/stat，以及流式传输 + 递归目录 + 原生选择框 + 进度条。
  */
-export function SftpPanel({ sshSessionId }: Props) {
+export function SftpPanel({ sshSessionId, terminalCwd = null }: Props) {
   const [sftpId, setSftpId] = useState<string | null>(null);
   const [cwd, setCwd] = useState("/");
+  const [followEnabled, setFollowEnabled] = useState(
+    () => getSettings().sftpFollowTerminalCwd,
+  );
+  /** 已跟随 / 跟随失败的终端目录：避免用户手动浏览后被反复打回。 */
+  const [handledPath, setHandledPath] = useState<string | null>(null);
+  const [blockedPath, setBlockedPath] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState("/");
   const [entries, setEntries] = useState<RemoteEntry[]>([]);
   const [busy, setBusy] = useState(false);
@@ -75,8 +89,47 @@ export function SftpPanel({ sshSessionId }: Props) {
   const [transfers, setTransfers] = useState<TransferRow[]>([]);
   const canceled = useRef<Set<string>>(new Set());
 
-  async function refresh(path?: string) {
+  useEffect(() => {
+    setFollowEnabled(getSettings().sftpFollowTerminalCwd);
+    return subscribeSettings(() =>
+      setFollowEnabled(getSettings().sftpFollowTerminalCwd),
+    );
+  }, []);
+
+  /** 终端 cwd 变化后把 SFTP 导航过去（有传输在跑 / 同一路径已处理过时跳过）。 */
+  useEffect(() => {
     if (!sftpId) return;
+    const target = followTarget();
+    if (!target) return;
+    const hasActiveWork = transfers.some((t) => t.status === "running");
+    if (
+      !shouldFollowTerminalCwdNavigate({
+        followEnabled,
+        isConnected: true,
+        hasActiveWork,
+        terminalCwd: target,
+        currentPath: cwd,
+        handledPath,
+        blockedPath,
+      })
+    ) {
+      return;
+    }
+    let canceledEffect = false;
+    void refresh(target).then((ok) => {
+      if (canceledEffect) return;
+      if (ok) setHandledPath(target);
+      else setBlockedPath(target);
+    });
+    return () => {
+      canceledEffect = true;
+    };
+    // refresh / followTarget 是组件内闭包；依赖只列驱动因素。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sftpId, terminalCwd, followEnabled, cwd, transfers, handledPath, blockedPath]);
+
+  async function refresh(path?: string): Promise<boolean> {
+    if (!sftpId) return false;
     setBusy(true);
     setErr("");
     try {
@@ -87,11 +140,33 @@ export function SftpPanel({ sshSessionId }: Props) {
       setEntries(list);
       setStat(null);
       setRenaming(null);
+      return true;
     } catch (e) {
       setErr(userVisibleError(String(e)));
+      return false;
     } finally {
       setBusy(false);
     }
+  }
+
+  /** 跟随目标：终端 cwd 展开 `~` 后仍是绝对路径才可用（对照 Netcatty resolveTerminalCwdForSftp）。 */
+  function followTarget(): string | null {
+    if (!terminalCwd) return null;
+    const path = resolveTerminalCwdForSftp(terminalCwd, null, cwd);
+    return isSftpFollowTargetPath(path) ? path : null;
+  }
+
+  /** 首次进入：跟随开启且终端已上报 cwd 时先试终端目录，不可达则回退 home。 */
+  async function refreshInitial(home: string) {
+    const target = followEnabled ? followTarget() : null;
+    if (target && target !== home) {
+      if (await refresh(target)) {
+        setHandledPath(target);
+        return;
+      }
+      setBlockedPath(target);
+    }
+    await refresh(home);
   }
 
   async function connectStandalone() {
@@ -127,7 +202,7 @@ export function SftpPanel({ sshSessionId }: Props) {
       const id = await api.sftpConnectSession(sshSessionId);
       setSftpId(id);
       const home = await api.sftpHome(id);
-      await refresh(home);
+      await refreshInitial(home);
     } catch (e) {
       setErr(userVisibleError(String(e)));
     } finally {
@@ -149,6 +224,8 @@ export function SftpPanel({ sshSessionId }: Props) {
     setCwd("/");
     setPathInput("/");
     setRenaming(null);
+    setHandledPath(null);
+    setBlockedPath(null);
   }
 
   async function openEntry(e: RemoteEntry) {

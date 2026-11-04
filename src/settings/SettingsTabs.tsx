@@ -1397,9 +1397,12 @@ export function SftpTab() {
         </Row>
         <Row
           title={t("settings.sftp.followTerminalCwd")}
-          desc={withReason(t("settings.sftp.followTerminalCwd.desc"))}
+          desc={t("settings.sftp.followTerminalCwd.desc")}
         >
-          <Toggle checked={false} onChange={() => {}} disabled />
+          <Toggle
+            checked={s.sftpFollowTerminalCwd}
+            onChange={(v) => updateSettings({ sftpFollowTerminalCwd: v })}
+          />
         </Row>
         <Row
           title={t("settings.sftp.autoOpenSidebar")}

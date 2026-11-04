@@ -170,6 +170,8 @@ export interface AppSettings {
   sftpShowHiddenFiles: boolean;
   /** 同一目标同时传输的文件数上限（对照 Netcatty settings.sftp.transferConcurrency）。 */
   sftpTransferConcurrency: number;
+  /** SFTP 跟随终端目录（对照 Netcatty settings.sftpFollowTerminalCwd）。 */
+  sftpFollowTerminalCwd: boolean;
 }
 
 export const SETTINGS_STORAGE_KEY = "settings.center.v1";
@@ -296,6 +298,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sftpDoubleClickBehavior: "open",
   sftpShowHiddenFiles: false,
   sftpTransferConcurrency: DEFAULT_SFTP_TRANSFER_CONCURRENCY,
+  sftpFollowTerminalCwd: false,
 };
 
 /** 窗口透明度 clamp 到 [0.5, 1]（对照 Netcatty clampWindowOpacity）。 */
@@ -545,5 +548,6 @@ export function normalizeSettings(raw: unknown): AppSettings {
     ),
     sftpShowHiddenFiles: pickBool(r.sftpShowHiddenFiles, d.sftpShowHiddenFiles),
     sftpTransferConcurrency: clampSftpTransferConcurrency(r.sftpTransferConcurrency),
+    sftpFollowTerminalCwd: pickBool(r.sftpFollowTerminalCwd, d.sftpFollowTerminalCwd),
   };
 }

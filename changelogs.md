@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-11-05 — P2 #31 终端细节增强（子项：SFTP 跟随终端目录）
+
+### 对照（Netcatty）
+
+- `sftpFollowTerminalCwd`（全局设置，档案可覆盖）：SFTP 侧栏可见、已连接、无进行中传输时
+  可被终端 cwd（OSC 7）带过去；handled / blocked 记忆避免用户手动浏览后被反复打回；
+  `resolveTerminalCwdForSftp` 负责 `~` 展开。
+- termX 的 OSC 7 钩子与菜单标题回显已在前一轮完成，缺的是「把 cwd 交给 SFTP」。
+
+### 修改点
+
+1. 新增纯函数模块 `src/domain/sftpFollowCwd.ts`（+ 4 组单测）：`shouldFollowTerminalCwdNavigate`
+   （跟随开关 / 已连接 / 传输在跑 / handled / blocked / 同目录）、`resolveTerminalCwdForSftp`、
+   `isSftpFollowTargetPath`、`guessUnixHomeDirFromPath`。
+2. `PaneHandle` 增 `cwd()` / `subscribeCwd`：`TerminalPane` 用 `cwdRef` + 订阅者集合镜像 OSC 7 目录，
+   `App` 订阅活动窗格并透传给 `SftpPanel`。
+3. `SftpPanel` 增 `terminalCwd` 入参与跟随效果：首次进入优先终端目录（不可达回退 home 并记 blocked），
+   之后 cwd 变化导航过去；`refresh()` 改为返回成功与否供回退判断。
+4. 设置中心 SFTP tab 的「追随终端目录」由置灰改为真实开关（默认关，对齐 Netcatty）；
+   `settingsModel` 增 `sftpFollowTerminalCwd`（含读取兜底）。
+
+### 验证
+
+- `npm run test:run`：44 文件 / 468 用例全绿（含新增 `sftpFollowCwd.test.ts`）。
+- `npm run build`（tsc --noEmit + vite）通过。
+- 未重启 GUI 实测：跟随链路依赖 OSC 7 实时上报与真实 SFTP 会话，本轮由纯函数单测覆盖判定；
+  端到端 UI 复检留待下一次 GUI 启动（如需 129 实测再补）。
+
+### 踩坑
+
+- `subscribeSettings` 回调类型是零参 `Listener`，写成 `(s) => ...` 会 TS2345；需在回调内自行 `getSettings()`。
+- 改 cwd 入口要一次性收敛到 `applyCwd()`（状态 + 镜像 + 通知），否则状态与句柄读取值会分叉。
+
+---
+
 ## 2026-11-05 — P1 #39 SSH Agent 转发（exec 通道补齐）+ #37 Vault 子页收尾
 
 ### 对照（Netcatty）

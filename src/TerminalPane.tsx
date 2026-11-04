@@ -123,6 +123,10 @@ export interface PaneHandle {
   sshSessionId: () => string | null;
   /** 订阅 SSH 会话变化（连接 / 断开时回调）。 */
   subscribeSession: (cb: (sid: string | null) => void) => () => void;
+  /** 最近一次 OSC 7 上报的远端目录（未上报 / 非 SSH 为 null）。 */
+  cwd: () => string | null;
+  /** 订阅 cwd 变化（SFTP 跟随终端目录用）。 */
+  subscribeCwd: (cb: (cwd: string | null) => void) => () => void;
   /** 重新连接当前窗格（对齐 Netcatty 标签右键「重连」）。 */
   reconnect: () => void;
   focus: () => void;
@@ -350,7 +354,7 @@ export function TerminalPane({
   /** 目录追踪只在活动 SSH 会话上有意义；断开后清空。 */
   useEffect(() => {
     if (status !== "connected") {
-      setCwd(null);
+      applyCwd(null);
       setCwdTracked(false);
     }
   }, [status]);
@@ -372,7 +376,7 @@ export function TerminalPane({
   function handleOsc7(payload: string) {
     const path = parseOsc7Cwd(payload);
     if (!path) return;
-    setCwd(path);
+    applyCwd(path);
     setCwdTracked(true);
   }
 
@@ -879,6 +883,15 @@ export function TerminalPane({
   /** 连接尝试代数：取消 / 超时后让仍在进行的旧尝试失效。 */
   const attemptRef = useRef(0);
   const listenersRef = useRef(new Set<(sid: string | null) => void>());
+  /** cwd 镜像与订阅者：SFTP 面板经句柄读取最新目录，不能等 state 异步生效。 */
+  const cwdRef = useRef<string | null>(null);
+  const cwdListenersRef = useRef(new Set<(cwd: string | null) => void>());
+
+  function applyCwd(next: string | null) {
+    cwdRef.current = next;
+    setCwd(next);
+    cwdListenersRef.current.forEach((cb) => cb(next));
+  }
   const pendingPromptRef = useRef<Prompt | null>(null);
   const aliveRef = useRef(true);
   const startedRef = useRef(false);
@@ -966,6 +979,14 @@ export function TerminalPane({
         cb(sidRef.current);
         return () => {
           listenersRef.current.delete(cb);
+        };
+      },
+      cwd: () => cwdRef.current,
+      subscribeCwd: (cb) => {
+        cwdListenersRef.current.add(cb);
+        cb(cwdRef.current);
+        return () => {
+          cwdListenersRef.current.delete(cb);
         };
       },
       reconnect: () => {

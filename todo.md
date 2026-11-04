@@ -273,7 +273,11 @@
   - 参考：`AGENTS.md`「Codex App Server」。
 - [ ] ⬜ **31. 终端细节增强**
   - 命令块脱敏、命令黑名单、光标行高亮、OSC7 目录追踪、压缩包快捷解压、Unicode 宽字符、中文输入法适配。
-  - 进度（2026-11-04）：OSC 7 目录追踪部分完成——「更多 → 配置目录追踪」可一键写入 bash/zsh/fish 幂等 hook，回传 cwd 显示在菜单标题；**未接** SFTP 跟随目录与状态栏显示（剩余部分待 #31 后续）。
+  - 进度（2026-11-05）：OSC 7 目录追踪已接通 SFTP——新增 `domain/sftpFollowCwd.ts` 判定纯函数，
+    `PaneHandle` 暴露 `cwd()/subscribeCwd`，`App` 透传活动窗格目录，`SftpPanel` 支持首次进入与实时跟随
+    （不可达回退 home 并记 blocked；设置中心「追随终端目录」开关默认关）。
+    剩余：命令黑名单 / 命令块脱敏依赖 Netcatty AI 执行器（termX 无 AI，置灰）、Unicode 宽字符与中文输入法未接、
+    本地压缩包快捷解压未做（远端已由 #24 覆盖）。
   - 参考：`commandBlocklist.ts`、`cursorLineHighlight.ts`、`inheritedCwd.ts`。
 - [ ] ⬜ **38. 会话快照迁移**
   - 跨窗口 / 重启的会话状态交接（序号、回滚缓冲、激活态），配合 #22 多窗口。
