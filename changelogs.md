@@ -75,13 +75,24 @@
   远端用 `printf '\033]7;file://%s%s\007' "$HOSTNAME" "$PWD"` 上报 OSC 7；SFTP 面板首进
   `/home/tianzry`，终端 `cd /tmp` 后自动跟到 `/tmp`。取证：`evidence/sftp-follow-129.png`
   与 `evidence/sftp-follow-129.json`（`firstOpenPath` / `followedPath` / `passed: true`）。
-  「有传输进行时不抢目录」由 `transfers.some(status === "running")` → `hasActiveWork` 判定，
-  该分支由 `sftpFollowCwd.test.ts` 覆盖；真实传输起点依赖原生另存为/打开选择框，未做 UI 自动化。
+- 复检 v2（同日，按用户指定 ST 结尾 `printf '\033]7;file://%s%s\033\\' "$HOSTNAME" "$PWD"`）：
+  首进 `/home/tianzry` → `cd /tmp` 跟到 `/tmp` → **真实上传 64 MiB 期间** `cd /var` 并上报 OSC 7，
+  SFTP 仍停在 `/tmp`（传输行 running 44%），取消传输后自动跟到 `/var`。
+  取证：`evidence/sftp-follow-129-v2.json`（`passed: true`）与三张截图
+  `sftp-follow-129-cd.png` / `-transfer-block.png` / `-after-transfer.png`。
+  「不抢目录」不再只靠单测：传输由原生「打开文件」框真实发起，
+  用 UIA 定位 `#32770` 对话框的文件名控件（AutomationId 1148）后 Alt+N 填入路径并确认
+  （脚本 `evidence/fill-open-dialog.ps1`）。
 
 ### 踩坑
 
 - `subscribeSettings` 回调类型是零参 `Listener`，写成 `(s) => ...` 会 TS2345；需在回调内自行 `getSettings()`。
 - 改 cwd 入口要一次性收敛到 `applyCwd()`（状态 + 镜像 + 通知），否则状态与句柄读取值会分叉。
+- 原生「打开文件」框自动化：DirectUI 控件在 UIA 里 `ControlType` 是 `Pane`，不能按 Edit/Button 过滤，
+  要按 `AutomationId`（文件名 1148）+ `ClassName`（Edit/Button）定位；找不到对话框就必须直接退出，
+  绝不能盲发按键。
+- PowerShell 5.1 读取 UTF-8 无 BOM 的脚本时中文注释会干扰后续行解析（表现为 `$uiaDir` 为 null），
+  evidence 辅助脚本保持纯 ASCII。
 
 ---
 

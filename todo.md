@@ -276,7 +276,9 @@
   - 进度（2026-11-05）：OSC 7 目录追踪已接通 SFTP——新增 `domain/sftpFollowCwd.ts` 判定纯函数，
     `PaneHandle` 暴露 `cwd()/subscribeCwd`，`App` 透传活动窗格目录，`SftpPanel` 支持首次进入与实时跟随
     （不可达回退 home 并记 blocked；设置中心「追随终端目录」开关默认关）。
-    端到端复检（129 + CDP）通过：首进 `/home/tianzry`，`cd /tmp` 后跟到 `/tmp`。
+    端到端复检（129 + CDP）通过：首进 `/home/tianzry`，`cd /tmp` 后跟到 `/tmp`；
+    复检 v2 追加真实传输场景：64 MiB 上传 running 期间 `cd /var` 不抢目录（仍 `/tmp`），
+    取消后跟到 `/var`（证据 `evidence/sftp-follow-129-v2.json` + 3 张截图）。
     剩余：命令黑名单 / 命令块脱敏依赖 Netcatty AI 执行器（termX 无 AI，置灰）、Unicode 宽字符与中文输入法未接、
     本地压缩包快捷解压未做（远端已由 #24 覆盖）。
   - 参考：`commandBlocklist.ts`、`cursorLineHighlight.ts`、`inheritedCwd.ts`。
