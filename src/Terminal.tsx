@@ -8,7 +8,11 @@ import {
   type ITheme,
 } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
+import * as api from "./backend/client";
+import { isFindShortcut, linkModifierAllows } from "./terminal/linkActivation";
 import type { AppSettings } from "./settings/settingsModel";
 import {
   clampCursorBarWidth,
@@ -21,6 +25,7 @@ import { getSettings, resolvedThemeMode, subscribeSettings } from "./settings/se
 export interface TerminalController {
   term: Terminal;
   fit: FitAddon;
+  search: SearchAddon;
 }
 
 interface Props {
@@ -29,6 +34,8 @@ interface Props {
   onResize?: (cols: number, rows: number) => void;
   /** OSC 7 上报的当前目录（`file://host/path`），用于目录追踪。 */
   onOsc7?: (payload: string) => void;
+  /** Cmd/Ctrl+F：打开终端搜索条（对照 Netcatty searchTerminal 热键）。 */
+  onFindShortcut?: () => void;
 }
 
 const DEFAULT_FONT_STACK = "Menlo, Monaco, Consolas, 'Courier New', monospace";
@@ -290,11 +297,13 @@ export function readTerminalSelection(term: Terminal, normalize: boolean): strin
 }
 
 /** 单例 xterm 画布：创建即 fit + focus，销毁时 unmount 清理。 */
-export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
+export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   // 回调可能随状态更新而变化，用 ref 保证 xterm 只注册一次处理器。
   const onOsc7Ref = useRef(onOsc7);
   onOsc7Ref.current = onOsc7;
+  const onFindRef = useRef(onFindShortcut);
+  onFindRef.current = onFindShortcut;
   const onDataRef = useRef(onData);
   onDataRef.current = onData;
 
@@ -302,7 +311,18 @@ export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
     const initial = getSettings();
     const term = new Terminal(buildXtermOptions(initial));
     const fit = new FitAddon();
+    const search = new SearchAddon();
     term.loadAddon(fit);
+    term.loadAddon(search);
+    // 链接识别：Ctrl/Cmd+点击（修饰键由设置中心的「链接修饰键」决定），
+    // 经 open_external_url 交系统浏览器打开（Netcatty WebLinksAddon 等价物）。
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        const s = getSettings();
+        if (!linkModifierAllows(s.terminal.linkModifier, event)) return;
+        void api.openExternalUrl(uri).catch(() => {});
+      }),
+    );
     term.open(containerRef.current!);
     const container = containerRef.current!;
     applyFontVisuals(container, initial);
@@ -331,6 +351,12 @@ export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
     // Shift+Enter 发送配置文本（默认 \e\r，传统 Alt+Enter 编码）。
     term.attachCustomKeyEventHandler((e) => {
       const s = getSettings();
+      if (e.type === "keydown" && isFindShortcut(e)) {
+        // Cmd/Ctrl+F 打开搜索条（对照 Netcatty searchTerminal 热键），
+        // 返回 false 阻止 Ctrl+F 被当作控制字符发往远端。
+        onFindRef.current?.();
+        return false;
+      }
       if (
         s.terminal.shiftEnterNewlineEnabled &&
         e.type === "keydown" &&
@@ -450,7 +476,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
     });
     ro.observe(container);
 
-    onReady({ term, fit });
+    onReady({ term, fit, search });
 
     return () => {
       unsubSettings();

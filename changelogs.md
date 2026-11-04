@@ -4221,3 +4221,40 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 卡片视图的条目按钮较多，需 `flexWrap`，否则窄栏下会溢出卡片。
 
 
+
+---
+
+## 2026-11-04 — 全应用逐功能比对·第六轮：终端搜索 / URL 识别 / 滚动缓冲（P0 #11）
+
+对照基准：Netcatty `components/terminal/hooks/useTerminalSearch.ts`（SearchAddon + SEARCH_DECORATIONS）、
+`components/terminal/runtime/createXTermRuntime.ts`（WebLinksAddon + linkModifier 判定）、
+`components/terminal/TerminalSearchBar.tsx`。
+
+### 修改点
+
+1. **搜索改为 xterm SearchAddon**（新增依赖 `@xterm/addon-search@0.17.0-beta.330`，与 Netcatty 同一条 0.17 线）：
+   - `TerminalController` 增加 `search`；`TerminalView` 创建并加载 SearchAddon。
+   - `TerminalPane.runSearch` 由「手扫 buffer 只滚动」改为 `findNext/findPrevious`；输入即时高亮（去抖交给 addon）。
+   - 配色逐项对齐 `SEARCH_DECORATIONS`（match `#FFFF0044` / active `#FF880088`），计数由 `onDidChangeResults` 驱动，显示 `n / m`。
+   - Cmd/Ctrl+F 在 `attachCustomKeyEventHandler` 中拦截并打开搜索条（返回 false，避免 Ctrl+F 作为控制字符发往远端）；搜索条已开时重新聚焦输入框。
+2. **终端链接识别**（新增依赖 `@xterm/addon-web-links@0.13.0-beta.330`）：
+   - WebLinksAddon 回调按设置中心「链接修饰键」（none/ctrl/alt/meta）判定是否激活，对齐 Netcatty `canActivateTerminalLink`。
+   - 激活后走既有 `open_external_url`（tauri-plugin-opener，仅接受 http/https），不再用 window.open（WebView2 下不可靠）。
+   - 设置中心该行取消置灰与「未实现」后缀，改为可保存即时生效。
+3. **滚动缓冲**：设置中心「回滚 0–100000」早已接通 xterm `scrollback`（本轮复核无需改动）。
+4. 纯逻辑 `src/terminal/linkActivation.ts`（修饰键判定 + 搜索热键识别）+ 4 例单测；`src/backend/client.ts` 增 `openExternalUrl`。
+
+### 验证
+
+- 门禁：`npm run test:run` **411 ✓**（35 文件）、`npm run build` ✓（tsc + vite）。本轮无 Rust 改动，未重跑 cargo 门禁。
+- debug 重编 + CDP 实机（本地 PTY）：
+  - `evidence/r6-search-link-01.png`：Ctrl+F 成功打开搜索条；
+  - `evidence/r6-search-link-02.png`：撰写栏输入 `echo http://example.com/search-demo` 回显后，搜索 `example` 显示 **2 / 2** 且两处黄色高亮，URL 文本正常渲染。
+  - 未实际点击链接（避免在用户桌面拉起浏览器）；链接激活逻辑由单测覆盖。
+
+### 踩坑
+
+- `@xterm/addon-search@0.17.0` 无稳定版，公共 registry 只有 `0.17.0-beta.*`；必须按 beta 装并加 `--legacy-peer-deps`（peer 指向 xterm 6 beta）。
+- SearchAddon 的命中计数不是返回值，需订阅 `onDidChangeResults({ resultIndex, resultCount })`；`resultIndex === -1` 表示无激活项。
+- 合成 KeyboardEvent 无法向 PTY 输入（xterm 只认真实按键链路）；实测改走撰写栏（React 状态 + 应用自身写入路径）才可靠。
+- PowerShell here-string 写 JSON 会带 BOM，`cdp-run.js` 解析失败；job 文件改用 Write 工具落盘。

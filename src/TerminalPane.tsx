@@ -84,6 +84,24 @@ import {
   type TerminalEncoding,
 } from "./terminal/terminalEncoding";
 
+/** 搜索高亮配色，逐项对齐 Netcatty `SEARCH_DECORATIONS`。 */
+const SEARCH_DECORATIONS = {
+  matchBackground: "#FFFF0044",
+  matchBorder: "#FFFF00",
+  matchOverviewRuler: "#FFFF00",
+  activeMatchBackground: "#FF880088",
+  activeMatchBorder: "#FF8800",
+  activeMatchColorOverviewRuler: "#FF8800",
+} as const;
+
+/** 搜索选项：非正则 / 忽略大小写 / 非整词，附带高亮装饰。 */
+const SEARCH_OPTIONS = {
+  regex: false,
+  caseSensitive: false,
+  wholeWord: false,
+  decorations: SEARCH_DECORATIONS,
+} as const;
+
 type PaneStatus = "connecting" | "connected" | "disconnected";
 
 type Prompt =
@@ -215,6 +233,8 @@ export function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchCount, setSearchCount] = useState(0);
+  const [searchIndex, setSearchIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [highlightOpen, setHighlightOpen] = useState(false);
   const [highlightDraft, setHighlightDraft] = useState("");
   const [highlightRules, setHighlightRules] = useState<
@@ -507,29 +527,37 @@ export function TerminalPane({
     setComposeText("");
   }
 
-  /** 终端搜索：按 query 扫描 buffer，上一个 / 下一个并滚动定位。 */
+  /** 终端搜索（SearchAddon，对照 Netcatty SEARCH_OPTIONS / SEARCH_DECORATIONS）。 */
   function runSearch(direction: 1 | -1) {
-    const term = controllerRef.current?.term;
-    const query = searchQuery.trim().toLowerCase();
-    if (!term || !query) {
+    const search = controllerRef.current?.search;
+    const query = searchQuery;
+    if (!search || !query.trim()) {
+      search?.clearDecorations();
       setSearchCount(0);
+      setSearchIndex(0);
       return;
     }
-    const buffer = term.buffer.active;
-    const hits: number[] = [];
-    for (let i = 0; i < buffer.length; i += 1) {
-      const text = buffer.getLine(i)?.translateToString(true) ?? "";
-      if (text.toLowerCase().includes(query)) hits.push(i);
-    }
-    setSearchCount(hits.length);
-    if (hits.length === 0) return;
-    const anchor = buffer.viewportY;
-    const target =
-      direction === 1
-        ? hits.find((i) => i > anchor + 1) ?? hits[0]
-        : [...hits].reverse().find((i) => i < anchor) ?? hits[hits.length - 1];
-    term.scrollToLine(Math.max(0, target - 2));
+    if (direction === 1) search.findNext(query, SEARCH_OPTIONS);
+    else search.findPrevious(query, SEARCH_OPTIONS);
   }
+
+  /** 搜索词变化即实时高亮全部匹配（Netcatty handleSearch 的 findNext 等价物）。 */
+  useEffect(() => {
+    const search = controllerRef.current?.search;
+    if (!searchOpen) {
+      search?.clearDecorations();
+      setSearchCount(0);
+      setSearchIndex(0);
+      return;
+    }
+    if (!search || !searchQuery.trim()) {
+      search?.clearDecorations();
+      setSearchCount(0);
+      setSearchIndex(0);
+      return;
+    }
+    search.findNext(searchQuery, SEARCH_OPTIONS);
+  }, [searchOpen, searchQuery]);
 
   /** 关键词高亮：在写入解析后扫描新增行，用 xterm decoration 铺底色。 */
   useEffect(() => {
@@ -2054,9 +2082,10 @@ export function TerminalPane({
         <div className="term-search-bar">
           <Icon name="search" size={12} />
           <input
+            ref={searchInputRef}
             autoFocus
             value={searchQuery}
-            placeholder="在终端中查找"
+            placeholder="在终端中查找（Enter 下一个 / Shift+Enter 上一个）"
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") runSearch(e.shiftKey ? -1 : 1);
@@ -2064,7 +2093,11 @@ export function TerminalPane({
             }}
           />
           <span className="term-search-count">
-            {searchQuery ? (searchCount === 0 ? "无结果" : `${searchCount} 处`) : ""}
+            {searchQuery
+              ? searchCount === 0
+                ? "无结果"
+                : `${searchIndex} / ${searchCount}`
+              : ""}
           </span>
           <button
             className="term-search-btn"
@@ -2124,8 +2157,17 @@ export function TerminalPane({
       )}
 
       <TerminalView
+        onFindShortcut={() => {
+          setSearchOpen(true);
+          requestAnimationFrame(() => searchInputRef.current?.focus());
+        }}
         onReady={(c) => {
           controllerRef.current = c;
+          // SearchAddon 的命中数事件：驱动「第 n / 共 m 处」显示。
+          c.search.onDidChangeResults(({ resultIndex, resultCount }) => {
+            setSearchCount(resultCount);
+            setSearchIndex(resultIndex >= 0 ? resultIndex + 1 : 0);
+          });
           if (!startedRef.current) {
             startedRef.current = true;
             void connect();

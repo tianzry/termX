@@ -1063,12 +1063,11 @@ export function TerminalTab() {
         </Row>
         <Row
           title={t("settings.terminal.behavior.linkModifier")}
-          desc={`${t("settings.terminal.behavior.linkModifier.desc")} ${unsupported}`}
+          desc={t("settings.terminal.behavior.linkModifier.desc")}
         >
           <Select
-            disabled
             value={term.linkModifier}
-            onChange={() => {}}
+            onChange={(v) => patch({ linkModifier: v as typeof term.linkModifier })}
             options={[
               { value: "none", label: t("settings.terminal.behavior.linkModifier.none") },
               { value: "ctrl", label: t("settings.terminal.behavior.linkModifier.ctrl") },

@@ -369,6 +369,11 @@ export function setSetting(key: string, value: string): Promise<void> {
   return invoke("set_setting", { key, value });
 }
 
+/** 用系统默认浏览器打开 http(s) 链接（终端 Ctrl/Cmd+点击）。 */
+export function openExternalUrl(url: string): Promise<void> {
+  return invoke<void>("open_external_url", { url });
+}
+
 // ── 设置中心支撑命令 ─────────────────────────────────────
 
 /** 系统字体条目（后端 `list_fonts`，fontdb 枚举）。 */
