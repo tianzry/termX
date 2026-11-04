@@ -386,6 +386,42 @@ export function setSetting(key: string, value: string): Promise<void> {
   return invoke("set_setting", { key, value });
 }
 
+// ── 应用锁（#23） ─────────────────────────────────────
+/** 后端字段为 snake_case（Tauri 只转换顶层参数名，不转换结构体字段）。 */
+export interface AppLockState {
+  enabled: boolean;
+  has_password: boolean;
+  timeout_minutes: number;
+}
+
+export function getAppLockState(): Promise<AppLockState> {
+  return invoke<AppLockState>("app_lock_state");
+}
+
+export function appLockSetPassword(
+  currentPassword: string | null,
+  nextPassword: string,
+): Promise<AppLockState> {
+  return invoke<AppLockState>("app_lock_set_password", { currentPassword, nextPassword });
+}
+
+export function appLockDisable(currentPassword: string): Promise<AppLockState> {
+  return invoke<AppLockState>("app_lock_disable", { currentPassword });
+}
+
+/** true = 口令正确。 */
+export function appLockUnlock(password: string): Promise<boolean> {
+  return invoke<boolean>("app_lock_unlock", { password });
+}
+
+export function appLockSetEnabled(enabled: boolean): Promise<AppLockState> {
+  return invoke<AppLockState>("app_lock_set_enabled", { enabled });
+}
+
+export function appLockSetTimeout(minutes: number): Promise<AppLockState> {
+  return invoke<AppLockState>("app_lock_set_timeout", { minutes });
+}
+
 /** 用系统默认浏览器打开 http(s) 链接（终端 Ctrl/Cmd+点击）。 */
 export function openExternalUrl(url: string): Promise<void> {
   return invoke<void>("open_external_url", { url });

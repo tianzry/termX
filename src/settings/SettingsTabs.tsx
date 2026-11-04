@@ -18,7 +18,15 @@ import {
   type UpdateCheckResult,
 } from "../backend/client";
 import { Icon } from "../ui/icons";
-import { userVisibleError } from "../domain/sshErrors";
+import { decodeAppError, userVisibleError } from "../domain/sshErrors";
+import {
+  disableAppLock,
+  lockNow,
+  setAppLockEnabled,
+  setAppLockPassword,
+  setAppLockTimeout,
+  useAppLock,
+} from "../appLock/appLockState";
 import { settingsT } from "./i18n";
 import {
   BINDING_CATEGORY_ORDER,
@@ -1623,6 +1631,200 @@ export function ShortcutsTab() {
   );
 }
 
+// ── 应用锁定（#23） ─────────────────────────────────────
+
+type AppLockFormMode = "setup" | "change" | "disable" | null;
+
+/**
+ * 系统 tab 的应用锁定区（对照 Netcatty AppLockSettingsSection）。
+ * 口令档位已移植；系统凭据（Touch ID / Windows Hello）无原生桥，置灰写明原因。
+ */
+function AppLockSection() {
+  const t = useT();
+  const lock = useAppLock();
+  const [mode, setMode] = useState<AppLockFormMode>(null);
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const reset = () => {
+    setMode(null);
+    setCurrent("");
+    setNext("");
+    setConfirm("");
+    setError(null);
+  };
+
+  const errText = (e: unknown): string => {
+    const { code } = decodeAppError(String(e));
+    switch (code) {
+      case "app_lock_incorrect_password":
+        return t("settings.appLock.error.incorrect");
+      case "app_lock_current_required":
+        return t("settings.appLock.error.currentRequired");
+      case "app_lock_password_required":
+        return t("settings.appLock.error.empty");
+      default:
+        return t("settings.appLock.error.failed");
+    }
+  };
+
+  const submitPassword = async () => {
+    if (!next.trim()) {
+      setError(t("settings.appLock.error.empty"));
+      return;
+    }
+    if (next !== confirm) {
+      setError(t("settings.appLock.error.mismatch"));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await setAppLockPassword(lock.has_password ? current : null, next);
+      reset();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitDisable = async () => {
+    if (!current.trim()) {
+      setError(t("settings.appLock.error.currentRequired"));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await disableAppLock(current);
+      reset();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const status = !lock.has_password
+    ? t("settings.appLock.status.noPassword")
+    : lock.enabled
+      ? t("settings.appLock.status.enabled")
+      : t("settings.appLock.status.disabled");
+
+  return (
+    <Section title={t("settings.appLock.title")}>
+      <Row title={t("settings.appLock.enabled")} desc={`${t("settings.appLock.enabledDesc")} · ${status}`}>
+        <Toggle
+          checked={lock.enabled}
+          onChange={(v) => {
+            setError(null);
+            if (v && !lock.has_password) {
+              setMode("setup");
+              return;
+            }
+            if (v) {
+              void setAppLockEnabled(true).catch((e) => setError(errText(e)));
+            } else {
+              setMode("disable");
+            }
+          }}
+        />
+      </Row>
+
+      <Row title={t("settings.appLock.timeout")} desc={t("settings.appLock.timeoutDesc")}>
+        <Select
+          value={String(lock.timeout_minutes)}
+          disabled={!lock.enabled}
+          onChange={(v) => void setAppLockTimeout(Number(v)).catch((e) => setError(errText(e)))}
+          options={[0, 1, 5, 15, 30, 60].map((m) => ({
+            value: String(m),
+            label: t(`settings.appLock.timeout.${m}`),
+          }))}
+        />
+      </Row>
+
+      <Row title={t("settings.appLock.currentPassword")} desc={status}>
+        <div className="nc-set-inline">
+          <button
+            className="nc-set-btn"
+            onClick={() => {
+              setError(null);
+              setMode(lock.has_password ? "change" : "setup");
+            }}
+          >
+            {lock.has_password
+              ? t("settings.appLock.changePassword")
+              : t("settings.appLock.setPassword")}
+          </button>
+          <button
+            className="nc-set-btn"
+            disabled={!lock.enabled}
+            onClick={() => lockNow()}
+          >
+            {t("settings.appLock.lockNow")}
+          </button>
+        </div>
+      </Row>
+
+      {mode !== null && (
+        <div className="nc-applock-form">
+          {mode !== "setup" && (
+            <input
+              className="nc-set-input"
+              type="password"
+              placeholder={t("settings.appLock.currentPassword")}
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+            />
+          )}
+          {mode !== "disable" && (
+            <>
+              <input
+                className="nc-set-input"
+                type="password"
+                placeholder={t("settings.appLock.newPassword")}
+                value={next}
+                onChange={(e) => setNext(e.target.value)}
+              />
+              <input
+                className="nc-set-input"
+                type="password"
+                placeholder={t("settings.appLock.confirmPassword")}
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+              />
+            </>
+          )}
+          {error && <div className="nc-app-lock-error">{error}</div>}
+          <div className="nc-set-inline">
+            <button
+              className="nc-set-btn"
+              disabled={busy}
+              onClick={() => void (mode === "disable" ? submitDisable() : submitPassword())}
+            >
+              {mode === "disable" ? t("settings.appLock.enabled") : t("settings.appLock.save")}
+            </button>
+            <button className="nc-set-btn" disabled={busy} onClick={reset}>
+              {t("settings.appLock.cancel")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <Row title={t("settings.appLock.systemUnlock")} desc={t("settings.appLock.systemUnlock.unsupported")}>
+        <div className="nc-set-inline">
+          <Toggle checked={false} disabled onChange={() => {}} />
+          <span className="nc-set-value">{t("settings.appLock.systemUnlock.desc")}</span>
+        </div>
+      </Row>
+    </Section>
+  );
+}
+
 // ── 系统 ──────────────────────────────────────────────────
 
 export function SystemTab() {
@@ -1855,9 +2057,8 @@ export function SystemTab() {
         </Row>
       </Section>
 
-      <Section title={t("settings.appLock.title")}>
-        <Row title={t("settings.appLock.notPorted")} />
-      </Section>
+      {/* 应用锁定（#23；对照 Netcatty 系统 tab AppLockSettingsSection） */}
+      <AppLockSection />
     </div>
   );
 }

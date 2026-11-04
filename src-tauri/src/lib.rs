@@ -1,4 +1,5 @@
 mod ai;
+mod app_lock;
 mod commands;
 #[cfg(desktop)]
 pub use commands::cli::CLI_VERSION;
@@ -217,6 +218,12 @@ pub fn run() {
             commands::discovery::list_dynamic_discovery_contexts,
             commands::discovery::discover_dynamic_targets,
             // settings & snippets & highlights
+            commands::app_lock::app_lock_state,
+            commands::app_lock::app_lock_set_password,
+            commands::app_lock::app_lock_disable,
+            commands::app_lock::app_lock_unlock,
+            commands::app_lock::app_lock_set_enabled,
+            commands::app_lock::app_lock_set_timeout,
             commands::settings::get_setting,
             commands::settings::set_setting,
             commands::settings::list_highlights,

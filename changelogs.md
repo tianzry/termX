@@ -4,6 +4,68 @@
 
 ---
 
+## 2026-11-05 — P1 #23 应用锁 + 凭据加密存储验收
+
+### 语义对照（Netcatty）
+
+- 应用锁 = **用户自设的锁定口令**：`domain/appLock.ts` 生成 PBKDF2-SHA256 校验器
+  （≥100k 迭代、16B salt、32B hash，明文口令不落盘），`appLockLifecycle` 在启动/回前台时
+  show overlay，`AppLockSettingsSection` 提供启用/改密/超时。
+- 另有「系统凭据解锁」（Touch ID / Windows Hello），由 **Electron 原生 helper** 实现；
+  termX（Tauri）没有对应原生桥 → 该控件**置灰**，行内写明原因。
+
+### 修改点
+
+1. **后端** `src-tauri/src/app_lock.rs`（新增）：
+   - `AppLockVerifier{version,algorithm,iterations,salt,hash}` 存 `db.settings.app_lock_verifier`；
+     `pbkdf2` + `sha2` + `getrandom` 生成，恒时比较校验。
+   - `state/set_password/disable/unlock/set_enabled/set_timeout_minutes`；
+     无校验器时 `enabled` 强制视为 false，避免「锁住但无法解锁」死锁。
+   - 7 个单测：正确/错误口令、哈希非明文、改密需当前口令、空口令拒绝、关闭清校验器、
+     开关需先有口令、超时合法性、校验器缺失不锁。
+2. **命令层** `commands/app_lock.rs`（6 命令）+ `lib.rs` 注册；
+   桌面 UI 门无 headless 语义，`server.rs` 不转发（R4 例外已注释）。
+3. **前端** `src/appLock/appLockState.ts`（store + `shouldLockAfterReturn` 纯逻辑）、
+   `src/appLock/AppLockGate.tsx`（全屏遮罩，启动锁 / 失焦按超时锁 / 手动锁 /
+   锁定时吞掉遮罩外快捷键）。
+4. **设置中心** 系统 tab 末尾「应用锁定」：启用开关、超时（0/1/5/15/30/60）、
+   设置/更换/关闭（内联表单，关闭需当前口令）、立即锁定、系统凭据解锁置灰+原因。
+5. **i18n** 中英新增 `settings.appLock.*` / `appLock.*`；删除旧的「应用锁未移植」占位。
+6. `client.ts` 增加 6 个封装 + `AppLockState`（结构体字段保持 snake_case）。
+
+### 实测（debug exe + CDP，证据 `evidence/`）
+
+- `applock-phase1.json`：设置口令→`enabled=true`；reload（冷启动语义）后遮罩出现；
+  错误口令 `wrong-pass-123` → 遮罩保持、错误文案「锁定密码不正确。」；
+  正确口令 → 遮罩消失；模拟失焦→回前台（超时=0）→ 再次上锁，正确口令解除。
+- `applock-startup.json`：**进程重启**后仍锁定，错误口令拒绝，正确口令进入。
+- 截图：`applock-startup-locked.png`、`applock-wrong-password.png`、`applock-unlocked.png`、
+  `applock-return-locked.png`。
+- 凭据取证 `applock-db-forensics.json`：写入 `secret=PLAINTEXT_PROBE_9f3a` 的 password 凭据后，
+  直接按字节扫描 `~/.rssh/rssh.db` 与 `rssh.db-wal`：
+  `plaintext_secret_found=false`、`lock_password_found=false`、`cipher_prefix_found=true`；
+  WAL 中可见凭据行（name/user/type），密文以 `enc:v1:` 存储。
+
+### 门禁
+
+- `npx vitest run` 458 ✓（新增 6 例 app lock 纯逻辑）
+- `npm run build` ✓
+- `cargo check --features server` ✓
+- `cargo test --lib` 897 ✓（`commands::plugin::local_exec_caps_output...` 首跑偶发失败，
+  单跑通过，与本改动无关）
+
+### 踩坑
+
+1. **debug 构建 PBKDF2 120k 迭代非常慢**（未优化 SHA256，单次数秒）。CDP 实测必须轮询
+   按钮 `disabled` 状态，固定 sleep 会把「正在解锁…」误判为卡死。
+2. **SQLite 文件被应用占用**：直接 `ReadAllBytes` 会失败；用 `FileStream` 以 `ReadWrite`
+   共享方式读，且**别忘了 WAL**——刚写入的凭据行在 `rssh.db-wal` 里，只查主库会看不到。
+3. **锁定遮罩的快捷键隔离**：capture 阶段吞掉事件要跳过遮罩内部目标
+   （`closest('[data-app-lock-overlay]')`），否则密码框收不到键盘。
+4. **单实例/CLI 重复启动**会让自动化连不上 9222，重启前必须 `Stop-Process rssh,msedgewebview2`。
+
+---
+
 ## 2026-10-29 — 阶段 0 POC：最小可运行骨架
 
 目标：以 **rssh 的 Rust 后端（Tauri 2）** + **netcatty 的 React 前端（Vite）**，搭一个最小可运行骨架，

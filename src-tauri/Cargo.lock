@@ -5133,6 +5133,7 @@ dependencies = [
  "libc",
  "log",
  "mockito",
+ "pbkdf2 0.12.2",
  "portable-pty",
  "rand 0.10.1",
  "regex",
