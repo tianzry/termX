@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import * as api from "./backend/client";
 import { userVisibleError } from "./domain/sshErrors";
 import type { Forward, ForwardRule, ForwardStats } from "./backend/client";
+import { ForwardForm, type ForwardDraft } from "./ForwardForm";
 
 interface ActiveInfo {
   activeId: string;
@@ -27,12 +28,8 @@ export function ForwardPanel() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  // 新建表单
-  const [name, setName] = useState("");
-  const [profileId, setProfileId] = useState("");
-  const [rules, setRules] = useState<ForwardRule[]>([]);
-  /** 非空 = 正在编辑该条目（表单复用新建区，保存走 updateForward）。 */
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // 表单状态由 ForwardForm 自持；非空 = 正在编辑该条目（保存走 updateForward）。
+  const [editing, setEditing] = useState<Forward | null>(null);
 
   // 已启动的转发：forward.id -> 活跃 session + 最近一次统计
   const [active, setActive] = useState<Record<string, ActiveInfo>>({});
@@ -48,7 +45,6 @@ export function ForwardPanel() {
       ]);
       setForwards(fs);
       setProfiles(ps);
-      setProfileId((cur) => cur || ps[0]?.id || "");
       // 运行态以后端为权威：重新打开侧栏 / Vault 已启动的条目这里也能显示为运行中。
       setActive((prev) => {
         const next: Record<string, ActiveInfo> = {};
@@ -71,52 +67,30 @@ export function ForwardPanel() {
     void refresh();
   }, []);
 
-  function addRule() {
-    setRules((r) => [
-      ...r,
-      { type: "local", local_port: 0, remote_host: "127.0.0.1", remote_port: 0 },
-    ]);
-  }
-
-  function updateRule(index: number, patch: Partial<ForwardRule>) {
-    setRules((r) => r.map((x, i) => (i === index ? { ...x, ...patch } : x)));
-  }
-
-  function removeRule(index: number) {
-    setRules((r) => r.filter((_, i) => i !== index));
-  }
-
-  async function create() {
-    if (!name.trim()) return setErr("请填写转发名称");
-    if (!profileId) return setErr("请选择 SSH 会话档案（profile）");
-    if (!rules.length) return setErr("请至少添加一条转发规则");
+  /** 表单校验已在 ForwardForm 内完成，这里只落库并刷新。 */
+  async function submitDraft(draft: ForwardDraft) {
     setBusy(true);
     setErr("");
     try {
-      if (editingId) {
-        const existing = forwards.find((f) => f.id === editingId);
+      if (editing) {
         await api.updateForward({
-          id: editingId,
-          name: name.trim(),
-          profile_id: profileId,
-          group_id: existing?.group_id ?? null,
-          rules,
+          id: editing.id,
+          name: draft.name,
+          profile_id: draft.profile_id,
+          group_id: editing.group_id,
+          rules: draft.rules,
         });
+        setEditing(null);
       } else {
         await api.createForward({
           id: crypto.randomUUID(),
-          name: name.trim(),
-          profile_id: profileId,
+          name: draft.name,
+          profile_id: draft.profile_id,
           group_id: null,
-          rules,
+          rules: draft.rules,
         });
       }
-      setName("");
-      setRules([]);
-      setEditingId(null);
       await refresh();
-    } catch (e) {
-      setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
@@ -128,17 +102,12 @@ export function ForwardPanel() {
       setErr("该转发正在运行，请先停止再编辑。");
       return;
     }
-    setEditingId(f.id);
-    setName(f.name);
-    setProfileId(f.profile_id);
-    setRules(f.rules.map((r) => ({ ...r })));
+    setEditing(f);
     setErr("");
   }
 
   function cancelEdit() {
-    setEditingId(null);
-    setName("");
-    setRules([]);
+    setEditing(null);
     setErr("");
   }
 
@@ -174,7 +143,7 @@ export function ForwardPanel() {
         }
       }
       await api.deleteForward(f.id);
-      if (editingId === f.id) cancelEdit();
+      if (editing?.id === f.id) cancelEdit();
       setActive((a) => {
         const next = { ...a };
         delete next[f.id];
@@ -260,81 +229,16 @@ export function ForwardPanel() {
       </div>
 
       {/* 新建 / 编辑转发 */}
-      <div className="fwd-form">
-        <div className="fwd-name">{editingId ? "编辑转发" : "新建转发"}</div>
-        <input
-          placeholder="转发名称"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <select
-          value={profileId}
-          onChange={(e) => setProfileId(e.target.value)}
-        >
-          <option value="">选择 SSH 会话档案…</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}（{p.host}:{p.port}）
-            </option>
-          ))}
-        </select>
-        <div className="fwd-rules">
-          {rules.map((r, i) => (
-            <div className="fwd-rule" key={i}>
-              <div className="fwd-rule-row">
-                <select
-                  className="fwd-select"
-                  value={r.type}
-                  onChange={(e) =>
-                    updateRule(i, { type: e.target.value as ForwardRule["type"] })
-                  }
-                >
-                  <option value="local">本地 (local)</option>
-                  <option value="remote">远程 (remote)</option>
-                  <option value="dynamic">动态 SOCKS5 (dynamic)</option>
-                </select>
-                <button onClick={() => removeRule(i)}>删除</button>
-              </div>
-              <div className="fwd-rule-row">
-                <input
-                  type="number"
-                  placeholder="本地端口"
-                  value={r.local_port || ""}
-                  onChange={(e) =>
-                    updateRule(i, { local_port: Number(e.target.value) || 0 })
-                  }
-                />
-                {r.type !== "dynamic" && (
-                  <>
-                    <input
-                      placeholder="远端主机"
-                      value={r.remote_host}
-                      onChange={(e) =>
-                        updateRule(i, { remote_host: e.target.value })
-                      }
-                    />
-                    <input
-                      type="number"
-                      placeholder="远端端口"
-                      value={r.remote_port || ""}
-                      onChange={(e) =>
-                        updateRule(i, { remote_port: Number(e.target.value) || 0 })
-                      }
-                    />
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="sftp-row">
-          <button onClick={addRule}>添加规则</button>
-          <button onClick={create} disabled={busy || !name.trim() || !rules.length}>
-            {editingId ? "保存修改" : "新建转发"}
-          </button>
-          {editingId && <button onClick={cancelEdit} disabled={busy}>取消编辑</button>}
-        </div>
-      </div>
+      <ForwardForm
+        key={editing?.id ?? "new"}
+        profiles={profiles}
+        initial={editing}
+        title={editing ? "编辑转发" : "新建转发"}
+        submitLabel={editing ? "保存修改" : "新建转发"}
+        busy={busy}
+        onSubmit={submitDraft}
+        onCancel={cancelEdit}
+      />
 
       {/* 已有转发列表 */}
       <ul className="sftp-list">

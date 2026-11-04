@@ -4094,3 +4094,40 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `npm run build` ✓
 - 仅前端改动，Rust 未变（`cargo check/test --lib` 沿用上一轮通过结果）
 - debug `npm run tauri build -- --debug` ✓（先停止 rssh）
+
+---
+
+## 2026-11-04 · 端口转发：Vault 页条目新建 / 编辑 / 复制 / 删除
+
+### 修改点
+
+1. **抽出复用表单 `src/ForwardForm.tsx`**：名称 / SSH 会话档案 / 多规则（类型 + 本地端口 + 远端主机/端口）编辑，终端侧栏与 Vault 总览共用一套字段与校验；成功后清空（新建）或由调用方关闭（编辑）。`sshProfiles` 过滤本地 shell 档案，避免为 local 主机建 SSH 转发。
+2. **校验前置到纯逻辑 `src/domain/forwardDraft.ts`**：名称/档案/规则必填；本地端口 0–65535（0 = 自动分配）；local/remote 必须填远端主机与 1–65535 端口，dynamic 不需要；错误信息带规则序号。新增 6 例单测。
+3. **Vault 总览补齐条目 CRUD**（`ForwardOverview.tsx`）：右上角「新建转发」内联表单；条目行新增 编辑 / 复制 / 删除。运行中「编辑」置灰并在行内注明「运行中 · 停止后可编辑」；删除走应用内确认对话框，运行中的条目先停会话再删库，避免残留无主 listener；正在编辑的条目被删除时自动关闭表单。
+4. **终栏侧栏接入同一表单**：`ForwardPanel` 删除自有表单状态，改用 `ForwardForm`；并修复侧栏先于 `listProfiles` 渲染导致档案下拉为空的问题（档案晚到时自动补默认选中）。
+5. **修 Vault 页配色 token 用法**：`ForwardOverview` 原来直接 `var(--border)` / `var(--card)`，但这些 token 是 HSL 三元组（如 `220 16% 82%`），直接使用是无效颜色；统一改为 `hsl(var(--token))`，卡片边框/背景/弱化文字恢复正常。
+
+### 验证（debug 重编 + CDP 实机，证据 `evidence/fwd-r3-*.png`）
+
+- 新建：`R3 验证转发`（local 127.0.0.1:18023 → 127.0.0.1:22，档案 129）→ `list_forwards` 返回 1 条，分组卡片显示 1 条目。
+- 编辑：点「编辑」回填原值 → 改名 `R3 验证转发（改）` → 保存后后端名称同步，表单关闭。
+- 复制：生成 `R3 验证转发（改） 副本`（同档案同规则）→ 列表 2 条。
+- 删除：确认对话框显示规则数与不可恢复提示 → 确认后 `list_forwards` 剩 1 条。
+- 运行中守卫：启动 → 停止按钮可用、「编辑」disabled 且 title=「运行中无法编辑，请先停止该转发」、行内显示「运行中 · 停止后可编辑」、规则 active。
+- 删除运行中条目：确认后 `list_forwards=0` 且 `forward_active_list=0`（先停会话再删，无残留）。
+- 终端侧栏复检：本地会话 → 工具栏「打开端口转发」→ 重构后的表单正常渲染且默认档案为 `129（192.168.126.129:22）`。
+
+### 门禁
+
+- `npm run test:run`：34 文件 / 407 用例 ✓（新增 forwardDraft 6 例）
+- `npm run build` ✓
+- `cargo check --features server` ✓（沿用，Rust 未改）
+- `cargo test --lib`：874 ✓（沿用，Rust 未改）
+- debug 重编 ✓（`npm run build` → `cargo build`；若 `cargo build` 因 dist 未触发重编，touch `src-tauri/src/lib.rs` 后再编，否则二进制里仍是旧前端资源）
+
+### 踩坑
+
+- `cargo build` 不会因 `dist/` 变化而重新编译（资源在编译期嵌入），必须 touch 一个 Rust 源文件或清理 crate 才能让新前端进包。
+- Vault 页主题 token 是 HSL 分量，内联样式必须写 `hsl(var(--x))`；直接 `var(--x)` 会静默变成无效颜色（无边框、透明背景）。
+- 表单在侧栏挂载早于 profiles 加载时，默认选中要做成 effect 迟到补值，不能只在 useState 初值里取第一项。
+
