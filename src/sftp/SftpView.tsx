@@ -124,6 +124,7 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
             addTab(side, {
               kind: "remote",
               sftpId,
+              canExec: true,
               label: entry.label,
               meta: entry.meta,
               path: home,
@@ -169,6 +170,7 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
           addTab(side, {
             kind: "remote",
             sftpId,
+            canExec: false,
             label: profile.name,
             meta: `${credential.username}@${profile.host}`,
             path: home,

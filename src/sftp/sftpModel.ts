@@ -108,6 +108,11 @@ export interface LocalConnection {
 export interface RemoteConnection {
   kind: "remote";
   sftpId: string;
+  /**
+   * 是否持有可复用的 SSH exec 通道（由终端会话派生 = true，独立 SFTP 连接 = false）。
+   * 远端原地解压等需要 exec 的功能据此隐藏入口，而不是点了才报错。
+   */
+  canExec: boolean;
   /** 标签名（主机名 / 会话名）。 */
   label: string;
   /** 右侧灰字说明（如 user@host）。 */
@@ -711,4 +716,12 @@ const ARCHIVE_SUFFIXES = [
 export function isExtractableArchive(name: string): boolean {
   const base = name.toLowerCase();
   return ARCHIVE_SUFFIXES.some((suffix) => base.endsWith(suffix) && base.length > suffix.length);
+}
+
+/**
+ * 「解压到当前目录」菜单项是否可见：远端原地解压走 SSH exec，
+ * 独立 SFTP 连接没有 exec 通道，双向条件都满足才显示。
+ */
+export function canExtractArchive(connection: PaneConnection, name: string): boolean {
+  return connection.kind === "remote" && connection.canExec && isExtractableArchive(name);
 }

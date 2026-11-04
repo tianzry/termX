@@ -36,7 +36,7 @@ import {
   filterHiddenEntries,
   formatEntryMtime,
   formatEntrySize,
-  isExtractableArchive,
+  canExtractArchive,
   isPathRoot,
   joinLocalPath,
   joinRemotePath,
@@ -723,7 +723,7 @@ export function SftpPaneView({
             setDialog({ type: "copy", row });
           },
         });
-        if (isExtractableArchive(row.name)) {
+        if (canExtractArchive(connection, row.name)) {
           menuItems.push({ label: "解压到当前目录", onClick: () => void runExtract(row) });
         }
       }
