@@ -389,7 +389,7 @@ pub async fn collect_monitor_sample(
     timeout_ms: Option<u64>,
 ) -> AppResult<MonitorSample> {
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(8_000).clamp(2_000, 30_000));
-    let result = crate::ssh::client::exec_once(&ssh, SAMPLE_SCRIPT, timeout).await?;
+    let result = crate::ssh::client::exec_once(&ssh, SAMPLE_SCRIPT, timeout, false).await?;
     if result.stdout.trim().is_empty() {
         return Err(crate::error::AppError::ssh(
             "monitor_exec_empty",

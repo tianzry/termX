@@ -1589,6 +1589,7 @@ mod tests {
                 &ssh,
                 "printf '__EXEC_OK__:%s' \"$(id -u)\"",
                 Duration::from_secs(10),
+                false,
             )
             .await
         })
@@ -1758,6 +1759,7 @@ pub async fn exec_once(
     ssh_handle: &SshHandle,
     command: &str,
     timeout: std::time::Duration,
+    agent_forwarding: bool,
 ) -> AppResult<crate::models::PluginExecResult> {
     const OUTPUT_CAP: usize = 256 * 1024;
 
@@ -1770,6 +1772,11 @@ pub async fn exec_once(
             )
         })?
     };
+    // 每次请求：档案开启「转发 Agent」时，exec 会话也要发 auth-agent-req
+    // （等价 `ssh -A host cmd`）。不请求的话，sshd 不会给该会话建 agent socket。
+    if agent_forwarding {
+        let _ = channel.agent_forward(false).await;
+    }
     channel
         .exec(true, command)
         .await

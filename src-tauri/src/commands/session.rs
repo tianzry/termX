@@ -230,11 +230,17 @@ pub async fn ssh_exec(
 ) -> AppResult<PluginExecResult> {
     let session = get_session(&state, &session_id)?;
     let ssh = session.ssh_handle().clone();
+    // exec 会话沿用档案的「转发 Agent」开关（等价 `ssh -A host cmd`）。
+    let agent_forwarding = crate::db::profile::get(&state.db, session.profile_id())
+        .map(|p| p.agent_forwarding)
+        .unwrap_or(false);
     let timeout = std::time::Duration::from_millis(
         timeout_ms.unwrap_or(10_000).clamp(1_000, 60_000),
     );
-    client::run_blocking_ssh(move || async move { client::exec_once(&ssh, &command, timeout).await })
-        .await
+    client::run_blocking_ssh(move || async move {
+        client::exec_once(&ssh, &command, timeout, agent_forwarding).await
+    })
+    .await
 }
 
 /// `tab_id` 只为未预留 session id 的旧客户端保留；新客户端的 prompt waiter

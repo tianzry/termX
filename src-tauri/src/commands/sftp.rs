@@ -696,7 +696,7 @@ pub(crate) async fn extract_archive(
     let command = crate::sftp::archive::build_extract_command(path)?;
     let timeout = crate::sftp::archive::compute_timeout(size);
     let result = crate::ssh::client::run_blocking_ssh(move || async move {
-        crate::ssh::client::exec_once(&ssh, &command, timeout).await
+        crate::ssh::client::exec_once(&ssh, &command, timeout, false).await
     })
     .await?;
     if result.exit_code != Some(0) {

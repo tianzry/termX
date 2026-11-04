@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-11-05 — P1 #39 SSH Agent 转发（exec 通道补齐）+ #37 Vault 子页收尾
+
+### 对照（Netcatty）
+
+- `agentForwarding`：连接时在会话通道请求 `auth-agent-req@openssh.com`，远端 sshd 据此为
+  该会话建 agent socket；等价 `ssh -A host cmd`。
+- termX 的 shell 通道（`client.rs` 开 shell 处）早已按档案开关请求；但 `exec_once` 漏了这一步，
+  `ssh_exec` / 归档解压 / 监控采样 / 插件 exec 都走 exec，等于 `-A` 语义缺失。
+
+### 修改点
+
+1. `exec_once` 增加 `agent_forwarding` 参数，为 true 时在 session 通道上发 `agent_forward(false)`；
+   `ssh_exec` 从 `session.profile_id()` 读档案开关传入；连接自检 / 监控 / 归档解压 / 插件显式 `false`。
+2. #37 核对收尾：`VaultView.tsx` 的 monitor / notes / logs / proxies 四项 nav 均已启用且视图已挂载，
+   monitor 自 #14 即可用，原先「仅 monitor 仍为禁用占位」的描述过期，条目关闭。
+
+### 实测（129，CDP）
+
+- 临时把 129 档案 `agent_forwarding` 置 true → `ssh_exec 'echo ${SSH_AUTH_SOCK:-EMPTY}'`
+  返回 `/tmp/ssh-<random>/agent.<pid>`；改回 false → `EMPTY`；`finally` 已把档案恢复原值（false）。
+- 证据：`evidence/agent-forward-live.json`（`passed: true`，`restored.agent_forwarding: false`）。
+
+### 置灰（未验，写明原因）
+
+- **桥接的端到端**（远端 `ssh-add -l` 真正取到本机身份）：本机 Windows `ssh-agent` 服务为
+  Stopped/Disabled（启动需管理员），且无 Pageant；只能验到「请求发出 → sshd 建 socket」。
+  handler 侧的 `server_channel_open_agent_forward` 桥接代码此前已在位。
+- 认证直接走 agent 与钥匙串 agent 身份列表属钥匙串阶段既有实现，本轮未改动。
+
+### 门禁
+
+- `cargo check --features server` ✓；`cargo build`（GUI bin）✓。前端未改，未跑 vitest/build。
+
+### 踩坑
+
+1. `ssh_connect` 的 `sessionId` 必须是 UUID，自造 `af-on-<ts>` 直接报 `session_id_invalid`。
+2. 应用在 CDP 断开后会自动退出：必须「重启 → 轮询 9222 → 跑脚本」写进同一条命令。
+3. 实测要临时改真实档案字段时，`finally` 必须恢复原值（本轮已回写并复核 false）。
+
+---
+
 ## 2026-11-05 — P1 #26 CLI（片段 CRUD + 直连 SFTP 传输；会话操作置灰）
 
 ### 对照（Netcatty）

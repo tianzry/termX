@@ -511,7 +511,7 @@ pub async fn plugin_exec_impl(
             let ssh = handle.clone();
             let cmd = command;
             client::run_blocking_ssh(
-                move || async move { client::exec_once(&ssh, &cmd, timeout).await },
+                move || async move { client::exec_once(&ssh, &cmd, timeout, false).await },
             )
             .await
         }
