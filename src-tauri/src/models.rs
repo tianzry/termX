@@ -113,6 +113,13 @@ pub struct Profile {
     /// 上面的内联 proxy_* 字段仅作库条目被删除后的回退。
     #[serde(default)]
     pub proxy_profile_id: Option<String>,
+    // ── 输入兼容模式（schema v43，对齐 Netcatty Host.sshInputCompatibility）──
+    /// 逐字发送（输入兼容模式）：开启后把一次 xterm onData 的文本按码点拆成
+    /// 多次 sshWrite，避免部分远端在中/短粘贴时丢字。
+    /// None = 老数据：SSH 主机视为开启（对齐 Netcatty sanitizeHost 的迁移语义）；
+    /// 新主机表单默认 false（标准模式）。
+    #[serde(default)]
+    pub ssh_input_compatibility: Option<bool>,
 }
 
 /// 代理库条目（对齐 Netcatty `ProxyProfile` 的 label + config 扁平化）：

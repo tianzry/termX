@@ -36,6 +36,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         proxy_username: row.get(26)?,
         proxy_no_proxy: row.get(27)?,
         proxy_profile_id: row.get(28)?,
+        ssh_input_compatibility: row.get(29)?,
     })
 }
 
@@ -84,7 +85,7 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility";
 
 pub fn list(db: &Db) -> AppResult<Vec<Profile>> {
     let conn = db.lock()?;
@@ -154,8 +155,9 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
         "INSERT INTO profiles (id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, \
          sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, \
          protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, \
-         proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29) \
+         proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, \
+         ssh_input_compatibility) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -168,7 +170,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          local_start_dir=excluded.local_start_dir, agent_forwarding=excluded.agent_forwarding, \
          proxy_type=excluded.proxy_type, proxy_host=excluded.proxy_host, proxy_port=excluded.proxy_port, \
          proxy_username=excluded.proxy_username, proxy_no_proxy=excluded.proxy_no_proxy, \
-         proxy_profile_id=excluded.proxy_profile_id",
+         proxy_profile_id=excluded.proxy_profile_id, \
+         ssh_input_compatibility=excluded.ssh_input_compatibility",
         params![
             p.id,
             p.name,
@@ -198,7 +201,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.proxy_port.map(|v| v as u32),
             p.proxy_username,
             p.proxy_no_proxy,
-            p.proxy_profile_id
+            p.proxy_profile_id,
+            p.ssh_input_compatibility
         ],
     )?;
     Ok(())
@@ -219,7 +223,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
          sftp_protocol=?9, sftp_sudo=?10, sftp_encoding=?11, icon_source=?12, icon_color=?13, totp_auto_submit=?14, totp_regex=?15, \
          protocol=?16, local_shell=?17, local_shell_args=?18, local_shell_name=?19, local_shell_icon=?20, local_start_dir=?21, \
          agent_forwarding=?22, proxy_type=?23, proxy_host=?24, proxy_port=?25, proxy_username=?26, proxy_no_proxy=?27, \
-         proxy_profile_id=?28 WHERE id=?29",
+         proxy_profile_id=?28, ssh_input_compatibility=?29 WHERE id=?30",
         params![
             p.name,
             p.host,
@@ -249,6 +253,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.proxy_username,
             p.proxy_no_proxy,
             p.proxy_profile_id,
+            p.ssh_input_compatibility,
             p.id
         ],
     )?;
@@ -317,6 +322,7 @@ mod tests {
             proxy_username: None,
             proxy_no_proxy: None,
             proxy_profile_id: None,
+            ssh_input_compatibility: None,
         }
     }
 
@@ -407,6 +413,29 @@ mod tests {
         let got = get(&db, "p1").unwrap();
         assert_eq!(got.host, "new.example");
         assert_eq!(got.port, 2222);
+    }
+
+    /// v43 新列三态往返：NULL 必须区别于显式 false（NULL = 老数据默认开启）。
+    #[test]
+    fn ssh_input_compatibility_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = mk("p1", "alpha");
+
+        insert(&db, &p).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().ssh_input_compatibility, None);
+
+        p.ssh_input_compatibility = Some(true);
+        insert(&db, &p).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().ssh_input_compatibility, Some(true));
+
+        p.ssh_input_compatibility = Some(false);
+        insert(&db, &p).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().ssh_input_compatibility, Some(false));
+
+        // update 路径同样要写这一列，且能把显式值改回 NULL。
+        p.ssh_input_compatibility = None;
+        update(&db, &p).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().ssh_input_compatibility, None);
     }
 
     #[test]

@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-11-05 — P2 #31（子项：输入兼容模式 / 中文 IME 逐字发送 + 宽字符核验）
+
+### 对照（Netcatty）
+
+`docs/ssh-input-compatibility.md` + `HostDetailsAdvancedSections.tsx`：
+主机级布尔项 `sshInputCompatibility`，标题「输入兼容模式：逐字发送」，说明「中文输入或短粘贴
+出现丢字时尝试开启」「保存后重新连接生效」；四条传输规则——多码点 IME / 普通短粘贴按码点
+分开写，>32 码点、bracketed paste 与已确认分行粘贴保持原行为，终端控制序列必须成组。
+
+### 修改点
+
+1. `models.rs` / `db/schema.rs`（v43）/ `db/profile.rs`：`profiles.ssh_input_compatibility`
+   可空列（NULL = 老数据，SSH 视为开启），PROFILE_COLUMNS / insert / upsert / update
+   全链路读写；迁移测试 + 三态往返测试。
+2. `client.ts` `Profile` 增可选字段；新建 `src/terminal/inputCompatibility.ts`：
+   `resolveInputCompatibility`（`?? true`）与 `splitCompatibleWrites`（bracketed paste /
+   >32 码点整段、CSI/OSC/SS3/ESC 序列成组、其余逐码点）。
+3. `TerminalPane`：连接前读一次主机配置写 `inputCompatRef`（读取失败不阻断连接，保留上次
+   快照）；`wire()` 的 ssh 写分支开启时逐 chunk `sshWrite`，pty/telnet/zmodem 不动。
+4. `VaultView` / `ConnectionManager` 两处主机表单加同款开关（新主机默认 false，老数据
+   `?? true` 显示，保存/复制原值透传）。
+
+### 验证
+
+- `npm run test:run`：46 文件 / 486 用例全绿（新增 `inputCompatibility.test.ts` 13 例）。
+- `npm run build` 通过；`cargo check --all-targets` 通过；`cargo test --lib db::` 145 通过
+  （含 `migration_43_adds_profile_ssh_input_compatibility`、`ssh_input_compatibility_roundtrip`）。
+- 端到端（debug 版 + CDP + 129）：开启主机开关 → 重连 → `cat > /tmp/termx-ime-31.txt` →
+  粘贴 `中文兼容测试` → 远端 `cat` 回读完整无丢字，终端正常渲染 CJK 宽字符；
+  取证 `evidence/ime-compat-31.json`（`passed: true`，`flagInSession: true`）与截图
+  `evidence/ime-compat-31-terminal.png`。旧库已备份 `~/.rssh/rssh.db.bak-20261105-ime`。
+
+### 踩坑 / 边界
+
+- Tauri 冻结 `window.__TAURI_INTERNALS__`，页面内替换 `invoke` 做「ssh_write 调用计数」
+  （`Page.addScriptToEvaluateOnNewDocument` 注入）无效；逐码点拆分改由 13 条纯函数单测
+  覆盖，端到端只断言「配置生效 + 文本完整送达」。JSON 里 `ipcCounterBlocked: true`。
+- Unicode 宽字符：xterm 默认 Unicode provider 已覆盖 CJK 全角宽度（Netcatty 也未启用
+  unicode11 addon），本轮以 129 实测中文回显完整作为核验，不再引入额外 provider。
+
+---
+
 ## 2026-11-05 — P2 #31（子项：本地压缩包快捷解压）
 
 ### 对照（Netcatty）

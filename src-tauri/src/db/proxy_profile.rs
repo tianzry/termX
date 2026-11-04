@@ -199,6 +199,7 @@ mod tests {
             proxy_username: None,
             proxy_no_proxy: None,
             proxy_profile_id: proxy_profile_id.map(str::to_string),
+            ssh_input_compatibility: None,
         };
         insert_profile(db, &p).unwrap();
     }

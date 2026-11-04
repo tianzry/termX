@@ -283,7 +283,13 @@
     `local_extract_archive` 双注册，本地归档行右键「解压到当前目录」；
     debug 版 + CDP 实测 `sample.tar.gz` → `hello-local.txt`（内容一致），
     证据 `evidence/local-extract-31.json` + 两张截图。
-    剩余：命令黑名单 / 命令块脱敏依赖 Netcatty AI 执行器（termX 无 AI，置灰）、Unicode 宽字符与中文输入法未接。
+    输入兼容模式（中文 IME 逐字发送）已完成（2026-11-05）：schema v43 主机级
+    `ssh_input_compatibility`（NULL = 老数据视为开启）、`splitCompatibleWrites` 纯函数、
+    连接时快照 + 逐码点 sshWrite、两处主机表单开关；129 实测粘贴 4 汉字远端回读完整，
+    证据 `evidence/ime-compat-31.json`（Tauri 冻结 internals，IPC 计数取证不可行，已记录）。
+    宽字符核验：xterm 默认 Unicode provider 覆盖 CJK（Netcatty 亦未用 unicode11），
+    129 实测中文渲染完整，无需额外改动。
+    剩余：命令黑名单 / 命令块脱敏依赖 Netcatty AI 执行器（termX 无 AI，置灰）。
   - 参考：`commandBlocklist.ts`、`cursorLineHighlight.ts`、`inheritedCwd.ts`。
 - [ ] ⏸ **38. 会话快照迁移（暂缓移植；口径修正为 AI 观察弹窗的活动会话接管）**
   - 原规格「跨窗口 / 重启的会话状态交接（序号、回滚缓冲、激活态）」与 Netcatty 实际不符：

@@ -1389,6 +1389,7 @@ mod tests {
                 proxy_username: None,
                 proxy_no_proxy: None,
                 proxy_profile_id: None,
+                ssh_input_compatibility: None,
             },
             credential: crate::models::Credential {
                 id: "smoke-credential".into(),

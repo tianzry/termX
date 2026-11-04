@@ -91,6 +91,10 @@ import {
   type ZmodemController,
   type ZmodemEvent,
 } from "./terminal/zmodem";
+import {
+  resolveInputCompatibility,
+  splitCompatibleWrites,
+} from "./terminal/inputCompatibility";
 
 /** 搜索高亮配色，逐项对齐 Netcatty `SEARCH_DECORATIONS`。 */
 const SEARCH_DECORATIONS = {
@@ -228,6 +232,11 @@ export function TerminalPane({
     loadTerminalEncoding(sshProfileId),
   );
   const encodingRef = useRef<TerminalEncoding>(encoding);
+  /**
+   * 输入兼容模式快照（对齐 Netcatty 的 session-owned terminalSettingsRef）：
+   * 连接建立时读一次主机配置，本次会话内不再跟随设置变化；重连会重新取快照。
+   */
+  const inputCompatRef = useRef(false);
   const decoderRef = useRef<TerminalDecoder>(createTerminalDecoder(encoding));
   /** 终端编码子菜单（Netcatty 折叠项里的二级选择）。 */
   const [encodingMenuOpen, setEncodingMenuOpen] = useState(false);
@@ -1158,7 +1167,12 @@ export function TerminalPane({
       write: (text) =>
         void (domain === "pty"
           ? api.ptyWrite(sid, text)
-          : api.sshWrite(sid, text, encodingRef.current)),
+          : inputCompatRef.current
+            // 输入兼容模式：一次 onData 拆成多次 sshWrite（控制序列仍成组）。
+            ? splitCompatibleWrites(text).forEach((chunk) =>
+                void api.sshWrite(sid, chunk, encodingRef.current),
+              )
+            : api.sshWrite(sid, text, encodingRef.current)),
       resize: (c, r) =>
         void (domain === "pty"
           ? api.ptyResize(sid, c, r)
@@ -1482,6 +1496,17 @@ export function TerminalPane({
         setHostKeyInfo(toHostKeyInfo(p));
       }),
     ];
+
+    // 输入兼容模式快照：在 sshConnect 之前读取。读取失败不阻断连接——
+    // 保持上一次的值（初始 false，标准模式）继续用既有传输行为。
+    try {
+      const profile = await api.getProfile(profileId);
+      inputCompatRef.current = resolveInputCompatibility(
+        profile.ssh_input_compatibility,
+      );
+    } catch {
+      // 主机档案读取失败只影响本会话的输入模式，连接照常进行。
+    }
 
     try {
       const actual = await api.sshConnect(

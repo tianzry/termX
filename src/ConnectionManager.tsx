@@ -42,6 +42,8 @@ type ProfDraft = {
   bastion_profile_id: string;
   /** 转发本机 SSH Agent 到远端。 */
   agent_forwarding: boolean;
+  /** 输入兼容模式：null = 老数据（SSH 视为开启）；新主机默认 false。 */
+  ssh_input_compatibility: boolean | null;
   /** 编辑时原样带回，避免 update 把自定义算法重置为默认。 */
   algorithms?: api.SshAlgorithms;
   /** 主机级连接代理（密码单独落 SecretStore）。 */
@@ -94,6 +96,7 @@ function emptyProfile(): ProfDraft {
     init_command: "",
     bastion_profile_id: "",
     agent_forwarding: false,
+    ssh_input_compatibility: false,
     proxy: { ...EMPTY_PROXY_DRAFT },
     proxy_profile_id: "",
   };
@@ -203,6 +206,7 @@ export function ConnectionManager({
         init_command: "",
         bastion_profile_id: "",
         agent_forwarding: false,
+        ssh_input_compatibility: false,
         proxy: { ...EMPTY_PROXY_DRAFT },
         proxy_profile_id: "",
       });
@@ -231,6 +235,7 @@ export function ConnectionManager({
       init_command: p.init_command ?? "",
       bastion_profile_id: p.bastion_profile_id ?? "",
       agent_forwarding: p.agent_forwarding,
+      ssh_input_compatibility: p.ssh_input_compatibility ?? null,
       algorithms: p.algorithms,
       proxy: proxyDraftFromProfile(p),
       proxy_profile_id: p.proxy_profile_id ?? "",
@@ -274,6 +279,7 @@ export function ConnectionManager({
         init_command: d.init_command.trim() || null,
         group_id: d.group_id || null,
         agent_forwarding: d.agent_forwarding,
+        ssh_input_compatibility: d.ssh_input_compatibility,
         algorithms: d.algorithms,
         ...proxyProfileFields(d.proxy_profile_id ? EMPTY_PROXY_DRAFT : d.proxy),
         proxy_profile_id: d.proxy_profile_id || null,
@@ -727,6 +733,30 @@ export function ConnectionManager({
                         未检测到运行中的 SSH Agent，转发将不可用
                       </div>
                     )}
+                  </div>
+                  <div className="cm-wide cm-agent-row">
+                    <div className="cm-agent-line">
+                      <span>输入兼容模式：逐字发送</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={profDraft.ssh_input_compatibility ?? true}
+                        className={`host-switch${(profDraft.ssh_input_compatibility ?? true) ? " on" : ""}`}
+                        onClick={() =>
+                          setProfDraft({
+                            ...profDraft,
+                            ssh_input_compatibility: !(
+                              profDraft.ssh_input_compatibility ?? true
+                            ),
+                          })
+                        }
+                      >
+                        <span className="host-switch-knob" />
+                      </button>
+                    </div>
+                    <p className="host-setting-hint">
+                      中文输入或短粘贴出现丢字时尝试开启。保存后重新连接生效。
+                    </p>
                   </div>
                   <div className="cm-actions-bar">
                     <button onClick={saveProfile} disabled={busy}>

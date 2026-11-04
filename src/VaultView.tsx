@@ -186,6 +186,8 @@ type ComposerDraft = {
   init_command: string;
   /** 转发本机 SSH Agent（对齐 Netcatty agentForwarding）。 */
   agent_forwarding: boolean;
+  /** 输入兼容模式：null = 老数据（SSH 视为开启）；新主机默认 false。 */
+  ssh_input_compatibility: boolean | null;
   // ── Netcatty 1:1 对齐新增（schema v33）──
   sftp_protocol: "auto" | "sftp" | "scp";
   sftp_sudo: boolean;
@@ -1588,6 +1590,7 @@ export function VaultView({
       terminal_encoding: "utf-8",
       init_command: "",
       agent_forwarding: false,
+      ssh_input_compatibility: false,
       sftp_protocol: "auto",
       sftp_sudo: false,
       sftp_encoding: "auto",
@@ -1633,6 +1636,7 @@ export function VaultView({
       terminal_encoding: loadTerminalEncoding(p.id),
       init_command: p.init_command ?? "",
       agent_forwarding: p.agent_forwarding ?? false,
+      ssh_input_compatibility: p.ssh_input_compatibility ?? null,
       sftp_protocol:
         p.sftp_protocol === "sftp" || p.sftp_protocol === "scp"
           ? p.sftp_protocol
@@ -1821,6 +1825,7 @@ export function VaultView({
         totp_auto_submit: d.totp_auto_submit,
         totp_regex: d.totp_regex.trim() || null,
         agent_forwarding: d.agent_forwarding,
+        ssh_input_compatibility: d.ssh_input_compatibility,
         ...proxyProfileFields(d.proxy_profile_id ? EMPTY_PROXY_DRAFT : d.proxy),
         proxy_profile_id: d.proxy_profile_id || null,
       };
@@ -2111,6 +2116,7 @@ export function VaultView({
       init_command: null,
       group_id: null,
       agent_forwarding: false,
+      ssh_input_compatibility: false,
     };
     api
       .createCredential({
@@ -4181,6 +4187,30 @@ export function VaultView({
                     未检测到运行中的 SSH Agent，转发将不可用
                   </p>
                 )}
+
+                <div className="host-setting-row">
+                  <span className="host-setting-label">输入兼容模式：逐字发送</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={composer.ssh_input_compatibility ?? true}
+                    className={`host-switch${(composer.ssh_input_compatibility ?? true) ? " on" : ""}`}
+                    onClick={() =>
+                      setComposer({
+                        ...composer,
+                        ssh_input_compatibility: !(
+                          composer.ssh_input_compatibility ?? true
+                        ),
+                      })
+                    }
+                  >
+                    <span className="host-switch-knob" />
+                  </button>
+                </div>
+                <p className="host-setting-hint">
+                  中文输入或短粘贴出现丢字时尝试开启。
+                </p>
+                <p className="host-setting-hint">保存后重新连接生效。</p>
 
                 <div className="host-setting-row">
                   <span className="host-setting-label">用户名</span>

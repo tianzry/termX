@@ -84,6 +84,11 @@ export interface Profile {
   proxy_no_proxy?: string | null;
   /** 引用代理库条目；设置后连接层以库配置为准（内联字段仅作回退） */
   proxy_profile_id?: string | null;
+  /**
+   * 输入兼容模式（逐字发送，对齐 Netcatty Host.sshInputCompatibility）。
+   * null / 缺省 = 老数据，SSH 主机视为开启；新主机表单默认 false。
+   */
+  ssh_input_compatibility?: boolean | null;
 }
 
 /** 代理库条目（`list_proxy_profiles`），密码单独走 SecretStore。 */

@@ -1118,6 +1118,7 @@ mod tests {
                 proxy_username: None,
                 proxy_no_proxy: None,
                 proxy_profile_id: None,
+                ssh_input_compatibility: None,
             },
             credential: Credential {
                 id: "credential".into(),
@@ -1268,6 +1269,7 @@ mod tests {
                 proxy_username: None,
                 proxy_no_proxy: None,
                 proxy_profile_id: None,
+                ssh_input_compatibility: None,
             },
             credential: Credential {
                 id: "smoke-credential".into(),
@@ -1407,6 +1409,7 @@ mod tests {
                 proxy_username: None,
                 proxy_no_proxy: None,
                 proxy_profile_id: None,
+                ssh_input_compatibility: None,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1509,6 +1512,7 @@ mod tests {
                 proxy_username: None,
                 proxy_no_proxy: None,
                 proxy_profile_id: None,
+                ssh_input_compatibility: None,
             },
             credential,
             bastion_chain: Vec::new(),

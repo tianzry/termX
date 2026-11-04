@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 42;
+const SCHEMA_VERSION: u32 = 43;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -898,6 +898,17 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if version < 43 && table_exists(conn, "profiles")? {
+        // 输入兼容模式（逐字发送，对齐 Netcatty Host.sshInputCompatibility）。
+        // 刻意可空：NULL = 老数据，SSH 主机视为开启；新主机写入 0/1。
+        // 不加 NOT NULL —— 用默认值回填会把"老数据"语义固化成显式 false。
+        if !column_exists(conn, "profiles", "ssh_input_compatibility")? {
+            conn.execute_batch(
+                "ALTER TABLE profiles ADD COLUMN ssh_input_compatibility INTEGER;",
+            )?;
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1023,6 +1034,37 @@ mod tests {
             )
             .unwrap();
         assert!(!flag);
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_43_adds_profile_ssh_input_compatibility() {
+        // v42 老库：新列必须可空，旧行保持 NULL（= 老数据，SSH 主机视为开启），
+        // 不能回填成 0，否则会把"老数据默认开启"固化成显式关闭。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+             INSERT INTO profiles VALUES ('h', 'legacy');
+             PRAGMA user_version = 42;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        // 幂等：同一版本再跑一次不应报错。
+        migrate(&conn).unwrap();
+
+        assert!(column_exists(&conn, "profiles", "ssh_input_compatibility").unwrap());
+        let value: Option<bool> = conn
+            .query_row(
+                "SELECT ssh_input_compatibility FROM profiles WHERE id = 'h'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, None);
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
