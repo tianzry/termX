@@ -4506,3 +4506,40 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - Vite dev server 在新增依赖后必须重启重新 optimize，否则 WebView 里加载的是旧依赖快照，表现为整页空白。
 - 三类协议都能真渲染，无需置灰；限制只有生命周期（休眠/重连后图片不保留，需重新输出）。
 
+---
+
+## 2026-11-05 — P1 #18 Zmodem / Ymodem 传输（ZMODEM 完成，YMODEM 置灰）
+
+目标：终端内 `sz` / `rz` 自动接管，拖拽上传走 ZMODEM；YMODEM 按 Netcatty 实现边界评估可移植性。
+
+### 修改点
+
+1. **新增依赖 `zmodem.js@0.1.10`**（Netcatty `electron/bridges/zmodemHelper.cjs` 使用的同一协议库）。
+2. **`src/terminal/zmodem.ts`**：ZMODEM 接管器。
+   - `Zmodem.Sentry` 包住 SSH 下行字节流：检测 ZRQINIT（远端 `sz`）进入下载会话，检测 ZRINIT（远端 `rz`）进入上传会话；协议字节走 `sender`，其余字节继续送终端。
+   - 下载：`offer.accept()` 直接 resolve 为 payload 数组，拼接后回调落盘；进度通过 `offer.on("input")` 节流上报。
+   - 上传：`startUpload(files)` 记录文件，检测后逐个 `send_offer`，4KB 分片 `xfer.send` + `xfer.end`。
+3. **`src/backend/client.ts`** 新增 `sshWriteBytes`：以 `encoding: null` 把 `Array<number>` 原样写入 SSH 通道，避免二进制高字节被 UTF-8 二次编码。
+4. **`src/TerminalPane.tsx`**：
+   - SSH 会话在 `wire()` 中创建接管器；`writeTerminalOutput` 先喂 Sentry，`dispose` 时随 teardown / 卸载释放。
+   - 下载固定落盘 `~/Downloads`（目录不存在则创建，重名自动加 ` (n)`）。
+   - 拖拽上传：`.pane` 接收 drag/drop（仅 `Files`），写入 `rz -y`，10 秒未收到 ZRINIT 提示检查 lrzsz。
+   - 终端左下角 ZMODEM 横幅（检测 / 进度 / 完成 / 失败），完成 4 秒后自动收起。
+5. **`src/styles.css`** 新增拖拽虚线蒙层与横幅样式；**`src/terminal/zmodem.test.ts`** 3 例（下载检测回 ZRINIT、上传检测、dispose 后静默）。
+
+### 验证
+
+- 门禁：`npm run test:run` 450 ✓、`npm run build`（tsc + vite）✓。无 Rust 改动。
+- 129 真机（CDP，`evidence/zmodem-129.js`）：无 root 用 `apt-get download lrzsz` + `dpkg-deb -x` 得到真实 `sz`/`rz`。
+  - 下载：终端输入 `sz /tmp/termx-zmodem-src.txt`（78894B），横幅显示完成，本地 `C:\Users\tianzry\Downloads\termx-zmodem-src.txt` 与远端 `cat` 内容逐字节一致。
+  - 上传：向 `.pane` 派发真实 `DragEvent`（`DataTransfer` + `File`，10000B），自动 `rz -y`，远端 `~/termx-zmodem-upload.txt` md5 与本地一致（`1550f2df…5555`）。
+  - 证据：`evidence/zmodem-129.json` + `zmodem-download-129.png` / `zmodem-upload-129.png` / `zmodem-after-129.png`。
+
+### 踩坑
+
+- `zmodem.js` 0.1.10 的 `offer.get_payloads()` 不存在（README 旧 API），`accept()` 直接 resolve payload 数组；首次实测报 `offer.get_payloads is not a function`，修正后下载通过。
+- Sentry 只认 `**\x18B0` 公共前缀；手工构造 ZRINIT 必须带 4 字节头（`["CANFDX","CANOVIO","CANFC32"], 0`），否则 `parse_hex` 因长度非法不触发上传会话。
+- 协议字节绝不能走 `sshWrite` 的文本编码路径，必须新增 `sshWriteBytes`（`encoding: null`）才能保真。
+- YMODEM 置灰原因：Netcatty `sendSerialYmodem` 只在 Electron 主进程串口桥内（直接持有 `serialPort` 双向流 + `node:fs` 文件读写）；termX 串口为 Rust 后端字节流、前端没有串口级流控/取消语义，且本轮无串口硬件可实测。
+- 已对齐/未对齐：下载目录固定 `~/Downloads`（无 Electron 目录选择框）；无传输队列 / 断点续传 / 拖出桌面；ZMODEM 之外的 X/YMODEM 不提供。
+

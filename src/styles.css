@@ -8883,3 +8883,47 @@ html[data-theme="dark"] {
   color: hsl(var(--muted-foreground));
   margin: 4px 0 10px;
 }
+
+/* ZMODEM 拖拽蒙层与传输横幅（P1 #18）。 */
+.pane.term-zmodem-dragging::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 2px dashed #0a84ff;
+  border-radius: 6px;
+  background: rgba(10, 132, 255, 0.08);
+  pointer-events: none;
+  z-index: 20;
+}
+.term-zmodem-drop-mask {
+  position: absolute;
+  inset: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #0a84ff;
+  background: rgba(10, 132, 255, 0.12);
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 21;
+}
+.term-zmodem-status {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  max-width: calc(100% - 24px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #fff;
+  background: rgba(10, 132, 255, 0.92);
+  z-index: 22;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.term-zmodem-status.error {
+  background: rgba(200, 40, 40, 0.92);
+}

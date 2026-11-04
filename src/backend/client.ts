@@ -258,6 +258,21 @@ export function sshWrite(
   });
 }
 
+/**
+ * 写入原始二进制字节（ZMODEM 协议用）。与 `sshWrite` 不同，不做文本编码，
+ * 高字节原样进通道；后端 `encoding: null` 时直接透传。
+ */
+export function sshWriteBytes(
+  sessionId: string,
+  data: Uint8Array,
+): Promise<void> {
+  return invoke("ssh_write", {
+    sessionId,
+    data: Array.from(data),
+    encoding: null,
+  });
+}
+
 export function sshResize(
   sessionId: string,
   cols: number,

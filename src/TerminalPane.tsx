@@ -86,6 +86,11 @@ import {
   type TerminalDecoder,
   type TerminalEncoding,
 } from "./terminal/terminalEncoding";
+import {
+  createZmodemController,
+  type ZmodemController,
+  type ZmodemEvent,
+} from "./terminal/zmodem";
 
 /** 搜索高亮配色，逐项对齐 Netcatty `SEARCH_DECORATIONS`。 */
 const SEARCH_DECORATIONS = {
@@ -207,6 +212,10 @@ export function TerminalPane({
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /** ZMODEM 传输提示（检测 / 进度 / 完成 / 错误），空闲为 null。 */
+  const [zmodemState, setZmodemState] = useState<ZmodemEvent | null>(null);
+  /** 文件拖拽悬停在终端上时显示投放蒙层。 */
+  const [zmodemDragActive, setZmodemDragActive] = useState(false);
   /**
    * 终端编码（Netcatty `encoding`）：按主机记住选择，输出用 TextDecoder
    * 解码、输入交给后端重编码。与日志/录制无关，独立于会话生命周期。
@@ -501,6 +510,16 @@ export function TerminalPane({
 
   /** 下行字节 → 文本（按会话编码）；串口由后端按串口配置解码，走原字节流。 */
   function writeTerminalOutput(bytes: Uint8Array) {
+    const zmodem = zmodemRef.current;
+    if (zmodem) {
+      zmodem.consume(bytes);
+      return;
+    }
+    writeTerminalText(bytes);
+  }
+
+  /** 直通字节 → 终端（ZMODEM 非协议输出、串口原始字节共用）。 */
+  function writeTerminalText(bytes: Uint8Array) {
     const term = controllerRef.current?.term;
     if (!term) return;
     if (transportRef.current?.kind === "serial") {
@@ -512,6 +531,78 @@ export function TerminalPane({
       term.write(text);
       scheduleOutputTriggerCheck();
     }
+  }
+
+  /** ZMODEM 完成 / 失败提示：完成显示 4 秒，错误保留到下次传输。 */
+  function handleZmodemEvent(event: ZmodemEvent) {
+    setZmodemState(event);
+    if (event.phase === "complete") {
+      const what = event.direction === "download" ? "下载" : "上传";
+      onStatus(
+        `ZMODEM ${what}完成：${event.filename ?? ""}${
+          event.savedPath ? ` → ${event.savedPath}` : ""
+        }`,
+      );
+      window.setTimeout(() => {
+        setZmodemState((prev) => (prev === event ? null : prev));
+      }, 4000);
+    } else if (event.phase === "error") {
+      onStatus(`ZMODEM 失败：${event.message ?? "未知错误"}`);
+    }
+  }
+
+  /** 下载落盘：固定写到本机 `~/Downloads`（与 Netcatty 的目录选择框不同）。 */
+  async function saveZmodemDownload(
+    filename: string,
+    bytes: Uint8Array,
+  ): Promise<string> {
+    const home = await api.localHome();
+    const dir = `${home}/Downloads`;
+    try {
+      await api.localStat(dir, true);
+    } catch {
+      await api.localMkdir(dir);
+    }
+    const safe = (filename || "download.bin").replace(/[\\/]+/g, "_");
+    const withIndex = (name: string, n: number) => {
+      const dot = name.lastIndexOf(".");
+      if (dot <= 0) return `${name} (${n})`;
+      return `${name.slice(0, dot)} (${n})${name.slice(dot)}`;
+    };
+    let target = `${dir}/${safe}`;
+    for (let n = 1; n < 1000; n++) {
+      try {
+        await api.localStat(target, true);
+      } catch {
+        break;
+      }
+      target = `${dir}/${withIndex(safe, n)}`;
+    }
+    await api.localWriteFile(target, bytes);
+    return target;
+  }
+
+  /** 文件拖入终端：记录待传文件并启动远端 `rz`，检测到 ZRINIT 后自动发送。 */
+  function handleZmodemDrop(files: File[]) {
+    if (!isSsh || status !== "connected" || !zmodemRef.current) {
+      onStatus("ZMODEM 拖拽上传仅支持已连接的 SSH 会话");
+      return;
+    }
+    if (files.length === 0) return;
+    zmodemRef.current.startUpload(files);
+    transportRef.current?.write("rz -y\r");
+    if (zmodemUploadTimerRef.current !== null) {
+      window.clearTimeout(zmodemUploadTimerRef.current);
+    }
+    zmodemUploadTimerRef.current = window.setTimeout(() => {
+      zmodemUploadTimerRef.current = null;
+      if (zmodemRef.current?.active()) return;
+      handleZmodemEvent({
+        phase: "error",
+        direction: "upload",
+        message: "远端未响应 ZRINIT（请确认已安装 lrzsz 的 rz）",
+      });
+    }, 10000);
   }
 
   /**
@@ -793,6 +884,10 @@ export function TerminalPane({
   const startedRef = useRef(false);
   /** 供标签右键「重连」使用的最新 connect 闭包（避免注册句柄时捕获旧实现）。 */
   const connectRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  /** ZMODEM 接管器（仅 SSH 会话创建）。 */
+  const zmodemRef = useRef<ZmodemController | null>(null);
+  /** 拖拽上传等待 rz 输出 ZRINIT 的超时计时器。 */
+  const zmodemUploadTimerRef = useRef<number | null>(null);
 
   function notifySession(sid: string | null) {
     sidRef.current = sid;
@@ -813,6 +908,12 @@ export function TerminalPane({
   /** 拆掉本窗格会话的事件监听与传输（不重连）。 */
   function teardown() {
     clearPendingWrites();
+    zmodemRef.current?.dispose();
+    zmodemRef.current = null;
+    if (zmodemUploadTimerRef.current !== null) {
+      window.clearTimeout(zmodemUploadTimerRef.current);
+      zmodemUploadTimerRef.current = null;
+    }
     unsubRef.current.forEach((u) => u());
     unsubRef.current = [];
     promptUnsubRef.current.forEach((u) => u());
@@ -836,6 +937,12 @@ export function TerminalPane({
       pendingPromptRef.current = null;
       if (hostKeySessionRef.current) void api.sshHostKeyCancel(hostKeySessionRef.current);
       hostKeySessionRef.current = null;
+      zmodemRef.current?.dispose();
+      zmodemRef.current = null;
+      if (zmodemUploadTimerRef.current !== null) {
+        window.clearTimeout(zmodemUploadTimerRef.current);
+        zmodemUploadTimerRef.current = null;
+      }
       unsubRef.current.forEach((u) => u());
       unsubRef.current = [];
       promptUnsubRef.current.forEach((u) => u());
@@ -1041,6 +1148,19 @@ export function TerminalPane({
           : api.sshDisconnect(sid)),
     };
     transportRef.current = transport;
+    // ZMODEM 接管：仅 SSH 会话。字节流先经 Sentry 分流，协议字节原样写回，
+    // 其余字节继续进终端；检测到 rz/sz 后自动完成收发。
+    if (domain === "ssh") {
+      zmodemRef.current?.dispose();
+      zmodemRef.current = createZmodemController({
+        writeToTerminal: writeTerminalText,
+        writeToRemote: (bytes) => {
+          void api.sshWriteBytes(sid, bytes);
+        },
+        saveDownload: saveZmodemDownload,
+        onEvent: handleZmodemEvent,
+      });
+    }
     setStatus("connected");
     setError(null);
     setChainProgress(null);
@@ -1767,10 +1887,49 @@ export function TerminalPane({
     else void pasteFromClipboard();
   }
 
+  /** ZMODEM 横幅文案（检测 / 进度 / 完成 / 错误）。 */
+  function zmodemStatusText(event: ZmodemEvent): string {
+    const dir = event.direction === "download" ? "下载" : "上传";
+    const pct =
+      event.total && event.total > 0
+        ? ` ${Math.min(100, Math.floor(((event.transferred ?? 0) / event.total) * 100))}%`
+        : "";
+    switch (event.phase) {
+      case "detect":
+        return `ZMODEM ${dir}：${event.filename ?? ""}${pct}`;
+      case "progress":
+        return `ZMODEM ${dir}：${event.filename ?? ""}${pct}`;
+      case "complete":
+        return `ZMODEM ${dir}完成：${event.filename ?? ""}${
+          event.savedPath ? ` → ${event.savedPath}` : ""
+        }`;
+      default:
+        return `ZMODEM ${dir}失败：${event.message ?? "未知错误"}`;
+    }
+  }
+
   return (
     <div
       ref={paneRef}
-      className={`pane${active ? " active" : ""}`}
+      className={`pane${active ? " active" : ""}${
+        zmodemDragActive ? " term-zmodem-dragging" : ""
+      }`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        if (!zmodemDragActive) setZmodemDragActive(true);
+      }}
+      onDragLeave={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (next && e.currentTarget.contains(next)) return;
+        setZmodemDragActive(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setZmodemDragActive(false);
+        handleZmodemDrop(Array.from(e.dataTransfer.files ?? []));
+      }}
       onMouseDown={(e) => {
         // 每次按下都复位长按标记：长按弹菜单后的 contextmenu 事件可能落在
         // 遮罩上，不能让它把下一次正常右键吞掉。
@@ -2336,6 +2495,20 @@ export function TerminalPane({
         onResize={(cols, rows) => transportRef.current?.resize(cols, rows)}
         onOsc7={handleOsc7}
       />
+
+      {zmodemDragActive && (
+        <div className="term-zmodem-drop-mask">松开以上传文件（ZMODEM rz）</div>
+      )}
+      {zmodemState && (
+        <div
+          className={`term-zmodem-status${
+            zmodemState.phase === "error" ? " error" : ""
+          }`}
+          role="status"
+        >
+          {zmodemStatusText(zmodemState)}
+        </div>
+      )}
 
       {osc7DialogOpen && (
         <div className="modal-mask" onClick={() => setOsc7DialogOpen(false)}>
