@@ -77,6 +77,8 @@ export function ForwardOverview() {
   const [loaded, setLoaded] = useState(false);
   const [form, setForm] = useState<FormState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<api.Forward | null>(null);
+  const [search, setSearch] = useState("");
+  const [bulk, setBulk] = useState<"start" | "stop" | null>(null);
 
   const refreshActive = useCallback(async () => {
     try {
@@ -114,6 +116,46 @@ export function ForwardOverview() {
     () => groupForwardsByHost(forwards, profiles, active),
     [forwards, profiles, active],
   );
+
+  const query = search.trim().toLowerCase();
+  // 搜索命中：条目名 / 规则文本 / 主机名或地址；命中主机则整组保留。
+  const filteredGroups = useMemo(() => {
+    if (!query) return groups;
+    return groups
+      .filter((g) => {
+        const groupHit =
+          g.profileName.toLowerCase().includes(query) ||
+          (g.host ?? "").toLowerCase().includes(query);
+        if (groupHit) return true;
+        return g.forwards.some(
+          (f) =>
+            f.name.toLowerCase().includes(query) ||
+            f.rules.some((r) => ruleLabel(r).toLowerCase().includes(query)),
+        );
+      })
+      .map((g) => ({
+        ...g,
+        forwards: g.forwards.filter(
+          (f) =>
+            g.profileName.toLowerCase().includes(query) ||
+            (g.host ?? "").toLowerCase().includes(query) ||
+            f.name.toLowerCase().includes(query) ||
+            f.rules.some((r) => ruleLabel(r).toLowerCase().includes(query)),
+        ),
+      }));
+  }, [groups, query]);
+
+  const totals = useMemo(() => {
+    let rules = 0;
+    let runningRules = 0;
+    for (const f of forwards) rules += f.rules.length;
+    for (const info of active) {
+      runningRules += info.stats.rules.filter(
+        (r) => r.status === "active" || r.status === "starting",
+      ).length;
+    }
+    return { rules, runningRules };
+  }, [forwards, active]);
 
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
@@ -184,6 +226,45 @@ export function ForwardOverview() {
       }),
     );
 
+  /** 全部启动：逐条启动未运行条目（失败逐条收集，成功后统一刷新）。 */
+  const startAll = async () => {
+    setBulk("start");
+    const failures: string[] = [];
+    try {
+      for (const f of forwards) {
+        if (activeFor(active, f.id)) continue;
+        try {
+          await api.forwardStart(f.id);
+        } catch (e) {
+          failures.push(`${f.name}：${userVisibleError(String(e))}`);
+        }
+      }
+      await refreshAll();
+      setError(failures.length ? failures.join("；") : null);
+    } finally {
+      setBulk(null);
+    }
+  };
+
+  /** 全部停止：结束所有运行中会话（已断开的忽略）。 */
+  const stopAll = async () => {
+    setBulk("stop");
+    const failures: string[] = [];
+    try {
+      for (const info of active) {
+        try {
+          await api.forwardStop(info.active_id);
+        } catch (e) {
+          failures.push(userVisibleError(String(e)));
+        }
+      }
+      await refreshAll();
+      setError(failures.length ? failures.join("；") : null);
+    } finally {
+      setBulk(null);
+    }
+  };
+
   /** 删除运行中的条目先停会话，避免后端留下无主 listener。 */
   const confirmDelete = async () => {
     const f = deleteTarget;
@@ -205,10 +286,43 @@ export function ForwardOverview() {
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "18px 22px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
         <div style={{ fontSize: 16, fontWeight: 600 }}>端口转发</div>
-        <div style={mutedText}>按主机分组 · 规则级启停与实时统计</div>
+        <div style={mutedText}>
+          {forwards.length} 条目 · {totals.rules} 规则
+          {totals.runningRules > 0 ? ` · ${totals.runningRules} 运行中` : ""}
+        </div>
         <div style={{ flex: 1 }} />
+        <input
+          style={{
+            background: "hsl(var(--background))",
+            color: "hsl(var(--foreground))",
+            border: "1px solid hsl(var(--border))",
+            borderRadius: 6,
+            padding: "4px 8px",
+            fontSize: 12,
+            width: 200,
+          }}
+          placeholder="搜索名称 / 主机 / 规则"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <button
+          style={smallBtn(bulk !== null || forwards.length === 0)}
+          disabled={bulk !== null || forwards.length === 0}
+          title="启动所有未运行条目"
+          onClick={() => void startAll()}
+        >
+          {bulk === "start" ? "启动中…" : "全部启动"}
+        </button>
+        <button
+          style={smallBtn(bulk !== null || active.length === 0)}
+          disabled={bulk !== null || active.length === 0}
+          title="停止所有运行中条目"
+          onClick={() => void stopAll()}
+        >
+          {bulk === "stop" ? "停止中…" : "全部停止"}
+        </button>
         <button
           style={smallBtn(busy !== null)}
           disabled={busy !== null}
@@ -257,7 +371,7 @@ export function ForwardOverview() {
 
       {!loaded ? (
         <div style={{ ...mutedText, fontSize: 13, padding: 24 }}>正在加载…</div>
-      ) : groups.length === 0 ? (
+      ) : filteredGroups.length === 0 ? (
         <div
           style={{
             border: "1px dashed hsl(var(--border))",
@@ -268,11 +382,13 @@ export function ForwardOverview() {
             marginTop: 12,
           }}
         >
-          还没有端口转发规则。点击右上角「新建转发」选择目标主机并添加规则；启动后会在这里按主机汇总显示。
+          {query
+            ? `没有匹配「${search.trim()}」的转发条目或规则。`
+            : "还没有端口转发规则。点击右上角「新建转发」选择目标主机并添加规则；启动后会在这里按主机汇总显示。"}
         </div>
       ) : (
         <div style={{ marginTop: 12 }}>
-          {groups.map((g) => (
+          {filteredGroups.map((g) => (
             <section key={g.profileId} style={cardStyle}>
               <div
                 style={{

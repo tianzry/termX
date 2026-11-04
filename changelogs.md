@@ -4157,4 +4157,34 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `Profile` 是 Rust struct 字面量构造，新增字段会波及所有测试/迁移构造点（本次一次补齐 8 处），`#[serde(default)]` 只保护反序列化。
 - 主机同时存内联代理与库引用时必须定义优先级；选择库引用即清空主机级 secret，避免两套密码长期不一致。
 
+---
+
+## 2026-11-04 · 代理轮补验证 + 端口转发第一层
+
+### 代理轮补验证（debug 实机）
+
+- 重编 `target/debug/rssh.exe` 并以 CDP 9222 启动，按 Netcatty `ProxyProfilesManager.tsx` 逐项复核：
+  - Vault「代理」页：导航可进入，空态、搜索框、新建按钮、卡片区、右侧编辑表单、底部「未移植能力」说明均正常渲染（`evidence/p4-proxy-01-page.png`）。
+  - 新建流程：填「P4 验证代理 / HTTP / 127.0.0.1:7897」→ 保存成功，列表即时出现卡片（`p4-proxy-02-form.png`、`p4-proxy-03-saved.png`）。
+  - 主机编辑器：打开 129 主机详情，「代理来源」下拉已列出库条目（`内联配置 / 直连` + `P4 验证代理（HTTP 127.0.0.1:7897）`），选中后内联字段隐藏、分组级代理行置灰（`p4-proxy-05-host-editor.png`）。
+  - 差异与处理：Netcatty 为「卡片列表 + 编辑侧栏」，termX 结构一致；Netcatty 无「未移植能力」区块，termX 按本项目要求保留置灰说明，属有意差异。未发现视觉/交互阻断问题。
+- 验证数据保留 1 条「P4 验证代理」，用于后续端口转发/主机绑定回归；如需清理可在代理页删除。
+
+### 端口转发第一层（Vault 总览）
+
+1. 对照 Netcatty `components/PortForwardingNew.tsx`：其 Vault 页是规则卡片平铺 + 顶部新建（按 local/remote/dynamic 分体菜单）/ 全部启动 / 全部停止 / 搜索 / 视图切换；termX 采用需求中的「按主机分组」，本轮补齐页面级能力。
+2. `ForwardOverview` 顶部新增：`N 条目 · M 规则 · K 运行中` 统计、名称/主机/规则关键字搜索（命中主机则整组保留，无命中给出行内空态）、「全部启动」（逐条启动未运行条目，失败汇总）与「全部停止」（结束所有 active 会话）。
+3. 沿用现有 `forward_*` 命令（`list_forwards` / `create_forward` / `update_forward` / `delete_forward` / `forward_start` / `forward_stop` / `forward_active_list`，lib.rs + server.rs 双注册），无需新增后端。
+4. 下轮第二层：终端侧面板逐项对齐、规则级启停与统计细节、视图切换、托盘快捷开关取舍。
+
+### 门禁
+
+- `npm run test:run`：407 ✓；`npm run build` ✓；`cargo check --features server` ✓；`cargo test --lib`：878 ✓。
+- debug 重编后 CDP 复核：`evidence/fwd-r4-01-overview.png`（计数/搜索/批量按钮），`fwd-r4-02-search-empty.png`（无匹配空态）。
+
+### 踩坑
+
+- 前端 `dist` 更新不会触发 Tauri 重编，必须 touch `src-tauri/src/lib.rs` 再 `cargo build`，否则实机仍是旧 UI。
+- 搜索过滤要同时作用于「分组命中」和「规则命中」，否则按主机搜索时会误隐藏同组其它条目。
+
 
