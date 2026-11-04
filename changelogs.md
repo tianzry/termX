@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-11-05 — P2 #38 会话快照迁移（核定 ⏸，无代码改动）
+
+### 对照（Netcatty）
+
+- `requestTerminalSessionSnapshot` / `onTerminalSessionSnapshotRequest` /
+  `respondTerminalSessionSnapshot` / `applyTerminalSessionSnapshot`
+  （`types/global/netcatty-bridge-session.d.ts` L432-L474）不是「跨窗口 / 重启」能力。
+- 唯一调用方是 AI 观察弹窗的 `attachExistingSession`：
+  `components/terminal/useTerminalEffects.ts` L693-L721 先
+  `acquireSessionFlowPauseLease()` 暂停并排空输出，再请求快照、rebind 输出到弹窗
+  renderer、最后恢复；`components/Terminal.tsx` L1668-L1711 注释明确
+  「Home renderer for AI observe popups」。
+- 输出重绑由 Electron 主进程维护 webContents 归属与授权码：
+  `electron/bridges/terminalBridge.cjs` L210-L247（`resolveSessionHomeWebContentsId` +
+  `isAuthorizedAttachIpc`）。应用重启后会话进程已消失，快照不会持久化到磁盘。
+
+### termX 现状与阻塞（源码层）
+
+1. 快照 API 的消费方是 AI 观察弹窗，而 AI 侧栏 #27 按 `docs/plan.md` 暂缓，termX 无调用场景。
+2. termX 后端没有窗口级输出归属：每块 SSH 数据走 `AppHandle::emit`
+   （`src-tauri/src/ssh/client.rs` L2125、`src-tauri/src/emitter.rs` L65），Tauri 的
+   `Emitter::emit` 文档与实现都是「Emits an event to all targets / all webviews」
+   （`tauri-2.12.5/src/lib.rs` L961-L978）；`emit_to` 存在，但 termX 未记录会话所属窗口。
+   同时缺少 Netcatty 的 flow pause / drain，无法在「取快照 → 新 renderer 接管」之间
+   保证字节不丢、不重复。
+3. 「重启恢复」不可达：`AppState.sessions` / `pty_sessions` 均为进程内 `HashMap`
+   （`src-tauri/src/state.rs` L74-L82），进程退出即销毁；若只恢复文本快照，
+   与 Netcatty 的实际行为也不一致。
+
+### 结论
+
+- #38 标记 **⏸ 暂缓**，不新增假入口。若启动 #27，需单独立项「会话输出路由 + 暂停排空 +
+  快照传输」子系统（覆盖 ssh / pty / serial / telnet），再做观察弹窗接管。
+- 本轮无代码改动；未跑门禁（无前端/Rust 变更），仅提交 `todo.md` 与 `changelogs.md`。
+
+### 踩坑
+
+- 判定可行性先看调用方：桥接方法名很像「窗口迁移」，但全仓只在 `attachExistingSession`
+  路径使用；不能凭 API 名称推断需求。
+
+---
+
 ## 2026-11-05 — P2 #31 终端细节增强（子项：SFTP 跟随终端目录）
 
 ### 对照（Netcatty）
