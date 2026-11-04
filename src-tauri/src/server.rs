@@ -899,6 +899,17 @@ fn dispatch(
         "keychain_list_file_keys" => ok(crate::commands::keychain::keychain_list_file_keys_impl(
             state,
         )),
+        "keychain_list_certificates" => ok(
+            crate::commands::keychain::keychain_list_certificates_impl(state),
+        ),
+        "keychain_import_certificate_credential" => ok(
+            crate::commands::keychain::keychain_import_certificate_credential_impl(
+                state,
+                &arg::<String>(&args, "name")?,
+                &arg::<String>(&args, "username")?,
+                args.get("label").and_then(|v| v.as_str()).unwrap_or(""),
+            ),
+        ),
         "keychain_generate_file_key" => ok(
             crate::commands::keychain::keychain_generate_file_key_impl(
                 state,

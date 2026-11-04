@@ -23,6 +23,8 @@ pub struct AuthCtx {
     pub resource_id: String,
     pub prompt_id: String,
     pub owner: SessionOwner,
+    /// 主机验证器配置；None = 未设置或已在 prompt 前被移除。
+    pub totp: Option<crate::totp::TotpConfig>,
 }
 
 /// RAII：rx await 走完前如果路径上失败（比如 emit 失败），guard drop 时

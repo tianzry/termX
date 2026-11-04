@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-05 — P2 证书认证 + TOTP 自动填充
+
+- **证书认证：可行并已接入**。russh 0.62 原生提供 `authenticate_openssh_cert` 与 `ssh_key::Certificate`，无需换库。
+  - 凭据新增 `certificate` 类型；私钥仍存 SecretStore `cred:<id>:secret`，OpenSSH 证书文本存 `cred:<id>:certificate`。
+  - `ssh/auth.rs` 解析 `*-cert.pub` 后走证书认证；解析/缺失/失败均有独立 i18n code。
+  - 钥匙串新增「证书」区：扫描 `~/.ssh/*-cert.pub`，展示算法 / principals / 有效期 / 是否缺私钥；
+    「用作凭据（绑定主机）」把证书与同名私钥组合成凭据，主机编辑选择该凭据即完成绑定/用于认证。
+  - 实机：本地临时 CA 签发的 `~/.ssh/termx_probe_cert-cert.pub` 被 `keychain_list_certificates` 正确解析
+    （算法 / principal root / 有效期）。缺口：本机没有信任该 CA 的 sshd，未做真实证书登录；
+    证书页 UI 已随前端 build 通过，未单独跑 CDP 截图。
+- **TOTP：可行并已接入**。新增 `src/totp.rs`：BASE32 解码 + HMAC-SHA1，RFC 6238 30s/6 位；
+  keyboard-interactive 提示命中验证码关键字（或主机 `totp_regex`）且 `totp_auto_submit=true` 时直接
+  用 SecretStore 中 `totp:<profile>` 计算并回答；未命中仍走人工弹窗。
+  - 验证：RFC 6238 SHA1 六组向量（8 位）全部通过；`tests/totp_mock.rs` 对 paramiko mock sshd
+    （keyboard-interactive 提示 «Verification code:»，服务端校验当前码）自动填充一次认证成功。
+- 门禁：`npm run test:run` 526✓ / 50 文件；`npm run build` ✓；`cargo check --no-default-features` ✓；
+  `cargo test --no-default-features --lib` 通过（其中一条 lifecycle 用例首轮 flaky、单跑复跑通过）；
+  mock 服务端用例 `cargo test --test totp_mock -- --ignored` ✓。
+
+---
+
+
 ## 2026-11-05 — P2 终端设置 tab：解除 4 项置灰 + 剩余项原因具体化
 
 - 先逐行核对终端设置 tab 的置灰项，能落地的按 Netcatty 语义实现：

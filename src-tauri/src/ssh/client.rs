@@ -1944,6 +1944,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         resource_id: session_id.clone(),
         prompt_id,
         owner: owner.clone(),
+        totp: crate::totp::config_from_store(&app.state(), &profile),
     });
 
     let target_label = profile_label(&profile);

@@ -324,6 +324,7 @@ fn default_compression_algorithms() -> Vec<String> {
 pub enum CredentialType {
     Password,
     Key,
+    Certificate,
     Interactive,
     Agent,
     None,
@@ -334,6 +335,7 @@ impl CredentialType {
         match self {
             Self::Password => "password",
             Self::Key => "key",
+            Self::Certificate => "certificate",
             Self::Interactive => "interactive",
             Self::Agent => "agent",
             Self::None => "none",
@@ -344,6 +346,7 @@ impl CredentialType {
         match s {
             "password" => Self::Password,
             "key" => Self::Key,
+            "certificate" => Self::Certificate,
             "interactive" => Self::Interactive,
             "agent" => Self::Agent,
             _ => Self::None,
@@ -889,6 +892,7 @@ mod tests {
     fn credential_type_as_str_stable_literals() {
         assert_eq!(CredentialType::Password.as_str(), "password");
         assert_eq!(CredentialType::Key.as_str(), "key");
+        assert_eq!(CredentialType::Certificate.as_str(), "certificate");
         assert_eq!(CredentialType::Interactive.as_str(), "interactive");
         assert_eq!(CredentialType::Agent.as_str(), "agent");
         assert_eq!(CredentialType::None.as_str(), "none");

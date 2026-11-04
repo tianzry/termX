@@ -235,6 +235,10 @@ pub fn cred_secret_key(credential_id: &str) -> String {
     format!("cred:{credential_id}:secret")
 }
 
+pub fn cert_secret_key(credential_id: &str) -> String {
+    format!("cred:{credential_id}:certificate")
+}
+
 pub fn cred_passphrase_key(credential_id: &str) -> String {
     format!("cred:{credential_id}:passphrase")
 }

@@ -72,6 +72,7 @@ type GroupDraft = {
 const CRED_LABEL: Record<CredentialType, string> = {
   password: "密码",
   key: "私钥",
+  certificate: "证书",
   interactive: "键盘交互",
   agent: "SSH Agent",
   none: "无",

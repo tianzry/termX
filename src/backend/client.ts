@@ -20,7 +20,7 @@ import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
  */
 
 export type TerminalDomain = "pty" | "ssh";
-export type CredentialType = "password" | "key" | "interactive" | "agent" | "none";
+export type CredentialType = "password" | "key" | "certificate" | "interactive" | "agent" | "none";
 
 export interface Credential {
   id: string;
@@ -1997,6 +1997,29 @@ export interface SshFileKeyEntry {
   encrypted: boolean;
   /** 是否当前默认密钥。 */
   is_default: boolean;
+}
+
+export interface SshCertificateEntry {
+  name: string;
+  cert_path: string;
+  key_type: string;
+  principals: string[];
+  valid_after: number;
+  valid_before: number;
+  comment: string;
+  has_private_key: boolean;
+}
+
+export function keychainListCertificates(): Promise<SshCertificateEntry[]> {
+  return invoke<SshCertificateEntry[]>("keychain_list_certificates");
+}
+
+export function keychainImportCertificateCredential(
+  name: string,
+  username: string,
+  label: string,
+): Promise<Credential> {
+  return invoke<Credential>("keychain_import_certificate_credential", { name, username, label });
 }
 
 export function keychainListFileKeys(): Promise<SshFileKeyEntry[]> {

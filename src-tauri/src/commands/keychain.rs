@@ -342,6 +342,123 @@ fn list_file_keys_in(dir: &std::path::Path, default_name: &str) -> Result<Vec<Ss
     Ok(out)
 }
 
+/// `~/.ssh` 内的 OpenSSH 用户证书（`*-cert.pub`）元数据。
+#[derive(serde::Serialize)]
+pub struct SshCertificateEntry {
+    pub name: String,
+    pub cert_path: String,
+    pub key_type: String,
+    pub principals: Vec<String>,
+    pub valid_after: u64,
+    pub valid_before: u64,
+    pub comment: String,
+    pub has_private_key: bool,
+}
+
+fn certificate_entries_in(dir: &std::path::Path) -> Result<Vec<SshCertificateEntry>, AppError> {
+    use russh::keys::ssh_key::Certificate;
+
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Ok(out),
+    };
+    for entry in entries.flatten() {
+        let cert_name = entry.file_name().to_string_lossy().to_string();
+        if !cert_name.ends_with("-cert.pub") || !crate::commands::profile::is_plain_file_name(&cert_name) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let Ok(cert) = Certificate::from_openssh(text.trim()) else {
+            continue;
+        };
+        let key_name = cert_name.trim_end_matches("-cert.pub");
+        out.push(SshCertificateEntry {
+            name: key_name.to_string(),
+            cert_path: cert_name.clone(),
+            key_type: cert.algorithm().to_string(),
+            principals: cert.valid_principals().to_vec(),
+            valid_after: cert.valid_after(),
+            valid_before: cert.valid_before(),
+            comment: cert.comment().to_string(),
+            has_private_key: dir.join(key_name).is_file(),
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+pub fn keychain_list_certificates_impl(
+    _state: &AppState,
+) -> Result<Vec<SshCertificateEntry>, AppError> {
+    certificate_entries_in(&ssh_dir()?)
+}
+
+/// 把 `~/.ssh/<name>-cert.pub` 与其私钥组合成证书凭据（host 侧选择该凭据即绑定）。
+pub fn keychain_import_certificate_credential_impl(
+    state: &AppState,
+    name: &str,
+    username: &str,
+    label: &str,
+) -> Result<Credential, AppError> {
+    let name = name.trim();
+    if !crate::commands::profile::is_plain_file_name(name) {
+        return Err(AppError::other("invalid_cert_name", json!({ "name": name })));
+    }
+    let username = username.trim();
+    if username.is_empty() {
+        return Err(AppError::other("username_required", json!({})));
+    }
+    let dir = ssh_dir()?;
+    let cert_path = dir.join(format!("{name}-cert.pub"));
+    let key_path = dir.join(name);
+    let cert_text = std::fs::read_to_string(&cert_path)
+        .map_err(|_| AppError::other("cert_file_not_found", json!({ "name": name })))?;
+    let pem = std::fs::read_to_string(&key_path)
+        .map_err(|_| AppError::other("key_file_not_found", json!({ "name": name })))?;
+    let label = if label.trim().is_empty() {
+        name.to_string()
+    } else {
+        label.trim().to_string()
+    };
+
+    let cred = Credential {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: label,
+        username: username.to_string(),
+        credential_type: CredentialType::Certificate,
+        secret: None,
+        save_to_remote: false,
+    };
+    crate::db::credential::insert(&state.db, &cred)?;
+    state
+        .secret_store
+        .set(&crate::secret::cred_secret_key(&cred.id), &pem)?;
+    state
+        .secret_store
+        .set(&crate::secret::cert_secret_key(&cred.id), cert_text.trim())?;
+    Ok(cred)
+}
+
+#[tauri::command]
+pub fn keychain_list_certificates(
+    state: State<AppState>,
+) -> Result<Vec<SshCertificateEntry>, AppError> {
+    keychain_list_certificates_impl(&state)
+}
+
+#[tauri::command]
+pub fn keychain_import_certificate_credential(
+    state: State<AppState>,
+    name: String,
+    username: String,
+    label: String,
+) -> Result<Credential, AppError> {
+    keychain_import_certificate_credential_impl(&state, &name, &username, &label)
+}
+
 fn default_key_name(state: &AppState) -> Result<String, AppError> {
     Ok(crate::db::settings::get(&state.db, DEFAULT_KEY_SETTING)?
         .unwrap_or_else(|| FALLBACK_DEFAULT_KEY.to_string()))

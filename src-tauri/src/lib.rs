@@ -19,6 +19,7 @@ pub use ssh::bastion;
 #[cfg(all(feature = "server", desktop))]
 pub mod server;
 mod state;
+pub mod totp;
 pub mod sync;
 mod telnet_profile;
 mod terminal;
@@ -183,6 +184,8 @@ pub fn run() {
             commands::profile::profile_proxy_password_set,
             commands::keychain::keychain_generate_key,
             commands::keychain::keychain_list_file_keys,
+            commands::keychain::keychain_list_certificates,
+            commands::keychain::keychain_import_certificate_credential,
             commands::keychain::ssh_agent_status,
             commands::keychain::keychain_generate_file_key,
             commands::keychain::keychain_import_file_key,

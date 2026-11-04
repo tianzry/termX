@@ -88,6 +88,7 @@ async fn unlock(pem: &str, cached: Option<&str>, replies: &[Option<&str>]) -> Un
         resource_id: session_id.clone(),
         prompt_id: session_id.clone(),
         owner: owner.clone(),
+        totp: None,
     };
     let prompt_event = format!("ssh:passphrase_prompt:{session_id}");
     let mut cache_at_prompts = Vec::new();

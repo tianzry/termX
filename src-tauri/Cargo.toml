@@ -66,6 +66,9 @@ getrandom = "0.2"
 # rand 0.10 的 thread_rng 与之同版本对齐）。
 rand = { version = "0.10", features = ["thread_rng"] }
 sha2 = "0.10"
+# TOTP（RFC 6238）：标准 HMAC-SHA1，避免手搓摘要实现
+hmac = "0.12"
+sha1 = "0.10"
 # 应用锁口令校验器（PBKDF2-HMAC-SHA256，对照 Netcatty domain/appLock.ts）
 pbkdf2 = "0.12"
 # 进程内 passphrase 缓存的内存清零保护（drop 时擦写底层字节）

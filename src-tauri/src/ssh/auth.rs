@@ -181,6 +181,40 @@ pub async fn authenticate(
             let key = decode_key_with_prompt(pem, Some(&cache_key), &prompt_label, ctx).await?;
             authenticate_private_key(handle, credential.username, key).await
         }
+        CredentialType::Certificate => {
+            // 证书文本存 SecretStore（public，但与会话凭据同生命周期）。
+            let ctx = ctx.ok_or_else(|| AppError::ssh("ssh_cert_requires_terminal", json!({})))?;
+            let pem = credential
+                .secret
+                .as_deref()
+                .ok_or_else(|| AppError::ssh("ssh_privkey_missing", json!({})))?;
+            let cert_text = ctx
+                .app
+                .state()
+                .secret_store
+                .get(&crate::secret::cert_secret_key(&credential.id))?
+                .ok_or_else(|| AppError::ssh("ssh_cert_missing", json!({})))?;
+            let cert = russh::keys::ssh_key::Certificate::from_openssh(cert_text.trim())
+                .map_err(|e| AppError::ssh("ssh_cert_parse_failed", json!({ "err": e.to_string() })))?;
+            let cache_key = format!("cred:{}", credential.id);
+            let prompt_label = format!(
+                "Enter passphrase for key '{}': ",
+                if credential.name.is_empty() {
+                    credential.username.as_str()
+                } else {
+                    credential.name.as_str()
+                }
+            );
+            let key =
+                decode_key_with_prompt(pem, Some(&cache_key), &prompt_label, Some(ctx)).await?;
+            let result = handle
+                .authenticate_openssh_cert(credential.username, Arc::new(key), cert)
+                .await
+                .map_err(|e| {
+                    AppError::ssh("ssh_cert_auth_failed", json!({ "err": e.to_string() }))
+                })?;
+            check_auth_result(result)
+        }
         CredentialType::Agent => {
             authenticate_with_agent_or_default_keys(handle, credential.username, ctx).await
         }
@@ -488,6 +522,32 @@ pub async fn authenticate_interactive(
                 instructions,
                 prompts,
             } => {
+                // 主机配置了验证器（TOTP）且提示命中 → 直接计算并提交，不打扰用户。
+                if let Some(totp) = ctx.totp.as_ref() {
+                    let prompt_pairs: Vec<(String, bool)> = prompts
+                        .iter()
+                        .map(|p| (p.prompt.clone(), p.echo))
+                        .collect();
+                    if let Some(answers) = crate::totp::answers_for_prompts(
+                        &prompt_pairs,
+                        totp,
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    ) {
+                        reply = handle
+                            .authenticate_keyboard_interactive_respond(answers)
+                            .await
+                            .map_err(|e| {
+                                AppError::ssh(
+                                    "ssh_kbi_response_failed",
+                                    json!({ "err": e.to_string() }),
+                                )
+                            })?;
+                        continue;
+                    }
+                }
                 let prompt_data: Vec<serde_json::Value> = prompts
                     .iter()
                     .map(|p| serde_json::json!({ "prompt": p.prompt, "echo": p.echo }))
@@ -539,6 +599,7 @@ mod tests {
             resource_id: session_id.clone(),
             prompt_id: session_id.clone(),
             owner: crate::state::SessionOwner::Window("main".into()),
+            totp: None,
         };
 
         for (remaining, expected) in [

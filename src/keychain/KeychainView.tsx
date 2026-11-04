@@ -3,7 +3,7 @@
 // 私钥内容不进前端：后端只回元数据与公钥行（commands/keychain.rs 文件段）。
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../backend/client";
-import type { SshAgentStatus, SshFileKeyEntry } from "../backend/client";
+import type { SshAgentStatus, SshCertificateEntry, SshFileKeyEntry } from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import { describeAgentStatus } from "../domain/sshAgentStatus";
 import {
@@ -24,6 +24,7 @@ type DialogState =
 
 export function KeychainView() {
   const [entries, setEntries] = useState<SshFileKeyEntry[]>([]);
+  const [certs, setCerts] = useState<SshCertificateEntry[]>([]);
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -38,7 +39,12 @@ export function KeychainView() {
   const refresh = useCallback(async () => {
     try {
       setErr("");
-      setEntries(await api.keychainListFileKeys());
+      const [keys, certificates] = await Promise.all([
+        api.keychainListFileKeys(),
+        api.keychainListCertificates(),
+      ]);
+      setEntries(keys);
+      setCerts(certificates);
     } catch (e) {
       setErr(userVisibleError(String(e)));
     }
@@ -61,6 +67,16 @@ export function KeychainView() {
     setNotice(msg);
     window.setTimeout(() => setNotice(""), 2500);
   };
+
+  async function importCertificate(name: string) {
+    const username = window.prompt(`证书 ${name} 登录使用的用户名`, "root");
+    if (!username) return;
+    await run(async () => {
+      await api.keychainImportCertificateCredential(name, username, name);
+      flash(`已添加证书凭据 ${name}，可在主机凭据中选择`);
+      await refresh();
+    });
+  }
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -301,6 +317,55 @@ export function KeychainView() {
           ))}
         </div>
       )}
+
+      <div className="kc-file-pane">
+        <div className="kc-file-toolbar">
+          <div className="kc-file-title">
+            证书<span className="kc-file-sub">~/.ssh/*-cert.pub</span>
+            <span className="kc-file-sub">共 {certs.length} 项</span>
+          </div>
+          <div className="kc-file-actions">
+            <button disabled={busy} onClick={() => void refresh()}>
+              刷新
+            </button>
+          </div>
+        </div>
+        {certs.length === 0 ? (
+          <div className="kc-file-empty">
+            未发现 OpenSSH 用户证书。可用 ssh-keygen 生成 `<i>id_ed25519-cert.pub</i>` 后刷新。
+          </div>
+        ) : (
+          <div className="kc-file-list">
+            {certs.map((c) => (
+              <div className="kc-key-detail" key={c.name}>
+                <div className="kc-key-detail-head">
+                  <span className="kc-file-name">{c.name}</span>
+                  {c.has_private_key ? (
+                    <span className="kc-file-badge">可认证</span>
+                  ) : (
+                    <span className="kc-file-badge kc-file-badge-dim">缺私钥</span>
+                  )}
+                </div>
+                <div className="kc-key-detail-meta">
+                  <span>{c.key_type}</span>
+                  <span>principal：{c.principals.join(", ") || "—"}</span>
+                  <span>
+                    有效期至 {new Date(c.valid_before * 1000).toLocaleString()}
+                  </span>
+                </div>
+                <div className="kc-file-actions">
+                  <button
+                    disabled={busy || !c.has_private_key}
+                    onClick={() => void importCertificate(c.name)}
+                  >
+                    用作凭据（绑定主机）
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {dialog && (
         <div className="kc-file-dialog-backdrop">
