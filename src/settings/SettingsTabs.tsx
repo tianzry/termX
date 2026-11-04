@@ -25,6 +25,13 @@ import {
   type KeyBinding,
 } from "./keyBindings";
 import type { AppIconVariant } from "./settingsModel";
+import {
+  MAX_TERMINAL_FONT_SIZE,
+  MAX_TERMINAL_SCROLLBACK,
+  MIN_TERMINAL_FONT_SIZE,
+  clampCursorBarWidth,
+  clampScrollback,
+} from "./settingsModel";
 import { resolvedThemeMode, updateSettings, useSettings } from "./settingsStore";
 import { UI_FONTS } from "./uiFonts";
 import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "./uiThemes";
@@ -299,23 +306,33 @@ function Stepper({
   min,
   max,
   suffix,
+  disabled,
 }: {
   value: number;
   onChange: (v: number) => void;
   min: number;
   max: number;
   suffix?: string;
+  disabled?: boolean;
 }) {
   return (
-    <div className="nc-set-stepper">
-      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} disabled={value <= min}>
+    <div className="nc-set-stepper" aria-disabled={disabled}>
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(min, value - 1))}
+        disabled={disabled || value <= min}
+      >
         −
       </button>
       <span>
         {value}
         {suffix}
       </span>
-      <button type="button" onClick={() => onChange(Math.min(max, value + 1))} disabled={value >= max}>
+      <button
+        type="button"
+        onClick={() => onChange(Math.min(max, value + 1))}
+        disabled={disabled || value >= max}
+      >
         ＋
       </button>
     </div>
@@ -668,6 +685,7 @@ export function TerminalTab() {
   const fonts = useFontList();
   const term = s.terminal;
   const patch = (p: Partial<typeof term>) => updateSettings({ terminal: { ...term, ...p } });
+  const unsupported = t("settings.terminal.row.unsupported");
 
   const fontOptions = [
     { value: "auto", label: t("settings.terminal.font.auto") },
@@ -681,6 +699,33 @@ export function TerminalTab() {
     value: String(w.value),
     label: `${w.value} - ${t(`settings.terminal.font.weight.${w.key}`)}`,
   }));
+
+  /** 滑杆行（对照 Netcatty 终端字号 / 连字内边距 / 光标粗细的 range + 数值）。 */
+  const sliderRow = (
+    title: string,
+    desc: string | undefined,
+    value: number,
+    min: number,
+    max: number,
+    suffix: string,
+    onChange: (value: number) => void,
+  ) => (
+    <Row title={title} desc={desc}>
+      <div className="nc-set-slider">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+        <span className="nc-set-value">
+          {value}
+          {suffix}
+        </span>
+      </div>
+    </Row>
+  );
 
   return (
     <div>
@@ -697,21 +742,21 @@ export function TerminalTab() {
 
       <Section title={t("settings.terminal.section.font")}>
         <Row title={t("settings.terminal.font.family")} desc={t("settings.terminal.font.family.desc")}>
-          <Select
+          <FontCombo
             value={s.terminalFontFamilyId}
             onChange={(v) => updateSettings({ terminalFontFamilyId: v })}
             options={fontOptions}
           />
         </Row>
         <Row title={t("settings.terminal.font.cjk")} desc={t("settings.terminal.font.cjk.desc")}>
-          <Select value={term.fallbackFont} onChange={(v) => patch({ fallbackFont: v })} options={cjkOptions} />
+          <FontCombo value={term.fallbackFont} onChange={(v) => patch({ fallbackFont: v })} options={cjkOptions} />
         </Row>
         <Row title={t("settings.terminal.font.size")} desc={t("settings.terminal.font.size.desc")}>
           <Stepper
             value={s.terminalFontSize}
             onChange={(v) => updateSettings({ terminalFontSize: v })}
-            min={8}
-            max={32}
+            min={MIN_TERMINAL_FONT_SIZE}
+            max={MAX_TERMINAL_FONT_SIZE}
             suffix="px"
           />
         </Row>
@@ -735,17 +780,23 @@ export function TerminalTab() {
         <Row title={t("settings.terminal.font.ligatures")} desc={t("settings.terminal.font.ligatures.desc")}>
           <Toggle checked={term.fontLigatures} onChange={(v) => patch({ fontLigatures: v })} />
         </Row>
-        <Row title={t("settings.terminal.font.linePadding")} desc={t("settings.terminal.font.linePadding.desc")}>
-          <Stepper value={term.linePadding} onChange={(v) => patch({ linePadding: v })} min={0} max={10} />
-        </Row>
+        {sliderRow(
+          t("settings.terminal.font.linePadding"),
+          t("settings.terminal.font.linePadding.desc"),
+          term.linePadding,
+          0,
+          10,
+          "px",
+          (v) => patch({ linePadding: v }),
+        )}
         <Row title={t("settings.terminal.font.emulationType")}>
           <Select
             value={term.terminalEmulationType}
             onChange={(v) => patch({ terminalEmulationType: v })}
             options={[
               { value: "xterm-256color", label: "xterm-256color" },
+              { value: "xterm-16color", label: "xterm-16color" },
               { value: "xterm", label: "xterm" },
-              { value: "vt100", label: "vt100" },
             ]}
           />
         </Row>
@@ -763,14 +814,32 @@ export function TerminalTab() {
             ]}
           />
         </Row>
-        <Row title={t("settings.terminal.cursor.barWidth")} desc={t("settings.terminal.cursor.barWidth.desc")}>
-          <Stepper value={term.cursorBarWidth} onChange={(v) => patch({ cursorBarWidth: v })} min={1} max={4} />
-        </Row>
+        {sliderRow(
+          t("settings.terminal.cursor.barWidth"),
+          t("settings.terminal.cursor.barWidth.desc"),
+          term.cursorBarWidth,
+          1,
+          4,
+          "px",
+          (v) => patch({ cursorBarWidth: clampCursorBarWidth(v) }),
+        )}
         <Row title={t("settings.terminal.cursor.blink")}>
           <Toggle checked={term.cursorBlink} onChange={(v) => patch({ cursorBlink: v })} />
         </Row>
         <Row title={t("settings.terminal.cursor.highlightLine")} desc={t("settings.terminal.cursor.highlightLine.desc")}>
           <Toggle checked={term.highlightCursorLine} onChange={(v) => patch({ highlightCursorLine: v })} />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.terminal.section.keyboard")}>
+        <Row title={t("settings.terminal.keyboard.altAsMeta")} desc={`${t("settings.terminal.keyboard.altAsMeta.desc")} ${unsupported}`}>
+          <Toggle disabled checked={term.altAsMeta} onChange={(v) => patch({ altAsMeta: v })} />
+        </Row>
+        <Row title={t("settings.terminal.keyboard.optionArrowWordJump")} desc={`${t("settings.terminal.keyboard.optionArrowWordJump.desc")} ${unsupported}`}>
+          <Toggle disabled checked={false} onChange={() => {}} />
+        </Row>
+        <Row title={t("settings.terminal.keyboard.kittyProtocol")} desc={`${t("settings.terminal.keyboard.kittyProtocol.desc")} ${unsupported}`}>
+          <Toggle disabled checked={false} onChange={() => {}} />
         </Row>
       </Section>
 
@@ -783,8 +852,8 @@ export function TerminalTab() {
           desc={t("settings.terminal.behavior.disconnectedNotice.desc")}
         >
           <Select
-            value={term.disconnectPrompt ? "dialog" : "terminal"}
-            onChange={(v) => patch({ disconnectPrompt: v === "dialog" })}
+            value={term.disconnectedNoticeMode}
+            onChange={(v) => patch({ disconnectedNoticeMode: v as typeof term.disconnectedNoticeMode })}
             options={[
               { value: "terminal", label: t("settings.terminal.behavior.disconnectedNotice.terminal") },
               { value: "dialog", label: t("settings.terminal.behavior.disconnectedNotice.dialog") },
@@ -796,10 +865,29 @@ export function TerminalTab() {
             value={term.rightClickBehavior}
             onChange={(v) => patch({ rightClickBehavior: v as typeof term.rightClickBehavior })}
             options={[
+              { value: "context-menu", label: t("settings.terminal.behavior.rightClick.menu") },
               { value: "paste", label: t("settings.terminal.behavior.rightClick.paste") },
-              { value: "menu", label: t("settings.terminal.behavior.rightClick.menu") },
-              { value: "none", label: t("settings.terminal.behavior.middleClick.disabled") },
+              { value: "select-word", label: t("settings.terminal.behavior.rightClick.selectWord") },
             ]}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.rightClick.longPressMenu")}
+          desc={t("settings.terminal.behavior.rightClick.longPressMenu.desc")}
+        >
+          <Toggle
+            disabled={term.rightClickBehavior === "context-menu"}
+            checked={term.rightClickLongPressMenu}
+            onChange={(v) => patch({ rightClickLongPressMenu: v })}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.rightClick.fullscreenMenu")}
+          desc={t("settings.terminal.behavior.rightClick.fullscreenMenu.desc")}
+        >
+          <Toggle
+            checked={term.showContextMenuOverFullscreenApps}
+            onChange={(v) => patch({ showContextMenuOverFullscreenApps: v })}
           />
         </Row>
         <Row title={t("settings.terminal.behavior.middleClick")} desc={t("settings.terminal.behavior.middleClick.desc")}>
@@ -807,14 +895,20 @@ export function TerminalTab() {
             value={term.middleClickBehavior}
             onChange={(v) => patch({ middleClickBehavior: v as typeof term.middleClickBehavior })}
             options={[
+              { value: "context-menu", label: t("settings.terminal.behavior.middleClick.menu") },
               { value: "paste", label: t("settings.terminal.behavior.middleClick.paste") },
-              { value: "copy", label: t("settings.terminal.behavior.copyOnSelect") },
-              { value: "none", label: t("settings.terminal.behavior.middleClick.disabled") },
+              { value: "disabled", label: t("settings.terminal.behavior.middleClick.disabled") },
             ]}
           />
         </Row>
         <Row title={t("settings.terminal.behavior.copyOnSelect")} desc={t("settings.terminal.behavior.copyOnSelect.desc")}>
           <Toggle checked={term.copyOnSelect} onChange={(v) => patch({ copyOnSelect: v })} />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.normalizeTextOnCopy")}
+          desc={t("settings.terminal.behavior.normalizeTextOnCopy.desc")}
+        >
+          <Toggle checked={term.normalizeTextOnCopy} onChange={(v) => patch({ normalizeTextOnCopy: v })} />
         </Row>
         <Row title={t("settings.terminal.behavior.wordSeparators")} desc={t("settings.terminal.behavior.wordSeparators.desc")}>
           <input
@@ -823,38 +917,191 @@ export function TerminalTab() {
             onChange={(e) => patch({ wordSeparators: e.target.value })}
           />
         </Row>
-        <Row title={t("settings.terminal.behavior.scrollback")} desc={t("settings.terminal.behavior.scrollback.desc")}>
+        <Row title={t("settings.terminal.behavior.bracketedPaste")} desc={t("settings.terminal.behavior.bracketedPaste.desc")}>
+          <Toggle checked={!term.disableBracketedPaste} onChange={(v) => patch({ disableBracketedPaste: !v })} />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.autoUploadClipboardImage")}
+          desc={`${t("settings.terminal.behavior.autoUploadClipboardImage.desc")} ${unsupported}`}
+        >
+          <Toggle disabled checked={false} onChange={() => {}} />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.confirmMultilinePaste")}
+          desc={t("settings.terminal.behavior.confirmMultilinePaste.desc")}
+        >
+          <Toggle
+            checked={term.confirmBeforeMultilinePaste}
+            onChange={(v) => patch({ confirmBeforeMultilinePaste: v })}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.confirmMultilinePasteMinLines")}
+          desc={t("settings.terminal.behavior.confirmMultilinePasteMinLines.desc")}
+        >
+          <Stepper
+            value={term.multilinePasteConfirmMinLines}
+            min={1}
+            max={1000}
+            disabled={!term.confirmBeforeMultilinePaste}
+            onChange={(v) => patch({ multilinePasteConfirmMinLines: v })}
+          />
+        </Row>
+        <Row title={t("settings.terminal.behavior.shiftEnterNewline")} desc={t("settings.terminal.behavior.shiftEnterNewline.desc")}>
+          <Toggle
+            checked={term.shiftEnterNewlineEnabled}
+            onChange={(v) => patch({ shiftEnterNewlineEnabled: v })}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.shiftEnterNewlineText")}
+          desc={t("settings.terminal.behavior.shiftEnterNewlineText.desc")}
+        >
+          <input
+            className="nc-set-input"
+            disabled={!term.shiftEnterNewlineEnabled}
+            value={term.shiftEnterNewlineText}
+            onChange={(e) => patch({ shiftEnterNewlineText: e.target.value })}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.shiftEnterForceText")}
+          desc={`${t("settings.terminal.behavior.shiftEnterForceText.desc")} ${unsupported}`}
+        >
+          <Toggle
+            disabled
+            checked={false}
+            onChange={() => {}}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.clearWipesScrollback")}
+          desc={`${t("settings.terminal.behavior.clearWipesScrollback.desc")} ${unsupported}`}
+        >
+          <Toggle disabled checked={term.clearWipesScrollback} onChange={() => {}} />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.preserveSelectionOnInput")}
+          desc={`${t("settings.terminal.behavior.preserveSelectionOnInput.desc")} ${unsupported}`}
+        >
+          <Toggle disabled checked={false} onChange={() => {}} />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.forcePromptNewLine")}
+          desc={`${t("settings.terminal.behavior.forcePromptNewLine.desc")} ${unsupported}`}
+        >
+          <Toggle disabled checked={false} onChange={() => {}} />
+        </Row>
+        <Row title={t("settings.terminal.behavior.tabDoubleClick")} desc={t("settings.terminal.behavior.tabDoubleClick.desc")}>
+          <Select
+            value={term.tabDoubleClickBehavior}
+            onChange={(v) => patch({ tabDoubleClickBehavior: v as typeof term.tabDoubleClickBehavior })}
+            options={[
+              { value: "duplicate", label: t("settings.terminal.behavior.tabDoubleClick.duplicate") },
+              { value: "copy", label: t("settings.terminal.behavior.tabDoubleClick.copy") },
+              { value: "disabled", label: t("settings.terminal.behavior.tabDoubleClick.disabled") },
+            ]}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.dynamicTabTitle")}
+          desc={`${t("settings.terminal.behavior.dynamicTabTitle.desc")} ${unsupported}`}
+        >
+          <Select
+            disabled
+            value={term.dynamicTabTitleMode}
+            onChange={() => {}}
+            options={[
+              { value: "off", label: t("settings.terminal.behavior.dynamicTabTitle.off") },
+              { value: "agent", label: t("settings.terminal.behavior.dynamicTabTitle.agent") },
+              { value: "all", label: t("settings.terminal.behavior.dynamicTabTitle.all") },
+            ]}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.oscNotifications")}
+          desc={`${t("settings.terminal.behavior.oscNotifications.desc")} ${unsupported}`}
+        >
+          <Select
+            disabled
+            value={term.oscNotifications}
+            onChange={() => {}}
+            options={[
+              { value: "always", label: t("settings.terminal.behavior.oscNotifications.always") },
+              { value: "unfocused", label: t("settings.terminal.behavior.oscNotifications.unfocused") },
+              { value: "off", label: t("settings.terminal.behavior.oscNotifications.off") },
+            ]}
+          />
+        </Row>
+        <Row title={t("settings.terminal.behavior.osc52Clipboard")} desc={t("settings.terminal.behavior.osc52Clipboard.desc")}>
+          <Select
+            value={term.osc52Clipboard}
+            onChange={(v) => patch({ osc52Clipboard: v as typeof term.osc52Clipboard })}
+            options={[
+              { value: "off", label: t("settings.terminal.behavior.osc52Clipboard.off") },
+              { value: "write-only", label: t("settings.terminal.behavior.osc52Clipboard.writeOnly") },
+              { value: "read-write", label: t("settings.terminal.behavior.osc52Clipboard.readWrite") },
+              { value: "prompt", label: t("settings.terminal.behavior.osc52Clipboard.prompt") },
+            ]}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.linkBrowser")}
+          desc={`${t("settings.terminal.behavior.linkBrowser.desc")} ${unsupported}`}
+        >
+          <Select
+            disabled
+            value={term.linkBrowser}
+            onChange={() => {}}
+            options={[
+              { value: "netcatty", label: t("settings.terminal.behavior.linkBrowser.netcatty") },
+              { value: "system", label: t("settings.terminal.behavior.linkBrowser.system") },
+            ]}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.behavior.linkModifier")}
+          desc={`${t("settings.terminal.behavior.linkModifier.desc")} ${unsupported}`}
+        >
+          <Select
+            disabled
+            value={term.linkModifier}
+            onChange={() => {}}
+            options={[
+              { value: "none", label: t("settings.terminal.behavior.linkModifier.none") },
+              { value: "ctrl", label: t("settings.terminal.behavior.linkModifier.ctrl") },
+              { value: "alt", label: t("settings.terminal.behavior.linkModifier.alt") },
+              { value: "meta", label: t("settings.terminal.behavior.linkModifier.meta") },
+            ]}
+          />
+        </Row>
+        <Row title={t("settings.terminal.behavior.scrollOnInput")} desc={t("settings.terminal.behavior.scrollOnInput.desc")}>
+          <Toggle checked={term.scrollOnInput} onChange={(v) => patch({ scrollOnInput: v })} />
+        </Row>
+        <Row title={t("settings.terminal.behavior.scrollOnOutput")} desc={t("settings.terminal.behavior.scrollOnOutput.desc")}>
+          <Toggle checked={term.scrollOnOutput} onChange={(v) => patch({ scrollOnOutput: v })} />
+        </Row>
+        <Row title={t("settings.terminal.behavior.scrollOnKeyPress")} desc={t("settings.terminal.behavior.scrollOnKeyPress.desc")}>
+          <Toggle checked={term.scrollOnKeyPress} onChange={(v) => patch({ scrollOnKeyPress: v })} />
+        </Row>
+        <Row title={t("settings.terminal.behavior.scrollOnPaste")} desc={t("settings.terminal.behavior.scrollOnPaste.desc")}>
+          <Toggle checked={term.scrollOnPaste} onChange={(v) => patch({ scrollOnPaste: v })} />
+        </Row>
+        <Row title={t("settings.terminal.behavior.smoothScrolling")} desc={t("settings.terminal.behavior.smoothScrolling.desc")}>
+          <Toggle checked={term.smoothScrolling} onChange={(v) => patch({ smoothScrolling: v })} />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.terminal.section.scrollback")}>
+        <Row title={t("settings.terminal.scrollback.rows")} desc={t("settings.terminal.scrollback.desc")}>
           <input
             className="nc-set-input nc-set-input-num"
             type="number"
-            min={100}
-            max={1000000}
+            min={0}
+            max={MAX_TERMINAL_SCROLLBACK}
             value={term.scrollback}
-            onChange={(e) => patch({ scrollback: Math.max(100, Number(e.target.value) || 10000) })}
+            onChange={(e) => patch({ scrollback: clampScrollback(e.target.value) })}
           />
-        </Row>
-        <Row title={t("settings.terminal.behavior.altAsMeta")} desc={t("settings.terminal.behavior.altAsMeta.desc")}>
-          <Toggle checked={term.altAsMeta} onChange={(v) => patch({ altAsMeta: v })} />
-        </Row>
-        <Row title={t("settings.terminal.behavior.scrollOnInput")}>
-          <Toggle checked={term.scrollOnInput} onChange={(v) => patch({ scrollOnInput: v })} />
-        </Row>
-        <Row title={t("settings.terminal.behavior.scrollOnOutput")}>
-          <Toggle checked={term.scrollOnOutput} onChange={(v) => patch({ scrollOnOutput: v })} />
-        </Row>
-        <Row title={t("settings.terminal.behavior.shiftEnter")} desc={t("settings.terminal.behavior.shiftEnter.desc")}>
-          <div className="nc-set-inline">
-            <Toggle
-              checked={term.shiftEnterNewlineEnabled}
-              onChange={(v) => patch({ shiftEnterNewlineEnabled: v })}
-            />
-            <input
-              className="nc-set-input"
-              disabled={!term.shiftEnterNewlineEnabled}
-              value={term.shiftEnterNewlineText}
-              onChange={(e) => patch({ shiftEnterNewlineText: e.target.value })}
-            />
-          </div>
         </Row>
       </Section>
 
@@ -866,12 +1113,13 @@ export function TerminalTab() {
           <Select
             value={s.sidePanelAutoOpenPane}
             onChange={(v) => updateSettings({ sidePanelAutoOpenPane: v })}
-            options={["sftp", "scripts", "history", "theme", "system", "notes", "ai"].map((p) => ({
+            options={["sftp", "scripts", "history", "theme", "system", "notes", "ai", "browser"].map((p) => ({
               value: p,
               label: t(`settings.terminal.sidePanel.pane.${p}`),
             }))}
           />
         </Row>
+        <Row title={t("settings.terminal.sidePanel.unavailableHint")} />
       </Section>
 
       <Section title={t("settings.terminal.section.localShellSidePanel")}>
@@ -880,6 +1128,7 @@ export function TerminalTab() {
           desc={t("settings.terminal.localShellSidePanel.autoOpen.desc")}
         >
           <Toggle
+            disabled
             checked={s.localShellSidePanelAutoOpen}
             onChange={(v) => updateSettings({ localShellSidePanelAutoOpen: v })}
           />
@@ -889,11 +1138,13 @@ export function TerminalTab() {
           desc={t("settings.terminal.localShellSidePanel.autoOpenPane.desc")}
         >
           <Select
+            disabled
             value={s.localShellSidePanelAutoOpenPane}
             onChange={(v) => updateSettings({ localShellSidePanelAutoOpenPane: v })}
             options={[{ value: "files", label: t("settings.terminal.localShellSidePanel.pane.files") }]}
           />
         </Row>
+        <Row title={t("settings.terminal.localShellSidePanel.unavailableHint")} />
       </Section>
 
       <Section title={t("settings.terminal.section.connection")}>

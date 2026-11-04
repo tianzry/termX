@@ -77,6 +77,8 @@ pub async fn sftp_connect(
         .unwrap_or(crate::ssh::client::DEFAULT_CONNECT_TIMEOUT);
 
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
+    // 独立 SFTP 连接同样要刷新主机密钥校验策略（否则会残留终端连接的取值）。
+    crate::commands::session::apply_ssh_runtime_settings(&state)?;
     let handle = crate::ssh::client::run_blocking_ssh(move || async move {
         SftpHandle::connect(host, port, cred, known_hosts_path, timeout_secs).await
     })

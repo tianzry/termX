@@ -1,8 +1,21 @@
 import { useEffect, useRef } from "react";
-import { Terminal, type IDisposable, type ITerminalOptions } from "@xterm/xterm";
+import {
+  Terminal,
+  type IDecoration,
+  type IDisposable,
+  type IMarker,
+  type ITerminalOptions,
+  type ITheme,
+} from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import type { AppSettings } from "./settings/settingsModel";
+import {
+  clampCursorBarWidth,
+  clampLinePadding,
+  clampScrollback,
+  resolveXtermScrollback,
+} from "./settings/settingsModel";
 import { getSettings, resolvedThemeMode, subscribeSettings } from "./settings/settingsStore";
 
 export interface TerminalController {
@@ -30,43 +43,240 @@ function resolveFontFamily(s: AppSettings): string {
   return `${base}${cjk}${DEFAULT_FONT_STACK}`;
 }
 
+const TERM_THEME_DARK: ITheme = {
+  background: "#16181d",
+  foreground: "#dfe3ea",
+  cursor: "#6aa1ff",
+  cursorAccent: "#16181d",
+  selectionBackground: "rgba(106, 161, 255, 0.28)",
+};
+
+const TERM_THEME_LIGHT: ITheme = {
+  background: "#ffffff",
+  foreground: "#16202b",
+  cursor: "#0a84ff",
+  cursorAccent: "#ffffff",
+  selectionBackground: "rgba(10, 132, 255, 0.22)",
+};
+
+/** 是否使用深色终端配色（跟随应用主题 / 固定深色）。 */
+export function isDarkTerminal(s: AppSettings): boolean {
+  return !s.terminal.followAppTheme || resolvedThemeMode(s) === "dark";
+}
+
 /** 由设置中心（终端 tab）构建 xterm 选项；导出供单测。 */
 export function buildXtermOptions(s: AppSettings): ITerminalOptions {
-  // 终端主题：跟随应用主题；关闭 followAppTheme 时终端固定深色配色
-  // （终端主题预设库未移植，对照 Netcatty settings.terminal.theme.followApp）。
-  const dark = !s.terminal.followAppTheme || resolvedThemeMode(s) === "dark";
   const t = s.terminal;
+  const dark = isDarkTerminal(s);
   return {
     convertEol: false,
+    allowProposedApi: true,
     cursorBlink: t.cursorBlink,
     cursorStyle: t.cursorShape,
-    cursorWidth: t.cursorBarWidth,
+    cursorWidth: clampCursorBarWidth(t.cursorBarWidth),
     fontSize: s.terminalFontSize,
     fontFamily: resolveFontFamily(s),
-    fontWeight: t.fontWeight,
-    fontWeightBold: t.fontWeightBold,
-    lineHeight: 1 + t.linePadding / 10,
-    scrollback: t.scrollback,
+    fontWeight: t.fontWeight as ITerminalOptions["fontWeight"],
+    fontWeightBold: t.fontWeightBold as ITerminalOptions["fontWeightBold"],
+    lineHeight: 1 + clampLinePadding(t.linePadding) / 10,
+    scrollback: resolveXtermScrollback(clampScrollback(t.scrollback)),
     wordSeparator: t.wordSeparators,
-    // xterm 的 Alt-as-Meta 仅 macOS 可配（windowsMode 下 Alt 行为由系统决定）。
+    // xterm 的 Alt-as-Meta 仅 macOS 可配（Windows 下 Alt 由系统 / Win32 输入处理）。
     macOptionIsMeta: t.altAsMeta,
     scrollOnUserInput: t.scrollOnInput,
-    theme: dark
-      ? {
-          background: "#16181d",
-          foreground: "#dfe3ea",
-          cursor: "#6aa1ff",
-          cursorAccent: "#16181d",
-          selectionBackground: "rgba(106, 161, 255, 0.28)",
-        }
-      : {
-          background: "#ffffff",
-          foreground: "#16202b",
-          cursor: "#0a84ff",
-          cursorAccent: "#ffffff",
-          selectionBackground: "rgba(10, 132, 255, 0.22)",
-        },
+    smoothScrollDuration: t.smoothScrolling ? 120 : 0,
+    ignoreBracketedPasteMode: t.disableBracketedPaste,
+    theme: dark ? TERM_THEME_DARK : TERM_THEME_LIGHT,
   };
+}
+
+/** 字体平滑 / 连字是 xterm 元素级 CSS（xterm 无对应 option）。 */
+function applyFontVisuals(container: HTMLDivElement, s: AppSettings): void {
+  container.classList.toggle("term-ligatures", s.terminal.fontLigatures);
+  container.classList.toggle("term-no-smoothing", !s.terminal.fontSmoothing);
+}
+
+/**
+ * 高亮光标所在行（对照 Netcatty cursorLineHighlight.ts）：
+ * 用 decoration 给默认背景单元格铺一层淡色底，保留 ANSI 背景与前景。
+ */
+class CursorLineHighlighter {
+  private enabled = false;
+  private backgroundColor = "#263449";
+  private marker: IMarker | null = null;
+  private decorations: IDecoration[] = [];
+  private disposeListeners: IDisposable[] = [];
+  private activeKey = "";
+  private pending = false;
+  private readonly disposables: IDisposable[] = [];
+
+  constructor(private readonly term: Terminal) {
+    this.disposables.push(
+      term.onCursorMove(() => (this.pending = true)),
+      term.onWriteParsed(() => (this.pending = true)),
+      term.onRender(() => {
+        const dirty = this.pending;
+        this.pending = false;
+        if (this.enabled && dirty) this.refresh();
+      }),
+      term.onSelectionChange(() => this.refresh(true)),
+      term.onResize(() => this.refresh(true)),
+    );
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) {
+      if (enabled) this.refresh();
+      return;
+    }
+    this.enabled = enabled;
+    if (!enabled) this.clear();
+    else this.refresh(true);
+  }
+
+  setBackgroundColor(color: string): void {
+    if (color === this.backgroundColor) return;
+    this.backgroundColor = color;
+    if (this.enabled) this.refresh(true);
+  }
+
+  dispose(): void {
+    this.clear();
+    this.disposables.forEach((d) => d.dispose());
+  }
+
+  private refresh(force = false): void {
+    if (!this.enabled) return;
+    this.pending = false;
+    if (this.term.hasSelection()) {
+      this.clear();
+      return;
+    }
+    const buffer = this.term.buffer.active;
+    if (buffer.type === "alternate") {
+      this.clear();
+      return;
+    }
+    const row = buffer.baseY + buffer.cursorY;
+    const cols = Math.max(1, this.term.cols);
+    const line = buffer.getLine(row);
+    const cell = buffer.getNullCell();
+    const ranges: Array<{ x: number; width: number }> = [];
+    let start: number | null = null;
+    for (let x = 0; x < cols; x += 1) {
+      const c = line?.getCell(x, cell);
+      const highlightable = !c || (c.isBgDefault() && !c.isInverse());
+      if (highlightable && start === null) start = x;
+      if ((!highlightable || x === cols - 1) && start !== null) {
+        const end = highlightable && x === cols - 1 ? x + 1 : x;
+        ranges.push({ x: start, width: end - start });
+        start = null;
+      }
+    }
+    const key = `${row}:${cols}:${this.backgroundColor}:${ranges
+      .map((r) => `${r.x},${r.width}`)
+      .join("|")}`;
+    if (!force && key === this.activeKey && this.marker && !this.marker.isDisposed) return;
+
+    const previousMarker = this.marker;
+    const previousDecorations = this.decorations;
+    const previousListeners = this.disposeListeners;
+    const marker = this.term.registerMarker(0);
+    if (!marker) {
+      this.clear();
+      return;
+    }
+    const decorations: IDecoration[] = [];
+    for (const r of ranges) {
+      const d = this.term.registerDecoration({
+        marker,
+        x: r.x,
+        width: r.width,
+        backgroundColor: this.backgroundColor,
+        layer: "bottom",
+      });
+      if (d) decorations.push(d);
+    }
+    this.marker = marker;
+    this.decorations = decorations;
+    this.disposeListeners = decorations.map((d) =>
+      d.onDispose(() => {
+        if (this.decorations.includes(d)) {
+          this.activeKey = "";
+        }
+      }),
+    );
+    this.activeKey = key;
+    this.clearOwned(previousMarker, previousDecorations, previousListeners);
+  }
+
+  private clear(): void {
+    this.clearOwned(this.marker, this.decorations, this.disposeListeners);
+    this.marker = null;
+    this.decorations = [];
+    this.disposeListeners = [];
+    this.activeKey = "";
+  }
+
+  private clearOwned(
+    marker: IMarker | null,
+    decorations: IDecoration[],
+    listeners: IDisposable[],
+  ): void {
+    listeners.forEach((d) => d.dispose());
+    decorations.forEach((d) => d.dispose());
+    marker?.dispose();
+  }
+}
+
+/** 解析 Shift+Enter 发送文本的反斜杠转义（\\e / \\x1b / \\n / \\r / \\t / \\\\）。 */
+export function decodeTerminalTextEscapes(text: string): string {
+  return text.replace(/\\(x1b|e|n|r|t|\\|0)/g, (_all, code: string) => {
+    switch (code) {
+      case "e":
+      case "x1b":
+        return "\u001b";
+      case "n":
+        return "\n";
+      case "r":
+        return "\r";
+      case "t":
+        return "\t";
+      case "0":
+        return "\0";
+      default:
+        return "\\";
+    }
+  });
+}
+
+/**
+ * 复制规范化（对照 Netcatty normalizeTextOnCopy）：
+ * 去掉显示用行尾填充空格，并把软换行拼回逻辑行。
+ */
+export function normalizeTerminalSelection(term: Terminal): string {
+  const range = term.getSelectionPosition();
+  if (!range) return term.getSelection().trimEnd();
+  const buffer = term.buffer.active;
+  const parts: string[] = [];
+  for (let row = range.start.y; row <= range.end.y; row += 1) {
+    const line = buffer.getLine(row);
+    if (!line) continue;
+    const startCol = row === range.start.y ? range.start.x : 0;
+    const endCol = row === range.end.y ? range.end.x : line.length;
+    const text = line.translateToString(true, startCol, endCol);
+    // 软换行行（isWrapped）是上一逻辑行的延续：换行符只加在「下一行不是
+    // 延续行」的位置，否则会把视觉折行错当成独立行。
+    if (row > range.start.y && !line.isWrapped) parts.push("\n");
+    parts.push(text);
+  }
+  const joined = parts.join("");
+  return joined.endsWith("\n") ? joined.slice(0, -1) : joined;
+}
+
+/** 读取终端选区文本：规范化开关由调用方决定。 */
+export function readTerminalSelection(term: Terminal, normalize: boolean): string {
+  return normalize ? normalizeTerminalSelection(term) : term.getSelection();
 }
 
 /** 单例 xterm 画布：创建即 fit + focus，销毁时 unmount 清理。 */
@@ -75,17 +285,28 @@ export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
   // 回调可能随状态更新而变化，用 ref 保证 xterm 只注册一次处理器。
   const onOsc7Ref = useRef(onOsc7);
   onOsc7Ref.current = onOsc7;
+  const onDataRef = useRef(onData);
+  onDataRef.current = onData;
 
   useEffect(() => {
-    const term = new Terminal(buildXtermOptions(getSettings()));
+    const initial = getSettings();
+    const term = new Terminal(buildXtermOptions(initial));
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current!);
+    const container = containerRef.current!;
+    applyFontVisuals(container, initial);
     fit.fit();
     term.focus();
 
+    const highlighter = new CursorLineHighlighter(term);
+    highlighter.setBackgroundColor(
+      isDarkTerminal(initial) ? "#263449" : "#eef3fb",
+    );
+    highlighter.setEnabled(initial.terminal.highlightCursorLine);
+
     const disposables: IDisposable[] = [];
-    disposables.push(term.onData((s) => onData?.(s)));
+    disposables.push(term.onData((s) => onDataRef.current?.(s)));
     disposables.push(term.onResize(({ cols, rows }) => onResize?.(cols, rows)));
     // OSC 7 = 当前目录；xterm 解析后回调负载（`file://host/path`）。
     disposables.push(
@@ -94,9 +315,120 @@ export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
         return true;
       }),
     );
+
+    // ── 行为区：输入 / 选择 / 粘贴 ──────────────────────────────
+    // Shift+Enter 发送配置文本（默认 \e\r，传统 Alt+Enter 编码）。
+    term.attachCustomKeyEventHandler((e) => {
+      const s = getSettings();
+      if (
+        s.terminal.shiftEnterNewlineEnabled &&
+        e.type === "keydown" &&
+        e.key === "Enter" &&
+        e.shiftKey &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.isComposing
+      ) {
+        onDataRef.current?.(decodeTerminalTextEscapes(s.terminal.shiftEnterNewlineText));
+        return false;
+      }
+      if (s.terminal.scrollOnKeyPress) term.scrollToBottom();
+      return true;
+    });
+
+    // 选择即复制（规范化开关跟随复制设置）。
+    const selDisposable = term.onSelectionChange(() => {
+      const s = getSettings();
+      if (!s.terminal.copyOnSelect) return;
+      const text = readTerminalSelection(term, s.terminal.normalizeTextOnCopy);
+      if (text) void navigator.clipboard.writeText(text).catch(() => {});
+    });
+    disposables.push(selDisposable);
+
+    // 输出时自动滚动。
+    const writeParsed = term.onWriteParsed(() => {
+      if (getSettings().terminal.scrollOnOutput) term.scrollToBottom();
+    });
+    disposables.push(writeParsed);
+
+    // 粘贴：多行确认 / 括号粘贴 / 粘贴后滚动 / 剪贴板图片。
+    const textarea = term.textarea;
+    const onPaste = (e: ClipboardEvent) => {
+      const s = getSettings();
+      const text = e.clipboardData?.getData("text") ?? "";
+      if (!text) {
+        // 图片粘贴仅在支持自动上传时才有意义；未移植时保持默认行为。
+        return;
+      }
+      if (s.terminal.confirmBeforeMultilinePaste) {
+        const lines = text.split(/\r\n|\r|\n/).length;
+        if (lines >= s.terminal.multilinePasteConfirmMinLines) {
+          e.preventDefault();
+          const ok = window.confirm(
+            `即将粘贴 ${lines} 行 / ${text.length} 个字符，确认发送？`,
+          );
+          if (!ok) return;
+          term.paste(text);
+          if (s.terminal.scrollOnPaste) term.scrollToBottom();
+          return;
+        }
+      }
+      if (s.terminal.scrollOnPaste) term.scrollToBottom();
+    };
+    textarea?.addEventListener("paste", onPaste, true);
+
+    // OSC 52 剪贴板（远程程序读写本机剪贴板）。
+    const osc52 = term.parser.registerOscHandler(52, (payload) => {
+      const s = getSettings();
+      if (s.terminal.osc52Clipboard === "off") return true;
+      const sep = payload.indexOf(";");
+      if (sep < 0) return true;
+      const body = payload.slice(sep + 1);
+      if (body) {
+        // 远端可发任意 payload；非法 base64 不能让异常穿透 xterm 的解析链路。
+        try {
+          const bytes = Uint8Array.from(atob(body), (c) => c.charCodeAt(0));
+          void navigator.clipboard
+            .writeText(new TextDecoder().decode(bytes))
+            .catch(() => {});
+        } catch {
+          // 忽略非法负载。
+        }
+        return true;
+      }
+      const mode = s.terminal.osc52Clipboard;
+      if (mode === "write-only") return true;
+      if (mode === "prompt" && !window.confirm("远程程序请求读取剪贴板，是否允许？")) {
+        return true;
+      }
+      void navigator.clipboard
+        .readText()
+        .then((text) => {
+          // 大段剪贴板不能用 String.fromCharCode(...bytes) 展开（参数上限约
+          // 12 万，会抛 RangeError），逐字节拼接更稳。
+          const bytes = new TextEncoder().encode(text);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i += 1) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          onDataRef.current?.(`\u001b]52;c;${btoa(binary)}\u0007`);
+        })
+        .catch(() => {});
+      return true;
+    });
+    disposables.push(osc52);
+
     // 设置变更（字体 / 光标 / 主题等）实时同步到已打开的终端。
     const unsubSettings = subscribeSettings(() => {
-      term.options = buildXtermOptions(getSettings());
+      const s = getSettings();
+      term.options = buildXtermOptions(s);
+      applyFontVisuals(container, s);
+      // 字号 / 字重 / 行间距会改变单元格尺寸，xterm 只重算 cell 不重排列数，
+      // 必须重新 fit 并通过 onResize 同步远端 PTY 尺寸。
+      fit.fit();
+      highlighter.setBackgroundColor(isDarkTerminal(s) ? "#263449" : "#eef3fb");
+      highlighter.setEnabled(s.terminal.highlightCursorLine);
     });
 
     // 分屏 / 切换标签会改变容器尺寸（隐藏标签的尺寸为 0），
@@ -104,13 +436,15 @@ export function TerminalView({ onReady, onData, onResize, onOsc7 }: Props) {
     const ro = new ResizeObserver(() => {
       if (containerRef.current) fit.fit();
     });
-    ro.observe(containerRef.current!);
+    ro.observe(container);
 
     onReady({ term, fit });
 
     return () => {
       unsubSettings();
       ro.disconnect();
+      textarea?.removeEventListener("paste", onPaste, true);
+      highlighter.dispose();
       disposables.forEach((d) => d.dispose());
       term.dispose();
     };

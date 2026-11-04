@@ -310,7 +310,10 @@ export default function App() {
           workspaceRef.current?.activateTab(id);
         }}
         onClose={(id) => workspaceRef.current?.closeTab(id)}
-        onRename={(id, title) => workspaceRef.current?.renameTab(id, title)}
+        onDuplicateTab={(id) => {
+          const tab = tabs.find((t) => t.id === id);
+          if (tab) workspaceRef.current?.newTab(tab.connector);
+        }}
         onNewTab={openLocal}
         onOpenVault={() => setSurface("vault")}
         onOpenSftp={() => setSurface("sftp")}

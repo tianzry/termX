@@ -1924,6 +1924,7 @@ async fn ssh_connect(
         None
     };
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
+    crate::commands::session::apply_ssh_runtime_settings(state).map_err(err_value)?;
     let init_command = profile.init_command.clone();
     let recording_path =
         crate::commands::settings::recording_path_for(state, &profile.name).map_err(err_value)?;
@@ -2110,6 +2111,7 @@ async fn sftp_connect(
         .and_then(|v| v.parse().ok())
         .unwrap_or(crate::ssh::client::DEFAULT_CONNECT_TIMEOUT);
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
+    crate::commands::session::apply_ssh_runtime_settings(state).map_err(err_value)?;
     let handle = crate::ssh::client::run_blocking_ssh(move || async move {
         SftpHandle::connect(host, port, cred, known_hosts_path, timeout_secs).await
     })

@@ -9,8 +9,15 @@
 export type ThemeMode = "light" | "dark" | "system";
 export type AccentMode = "theme" | "custom";
 export type CursorShape = "block" | "bar" | "underline";
-export type RightClickBehavior = "paste" | "menu" | "none";
-export type MiddleClickBehavior = "paste" | "copy" | "none";
+export type RightClickBehavior = "context-menu" | "paste" | "select-word";
+export type MiddleClickBehavior = "context-menu" | "paste" | "disabled";
+export type DisconnectedNoticeMode = "terminal" | "dialog";
+export type TabDoubleClickBehavior = "duplicate" | "copy" | "disabled";
+export type DynamicTabTitleMode = "off" | "agent" | "all";
+export type OscNotificationMode = "always" | "unfocused" | "off";
+export type Osc52ClipboardMode = "off" | "write-only" | "read-write" | "prompt";
+export type LinkModifier = "none" | "ctrl" | "alt" | "meta";
+export type LinkBrowser = "netcatty" | "system";
 export type ProxyMode = "system" | "direct" | "custom";
 export type SessionLogFormat = "txt" | "raw" | "html";
 export type HotkeyScheme = "mac" | "pc";
@@ -51,14 +58,34 @@ export interface TerminalSettings {
   altAsMeta: boolean;
   scrollOnInput: boolean;
   scrollOnOutput: boolean;
+  scrollOnKeyPress: boolean;
+  scrollOnPaste: boolean;
+  smoothScrolling: boolean;
   rightClickBehavior: RightClickBehavior;
+  rightClickLongPressMenu: boolean;
+  showContextMenuOverFullscreenApps: boolean;
   middleClickBehavior: MiddleClickBehavior;
   copyOnSelect: boolean;
+  normalizeTextOnCopy: boolean;
   wordSeparators: string;
+  disableBracketedPaste: boolean;
+  autoUploadClipboardImageOnPaste: boolean;
+  confirmBeforeMultilinePaste: boolean;
+  multilinePasteConfirmMinLines: number;
   autoCloseOnExit: boolean;
-  disconnectPrompt: boolean;
+  disconnectedNoticeMode: DisconnectedNoticeMode;
   shiftEnterNewlineEnabled: boolean;
   shiftEnterNewlineText: string;
+  shiftEnterForceText: boolean;
+  clearWipesScrollback: boolean;
+  preserveSelectionOnInput: boolean;
+  forcePromptNewLine: boolean;
+  tabDoubleClickBehavior: TabDoubleClickBehavior;
+  dynamicTabTitleMode: DynamicTabTitleMode;
+  oscNotifications: OscNotificationMode;
+  osc52Clipboard: Osc52ClipboardMode;
+  linkModifier: LinkModifier;
+  linkBrowser: LinkBrowser;
   /** 终端主题跟随应用主题；关闭后终端固定深色（Netcatty settings.terminal.theme.followApp）。 */
   followAppTheme: boolean;
 }
@@ -117,10 +144,17 @@ export interface AppSettings {
 
 export const SETTINGS_STORAGE_KEY = "settings.center.v1";
 
+/** 终端字号范围（对照 Netcatty infrastructure/config/fonts.ts MIN/MAX_FONT_SIZE）。 */
+export const MIN_TERMINAL_FONT_SIZE = 10;
+export const MAX_TERMINAL_FONT_SIZE = 32;
+/** 回滚行数：0 = 不限（映射到 50000 行上限），上限 100000（对照 Netcatty resolveXTermScrollback）。 */
+export const MAX_TERMINAL_SCROLLBACK = 100000;
+export const UNLIMITED_SCROLLBACK_CAP = 50000;
+
 export const DEFAULT_WORD_SEPARATORS = "`~!@#$%^&*()-=+[]{}\\|;:'\",.<>/?";
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
-  scrollback: 10000,
+  scrollback: 3000,
   terminalEmulationType: "xterm-256color",
   fontLigatures: true,
   fontSmoothing: true,
@@ -134,15 +168,35 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   highlightCursorLine: false,
   altAsMeta: false,
   scrollOnInput: true,
-  scrollOnOutput: true,
-  rightClickBehavior: "paste",
+  scrollOnOutput: false,
+  scrollOnKeyPress: false,
+  scrollOnPaste: true,
+  smoothScrolling: false,
+  rightClickBehavior: "context-menu",
+  rightClickLongPressMenu: false,
+  showContextMenuOverFullscreenApps: false,
   middleClickBehavior: "paste",
   copyOnSelect: false,
+  normalizeTextOnCopy: true,
   wordSeparators: DEFAULT_WORD_SEPARATORS,
+  disableBracketedPaste: false,
+  autoUploadClipboardImageOnPaste: false,
+  confirmBeforeMultilinePaste: false,
+  multilinePasteConfirmMinLines: 2,
   autoCloseOnExit: false,
-  disconnectPrompt: true,
-  shiftEnterNewlineEnabled: false,
-  shiftEnterNewlineText: "\\x1b\\r",
+  disconnectedNoticeMode: "terminal",
+  shiftEnterNewlineEnabled: true,
+  shiftEnterNewlineText: "\\e\\r",
+  shiftEnterForceText: false,
+  clearWipesScrollback: true,
+  preserveSelectionOnInput: false,
+  forcePromptNewLine: false,
+  tabDoubleClickBehavior: "duplicate",
+  dynamicTabTitleMode: "agent",
+  oscNotifications: "always",
+  osc52Clipboard: "write-only",
+  linkModifier: "none",
+  linkBrowser: "netcatty",
   followAppTheme: true,
 };
 
@@ -177,7 +231,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   shellOnlyTabNumberShortcuts: false,
   showTabNumberBadges: true,
   sidePanelAutoOpen: false,
-  sidePanelAutoOpenPane: "sftp",
+  sidePanelAutoOpenPane: "scripts",
   localShellSidePanelAutoOpen: false,
   localShellSidePanelAutoOpenPane: "files",
   verifyHostKeys: true,
@@ -206,33 +260,146 @@ function pickOne<T extends string>(v: unknown, allowed: readonly T[], fallback: 
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 }
 
+/** 终端行数输入 clamp：0 = 不限（运行期映射 50000），上限 100000。 */
+export function clampScrollback(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_TERMINAL_SETTINGS.scrollback;
+  return Math.min(MAX_TERMINAL_SCROLLBACK, Math.max(0, Math.round(n)));
+}
+
+/** xterm 实际使用的回滚行数（0 → 50000，对照 Netcatty resolveXTermScrollback）。 */
+export function resolveXtermScrollback(value: number): number {
+  return value === 0 ? UNLIMITED_SCROLLBACK_CAP : value;
+}
+
+export function clampCursorBarWidth(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_TERMINAL_SETTINGS.cursorBarWidth;
+  return Math.min(4, Math.max(1, Math.round(n)));
+}
+
+export function clampLinePadding(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_TERMINAL_SETTINGS.linePadding;
+  return Math.min(10, Math.max(0, Math.round(n)));
+}
+
+/** 旧版右键 / 中键枚举迁移到 Netcatty 现行取值。 */
+function migrateRightClick(raw: Record<string, unknown>): RightClickBehavior {
+  if (raw.rightClickBehavior === "menu") return "context-menu";
+  if (raw.rightClickBehavior === "none") return "context-menu";
+  return pickOne(
+    raw.rightClickBehavior,
+    ["context-menu", "paste", "select-word"] as const,
+    DEFAULT_TERMINAL_SETTINGS.rightClickBehavior,
+  );
+}
+
+function migrateMiddleClick(raw: Record<string, unknown>): MiddleClickBehavior {
+  if (raw.middleClickBehavior === "menu") return "context-menu";
+  if (raw.middleClickBehavior === "copy") return "paste";
+  if (raw.middleClickBehavior === "none") return "disabled";
+  return pickOne(
+    raw.middleClickBehavior,
+    ["context-menu", "paste", "disabled"] as const,
+    DEFAULT_TERMINAL_SETTINGS.middleClickBehavior,
+  );
+}
+
+/** 旧版布尔 disconnectPrompt → 现行 disconnectedNoticeMode。 */
+function migrateDisconnectedNotice(raw: Record<string, unknown>): DisconnectedNoticeMode {
+  if (raw.disconnectedNoticeMode === "terminal" || raw.disconnectedNoticeMode === "dialog") {
+    return raw.disconnectedNoticeMode;
+  }
+  if (typeof raw.disconnectPrompt === "boolean") {
+    return raw.disconnectPrompt ? "dialog" : "terminal";
+  }
+  return DEFAULT_TERMINAL_SETTINGS.disconnectedNoticeMode;
+}
+
 function normalizeTerminal(raw: unknown): TerminalSettings {
   const d = DEFAULT_TERMINAL_SETTINGS;
   const r = (raw ?? {}) as Record<string, unknown>;
   return {
-    scrollback: pickNum(r.scrollback, d.scrollback),
-    terminalEmulationType: pickStr(r.terminalEmulationType, d.terminalEmulationType),
+    scrollback: clampScrollback(pickNum(r.scrollback, d.scrollback)),
+    terminalEmulationType: pickOne(
+      r.terminalEmulationType,
+      ["xterm-256color", "xterm-16color", "xterm"] as const,
+      d.terminalEmulationType,
+    ),
     fontLigatures: pickBool(r.fontLigatures, d.fontLigatures),
     fontSmoothing: pickBool(r.fontSmoothing, d.fontSmoothing),
     fontWeight: pickNum(r.fontWeight, d.fontWeight),
     fontWeightBold: pickNum(r.fontWeightBold, d.fontWeightBold),
-    linePadding: pickNum(r.linePadding, d.linePadding),
+    linePadding: clampLinePadding(r.linePadding),
     fallbackFont: pickStr(r.fallbackFont, d.fallbackFont),
     cursorShape: pickOne(r.cursorShape, ["block", "bar", "underline"] as const, d.cursorShape),
     cursorBlink: pickBool(r.cursorBlink, d.cursorBlink),
-    cursorBarWidth: pickNum(r.cursorBarWidth, d.cursorBarWidth),
+    cursorBarWidth: clampCursorBarWidth(r.cursorBarWidth),
     highlightCursorLine: pickBool(r.highlightCursorLine, d.highlightCursorLine),
     altAsMeta: pickBool(r.altAsMeta, d.altAsMeta),
     scrollOnInput: pickBool(r.scrollOnInput, d.scrollOnInput),
     scrollOnOutput: pickBool(r.scrollOnOutput, d.scrollOnOutput),
-    rightClickBehavior: pickOne(r.rightClickBehavior, ["paste", "menu", "none"] as const, d.rightClickBehavior),
-    middleClickBehavior: pickOne(r.middleClickBehavior, ["paste", "copy", "none"] as const, d.middleClickBehavior),
+    scrollOnKeyPress: pickBool(r.scrollOnKeyPress, d.scrollOnKeyPress),
+    scrollOnPaste: pickBool(r.scrollOnPaste, d.scrollOnPaste),
+    smoothScrolling: pickBool(r.smoothScrolling, d.smoothScrolling),
+    rightClickBehavior: migrateRightClick(r),
+    rightClickLongPressMenu: pickBool(r.rightClickLongPressMenu, d.rightClickLongPressMenu),
+    showContextMenuOverFullscreenApps: pickBool(
+      r.showContextMenuOverFullscreenApps,
+      d.showContextMenuOverFullscreenApps,
+    ),
+    middleClickBehavior: migrateMiddleClick(r),
     copyOnSelect: pickBool(r.copyOnSelect, d.copyOnSelect),
+    normalizeTextOnCopy: pickBool(r.normalizeTextOnCopy, d.normalizeTextOnCopy),
     wordSeparators: pickStr(r.wordSeparators, d.wordSeparators),
+    disableBracketedPaste: pickBool(r.disableBracketedPaste, d.disableBracketedPaste),
+    autoUploadClipboardImageOnPaste: pickBool(
+      r.autoUploadClipboardImageOnPaste,
+      d.autoUploadClipboardImageOnPaste,
+    ),
+    confirmBeforeMultilinePaste: pickBool(
+      r.confirmBeforeMultilinePaste,
+      d.confirmBeforeMultilinePaste,
+    ),
+    multilinePasteConfirmMinLines: Math.min(
+      1000,
+      Math.max(1, Math.round(pickNum(r.multilinePasteConfirmMinLines, d.multilinePasteConfirmMinLines))),
+    ),
     autoCloseOnExit: pickBool(r.autoCloseOnExit, d.autoCloseOnExit),
-    disconnectPrompt: pickBool(r.disconnectPrompt, d.disconnectPrompt),
+    disconnectedNoticeMode: migrateDisconnectedNotice(r),
     shiftEnterNewlineEnabled: pickBool(r.shiftEnterNewlineEnabled, d.shiftEnterNewlineEnabled),
     shiftEnterNewlineText: pickStr(r.shiftEnterNewlineText, d.shiftEnterNewlineText),
+    shiftEnterForceText: pickBool(r.shiftEnterForceText, d.shiftEnterForceText),
+    clearWipesScrollback: pickBool(r.clearWipesScrollback, d.clearWipesScrollback),
+    preserveSelectionOnInput: pickBool(r.preserveSelectionOnInput, d.preserveSelectionOnInput),
+    forcePromptNewLine: pickBool(r.forcePromptNewLine, d.forcePromptNewLine),
+    tabDoubleClickBehavior: pickOne(
+      r.tabDoubleClickBehavior,
+      ["duplicate", "copy", "disabled"] as const,
+      d.tabDoubleClickBehavior,
+    ),
+    dynamicTabTitleMode: pickOne(
+      r.dynamicTabTitleMode,
+      ["off", "agent", "all"] as const,
+      d.dynamicTabTitleMode,
+    ),
+    oscNotifications: pickOne(
+      r.oscNotifications,
+      ["always", "unfocused", "off"] as const,
+      d.oscNotifications,
+    ),
+    osc52Clipboard: pickOne(
+      r.osc52Clipboard,
+      ["off", "write-only", "read-write", "prompt"] as const,
+      d.osc52Clipboard,
+    ),
+    linkModifier: pickOne(
+      r.linkModifier,
+      ["none", "ctrl", "alt", "meta"] as const,
+      d.linkModifier,
+    ),
+    linkBrowser: pickOne(r.linkBrowser, ["netcatty", "system"] as const, d.linkBrowser),
     followAppTheme: pickBool(r.followAppTheme, d.followAppTheme),
   };
 }
@@ -277,7 +444,10 @@ export function normalizeSettings(raw: unknown): AppSettings {
     showHostTreeSidebar: pickBool(r.showHostTreeSidebar, d.showHostTreeSidebar),
     autoImportSystemKnownHosts: pickBool(r.autoImportSystemKnownHosts, d.autoImportSystemKnownHosts),
     terminalFontFamilyId: pickStr(r.terminalFontFamilyId, d.terminalFontFamilyId),
-    terminalFontSize: Math.min(32, Math.max(8, pickNum(r.terminalFontSize, d.terminalFontSize))),
+    terminalFontSize: Math.min(
+      MAX_TERMINAL_FONT_SIZE,
+      Math.max(MIN_TERMINAL_FONT_SIZE, pickNum(r.terminalFontSize, d.terminalFontSize)),
+    ),
     terminal: normalizeTerminal(r.terminal),
     hotkeyScheme: pickOne(r.hotkeyScheme, ["mac", "pc"] as const, d.hotkeyScheme),
     customKeyBindings,

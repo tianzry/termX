@@ -8,7 +8,6 @@
  * 这里只展示快照并回调。
  */
 
-import { useEffect, useState } from "react";
 import { useSettings } from "./settings/settingsStore";
 import type { Tab } from "./workspaceModel";
 import { Icon } from "./ui/icons";
@@ -23,7 +22,8 @@ interface Props {
   status: string;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
-  onRename: (id: string, title: string) => void;
+  /** 双击标签行为「复制会话 / 复制标签页」：新建一个同连接标签。 */
+  onDuplicateTab: (id: string) => void;
   onNewTab: () => void;
   onOpenVault: () => void;
   onOpenSftp: () => void;
@@ -51,29 +51,16 @@ export function TopTabs({
   status,
   onActivate,
   onClose,
-  onRename,
+  onDuplicateTab,
   onNewTab,
   onOpenVault,
   onOpenSftp,
   onToggleHostTree,
   onOpenSettings,
 }: Props) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
   // 设置中心「外观 · 主机库」两个显示开关（对照 Netcatty showSftpTab /
   // showHostTreeSidebar）。
   const settings = useSettings();
-
-  useEffect(() => {
-    if (editingId && !tabs.some((t) => t.id === editingId)) setEditingId(null);
-  }, [tabs, editingId]);
-
-  function commit() {
-    const id = editingId;
-    const text = draft.trim();
-    setEditingId(null);
-    if (id && text) onRename(id, text);
-  }
 
   return (
     <header className="nc-topbar" data-section="top-tabs">
@@ -120,8 +107,10 @@ export function TopTabs({
                 className={`nc-session-tab${active ? " active" : ""}`}
                 onMouseDown={() => onActivate(tab.id)}
                 onDoubleClick={() => {
-                  setDraft(tab.title);
-                  setEditingId(tab.id);
+                  // 行为区「标签页双击行为」（Netcatty tabDoubleClickBehavior）：
+                  // duplicate / copy 都新建同连接标签（termX 尚无会话复用通道）。
+                  if (settings.terminal.tabDoubleClickBehavior === "disabled") return;
+                  onDuplicateTab(tab.id);
                 }}
               >
                 <Icon
@@ -129,22 +118,7 @@ export function TopTabs({
                   size={14}
                   className="nc-session-tab-icon"
                 />
-                {editingId === tab.id ? (
-                  <input
-                    className="nc-tab-input"
-                    autoFocus
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onBlur={commit}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commit();
-                      if (e.key === "Escape") setEditingId(null);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span className="nc-session-tab-title">{tab.title}</span>
-                )}
+                <span className="nc-session-tab-title">{tab.title}</span>
                 <button
                   className="nc-tab-close"
                   title="关闭标签"

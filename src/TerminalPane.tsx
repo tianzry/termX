@@ -36,6 +36,8 @@ import type {
   TerminalTransport,
 } from "./backend/client";
 import type { Tab } from "./workspaceModel";
+import { getSettings } from "./settings/settingsStore";
+import { readTerminalSelection } from "./Terminal";
 import {
   advanceIndeterminateConnectionProgress,
   advanceMonotonicConnectionProgress,
@@ -584,6 +586,9 @@ export function TerminalPane({
     y: number;
     selection: string;
   } | null>(null);
+  /** 右键长按弹菜单（Netcatty rightClickLongPressMenu）。 */
+  const longPressOpenedRef = useRef(false);
+  const longPressTimerRef = useRef<number | null>(null);
 
   // ── 连接弹窗（认证重试）表单状态 ──────────────────────────
   const [hostInfo, setHostInfo] = useState<HostConnectionInfo>({
@@ -869,12 +874,33 @@ export function TerminalPane({
         setProgressLogs((prev) => [...prev, suffix]);
         setDisconnectedDismissed(false);
         onStatus(`${tab.title} ${suffix}`);
+        // 会话结束后自动关闭窗格 / 标签（Netcatty autoCloseOnExit）。
+        if (getSettings().terminal.autoCloseOnExit) {
+          window.setTimeout(() => onClosePane?.(), 0);
+          return;
+        }
+        // 行为区「连接断开时」：终端内提示（不弹完整连接弹窗）。
+        if (getSettings().terminal.disconnectedNoticeMode === "terminal") {
+          controllerRef.current?.term.write(
+            `\r\n\u001b[90m[连接已断开：${suffix} · 按 Enter 重新连接]\u001b[0m\r\n`,
+          );
+          setDisconnectedDismissed(true);
+          controllerRef.current?.term.focus();
+        }
       }),
     ];
 
     onStatus(`${tab.title} 已连接 (${sid})`);
     controllerRef.current?.fit.fit();
     controllerRef.current?.term.focus();
+    maybeAutoOpenSidePanel();
+  }
+
+  /** 连接成功后按设置自动打开侧边栏（termX 目前仅支持 SFTP 面板）。 */
+  function maybeAutoOpenSidePanel() {
+    const s = getSettings();
+    if (!s.sidePanelAutoOpen) return;
+    if (s.sidePanelAutoOpenPane === "sftp") onOpenTool?.("sftp");
   }
 
   async function connect(authOverride?: AuthOverride) {
@@ -1040,6 +1066,7 @@ export function TerminalPane({
         );
         controllerRef.current?.fit.fit();
         controllerRef.current?.term.focus();
+        maybeAutoOpenSidePanel();
       } catch (e) {
         if (!aliveRef.current || attempt !== attemptRef.current) return;
         const message = userVisibleError(String(e));
@@ -1406,41 +1433,185 @@ export function TerminalPane({
   // netcatty shouldShowTerminalConnectionDialog：status !== connected
   // 且 disconnected 状态下未被用户 dismiss。
   const showConnectionDialog =
-    isSsh && status !== "connected" && !(status === "disconnected" && disconnectedDismissed);
+    isSsh &&
+    status !== "connected" &&
+    !(status === "disconnected" && disconnectedDismissed) &&
+    (status !== "disconnected" || getSettings().terminal.disconnectedNoticeMode === "dialog");
 
   /** 终端右键菜单（对照 netcatty TerminalContextMenu；坐标相对窗格左上角）。 */
   function openContextMenu(e: ReactMouseEvent<HTMLDivElement>) {
     if ((e.target as HTMLElement).closest(".term-toolbar")) return;
+    const s = getSettings();
+    const term = controllerRef.current?.term;
+    // 全屏 TUI 接管鼠标时，设置关闭则把右键交还给应用（Netcatty
+    // showContextMenuOverFullscreenApps）。
+    if (
+      term &&
+      term.modes.mouseTrackingMode !== "none" &&
+      !s.terminal.showContextMenuOverFullscreenApps
+    ) {
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
+    if (longPressOpenedRef.current) return;
+    if (s.terminal.rightClickBehavior === "paste") {
+      void pasteFromClipboard();
+      return;
+    }
+    if (s.terminal.rightClickBehavior === "select-word") {
+      selectWordAt(e.clientX, e.clientY);
+      return;
+    }
+    showContextMenu(e.clientX, e.clientY);
+  }
+
+  function showContextMenu(clientX: number, clientY: number) {
     const box = paneRef.current?.getBoundingClientRect();
     if (!box) return;
+    const s = getSettings();
+    const term = controllerRef.current?.term;
     const menuWidth = 200;
     const menuHeight = 340;
     setMenu({
-      x: Math.max(4, Math.min(e.clientX - box.left, box.width - menuWidth - 4)),
-      y: Math.max(
-        4,
-        Math.min(e.clientY - box.top, Math.max(4, box.height - menuHeight)),
-      ),
-      selection: controllerRef.current?.term.getSelection() ?? "",
+      x: Math.max(4, Math.min(clientX - box.left, box.width - menuWidth - 4)),
+      y: Math.max(4, Math.min(clientY - box.top, Math.max(4, box.height - menuHeight))),
+      selection: term ? readTerminalSelection(term, s.terminal.normalizeTextOnCopy) : "",
     });
+  }
+
+  /** 读取系统剪贴板并粘贴（多行确认 / 粘贴后滚动与 Netcatty 行为区一致）。 */
+  async function pasteFromClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return;
+      const s = getSettings();
+      if (s.terminal.confirmBeforeMultilinePaste) {
+        const lines = text.split(/\r\n|\r|\n/).length;
+        if (
+          lines >= s.terminal.multilinePasteConfirmMinLines &&
+          !window.confirm(`即将粘贴 ${lines} 行 / ${text.length} 个字符，确认发送？`)
+        ) {
+          return;
+        }
+      }
+      const term = controllerRef.current?.term;
+      term?.paste(text);
+      if (s.terminal.scrollOnPaste) term?.scrollToBottom();
+      term?.focus();
+    } catch {
+      // 剪贴板无权限时静默失败（与 Netcatty 一致）。
+    }
+  }
+
+  /** 右键「选择单词」：按 xterm 单元格坐标命中光标词并选中（Netcatty select-word）。 */
+  function selectWordAt(clientX: number, clientY: number) {
+    const term = controllerRef.current?.term;
+    const el = term?.element;
+    if (!term || !el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const cellW = rect.width / Math.max(1, term.cols);
+    const cellH = rect.height / Math.max(1, term.rows);
+    const col = Math.max(0, Math.min(term.cols - 1, Math.floor((clientX - rect.left) / cellW)));
+    const viewRow = Math.max(
+      0,
+      Math.min(term.rows - 1, Math.floor((clientY - rect.top) / cellH)),
+    );
+    const buffer = term.buffer.active;
+    const row = buffer.viewportY + viewRow;
+    const line = buffer.getLine(row);
+    if (!line) return;
+    // translateToString 返回的是字符序列，宽字符 / 组合字符会占多个单元格；
+    // 直接拿字符下标当列用会让 CJK 行的选词整体偏移。这里按单元格宽度建立
+    // 「字符 → 起始列」映射，选区长度也用单元格语义。
+    const cells: { text: string; col: number; width: number }[] = [];
+    for (let c = 0; c < line.length; ) {
+      const cell = line.getCell(c);
+      if (!cell) break;
+      const width = cell.getWidth() || 1;
+      cells.push({ text: cell.getChars(), col: c, width });
+      c += width;
+    }
+    const separators = getSettings().terminal.wordSeparators;
+    const isSeparator = (ch: string) => ch === "" || separators.includes(ch);
+    const hit = cells.findIndex((cell) => col >= cell.col && col < cell.col + cell.width);
+    if (hit < 0 || isSeparator(cells[hit].text)) {
+      term.clearSelection();
+      return;
+    }
+    let start = hit;
+    let end = hit;
+    while (start > 0 && !isSeparator(cells[start - 1].text)) start -= 1;
+    while (end + 1 < cells.length && !isSeparator(cells[end + 1].text)) end += 1;
+    const startCol = cells[start].col;
+    const endCol = cells[end].col + cells[end].width;
+    term.select(startCol, row, Math.max(1, endCol - startCol));
   }
 
   function closeMenu() {
     setMenu(null);
   }
 
+  function clearLongPressTimer() {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  /** 中键行为（Netcatty middleClickBehavior：context-menu / paste / disabled）。 */
+  function handleAuxClick(e: ReactMouseEvent<HTMLDivElement>) {
+    if (e.button !== 1) return;
+    if ((e.target as HTMLElement).closest(".term-toolbar")) return;
+    const term = controllerRef.current?.term;
+    if (term && term.modes.mouseTrackingMode !== "none") return;
+    const mode = getSettings().terminal.middleClickBehavior;
+    if (mode === "disabled") return;
+    e.preventDefault();
+    if (mode === "context-menu") showContextMenu(e.clientX, e.clientY);
+    else void pasteFromClipboard();
+  }
+
   return (
     <div
       ref={paneRef}
       className={`pane${active ? " active" : ""}`}
-      onMouseDown={() => {
+      onMouseDown={(e) => {
+        // 每次按下都复位长按标记：长按弹菜单后的 contextmenu 事件可能落在
+        // 遮罩上，不能让它把下一次正常右键吞掉。
+        longPressOpenedRef.current = false;
         onActivate();
         controllerRef.current?.term.focus();
+        const s = getSettings();
+        if (
+          e.button === 2 &&
+          s.terminal.rightClickLongPressMenu &&
+          s.terminal.rightClickBehavior !== "context-menu"
+        ) {
+          clearLongPressTimer();
+          longPressTimerRef.current = window.setTimeout(() => {
+            longPressOpenedRef.current = true;
+            longPressTimerRef.current = null;
+            showContextMenu(e.clientX, e.clientY);
+          }, 450);
+        }
       }}
+      onMouseUp={() => clearLongPressTimer()}
+      onMouseLeave={() => clearLongPressTimer()}
+      onAuxClick={handleAuxClick}
       onContextMenu={openContextMenu}
       onKeyDownCapture={(e) => {
+        // 终端内提示模式下按 Enter 重连（Netcatty disconnectedNoticeMode=terminal）。
+        if (
+          status === "disconnected" &&
+          getSettings().terminal.disconnectedNoticeMode === "terminal" &&
+          e.key === "Enter"
+        ) {
+          e.preventDefault();
+          void connect();
+          return;
+        }
         // 逐片段快捷键（对照 Netcatty Snippet.shortkey）：仅命中本窗格焦点终端。
         if (status !== "connected" || snippets.length === 0) return;
         const hit = snippets.find((s) => {
@@ -2045,15 +2216,17 @@ export function TerminalPane({
         <div className="pane-badge">连接中…</div>
       )}
 
-      {!isSsh && status === "disconnected" && (
-        <div className="pane-overlay" onContextMenu={openContextMenu}>
-          <div className="pane-overlay-title">会话已结束</div>
-          {error && <div className="pane-overlay-detail">{error}</div>}
-          <button onClick={() => void connect()} className="pane-reconnect">
-            重连
-          </button>
-        </div>
-      )}
+      {!isSsh &&
+        status === "disconnected" &&
+        getSettings().terminal.disconnectedNoticeMode === "dialog" && (
+          <div className="pane-overlay" onContextMenu={openContextMenu}>
+            <div className="pane-overlay-title">会话已结束</div>
+            {error && <div className="pane-overlay-detail">{error}</div>}
+            <button onClick={() => void connect()} className="pane-reconnect">
+              重连
+            </button>
+          </div>
+        )}
 
       {/* 右键菜单（对照 netcatty TerminalContextMenu） */}
       {menu && (
@@ -2063,6 +2236,9 @@ export function TerminalPane({
             onMouseDown={closeMenu}
             onContextMenu={(e) => {
               e.preventDefault();
+              // 长按刚弹过菜单时，松手产生的 contextmenu 落在遮罩上；此时
+              // 不能立刻关闭，否则长按菜单一点就闪没。
+              if (longPressOpenedRef.current) return;
               closeMenu();
             }}
           />
@@ -2083,10 +2259,7 @@ export function TerminalPane({
             </button>
             <button
               onClick={() => {
-                void navigator.clipboard
-                  .readText()
-                  .then((text) => controllerRef.current?.term.paste(text))
-                  .catch(() => {});
+                void pasteFromClipboard();
                 closeMenu();
               }}
             >

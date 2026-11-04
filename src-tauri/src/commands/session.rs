@@ -56,6 +56,30 @@ fn apply_auth_override(
     Ok(())
 }
 
+/// 应用「设置 → 终端」中的 SSH 运行期设置（主机密钥校验 / TERM 类型）。
+///
+/// 校验开关是进程级原子量，必须在每个顶层连接入口（终端 / 独立 SFTP /
+/// 端口转发 / headless）连接前重新读取，否则会残留上一次连接时的取值。
+pub fn apply_ssh_runtime_settings(state: &AppState) -> AppResult<()> {
+    let parsed = crate::db::settings::get(&state.db, "settings.center.v1")?
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    let verify_host_keys = parsed
+        .as_ref()
+        .and_then(|v| v.get("verifyHostKeys").and_then(|b| b.as_bool()))
+        .unwrap_or(true);
+    client::set_verify_host_keys(verify_host_keys);
+    let terminal_type = parsed
+        .as_ref()
+        .and_then(|v| {
+            v.get("terminal")
+                .and_then(|t| t.get("terminalEmulationType"))
+                .and_then(|s| s.as_str())
+        })
+        .unwrap_or("xterm-256color");
+    client::set_terminal_emulation_type(terminal_type);
+    Ok(())
+}
+
 /// 经 profile_id 建立 SSH 连接（自动带堡垒机链）。
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Flat fields preserve the existing invoke wire contract.
@@ -118,6 +142,8 @@ pub async fn ssh_connect(
     let timeout_secs: u64 = crate::db::settings::get(&state.db, "connect_timeout")?
         .and_then(|v| v.parse().ok())
         .unwrap_or(crate::ssh::client::DEFAULT_CONNECT_TIMEOUT);
+    // 设置中心 → 终端 → 主机密钥校验策略 / 终端仿真类型。
+    apply_ssh_runtime_settings(&state)?;
     let recording_path = crate::commands::settings::recording_path_for(&state, &profile.name)?;
 
     // Only pass log_session_id if verbose logging is enabled

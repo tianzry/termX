@@ -93,6 +93,8 @@ pub async fn forward_start_impl(
         chain.push((hop, bc));
     }
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
+    // 端口转发自带独立握手：连前刷新主机密钥校验策略。
+    crate::commands::session::apply_ssh_runtime_settings(state)?;
     // 转发连接与终端连接共用同一套代理解析（目标 + 堡垒逐跳）。
     let proxy_configs = {
         let mut all: Vec<&crate::models::Profile> = vec![&p];

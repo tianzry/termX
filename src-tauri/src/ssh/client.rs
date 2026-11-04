@@ -14,6 +14,39 @@ use crate::models::{Credential, Profile};
 
 use super::prompt::prompt_host_key;
 
+/// 全局主机密钥校验开关（设置中心 → 终端 → 主机密钥校验策略）。
+///
+/// 设置是应用级全局值，连接入口（ssh_connect / 后台 SFTP / 端口转发）在
+/// 建立连接前读取一次即可；握手处理器不持有 AppState，故用进程级原子量。
+static VERIFY_HOST_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// 由连接入口按设置写入；默认开启校验。
+pub fn set_verify_host_keys(enabled: bool) {
+    VERIFY_HOST_KEYS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn verify_host_keys_enabled() -> bool {
+    VERIFY_HOST_KEYS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 终端 TERM 类型（设置中心 → 终端 → 字体区「终端标识」）。
+static TERM_TYPE: OnceLock<StdMutex<String>> = OnceLock::new();
+
+pub fn set_terminal_emulation_type(value: &str) {
+    let cell = TERM_TYPE.get_or_init(|| StdMutex::new("xterm-256color".into()));
+    if let Ok(mut guard) = cell.lock() {
+        *guard = value.to_string();
+    }
+}
+
+fn terminal_emulation_type() -> String {
+    let cell = TERM_TYPE.get_or_init(|| StdMutex::new("xterm-256color".into()));
+    match cell.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => "xterm-256color".into(),
+    }
+}
+
 /// Re-export 旧 path：实现已迁移到 `ssh::auth` / `ssh::prompt`，调用点
 /// （forward / sftp / commands / state）仍可写 `ssh::client::AuthCtx`、
 /// `ssh::client::authenticate`，无需扩散改动。
@@ -307,6 +340,9 @@ impl client::Handler for SshHandler {
         use russh::keys::known_hosts;
         use russh::keys::HashAlg;
 
+        // 设置关闭校验时跳过 known_hosts 查询（Netcatty verifyHostKeys = false）。
+        let skip_verify = !verify_host_keys_enabled();
+
         // 同步部分先做完：known_hosts 查询 + 指纹计算。
         // pubkey 跨 await 边界要 Clone（learn 需要它）。
         let check = known_hosts::check_known_hosts_path(
@@ -326,6 +362,9 @@ impl client::Handler for SshHandler {
         let mismatch = self.key_mismatch.clone();
 
         async move {
+            if skip_verify {
+                return Ok(true);
+            }
             match check {
                 Ok(true) => Ok(true),
                 // 未知主机：有 ctx 走 xterm 确认，无 ctx（SFTP/Forward 后台连接）直接拒绝。
@@ -1891,7 +1930,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
     }
 
     channel
-        .request_pty(false, "xterm-256color", cols, rows, 0, 0, &[])
+        .request_pty(false, &terminal_emulation_type(), cols, rows, 0, 0, &[])
         .await
         .map_err(|e| AppError::ssh("ssh_pty_request_failed", json!({ "err": e.to_string() })))?;
 

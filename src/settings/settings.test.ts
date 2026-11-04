@@ -39,7 +39,28 @@ describe("normalizeSettings", () => {
     const s = normalizeSettings({ terminal: { scrollback: 500 } });
     expect(s.terminal.scrollback).toBe(500);
     expect(s.terminal.cursorShape).toBe("block");
-    expect(s.terminal.disconnectPrompt).toBe(true);
+    expect(s.terminal.disconnectedNoticeMode).toBe("terminal");
+    expect(s.terminal.rightClickBehavior).toBe("context-menu");
+    expect(s.terminal.middleClickBehavior).toBe("paste");
+    expect(s.terminal.shiftEnterNewlineEnabled).toBe(true);
+  });
+
+  it("旧版右键 / 中键 / 断开提示取值迁移到 Netcatty 枚举", () => {
+    expect(normalizeSettings({ terminal: { rightClickBehavior: "menu" } }).terminal.rightClickBehavior).toBe(
+      "context-menu",
+    );
+    expect(normalizeSettings({ terminal: { middleClickBehavior: "none" } }).terminal.middleClickBehavior).toBe(
+      "disabled",
+    );
+    expect(normalizeSettings({ terminal: { middleClickBehavior: "copy" } }).terminal.middleClickBehavior).toBe(
+      "paste",
+    );
+    expect(normalizeSettings({ terminal: { disconnectPrompt: true } }).terminal.disconnectedNoticeMode).toBe(
+      "dialog",
+    );
+    expect(normalizeSettings({ terminal: { disconnectPrompt: false } }).terminal.disconnectedNoticeMode).toBe(
+      "terminal",
+    );
   });
 
   it("terminal.followAppTheme 默认 true 且可被输入覆盖", () => {
@@ -47,9 +68,9 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({ terminal: { followAppTheme: false } }).terminal.followAppTheme).toBe(false);
   });
 
-  it("终端字号 clamp 到 [8, 32]", () => {
+  it("终端字号 clamp 到 [10, 32]（对照 Netcatty MIN/MAX_FONT_SIZE）", () => {
     expect(normalizeSettings({ terminalFontSize: 99 }).terminalFontSize).toBe(32);
-    expect(normalizeSettings({ terminalFontSize: 2 }).terminalFontSize).toBe(8);
+    expect(normalizeSettings({ terminalFontSize: 2 }).terminalFontSize).toBe(10);
   });
 
   it("过滤非法 customKeyBindings / disabledKeyBindings", () => {

@@ -3604,3 +3604,90 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 | 低·死键 | 删除 `settings.appearance.fonts.systemFont`（zh/en），补 en `settings.appearance.language.en` |
 
 复跑门禁：`npm run test:run` 31 文件 / **378✓**、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` **874✓**。
+
+## 2026-11-04 · 设置中心「终端」tab 1:1 复刻
+
+**取证**：本轮重读 Netcatty `components/settings/tabs/SettingsTerminalTab.tsx`、`SettingsTerminalTabControls.tsx`、`TerminalBehaviorSettings.tsx`、`TerminalFontSelect.tsx`、`TerminalCjkFontSelect.tsx`，量值来自 `infrastructure/config/fonts.ts`（`MIN_FONT_SIZE` / `MAX_FONT_SIZE`）、`resolveXTermScrollback` 与 xterm 建项路径；默认值逐键对照 `types/global/settings` 默认对象。运行中 Netcatty 仍不可用（无 electron / dist），像素并排复核继续登记为缺口。
+
+### 逐项对照
+
+| 区域 | 项 | 之前 | 本轮（1:1） |
+| --- | --- | --- | --- |
+| 主题 | 终端主题跟随应用 | 已有开关但深/浅切换时终端不跟随 | `followAppTheme` 订阅设置 + `onSystemThemeChange`，深浅主题即时重建 `term.options.theme`；关闭时固定深色并显示说明行 |
+| 字体（9 项） | 字体族 | 单一文本框 | 搜索型 combo（Auto + 本机字体，写入 `fontFamily`），Auto 走 `resolveFontFamily` 回退链 |
+| 字体（9 项） | 中文 / CJK 字体 | 无 | combo（Auto + 已列出 CJK 字体），Auto 时按主字体搭配并叠加 CJK 回退 |
+| 字体（9 项） | 字号 | 14，范围未限 | `clamp [10, 32]`（Netcatty `MIN/MAX_FONT_SIZE`），Stepper 到边界禁用按钮，改后 `term.options.fontSize` + `fit()` 即时生效 |
+| 字体（9 项） | 字重 / 粗体字重 | 无 | 两个 select（100–900 九档），落 `fontWeight` / `fontWeightBold` |
+| 字体（9 项） | 字体平滑 | 无 | `term-no-smoothing` CSS（`-webkit-font-smoothing:none` / `text-rendering:optimizeSpeed`），容器 class 即时切换 |
+| 字体（9 项） | 字体连字 | 无 | `term-ligatures` CSS（`font-feature-settings:"liga" 1,"calt" 1`） |
+| 字体（9 项） | 行间距 | 无 | 滑杆 0–10，映射 `lineHeight = 1 + value/10`，即时 `term.options.lineHeight` + `fit()` |
+| 字体（9 项） | 终端仿真类型 | 硬编码 `xterm-256color` | select（`xterm-256color` / `xterm-16color` / `xterm`），`ssh_connect` 读取设置后 `set_terminal_emulation_type`，`request_pty` 使用该 TERM |
+| 光标（4 项） | 样式 | 已有 | select 块/竖线/下划线 → `cursorStyle` |
+| 光标（4 项） | 竖线粗细 | 无 | 滑杆 1–4px，`clampCursorBarWidth` → `cursorWidth` |
+| 光标（4 项） | 闪烁 | 已有 | `cursorBlink` |
+| 光标（4 项） | 高亮当前行 | 无 | `CursorLineHighlighter`：`registerDecoration` 铺淡色底，跳过 alternate buffer 与选区，`onCursorMove/onWriteParsed/onRender/onSelectionChange/onResize` 驱动 |
+| 键盘（3 项） | Option 作 Meta / Option+←→ 按词 / Kitty 协议 | 无 | 行保留但置灰 + 行内 `row.unsupported`；`altAsMeta` 值仍写入 `macOptionIsMeta`（Windows 无实际效果，故 UI 禁用） |
+| 行为 | 退出后自动关闭 | 无 | 关闭回调中 `autoCloseOnExit` → `onClosePane` |
+| 行为 | 连接断开时（终端内提示 / 弹窗） | 旧 `disconnectPrompt` 布尔 | 枚举迁移（true→dialog / false→terminal）；terminal 模式写灰色提示并允许 Enter 重连，首次连接失败仍用弹窗 |
+| 行为 | 右键行为 | 只有菜单 / 粘贴 / 无 | 三值 `context-menu` / `paste` / `select-word`（旧 `menu→context-menu`、`none→context-menu`）；选词按 cell 坐标 + `wordSeparators` 计算并 `term.select` |
+| 行为 | 右键长按菜单 | 无 | 450ms 长按计时，仅在右键为粘贴/选词时生效；全屏应用接管鼠标时按 `showContextMenuOverFullscreenApps` 决定是否弹菜单 |
+| 行为 | 中键行为 | 无 | 三值 `context-menu` / `paste` / `disabled`（旧 `menu→context-menu`、`copy→paste`、`none→disabled`） |
+| 行为 | 选择即复制 / 复制规范化 | 无 | `onSelectionChange` 写剪贴板；`normalizeTerminalSelection` 去掉行尾填充空格并拼接软换行；菜单复制同样走规范化 |
+| 行为 | 单词分隔符 | 已有（仅双击） | 设置值落 `term.options.wordSeparator`，双击与右键选词共用 |
+| 行为 | 括号粘贴 | 无 | `disableBracketedPaste` → `ignoreBracketedPasteMode` |
+| 行为 | 多行粘贴确认 | 无 | 勾选后粘贴前 `confirm`，阈值行数可调（默认 2），仅拦 paste 事件 |
+| 行为 | Shift+Enter 开关 / 文本 | 硬编码 `\x1b\r` 且默认关 | 默认开、序列 `\e\r`（可改，支持 `\e \r \n \t \\ \xNN` 转义解码），`attachCustomKeyEventHandler` 拦截 |
+| 行为 | 标签双击 | 双击进入重命名输入 | `duplicate` / `copy` / `disabled`（默认 duplicate，两者都复制标签），移除重命名编辑状态 |
+| 行为 | OSC 52 剪贴板 | 无 | 四值 `off` / `write-only` / `read-write` / `prompt`；`parser.registerOscHandler(52)` 写入 / 读取（prompt 用 `confirm`） |
+| 行为 | 滚动 4 项 + 平滑 | 无 | `scrollOnInput→scrollOnUserInput`、`scrollOnOutput`（`onWriteParsed`）、`scrollOnKeyPress`、`scrollOnPaste`、`smoothScrolling→smoothScrollDuration(120)` |
+| 回滚 | 回滚行数 | 10000，固定 | number 0–100000；0 = 不限（映射 50000，`resolveXtermScrollback`），改后重建 `scrollback` |
+| 侧边栏 | 自动打开 + 8 个面板 | 无 | `sidePanelAutoOpen` + `sidePanelAutoOpenPane`（默认 scripts；termX 仅 SFTP 可用，其余选项保留但行内说明不可用）；SSH/Telnet 连接成功后按设置打开 SFTP |
+| 本地 Shell 侧栏 | 两组 | 无 | 按 Netcatty 行保留，全部置灰 + 行内说明（termX 本地终端无侧栏） |
+| 连接 | 主机密钥校验策略 | 始终校验 | `verifyHostKeys` 经 `settings.center.v1` 下发 `set_verify_host_keys`，关闭时 `check_server_key` 直接 `Ok(true)` 并跳过 known_hosts 比对 |
+
+### 默认值 / 取值范围对齐（对照 Netcatty 默认对象）
+
+- 字号 14、范围 10–32；字重 400 / 粗体 700；行间距 0；回滚 3000、范围 0–100000（0 → 50000）。
+- 光标：块 + 闪烁开 + 竖线宽 2 + 行高亮关。
+- 行为默认：右键菜单、长按关、全屏也弹菜单关、中键粘贴、选择即复制关、复制规范化开、括号粘贴开、自动上传图片关、多行确认关（阈值 2）、Shift+Enter 开（`\e\r`）、退出自动关闭关、断开终端内提示、标签双击复制、动态标题 agent、OSC 通知 always、OSC 52 write-only、链接浏览器 netcatty / 无修饰键、滚动输入开 / 输出关 / 按键关 / 粘贴开、平滑关。
+- 侧栏自动打开关、默认面板 scripts；主机密钥校验开；终端主题跟随开。
+
+### 真机验证（WebView2 CDP + 重启）
+
+- 字号 14→15：`term.options.fontSize` 与 `.xterm-rows` 字号即时变化；重启后仍 15。
+- 字重 300：重启后 `fontWeight=300`，渲染变细。
+- 竖线光标：`xterm-cursor-bar` class 出现；重启保持。
+- 高亮当前行：decoration 数 1，截图见淡蓝行底；重启保持。
+- 行间距 0→10：`lineHeight` 18.39→36.8，内容区即时重排（验证后复位 0）。
+- 右键行为从 paste 改回 context-menu：真实 `contextmenu` 事件弹出 `.term-context-menu`（复制 / 粘贴 / 全选 / 插入片段 / 磁盘用量 / 运行脚本 / 浏览器 / 重新连接 / 分屏 / 清空缓冲区）。
+- 截图：`shots/term-restart.png`、`term-final.png`、`term-menu2.png`。
+
+### 未移植项（保留条目 + 置灰 + 行内原因）
+
+altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty 协议、自动上传剪贴板图片、Shift+Enter 强制文本、clear 清回滚、保留选区、提示符换行、动态标签标题、OSC 通知、链接浏览器 / 修饰键、本地 Shell 侧栏两组、非 SFTP 侧栏面板。
+
+### 已知缺口
+
+- Netcatty 运行实例不可用，像素并排复核仍未做。
+- 侧栏自动打开只接 SFTP（`forward` / browser / scripts 等无对应面板）。
+- 终端仿真类型只影响 SSH 的 TERM 字符串；本地 PTY 仍由后端固定。
+- 全应用 i18n 未覆盖（终端 tab 的 zh/en 已补齐）。
+
+### 门禁
+
+- `npm run test:run` 31 文件 / **379✓**、`npm run build` ✓。
+- `cargo check --features server` ✓、`cargo test --lib` **874✓**。
+- 代理 WIP `d633866` / `60d8deb` 与端口转发未触碰。
+
+### review 修复（同日复检）
+
+| 评审项 | 修复 |
+| --- | --- |
+| 高·主机密钥校验开关是进程级原子量，只有终端入口写入；独立 SFTP / 端口转发 / headless 读到上一次残留值（关闭校验后即使重新打开，这些入口仍跳过 known_hosts） | 新增 `commands::session::apply_ssh_runtime_settings`（统一从 `settings.center.v1` 读 `verifyHostKeys` + `terminalEmulationType`），在终端、独立 SFTP、端口转发、headless SSH/SFTP 入口连接前各刷新一次 |
+| 高·OSC 52 的 `atob` 无保护，远端非法 base64 抛错会穿透 xterm 解析链路 | 解码包 try/catch；读剪贴板编码改逐字节拼接，避免 `String.fromCharCode(...bytes)` 在大文本时 RangeError |
+| 中·复制规范化把换行符加在当前行（`isWrapped` 是「本行是延续行」），视觉折行会错行 | 改为「下一行不是延续行」时补换行，首行不加前导换行 |
+| 中·字号 / 字重 / 行距热更新只改 options，不重排列数 | 设置订阅里补 `fit.fit()`，经 `onResize` 同步远端 PTY 尺寸 |
+| 中·长按弹菜单后松手的 contextmenu 落在遮罩上会立刻关闭菜单，且标记不复位会吞下一次右键 | 长按标记改在窗格 `mousedown` 复位；`openContextMenu` 与遮罩 `contextmenu` 只跳过、不关闭 |
+| 中·右键选词把 `translateToString` 的字符下标当单元格列，CJK / 宽字符偏移 | 按 `getCell` 的 `getWidth` 建立「字符 → 起始列」映射，选区起止与长度都按单元格计算 |
+
+复跑门禁：`npm run test:run` 31 文件 / **379✓**、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` **874✓**。
