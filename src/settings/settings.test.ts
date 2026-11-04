@@ -5,7 +5,9 @@
 
 import { describe, expect, it } from "vitest";
 import { settingsT } from "./i18n";
-import { accentToHslTriplet, hexToHslTriplet } from "./settingsStore";
+import { accentToHslTriplet, hexToHslTriplet, readableForeground } from "./settingsStore";
+import { DEFAULT_UI_FONT_ID, UI_FONTS, withUiCjkFallback } from "./uiFonts";
+import { DARK_UI_THEMES, LIGHT_UI_THEMES, getUiThemeById } from "./uiThemes";
 import {
   DEFAULT_KEY_BINDINGS,
   captureBinding,
@@ -58,6 +60,12 @@ describe("normalizeSettings", () => {
     expect(s.customKeyBindings["new-tab"]).toEqual({ pc: "Ctrl + N" });
     expect(s.customKeyBindings.bad).toBeUndefined();
     expect(s.disabledKeyBindings).toEqual(["copy"]);
+  });
+
+  it("appIconVariant 白名单：未知值回落 original", () => {
+    expect(normalizeSettings({ appIconVariant: "rainbow" }).appIconVariant).toBe("rainbow");
+    expect(normalizeSettings({ appIconVariant: "highContrast" }).appIconVariant).toBe("original");
+    expect(normalizeSettings({ appIconVariant: 42 }).appIconVariant).toBe("original");
   });
 
   it("networkProxy / sessionLogs 枚举值校验", () => {
@@ -124,11 +132,48 @@ describe("accentToHslTriplet", () => {
   });
 });
 
+describe("UI 主题预设库（1:1 移植 Netcatty）", () => {
+  it("浅色 / 深色预设数量与调色值完整", () => {
+    expect(LIGHT_UI_THEMES.length).toBeGreaterThanOrEqual(60);
+    expect(DARK_UI_THEMES.length).toBeGreaterThanOrEqual(60);
+    for (const preset of [...LIGHT_UI_THEMES, ...DARK_UI_THEMES]) {
+      expect(preset.tokens.background).toMatch(/^\d+(\.\d+)?\s+\d+(\.\d+)?%\s+\d+(\.\d+)?%$/);
+      expect(preset.tokens.foreground).toBeTruthy();
+    }
+  });
+
+  it("未知 id 回落该模式首个预设", () => {
+    expect(getUiThemeById("dark", "no-such-theme")).toBe(DARK_UI_THEMES[0]);
+    expect(getUiThemeById("light", "midnight").id).toBe("snow");
+  });
+});
+
+describe("UI 字体预设（1:1 移植 Netcatty）", () => {
+  it("预设数量、默认值与 CJK 回退链", () => {
+    expect(UI_FONTS.length).toBe(22);
+    expect(DEFAULT_UI_FONT_ID).toBe("mona-sans");
+    expect(UI_FONTS[0].id).toBe(DEFAULT_UI_FONT_ID);
+    for (const font of UI_FONTS) {
+      expect(font.family).toContain("Microsoft YaHei");
+      expect(withUiCjkFallback(font.family)).toBe(font.family);
+    }
+  });
+});
+
+describe("readableForeground（强调色前景对比度）", () => {
+  it("深色强调色用白字，浅色强调色用黑字", () => {
+    expect(readableForeground("0 0% 0%")).toBe("0 0% 100%");
+    expect(readableForeground("0 0% 100%")).toBe("0 0% 0%");
+    expect(readableForeground("bad-value", "1 2% 3%")).toBe("1 2% 3%");
+  });
+});
+
 describe("settingsT", () => {
   it("zh-CN 命中、en 缺键回落 zh-CN、未知键回落 key", () => {
     expect(settingsT("zh-CN", "settings.title")).toBe("设置");
     expect(settingsT("en", "settings.title")).toBe("Settings");
-    expect(settingsT("en", "settings.vault.title")).toBe("主机库");
+    // en 词典目前只覆盖应用/外观等 tab，快捷键 tab 仍回落 zh-CN。
+    expect(settingsT("en", "settings.shortcuts.section.scheme")).toBe("快捷键方案");
     expect(settingsT("zh-CN", "no.such.key")).toBe("no.such.key");
   });
 

@@ -1,5 +1,118 @@
-use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use uuid::Uuid;
+
+// ── 设置中心 · 外观：原生窗口外观 ──────────────────────────
+//
+// Netcatty（Electron）用 BrowserWindow.setOpacity 做整窗透明度、macOS
+// vibrancy 做毛玻璃、app.dock/app icon 切换图标。termX 是 Tauri，等价实现：
+// - 透明度：Windows 走 WS_EX_LAYERED + SetLayeredWindowAttributes（与
+//   Electron 同一套 Win32 机制；不是 CSS 近似），其余平台 no-op；
+// - 毛玻璃：仅 macOS 用原生 HudWindow vibrancy，Windows/Linux 不渲染该行
+//   （与 Netcatty 的 `isMac &&` 条件一致）；
+// - 图标：把对应变体 PNG 通过 Tauri `set_icon` 应用到所有窗口（任务栏生效）。
+
+const APP_ICON_VARIANTS: [(&str, &[u8]); 12] = [
+    ("original", include_bytes!("../../icons/variants/original.png")),
+    ("bright", include_bytes!("../../icons/variants/bright.png")),
+    ("dark", include_bytes!("../../icons/variants/dark.png")),
+    ("colorful", include_bytes!("../../icons/variants/colorful.png")),
+    ("high-contrast", include_bytes!("../../icons/variants/high-contrast.png")),
+    ("white-navy", include_bytes!("../../icons/variants/white-navy.png")),
+    ("white-sky", include_bytes!("../../icons/variants/white-sky.png")),
+    ("white-rose", include_bytes!("../../icons/variants/white-rose.png")),
+    ("white-emerald", include_bytes!("../../icons/variants/white-emerald.png")),
+    ("white-amber", include_bytes!("../../icons/variants/white-amber.png")),
+    ("white-violet", include_bytes!("../../icons/variants/white-violet.png")),
+    ("rainbow", include_bytes!("../../icons/variants/rainbow.png")),
+];
+
+/// 整窗不透明度（0.5~1，与 Netcatty clampWindowOpacity 同范围）。
+#[tauri::command]
+pub fn set_window_opacity(app: AppHandle, opacity: f64) -> Result<(), String> {
+    let clamped = opacity.clamp(0.5, 1.0);
+    #[cfg(windows)]
+    {
+        let alpha = (clamped * 255.0).round() as u8;
+        for (_, win) in app.webview_windows() {
+            if let Err(e) = apply_windows_layered_alpha(&win, alpha) {
+                return Err(e);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (&app, clamped);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn apply_windows_layered_alpha(win: &tauri::WebviewWindow, alpha: u8) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, SetLayeredWindowAttributes, SetWindowLongW, GWL_EXSTYLE, LWA_ALPHA,
+        WS_EX_LAYERED,
+    };
+
+    let hwnd = win.hwnd().map_err(|e| e.to_string())?.0 as isize as HWND;
+    // SAFETY: hwnd 来自当前进程存活的 Tauri 窗口；调用的是 Win32 已知 API。
+    unsafe {
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if ex_style & (WS_EX_LAYERED as i32) == 0 {
+            SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED as i32);
+        }
+        SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
+    }
+    Ok(())
+}
+
+/// 毛玻璃背景（macOS 原生 vibrancy；其它平台 no-op，设置行也不渲染）。
+#[tauri::command]
+pub fn set_window_background_blur(app: AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::utils::config::{WindowEffect, WindowEffectsConfig};
+        let effects = if enabled {
+            Some(WindowEffectsConfig {
+                effects: vec![WindowEffect::HudWindow],
+                state: None,
+                radius: None,
+                color: None,
+            })
+        } else {
+            Some(WindowEffectsConfig {
+                effects: vec![],
+                state: None,
+                radius: None,
+                color: None,
+            })
+        };
+        for (_, win) in app.webview_windows() {
+            win.set_effects(effects.clone()).map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (&app, enabled);
+    }
+    Ok(())
+}
+
+/// 应用图标变体：每个窗口 set_icon（任务栏 / 窗口图标即时生效）。
+#[tauri::command]
+pub fn set_app_icon_variant(app: AppHandle, variant: String) -> Result<(), String> {
+    let bytes = APP_ICON_VARIANTS
+        .iter()
+        .find(|(id, _)| *id == variant)
+        .or_else(|| APP_ICON_VARIANTS.iter().find(|(id, _)| *id == "original"))
+        .map(|(_, bytes)| *bytes)
+        .ok_or_else(|| "app_icon_variant_missing".to_string())?;
+    let icon = tauri::image::Image::from_bytes(bytes).map_err(|e| e.to_string())?;
+    for (_, win) in app.webview_windows() {
+        win.set_icon(icon.clone()).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
 use crate::error::{AppError, AppResult};
 

@@ -3546,3 +3546,61 @@ CU 扩展本轮不可用（`Extension ide_mcp.config.ext.computer-use not found`
 - `npx tsc --noEmit` ✓、`npm run test:run` **31 文件 / 373✓**、`npm run build` ✓（2.09s）。
 - `cargo check --features server` ✓、`cargo test --lib` **874✓**、debug `cargo build` ✓。
 - 代理 WIP `d633866` / `60d8deb` 未触碰。
+
+## 2026-11-04 · 设置中心「外观」tab 1:1 复刻
+
+**取证**：Netcatty 源码 `components/settings/tabs/SettingsAppearanceTab.tsx`、`infrastructure/config/uiThemes.ts`、`uiFonts.ts`、`application/state/uiFontStore.ts`、`domain/colorContrast.ts`、`infrastructure/config/appIconVariants.ts`、`electron` 主进程窗口接口。运行中 Netcatty 本轮不可用（仓库内无 electron 运行时 / dist / 安装包），像素比对退化为「源码量值 + termX 真机截图自检」，已登记为复核缺口。
+
+### 逐项对照
+
+| 项 | 之前（降级实现） | 本轮（1:1） |
+| --- | --- | --- |
+| 主题预设库 | 只有 snow / midnight，且 id 存了不生效 | 原样移植 `uiThemes.ts`：浅色 62 + 深色 62 个预设（含每个预设 19 个调色令牌），`getUiThemeById` 未知 id 回落首个预设 |
+| 主题色选择 UI | 两个原生 select | 模式分段控件（sun / monitor / moon）+ 当前模式色板（24px 圆形、选中 2px 环 + 1.1 倍、title 显示预设名） |
+| 强调色 | 单个 `<input type=color>`，前景不跟随 | 18 个 Netcatty 原值色板 + 自定义取色圆钮；`--primary/--accent/--ring` 同步，前景按 WCAG 对比度自动黑/白（`resolveReadableForegroundForHsl` 等价实现） |
+| UI 字体 | 原生 select + 全系统字体，回退链写死 | 搜索型 combo（搜索框 + 过滤 + 当前项勾选 + Esc 关闭）；22 个 Netcatty 预设（默认 Mona Sans）+ 本机字体；`withUiCjkFallback` + Windows emoji 前置链 |
+| 窗口透明度 | `.nc-shell { opacity: var(...) }` CSS 近似（桌面不可见） | Windows 原生 `WS_EX_LAYERED + SetLayeredWindowAttributes`（与 Electron `setOpacity` 同机制）；删除 CSS 叠加 |
+| 背景模糊 | Windows 也渲染，开关无效果 | 与 Netcatty 相同 `isMac` 条件：Windows/Linux 不渲染该行；macOS 走原生 HudWindow vibrancy（`set_effects`） |
+| 应用图标变体 | 5 项 select，只存 localStorage | 12 项缩略图网格（经典 / 白色系列 / 特别款三组）；PNG 编进二进制，`tauri::image::Image` 解码后 `set_icon` 应用到所有窗口 |
+| 主机库 6 开关 | 全部只写 localStorage、无消费方 | 逐项接通：最近连接区、单击行为（设置中心单一数据源，删除 `termx.vault.click.v1`）、根目录仅未分组、SFTP 标签（隐藏 + 自动回主机库）、主机列表侧栏（侧栏与切换钮同时隐藏）、known_hosts 自动导入 |
+| 自定义 CSS | 已注入 | 保持逐键即时注入（Netcatty 为 draft 即时 + commit 防抖）；实测即时生效、清空即恢复 |
+| 语言 | en 词典仅 13 键 | 外观 tab 全量 en（语言/字体/窗口/主题/强调色/图标/主机库/CSS）；其余 tab 仍回落 zh-CN（登记缺口） |
+
+### 真机验证（WebView2 CDP + Win32 + 重启）
+
+- 主题：切深色 → `--background = 220 28% 10%`，全站（侧栏/内容/弹层）即时变化；色板点选即时切换。
+- 强调色：开启自定义 → 点红色 → `--primary = 0 84.2% 60.2%`、`--primary-foreground = 0 0% 100%`、`--ring` 同值。
+- 字体：combo 共 122 项（22 预设 + 100 本机）；选 Inter 后 `--termx-ui-font` = `"Segoe UI Emoji", "Inter", system-ui, PingFang SC…`；已恢复 Mona Sans。
+- 透明度：70% 预设 → Win32 读回 `WS_EX_LAYERED = true`、`alpha = 179`；重启后 100% → `alpha = 255`，证明持久化与启动即应用。
+- 图标：直接 invoke `set_app_icon_variant('rainbow')` 成功（PNG 解码 + 全窗口 set_icon）；重启恢复 original。
+- 开关：关闭「最近连接」→ 主机库最近区消失；关闭「SFTP 标签页」→ 顶部 SFTP 标签消失；重启后全部恢复。
+- 自定义 CSS：输入 `.nc-shell{outline:3px solid red}` → 计算样式 `outline: red`；清空恢复。
+- 语言：切 en → 外观 tab 全英文；切回 zh-CN。
+- 截图：`appearance-1 / dark / accent / lower / en / css / fontcombo2 / final`。
+
+### 已知缺口（登记，不删项）
+
+- 运行中 Netcatty 本轮无法启动（仓库无 electron/dist，安装包不存在），并排像素复核待下一轮。
+- macOS 窗口透明度：Tauri 无 `setOpacity` API，当前仅 Windows 原生；mac 仍缺。
+- 背景模糊在 Windows 不渲染（与 Netcatty 一致），没有 Windows 等效模糊；mac 原生路径已就位但未验证。
+- 语言切换只覆盖设置中心；应用其余界面约 2957 处中文硬编码，需独立 i18n 轮次。
+- 网络代理 WIP 未触碰。
+
+### 门禁
+
+- `npm run test:run` 31 文件 / **378✓**、`npm run build` ✓。
+- `cargo check --features server` ✓、`cargo test --lib` **874✓**、debug 构建 ✓。
+
+### review 修复（同日复检）
+
+| 评审项 | 修复 |
+| --- | --- |
+| 高·每次设置变更重发 3 个原生 IPC 且可能乱序 | `applyNativeWindowChrome` 改为「期望值 / 已应用值」串行 drain：值相同直接跳过，连续变更只下发最终态，失败不更新基准（下次自动重试）；删除死代码 `reapplyNativeChrome` |
+| 高·「自动导入系统 known_hosts」开关实际无效 | termX 的已知主机列表本身就是系统 `~/.ssh/known_hosts`（`known_hosts_scan_system` 只解析计数、不写库），导入无意义：保留条目但置灰，行内说明追加原因；删除 VaultView 空转 effect |
+| 中·系统主题切换只重绘不通知订阅者 | matchMedia listener 补 `emit()`，终端等订阅方即时跟随明暗 |
+| 中·FontCombo 点外部 / Esc 不关闭 | 根节点 ref + document `mousedown` / `keydown` 监听（仅打开时挂载） |
+| 中·appIconVariant 无白名单校验 | settingsModel 新增 `APP_ICON_VARIANTS` 白名单，非法值回落 `original`（+1 单测） |
+| 低·uiThemes 头注释数量错误 | 64 / 67 → 62 / 62 |
+| 低·死键 | 删除 `settings.appearance.fonts.systemFont`（zh/en），补 en `settings.appearance.language.en` |
+
+复跑门禁：`npm run test:run` 31 文件 / **378✓**、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` **874✓**。

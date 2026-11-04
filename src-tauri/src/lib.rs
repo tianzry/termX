@@ -377,6 +377,13 @@ pub fn run() {
             commands::window::clipboard_read,
             #[cfg(desktop)]
             commands::window::clipboard_write,
+            // 设置中心 · 外观：原生窗口透明度 / 毛玻璃 / 应用图标
+            #[cfg(desktop)]
+            commands::window::set_window_opacity,
+            #[cfg(desktop)]
+            commands::window::set_window_background_blur,
+            #[cfg(desktop)]
+            commands::window::set_app_icon_variant,
             // external URL opener — cross-platform via tauri-plugin-opener
             commands::external::open_external_url,
             // update check (cross-platform — separate mod from window)

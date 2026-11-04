@@ -21,6 +21,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import * as api from "./backend/client";
+import { updateSettings, useSettings } from "./settings/settingsStore";
 import type {
   Credential,
   CredentialType,
@@ -75,7 +76,6 @@ const PINNED_KEY = "termx.pinned.v1";
 const SIDEBAR_W_KEY = "termx.vault.sidebar.v1";
 const ORDER_KEY = "termx.vault.order.v1";
 const TAGS_KEY = "termx.vault.tags.v1";
-const CLICK_KEY = "termx.vault.click.v1";
 const HOST_PANEL_W_KEY = "termx.vault.hostpanel.v1";
 const KH_VIEW_KEY = "termx.vault.khView.v1";
 const KC_VIEW_KEY = "termx.vault.kcView.v1";
@@ -388,13 +388,7 @@ function readTags(): TagMap {
   }
 }
 
-function readClickBehavior(): ClickBehavior {
-  try {
-    return localStorage.getItem(CLICK_KEY) === "select" ? "select" : "connect";
-  } catch {
-    return "connect";
-  }
-}
+// 单击行为由设置中心「外观 · 主机库」统一管理（settings.center.v1）。
 
 function clampPanelWidth(n: number): number {
   return Math.min(HOST_PANEL_MAX, Math.max(HOST_PANEL_MIN, n));
@@ -499,8 +493,9 @@ export function VaultView({
   const [sortMenu, setSortMenu] = useState(false);
   const [newMenu, setNewMenu] = useState(false);
   const [tagMenu, setTagMenu] = useState(false);
-  const [clickBehavior, setClickBehavior] =
-    useState<ClickBehavior>(readClickBehavior);
+  const settings = useSettings();
+  const clickBehavior = settings.hostClickBehavior;
+  const setClickBehavior = (v: ClickBehavior) => updateSettings({ hostClickBehavior: v });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagQuery, setTagQuery] = useState("");
   const [tagRename, setTagRename] = useState<{ from: string; value: string } | null>(
@@ -679,9 +674,7 @@ export function VaultView({
     persist(TAGS_KEY, JSON.stringify(tags));
   }, [tags]);
 
-  useEffect(() => {
-    persist(CLICK_KEY, clickBehavior);
-  }, [clickBehavior]);
+
 
   useEffect(() => {
     if (!collapsed) persist(SIDEBAR_W_KEY, String(sidebarWidth));
@@ -999,13 +992,17 @@ export function VaultView({
   ].filter((s) => s.hosts.length > 0);
 
   // 最近连接：按记录顺序，排除已置顶（避免与「已置顶」重复），最多 6 条。
-  const recentProfiles = recentIds
-    .filter((id) => id !== "__local" && !pinnedIds.includes(id))
-    .map((id) => visible.find((p) => p.id === id))
-    .filter((p): p is Profile => Boolean(p))
-    .slice(0, 6);
+  const recentProfiles = settings.showRecentHosts
+    ? recentIds
+        .filter((id) => id !== "__local" && !pinnedIds.includes(id))
+        .map((id) => visible.find((p) => p.id === id))
+        .filter((p): p is Profile => Boolean(p))
+        .slice(0, 6)
+    : [];
   const showLocalRecently =
-    recentIds.includes("__local") && (!keyword || "local".includes(keyword));
+    settings.showRecentHosts &&
+    recentIds.includes("__local") &&
+    (!keyword || "local".includes(keyword));
 
   const pinnedHosts = sortHosts(
     pinnedIds
@@ -1022,7 +1019,10 @@ export function VaultView({
   const rootRemaining =
     atRoot && !keyword
       ? scopedHosts.filter(
-          (p) => !pinnedIds.includes(p.id) && !recentIdSet.has(p.id),
+          (p) =>
+            !pinnedIds.includes(p.id) &&
+            !recentIdSet.has(p.id) &&
+            (!settings.showOnlyUngroupedHostsInRoot || !p.group_id),
         )
       : scopedHosts;
   const hideRootHostsSection =

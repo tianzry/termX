@@ -361,6 +361,21 @@ export interface FontInfo {
   monospaced: boolean;
 }
 
+/** 窗口不透明度（0.5~1）：Windows 分层窗口 alpha，macOS 原生窗口 API。 */
+export function setWindowOpacity(opacity: number): Promise<void> {
+  return invoke("set_window_opacity", { opacity });
+}
+
+/** 毛玻璃背景（原生窗口效果；仅 macOS / Windows 支持，其余平台为 no-op）。 */
+export function setWindowBackgroundBlur(enabled: boolean): Promise<void> {
+  return invoke("set_window_background_blur", { enabled });
+}
+
+/** 应用图标变体（如 "original" / "white-navy" / "rainbow"）。 */
+export function setAppIconVariant(variant: string): Promise<void> {
+  return invoke("set_app_icon_variant", { variant });
+}
+
 // --- Snippets（P0 #5 阶段 A；字段对齐 Netcatty Snippet 子集，snake_case 镜像 serde） ---
 
 export interface Snippet {

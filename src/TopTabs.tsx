@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useSettings } from "./settings/settingsStore";
 import type { Tab } from "./workspaceModel";
 import { Icon } from "./ui/icons";
 
@@ -59,6 +60,9 @@ export function TopTabs({
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // 设置中心「外观 · 主机库」两个显示开关（对照 Netcatty showSftpTab /
+  // showHostTreeSidebar）。
+  const settings = useSettings();
 
   useEffect(() => {
     if (editingId && !tabs.some((t) => t.id === editingId)) setEditingId(null);
@@ -82,17 +86,19 @@ export function TopTabs({
             <Icon name="folder" size={14} />
             <span>Vaults</span>
           </button>
-          <button
-            className={`nc-root-tab${surface === "sftp" ? " active" : ""}`}
-            onClick={onOpenSftp}
-          >
-            <Icon name="folder" size={14} />
-            <span>SFTP</span>
-          </button>
+          {settings.showSftpTab && (
+            <button
+              className={`nc-root-tab${surface === "sftp" ? " active" : ""}`}
+              onClick={onOpenSftp}
+            >
+              <Icon name="folder" size={14} />
+              <span>SFTP</span>
+            </button>
+          )}
         </div>
 
         {/* 主机树开关（netcatty 放在标签区内、会话标签之前） */}
-        {tabs.length > 0 && (
+        {tabs.length > 0 && settings.showHostTreeSidebar && (
           <button
             className={`nc-icon-btn nc-hosttree-toggle${hostTreeOpen ? " active" : ""}`}
             title={hostTreeOpen ? "收起主机侧栏" : "展开主机侧栏"}

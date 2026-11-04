@@ -7,7 +7,13 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { getSetting, setSetting } from "../backend/client";
+import {
+  getSetting,
+  setAppIconVariant,
+  setSetting,
+  setWindowBackgroundBlur,
+  setWindowOpacity,
+} from "../backend/client";
 import {
   type AppSettings,
   DEFAULT_SETTINGS,
@@ -15,6 +21,8 @@ import {
   clampWindowOpacity,
   normalizeSettings,
 } from "./settingsModel";
+import { UI_FONTS } from "./uiFonts";
+import { getUiThemeById } from "./uiThemes";
 
 type Listener = () => void;
 
@@ -65,12 +73,22 @@ export function updateSettings(patch: Partial<AppSettings>): void {
   void persist(current);
 }
 
-async function persist(s: AppSettings): Promise<void> {
-  try {
-    await setSetting(SETTINGS_STORAGE_KEY, JSON.stringify(s));
-  } catch {
-    // 持久化失败不回滚 UI；下次启动回落默认值（与 Netcatty 本地优先一致）。
-  }
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingPersist: AppSettings | null = null;
+
+/** 持久化去抖 200ms：滑杆/取色器连续拖动时只写最后一次，避免 IPC 风暴。 */
+function persist(s: AppSettings): void {
+  pendingPersist = s;
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    const snapshot = pendingPersist;
+    pendingPersist = null;
+    if (!snapshot) return;
+    setSetting(SETTINGS_STORAGE_KEY, JSON.stringify(snapshot)).catch(() => {
+      // 持久化失败不回滚 UI；下次启动回落默认值（与 Netcatty 本地优先一致）。
+    });
+  }, 200);
 }
 
 // ── 副作用应用 ────────────────────────────────────────────
@@ -120,53 +138,249 @@ export function accentToHslTriplet(v: string): string | null {
   return /^\d+(\.\d+)?(\s+\d+(\.\d+)?%){2}$/.test(t) ? t : null;
 }
 
-function uiFontCss(id: string): string {
-  if (!id || id === "system") {
-    return "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif";
+// ── 主题令牌应用（对照 Netcatty settingsStateDefaults.buildAppThemeCssVars）──
+
+const CJK_FALLBACK_FONTS = [
+  '"PingFang SC"',
+  '"Hiragino Sans GB"',
+  '"Microsoft YaHei UI"',
+  '"Microsoft YaHei"',
+  '"Noto Sans CJK SC"',
+  '"Source Han Sans SC"',
+  "sans-serif",
+];
+
+/** Windows 上系统字体缺少国旗 emoji 字形，需前置 emoji 字体（对照 withWindowsEmojiFallback）。 */
+function withWindowsEmojiFallback(family: string): string {
+  const isWindows = typeof navigator !== "undefined" && /Win/i.test(navigator.userAgent);
+  if (!isWindows) return family;
+  if (family.includes("Segoe UI Emoji")) return family;
+  return `"Segoe UI Emoji", ${family}, "Segoe UI Symbol"`;
+}
+
+/** UI 字体 id → 完整回退链（system / local-<family>，对照 Netcatty uiFontStore + withUiCjkFallback）。 */
+export function uiFontCss(id: string): string {
+  const preset = UI_FONTS.find((f) => f.id === id);
+  if (preset) return withWindowsEmojiFallback(preset.family);
+  const family =
+    !id || id === "system"
+      ? 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Mona Sans"'
+      : id.startsWith("local-")
+        ? `"${id.slice(6)}"`
+        : `"${id}"`;
+  // 已带 CJK 回退链的 family 不再重复追加。
+  return withWindowsEmojiFallback(
+    CJK_FALLBACK_FONTS.some((f) => family.includes(f.replace(/"/g, "")))
+      ? family
+      : `${family}, ${CJK_FALLBACK_FONTS.join(", ")}`,
+  );
+}
+
+function parseHslTriplet(value: string): { h: number; s: number; l: number } | null {
+  const m = /^\s*(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%\s*$/.exec(value);
+  if (!m) return null;
+  const [h, s, l] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (![h, s, l].every(Number.isFinite)) return null;
+  return { h: ((h % 360) + 360) % 360, s: Math.min(100, Math.max(0, s)) / 100, l: Math.min(100, Math.max(0, l)) / 100 };
+}
+
+/** 相对亮度（WCAG），用于强调色前景自动取黑/白。 */
+function relativeLuminance(triplet: string): number | null {
+  const p = parseHslTriplet(triplet);
+  if (!p) return null;
+  let r: number;
+  let g: number;
+  let b: number;
+  if (p.s === 0) {
+    r = g = b = p.l;
+  } else {
+    const c = (1 - Math.abs(2 * p.l - 1)) * p.s;
+    const hp = p.h / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    [r, g, b] =
+      hp < 1 ? [c, x, 0] :
+      hp < 2 ? [x, c, 0] :
+      hp < 3 ? [0, c, x] :
+      hp < 4 ? [0, x, c] :
+      hp < 5 ? [x, 0, c] : [c, 0, x];
+    const m = p.l - c / 2;
+    r += m;
+    g += m;
+    b += m;
   }
-  if (id.startsWith("local-")) return `'${id.slice(6)}', system-ui, sans-serif`;
-  return `'${id}', system-ui, sans-serif`;
+  const lin = (v: number) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** 对照 Netcatty resolveReadableForegroundForHsl：按对比度返回黑或白。 */
+export function readableForeground(hsl: string, fallback = "0 0% 100%"): string {
+  const lum = relativeLuminance(hsl);
+  if (lum == null) return fallback;
+  // WCAG 对比度：黑字 = (L+0.05)/0.05，白字 = 1.05/(L+0.05)，取对比度更大者。
+  const black = (lum + 0.05) / 0.05;
+  const white = 1.05 / (lum + 0.05);
+  return white >= black ? "0 0% 100%" : "0 0% 0%";
+}
+
+const THEME_VARS = [
+  "background",
+  "foreground",
+  "card",
+  "card-foreground",
+  "popover",
+  "popover-foreground",
+  "primary",
+  "primary-foreground",
+  "secondary",
+  "secondary-foreground",
+  "muted",
+  "muted-foreground",
+  "accent",
+  "accent-foreground",
+  "destructive",
+  "destructive-foreground",
+  "border",
+  "input",
+  "ring",
+] as const;
+
+function applyThemeTokens(s: AppSettings, mode: "light" | "dark"): void {
+  const preset = getUiThemeById(mode, mode === "dark" ? s.darkUiThemeId : s.lightUiThemeId);
+  const t = preset.tokens;
+  const accent =
+    s.accentMode === "custom" ? accentToHslTriplet(s.customAccent) ?? t.accent : t.accent;
+  const accentFg = readableForeground(accent, t.primaryForeground);
+  const values: Record<(typeof THEME_VARS)[number], string> = {
+    background: t.background,
+    foreground: t.foreground,
+    card: t.card,
+    "card-foreground": t.cardForeground,
+    popover: t.popover,
+    "popover-foreground": t.popoverForeground,
+    primary: accent,
+    "primary-foreground": accentFg,
+    secondary: t.secondary,
+    "secondary-foreground": t.secondaryForeground,
+    muted: t.muted,
+    "muted-foreground": t.mutedForeground,
+    accent: accent,
+    "accent-foreground": accentFg,
+    destructive: t.destructive,
+    "destructive-foreground": t.destructiveForeground,
+    border: t.border,
+    input: t.input,
+    ring: accent,
+  };
+  const root = document.documentElement;
+  for (const key of THEME_VARS) root.style.setProperty(`--${key}`, values[key]);
 }
 
 export function applySideEffects(s: AppSettings): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
 
-  // 主题（data-theme + .dark/.light class，对照 Netcatty applyThemeMode）
+  // 主题（data-theme + .dark/.light class + 全量调色令牌）
   const mode = resolvedTheme(s);
   root.dataset.theme = mode;
   root.classList.toggle("dark", mode === "dark");
   root.classList.toggle("light", mode === "light");
+  applyThemeTokens(s, mode);
   if (s.theme === "system" && !mediaQueryBound && window.matchMedia) {
     mediaQueryBound = true;
     window
       .matchMedia("(prefers-color-scheme: dark)")
-      .addEventListener("change", () => applySideEffects(getSettings()));
+      .addEventListener("change", () => {
+        applySideEffects(getSettings());
+        emit();
+      });
   }
 
-  // 窗口透明度（CSS 变量，.nc-shell 消费；原生窗口透明未移植，见 changelogs）
-  root.style.setProperty("--termx-window-opacity", String(clampWindowOpacity(s.windowOpacity)));
+  // 窗口透明度：原生窗口（Windows 分层窗口 alpha，等效 Electron setOpacity）。
+  void applyNativeWindowChrome(s);
 
   // UI 字体
   root.style.setProperty("--termx-ui-font", uiFontCss(s.uiFontFamilyId));
 
-  // 强调色：覆写 --primary/--accent（HSL 三元组，全站 hsl(var(--primary)) 消费）；
-  // 移除内联覆写即回落到主题自带值。
-  const accentTriplet =
-    s.accentMode === "custom" && s.customAccent ? accentToHslTriplet(s.customAccent) : null;
-  if (accentTriplet) {
-    root.style.setProperty("--primary", accentTriplet);
-    root.style.setProperty("--accent", accentTriplet);
-  } else {
-    root.style.removeProperty("--primary");
-    root.style.removeProperty("--accent");
-  }
-
-  // 自定义 CSS
+  // 自定义 CSS（即时注入，对照 Netcatty applyCustomCssToDocument）
   if (!customCssEl) {
     customCssEl = document.createElement("style");
     customCssEl.id = "termx-custom-css";
     document.head.appendChild(customCssEl);
   }
   customCssEl.textContent = s.customCSS;
+}
+
+// ── 原生窗口外观（透明度 / 背景模糊 / 应用图标）────────────
+
+/** blur 用 null 表示「尚未下发过」，避免 false 默认值被误当成已应用。 */
+interface NativeChrome {
+  opacity: number;
+  blur: boolean | null;
+  icon: string;
+}
+
+/** 最近一次成功下发的值（哨兵 = 全部未下发）；相同则跳过，避免重复 IPC。 */
+let nativeApplied: NativeChrome = { opacity: -1, blur: null, icon: "" };
+/** 最新期望值；连续变更时由串行 drain 只下发最终态。 */
+let nativeDesired: NativeChrome | null = null;
+let nativeDrain: Promise<void> | null = null;
+
+function sameNativeChrome(a: NativeChrome | null, b: NativeChrome | null): boolean {
+  return (
+    !!a &&
+    !!b &&
+    a.opacity === b.opacity &&
+    a.blur === b.blur &&
+    a.icon === b.icon
+  );
+}
+
+function applyNativeWindowChrome(s: AppSettings): void {
+  nativeDesired = {
+    opacity: clampWindowOpacity(s.windowOpacity),
+    blur: Boolean(s.windowBackgroundBlur),
+    icon: s.appIconVariant,
+  };
+  if (nativeDrain || sameNativeChrome(nativeApplied, nativeDesired)) return;
+  startNativeDrain();
+}
+
+function startNativeDrain(): void {
+  nativeDrain = drainNativeChrome().then(
+    (ok) => {
+      nativeDrain = null;
+      // drain 期间又有新期望值（且本次未失败）→ 继续下发最终态。
+      if (ok && nativeDesired && !sameNativeChrome(nativeApplied, nativeDesired)) {
+        startNativeDrain();
+      }
+    },
+    () => {
+      nativeDrain = null;
+    },
+  );
+}
+
+/** 串行下发：只发与已应用值不同的项，成功后更新基准。返回 false 表示失败。 */
+async function drainNativeChrome(): Promise<boolean> {
+  while (!sameNativeChrome(nativeApplied, nativeDesired)) {
+    const target = nativeDesired!;
+    try {
+      if (nativeApplied.opacity !== target.opacity) {
+        await setWindowOpacity(target.opacity);
+        nativeApplied = { ...nativeApplied, opacity: target.opacity };
+      }
+      if (nativeApplied.blur !== target.blur) {
+        await setWindowBackgroundBlur(Boolean(target.blur));
+        nativeApplied = { ...nativeApplied, blur: target.blur };
+      }
+      if (nativeApplied.icon !== target.icon) {
+        await setAppIconVariant(target.icon);
+        nativeApplied = { ...nativeApplied, icon: target.icon };
+      }
+    } catch {
+      // 无窗口环境（headless server / 单测）或旧二进制：停止本次 drain，等下次变更重试。
+      return false;
+    }
+  }
+  return true;
 }

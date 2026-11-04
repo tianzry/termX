@@ -5,7 +5,7 @@
  * 未移植能力的控件保留但禁用 / 标注（范围决策见 changelogs 2026-11-03）。
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   appVersion,
   getAutoLaunch,
@@ -15,6 +15,7 @@ import {
   setSetting,
   type FontInfo,
 } from "../backend/client";
+import { Icon } from "../ui/icons";
 import { settingsT } from "./i18n";
 import {
   BINDING_CATEGORY_ORDER,
@@ -23,9 +24,188 @@ import {
   effectiveBinding,
   type KeyBinding,
 } from "./keyBindings";
-import { updateSettings, useSettings } from "./settingsStore";
+import type { AppIconVariant } from "./settingsModel";
+import { resolvedThemeMode, updateSettings, useSettings } from "./settingsStore";
+import { UI_FONTS } from "./uiFonts";
+import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "./uiThemes";
 
 type TFn = (k: string, p?: Record<string, string | number>) => string;
+
+/** 强调色色板（逐个对齐 Netcatty SettingsAppearanceTab ACCENT_COLORS）。 */
+const ACCENT_COLORS = [
+  { name: "Sky", value: "199 89% 48%" },
+  { name: "Blue", value: "221.2 83.2% 53.3%" },
+  { name: "Indigo", value: "234 89% 62%" },
+  { name: "Violet", value: "262.1 83.3% 57.8%" },
+  { name: "Purple", value: "271 81% 56%" },
+  { name: "Fuchsia", value: "292 84% 61%" },
+  { name: "Pink", value: "330 81% 60%" },
+  { name: "Rose", value: "346.8 77.2% 49.8%" },
+  { name: "Red", value: "0 84.2% 60.2%" },
+  { name: "Orange", value: "24.6 95% 53.1%" },
+  { name: "Amber", value: "38 92% 50%" },
+  { name: "Yellow", value: "48 96% 53%" },
+  { name: "Lime", value: "84 81% 44%" },
+  { name: "Green", value: "142.1 76.2% 36.3%" },
+  { name: "Emerald", value: "160 84% 39%" },
+  { name: "Teal", value: "173 80% 40%" },
+  { name: "Cyan", value: "189 94% 43%" },
+  { name: "Slate", value: "215 16% 47%" },
+];
+
+/** 应用图标变体（对照 Netcatty appIconVariants.ts 资源路径与分组）。 */
+const APP_ICON_VARIANT_ASSET_PATH: Record<string, string> = {
+  original: "/icons/variants/original.png",
+  bright: "/icons/variants/bright.png",
+  dark: "/icons/variants/dark.png",
+  colorful: "/icons/variants/colorful.png",
+  "high-contrast": "/icons/variants/high-contrast.png",
+  "white-navy": "/icons/variants/white-navy.png",
+  "white-sky": "/icons/variants/white-sky.png",
+  "white-rose": "/icons/variants/white-rose.png",
+  "white-emerald": "/icons/variants/white-emerald.png",
+  "white-amber": "/icons/variants/white-amber.png",
+  "white-violet": "/icons/variants/white-violet.png",
+  rainbow: "/icons/variants/rainbow.png",
+};
+
+const APP_ICON_VARIANT_I18N_KEY: Record<string, string> = {
+  original: "settings.appearance.icon.appIconVariant.original",
+  bright: "settings.appearance.icon.appIconVariant.bright",
+  dark: "settings.appearance.icon.appIconVariant.dark",
+  colorful: "settings.appearance.icon.appIconVariant.colorful",
+  "high-contrast": "settings.appearance.icon.appIconVariant.highContrast",
+  "white-navy": "settings.appearance.icon.whiteNavy",
+  "white-sky": "settings.appearance.icon.whiteSky",
+  "white-rose": "settings.appearance.icon.whiteRose",
+  "white-emerald": "settings.appearance.icon.whiteEmerald",
+  "white-amber": "settings.appearance.icon.whiteAmber",
+  "white-violet": "settings.appearance.icon.whiteViolet",
+  rainbow: "settings.appearance.icon.rainbow",
+};
+
+const APP_ICON_VARIANT_GROUPS: Array<{
+  id: string;
+  labelKey: string;
+  variants: AppIconVariant[];
+}> = [
+  {
+    id: "classic",
+    labelKey: "settings.appearance.icon.group.classic",
+    variants: ["original", "bright", "dark", "colorful", "high-contrast"],
+  },
+  {
+    id: "white",
+    labelKey: "settings.appearance.icon.group.white",
+    variants: ["white-navy", "white-sky", "white-rose", "white-emerald", "white-amber", "white-violet"],
+  },
+  { id: "special", labelKey: "settings.appearance.icon.group.special", variants: ["rainbow"] },
+];
+
+/**
+ * 搜索型字体下拉（对照 Netcatty FontSelect + Combobox）：
+ * 触发器显示当前字体，弹层内含搜索框与过滤列表。
+ */
+function FontCombo({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (v: string) => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const current = options.find((o) => o.value === value);
+  const q = query.trim().toLowerCase();
+  const filtered = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+  const previewFamily = value.startsWith("local-") ? `"${value.slice(6)}"` : undefined;
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  // 点击外部 / Esc 关闭（对照 Netcatty Combobox Popover 行为）。
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="nc-set-combo" ref={rootRef}>
+      <button
+        type="button"
+        className="nc-set-combo-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={current?.label ?? value}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span style={previewFamily ? { fontFamily: previewFamily } : undefined}>
+          {current?.label ?? value}
+        </span>
+        <Icon name="chevron-down" />
+      </button>
+      {open && (
+        <div className="nc-set-combo-pop" role="listbox">
+          <div className="nc-set-combo-search">
+            <Icon name="search" />
+            <input
+              autoFocus
+              value={query}
+              placeholder={t("settings.appearance.fonts.searchPlaceholder")}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setOpen(false);
+              }}
+            />
+          </div>
+          <div className="nc-set-combo-list">
+            {filtered.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                role="option"
+                aria-selected={o.value === value}
+                className={"nc-set-combo-item" + (o.value === value ? " is-active" : "")}
+                onClick={() => {
+                  onChange(o.value);
+                  setOpen(false);
+                }}
+              >
+                <span
+                  style={
+                    o.value.startsWith("local-") ? { fontFamily: `"${o.value.slice(6)}"` } : undefined
+                  }
+                >
+                  {o.label}
+                </span>
+                {o.value === value && <Icon name="check" />}
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <div className="nc-set-combo-empty">{t("settings.appearance.fonts.noMatch")}</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function useT(): TFn {
   const s = useSettings();
@@ -241,9 +421,17 @@ export function AppearanceTab() {
   const t = useT();
   const fonts = useFontList();
   const fontOptions = [
-    { value: "system", label: t("settings.appearance.fonts.systemFont") },
+    ...UI_FONTS.map((f) => ({ value: f.id, label: f.name })),
     ...fonts.map((f) => ({ value: `local-${f.family}`, label: f.family })),
   ];
+  /** Netcatty 在 Windows/Linux 不渲染背景模糊（macOS vibrancy 专属）。 */
+  const isMac = /Mac|iPhone|iPad/i.test(navigator.platform);
+  const resolved = resolvedThemeMode(s);
+  const activeThemes = resolved === "dark" ? DARK_UI_THEMES : LIGHT_UI_THEMES;
+  const activeThemeId = resolved === "dark" ? s.darkUiThemeId : s.lightUiThemeId;
+  const setActiveThemeId = (id: string) =>
+    updateSettings(resolved === "dark" ? { darkUiThemeId: id } : { lightUiThemeId: id });
+  const isCustomAccentPicked = ACCENT_COLORS.some((c) => c.value === s.customAccent);
 
   return (
     <div>
@@ -262,10 +450,10 @@ export function AppearanceTab() {
 
       <Section title={t("settings.appearance.section.fonts")}>
         <Row title={t("settings.appearance.fonts.uiFontFamily")} desc={t("settings.appearance.fonts.uiFontFamily.desc")}>
-          <Select
+          <FontCombo
             value={s.uiFontFamilyId}
-            onChange={(v) => updateSettings({ uiFontFamilyId: v })}
             options={fontOptions}
+            onChange={(v) => updateSettings({ uiFontFamilyId: v })}
           />
         </Row>
       </Section>
@@ -294,15 +482,17 @@ export function AppearanceTab() {
             ))}
           </div>
         </Row>
-        <Row
-          title={t("settings.appearance.window.backgroundBlur")}
-          desc={t("settings.appearance.window.backgroundBlur.desc")}
-        >
-          <Toggle
-            checked={s.windowBackgroundBlur}
-            onChange={(v) => updateSettings({ windowBackgroundBlur: v })}
-          />
-        </Row>
+        {isMac && (
+          <Row
+            title={t("settings.appearance.window.backgroundBlur")}
+            desc={t("settings.appearance.window.backgroundBlur.desc")}
+          >
+            <Toggle
+              checked={s.windowBackgroundBlur}
+              onChange={(v) => updateSettings({ windowBackgroundBlur: v })}
+            />
+          </Row>
+        )}
       </Section>
 
       <Section title={t("settings.appearance.section.theme")}>
@@ -316,24 +506,31 @@ export function AppearanceTab() {
                 className={"nc-set-theme-card" + (s.theme === m ? " is-active" : "")}
                 onClick={() => updateSettings({ theme: m })}
               >
+                <Icon name={m === "light" ? "sun" : m === "dark" ? "moon" : "monitor"} />
                 {t(`settings.appearance.theme.${m}`)}
               </button>
             ))}
           </div>
         </Row>
-        <Row title={t("settings.appearance.theme.lightTheme")} desc={t("settings.appearance.theme.notPorted")}>
-          <Select
-            value={s.lightUiThemeId}
-            onChange={(v) => updateSettings({ lightUiThemeId: v })}
-            options={[{ value: "snow", label: "Snow" }]}
-          />
-        </Row>
-        <Row title={t("settings.appearance.theme.darkTheme")} desc={t("settings.appearance.theme.notPorted")}>
-          <Select
-            value={s.darkUiThemeId}
-            onChange={(v) => updateSettings({ darkUiThemeId: v })}
-            options={[{ value: "midnight", label: "Midnight" }]}
-          />
+        <Row
+          title={t(resolved === "dark" ? "settings.appearance.theme.darkTheme" : "settings.appearance.theme.lightTheme")}
+        >
+          <div className="nc-set-swatches" role="radiogroup">
+            {activeThemes.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                role="radio"
+                aria-checked={activeThemeId === preset.id}
+                title={preset.name}
+                className={"nc-set-swatch" + (activeThemeId === preset.id ? " is-active" : "")}
+                style={{ backgroundColor: `hsl(${preset.tokens.background})` }}
+                onClick={() => setActiveThemeId(preset.id)}
+              >
+                {activeThemeId === preset.id && <Icon name="check" />}
+              </button>
+            ))}
+          </div>
         </Row>
       </Section>
 
@@ -348,31 +545,65 @@ export function AppearanceTab() {
           />
         </Row>
         {s.accentMode === "custom" && (
-          <Row title={t("settings.appearance.accent.customColor")}>
-            <input
-              type="color"
-              className="nc-set-color"
-              value={/^#[0-9a-fA-F]{6}$/.test(s.customAccent) ? s.customAccent : "#3b82f6"}
-              onChange={(e) => updateSettings({ customAccent: e.target.value })}
-            />
-          </Row>
+          <div className="nc-set-accent-block">
+            <div className="nc-set-row-title">{t("settings.appearance.accent.customColor")}</div>
+            <div className="nc-set-swatches">
+              {ACCENT_COLORS.map((c) => (
+                <button
+                  key={c.value}
+                  type="button"
+                  title={c.name}
+                  className={"nc-set-swatch" + (s.customAccent === c.value ? " is-active" : "")}
+                  style={{ backgroundColor: `hsl(${c.value})` }}
+                  onClick={() => updateSettings({ customAccent: c.value })}
+                >
+                  {s.customAccent === c.value && <Icon name="check" />}
+                </button>
+              ))}
+              <label
+                className={"nc-set-swatch nc-set-swatch-custom" + (isCustomAccentPicked ? "" : " is-active")}
+                title={t("settings.appearance.accent.customColor")}
+              >
+                <input
+                  type="color"
+                  className="nc-set-color-hidden"
+                  value={/^#[0-9a-fA-F]{6}$/.test(s.customAccent) ? s.customAccent : "#3b82f6"}
+                  onChange={(e) => updateSettings({ customAccent: e.target.value })}
+                />
+                <Icon name={isCustomAccentPicked ? "palette" : "check"} />
+              </label>
+            </div>
+          </div>
         )}
       </Section>
 
       <Section title={t("settings.appearance.section.icon")}>
-        <Row
-          title={t("settings.appearance.icon.appIconVariant")}
-          desc={`${t("settings.appearance.icon.appIconVariant.desc")} ${t("settings.appearance.icon.notPorted")}`}
-        >
-          <Select
-            value={s.appIconVariant}
-            onChange={(v) => updateSettings({ appIconVariant: v })}
-            options={(["original", "bright", "dark", "colorful", "highContrast"] as const).map((v) => ({
-              value: v,
-              label: t(`settings.appearance.icon.appIconVariant.${v}`),
-            }))}
-          />
-        </Row>
+        <div className="nc-set-icon-desc">{t("settings.appearance.icon.appIconVariant.desc")}</div>
+        <div className="nc-set-icon-groups">
+          {APP_ICON_VARIANT_GROUPS.map((group) => (
+            <div key={group.id} className="nc-set-icon-group">
+              <span className="nc-set-icon-group-label">{t(group.labelKey)}</span>
+              <div className="nc-set-icon-row">
+                {group.variants.map((variant) => (
+                  <button
+                    key={variant}
+                    type="button"
+                    title={t(APP_ICON_VARIANT_I18N_KEY[variant])}
+                    className={"nc-set-icon-tile" + (s.appIconVariant === variant ? " is-active" : "")}
+                    onClick={() => updateSettings({ appIconVariant: variant })}
+                  >
+                    <img src={APP_ICON_VARIANT_ASSET_PATH[variant]} alt="" draggable={false} />
+                    {s.appIconVariant === variant && (
+                      <span className="nc-set-icon-check">
+                        <Icon name="check" />
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </Section>
 
       <Section title={t("settings.vault.title")}>
@@ -402,11 +633,15 @@ export function AppearanceTab() {
         </Row>
         <Row
           title={t("settings.vault.autoImportSystemKnownHosts")}
-          desc={t("settings.vault.autoImportSystemKnownHostsDesc")}
+          desc={`${t("settings.vault.autoImportSystemKnownHostsDesc")} ${t(
+            "settings.vault.autoImportSystemKnownHostsDisabled",
+          )}`}
         >
+          {/* termX 的主机列表本身就是系统 known_hosts 文件，导入无意义 → 保留条目但禁用。 */}
           <Toggle
             checked={s.autoImportSystemKnownHosts}
             onChange={(v) => updateSettings({ autoImportSystemKnownHosts: v })}
+            disabled
           />
         </Row>
       </Section>

@@ -7940,10 +7940,8 @@ button:disabled {
 
 /* ── 设置中心（对照 Netcatty SettingsPage 独立窗口；termX 以全屏 overlay 承载）── */
 
-/* 窗口透明度：设置中心 · 外观 · 窗口（原生窗口透明未移植，CSS 近似） */
-.nc-shell {
-  opacity: var(--termx-window-opacity, 1);
-}
+/* 窗口透明度：设置中心 · 外观 · 窗口。透明度由原生窗口（Windows 分层窗口
+   alpha / macOS 原生 API）施加，CSS 不再叠加整壳 opacity，避免双重变淡。 */
 
 /* UI 字体：设置中心 · 外观 · 字体 */
 body {
@@ -8259,24 +8257,300 @@ body {
   width: 180px;
 }
 
+/* 主题模式分段控件（对照 Netcatty：容器 muted 底 + 选中项背景提升） */
 .nc-set-theme-cards {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--muted) / 0.5);
+  padding: 2px;
 }
 
 .nc-set-theme-card {
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  background: hsl(var(--card));
-  color: hsl(var(--foreground));
-  font-size: 12.5px;
-  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
   cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+
+.nc-set-theme-card svg {
+  width: 14px;
+  height: 14px;
+}
+
+.nc-set-theme-card:hover {
+  color: hsl(var(--foreground));
 }
 
 .nc-set-theme-card.is-active {
-  border-color: hsl(var(--primary));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.12);
+}
+
+/* 主题 / 强调色色板（24px 圆形，选中环 2px + 1.1 倍，对照 Netcatty） */
+.nc-set-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.nc-set-swatch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 999px;
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.12);
+  color: hsl(0 0% 100%);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.nc-set-swatch svg {
+  width: 10px;
+  height: 10px;
+  filter: drop-shadow(0 1px 1px hsl(0 0% 0% / 0.45));
+}
+
+.nc-set-swatch:hover {
+  transform: scale(1.05);
+}
+
+.nc-set-swatch.is-active {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--foreground));
+}
+
+.nc-set-swatch-custom {
+  background: linear-gradient(135deg, #ec4899, #a855f7 50%, #3b82f6);
+}
+
+.nc-set-color-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nc-set-accent-block {
+  padding: 9px 0;
+  display: grid;
+  gap: 8px;
+}
+
+.nc-set-accent-block .nc-set-swatches {
+  justify-content: flex-start;
+  max-width: none;
+}
+
+/* 应用图标变体：44px 圆角缩略图 + 选中遮罩（对照 Netcatty w-11 h-11 rounded-xl） */
+.nc-set-icon-desc {
+  font-size: 11.5px;
+  color: hsl(var(--muted-foreground));
+  margin: 2px 0 10px;
+}
+
+.nc-set-icon-groups {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.nc-set-icon-group {
+  display: grid;
+  gap: 6px;
+}
+
+.nc-set-icon-group-label {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-set-icon-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nc-set-icon-tile {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: transparent;
+  cursor: pointer;
+  transition: transform 0.15s, opacity 0.15s;
+  opacity: 0.9;
+}
+
+.nc-set-icon-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.nc-set-icon-tile:hover {
+  transform: scale(1.05);
+  opacity: 1;
+}
+
+.nc-set-icon-tile.is-active {
+  transform: scale(1.05);
+  opacity: 1;
+}
+
+.nc-set-icon-check {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(0 0% 0% / 0.2);
+  color: hsl(0 0% 100%);
+}
+
+.nc-set-icon-check svg {
+  width: 14px;
+  height: 14px;
+  filter: drop-shadow(0 1px 1px hsl(0 0% 0% / 0.45));
+}
+
+/* 搜索型字体下拉（FontSelect + Combobox 等价） */
+.nc-set-combo {
+  position: relative;
+  width: 220px;
+}
+
+.nc-set-combo-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font-size: 12.5px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.nc-set-combo-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-set-combo-trigger svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-set-combo-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 60;
+  width: 260px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 8px 24px hsl(0 0% 0% / 0.18);
+  overflow: hidden;
+}
+
+.nc-set-combo-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.nc-set-combo-search svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-set-combo-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+}
+
+.nc-set-combo-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.nc-set-combo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nc-set-combo-item:hover {
+  background: hsl(var(--secondary));
+}
+
+.nc-set-combo-item.is-active {
   color: hsl(var(--primary));
+}
+
+.nc-set-combo-item svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+.nc-set-combo-empty {
+  padding: 10px 8px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
 }
 
 .nc-set-color {

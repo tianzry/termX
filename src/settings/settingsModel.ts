@@ -16,6 +16,23 @@ export type SessionLogFormat = "txt" | "raw" | "html";
 export type HotkeyScheme = "mac" | "pc";
 export type UiLanguage = "zh-CN" | "en";
 
+/** 应用图标变体白名单（对齐 Netcatty domain/appIconVariant.ts APP_ICON_VARIANTS）。 */
+export const APP_ICON_VARIANTS = [
+  "original",
+  "bright",
+  "dark",
+  "colorful",
+  "high-contrast",
+  "white-navy",
+  "white-sky",
+  "white-rose",
+  "white-emerald",
+  "white-amber",
+  "white-violet",
+  "rainbow",
+] as const;
+export type AppIconVariant = (typeof APP_ICON_VARIANTS)[number];
+
 /** 终端行为设置（字段名对齐 Netcatty domain/models/terminal.ts TerminalSettings）。 */
 export interface TerminalSettings {
   scrollback: number;
@@ -68,7 +85,7 @@ export interface AppSettings {
   uiFontFamilyId: string;
   windowOpacity: number;
   windowBackgroundBlur: boolean;
-  appIconVariant: string;
+  appIconVariant: AppIconVariant;
   customCSS: string;
   showRecentHosts: boolean;
   /** connect = 单击直接连接（默认）；select = 先选中再连接。 */
@@ -136,7 +153,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   darkUiThemeId: "midnight",
   accentMode: "theme",
   customAccent: "221.2 83.2% 53.3%",
-  uiFontFamilyId: "system",
+  uiFontFamilyId: "mona-sans",
   windowOpacity: 1,
   windowBackgroundBlur: false,
   appIconVariant: "original",
@@ -251,7 +268,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     uiFontFamilyId: pickStr(r.uiFontFamilyId, d.uiFontFamilyId),
     windowOpacity: clampWindowOpacity(r.windowOpacity),
     windowBackgroundBlur: pickBool(r.windowBackgroundBlur, d.windowBackgroundBlur),
-    appIconVariant: pickStr(r.appIconVariant, d.appIconVariant),
+    appIconVariant: pickOne(r.appIconVariant, APP_ICON_VARIANTS, d.appIconVariant),
     customCSS: pickStr(r.customCSS, d.customCSS),
     showRecentHosts: pickBool(r.showRecentHosts, d.showRecentHosts),
     hostClickBehavior: pickOne(r.hostClickBehavior, ["connect", "select"] as const, d.hostClickBehavior),

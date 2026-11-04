@@ -32,7 +32,7 @@ import {
   SettingsDialog,
   type SettingsTabId,
 } from "./settings/SettingsDialog";
-import { loadSettings } from "./settings/settingsStore";
+import { loadSettings, useSettings } from "./settings/settingsStore";
 import type {
   Credential,
   DiscoveredShell,
@@ -88,9 +88,14 @@ function saveRecent(id: string, prev: string[]): string[] {
 
 export default function App() {
   const workspaceRef = useRef<WorkspaceHandle>(null);
+  const settings = useSettings();
 
   const [status, setStatus] = useState("就绪");
   const [surface, setSurface] = useState<RootSurface>("vault");
+  // 「显示 SFTP 标签页」关闭时，若当前停在 SFTP 视图则回到主机库。
+  useEffect(() => {
+    if (!settings.showSftpTab && surface === "sftp") setSurface("vault");
+  }, [settings.showSftpTab, surface]);
   // SFTP 视图首次进入后常驻挂载，切走仅 CSS 隐藏（对齐 Netcatty SftpViewMount
   // 的 sticky 保活）：pane 标签 / 双栏状态不因 surface 切换丢失。
   const [sftpMounted, setSftpMounted] = useState(false);
@@ -332,7 +337,7 @@ export default function App() {
       )}
 
       <div className="nc-body">
-        {terminalActive && sideOpen && (
+        {terminalActive && sideOpen && settings.showHostTreeSidebar && (
           <HostSidebar
             profiles={profiles}
             groups={groups}
