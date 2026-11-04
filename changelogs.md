@@ -4025,3 +4025,4 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `cargo check --features server` ✓（4 个既有 warning）
 - `cargo test --lib`：874 ✓（无新增 Rust 用例）
 - debug 重编 ✓ + CDP 实机复核（上述 129 正/负向、SFTP 列表、设置文案）
+- 提交 `ebec12c`，已推送（ssh.github.com:443），远端 main 核对为 `ebec12c` ✓
