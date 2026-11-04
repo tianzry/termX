@@ -12,6 +12,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ImageAddon } from "@xterm/addon-image";
 import { resolveInlineImageAddonOptions } from "./terminal/inlineImages";
+import { resolveCursorLineHighlightBackground } from "./terminal/cursorLineHighlight";
 import "@xterm/xterm/css/xterm.css";
 import * as api from "./backend/client";
 import { isFindShortcut, linkModifierAllows } from "./terminal/linkActivation";
@@ -115,6 +116,16 @@ function applyTermBackground(container: HTMLDivElement, s: AppSettings): void {
   container.style.backgroundColor = theme.background ?? "";
 }
 
+/** 光标行底色：主题背景混入选区色，并保证与前景色的对比度（对照 Netcatty）。 */
+function resolveCursorLineColor(s: AppSettings): string {
+  const theme = isDarkTerminal(s) ? TERM_THEME_DARK : TERM_THEME_LIGHT;
+  return resolveCursorLineHighlightBackground({
+    background: theme.background ?? "",
+    foreground: theme.foreground ?? "",
+    selection: theme.selectionBackground ?? "",
+  });
+}
+
 /**
  * 高亮光标所在行（对照 Netcatty cursorLineHighlight.ts）：
  * 用 decoration 给默认背景单元格铺一层淡色底，保留 ANSI 背景与前景。
@@ -127,6 +138,8 @@ class CursorLineHighlighter {
   private disposeListeners: IDisposable[] = [];
   private activeKey = "";
   private pending = false;
+  /** 跟踪的 marker / decorations 是否仍被 xterm 持有（clear/reset 后需要自愈）。 */
+  private tracking = false;
   private readonly disposables: IDisposable[] = [];
 
   constructor(private readonly term: Terminal) {
@@ -136,10 +149,14 @@ class CursorLineHighlighter {
       term.onRender(() => {
         const dirty = this.pending;
         this.pending = false;
-        if (this.enabled && dirty) this.refresh();
+        if (!this.enabled) return;
+        // 写入 / 光标移动等渲染；xterm 也可能在 clear/reset 时直接销毁 decoration
+        // 而不派发事件，所以每帧都校验跟踪集合是否还有效，失效即重建。
+        if (dirty || !this.tracking) this.refresh();
       }),
       term.onSelectionChange(() => this.refresh(true)),
       term.onResize(() => this.refresh(true)),
+      term.buffer.onBufferChange(() => this.refresh(true)),
     );
   }
 
@@ -182,8 +199,12 @@ class CursorLineHighlighter {
     const cell = buffer.getNullCell();
     const ranges: Array<{ x: number; width: number }> = [];
     let start: number | null = null;
+    let contentEnd = 0;
     for (let x = 0; x < cols; x += 1) {
       const c = line?.getCell(x, cell);
+      if (c && (c.getChars() !== "" || !c.isAttributeDefault())) {
+        contentEnd = Math.min(cols, x + Math.max(1, c.getWidth()));
+      }
       const highlightable = !c || (c.isBgDefault() && !c.isInverse());
       if (highlightable && start === null) start = x;
       if ((!highlightable || x === cols - 1) && start !== null) {
@@ -192,9 +213,19 @@ class CursorLineHighlighter {
         start = null;
       }
     }
-    const key = `${row}:${cols}:${this.backgroundColor}:${ranges
+    // 行内容之后的空白单独铺一条尾段（对齐 Netcatty getTailRanges），
+    // 避免正文范围受行尾默认属性单元格影响而缩短。
+    const clipped = ranges
+      .map((r) => {
+        const end = Math.min(r.x + r.width, contentEnd);
+        return { x: r.x, width: end - r.x };
+      })
+      .filter((r) => r.width > 0);
+    const tailRanges =
+      contentEnd < cols ? [{ x: contentEnd, width: cols - contentEnd }] : [];
+    const key = `${row}:${cols}:${this.backgroundColor}:${clipped
       .map((r) => `${r.x},${r.width}`)
-      .join("|")}`;
+      .join("|")}#${tailRanges.map((r) => `${r.x},${r.width}`).join("|")}`;
     if (!force && key === this.activeKey && this.marker && !this.marker.isDisposed) return;
 
     const previousMarker = this.marker;
@@ -206,7 +237,7 @@ class CursorLineHighlighter {
       return;
     }
     const decorations: IDecoration[] = [];
-    for (const r of ranges) {
+    for (const r of [...clipped, ...tailRanges]) {
       const d = this.term.registerDecoration({
         marker,
         x: r.x,
@@ -218,10 +249,12 @@ class CursorLineHighlighter {
     }
     this.marker = marker;
     this.decorations = decorations;
+    this.tracking = true;
     this.disposeListeners = decorations.map((d) =>
       d.onDispose(() => {
         if (this.decorations.includes(d)) {
           this.activeKey = "";
+          this.tracking = false;
         }
       }),
     );
@@ -235,6 +268,7 @@ class CursorLineHighlighter {
     this.decorations = [];
     this.disposeListeners = [];
     this.activeKey = "";
+    this.tracking = false;
   }
 
   private clearOwned(
@@ -362,9 +396,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
     term.focus();
 
     const highlighter = new CursorLineHighlighter(term);
-    highlighter.setBackgroundColor(
-      isDarkTerminal(initial) ? "#263449" : "#eef3fb",
-    );
+    highlighter.setBackgroundColor(resolveCursorLineColor(initial));
     highlighter.setEnabled(initial.terminal.highlightCursorLine);
 
     const disposables: IDisposable[] = [];
@@ -497,7 +529,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       // 字号 / 字重 / 行间距会改变单元格尺寸，xterm 只重算 cell 不重排列数，
       // 必须重新 fit 并通过 onResize 同步远端 PTY 尺寸。
       fit.fit();
-      highlighter.setBackgroundColor(isDarkTerminal(s) ? "#263449" : "#eef3fb");
+      highlighter.setBackgroundColor(resolveCursorLineColor(s));
       highlighter.setEnabled(s.terminal.highlightCursorLine);
     });
 

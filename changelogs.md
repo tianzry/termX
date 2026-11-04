@@ -4,6 +4,45 @@
 
 ---
 
+## 2026-11-05 — P2 #31（光标行高亮：对齐 Netcatty 语义 + 主题色派生）
+
+### 对照（Netcatty）
+
+`components/terminal/runtime/cursorLineHighlight.ts` 的 `CursorLineHighlighter`：
+`onCursorMove` / `onWriteParsed` 置 pending → `onRender` 刷新；`onSelectionChange` /
+`onResize` / `buffer.onBufferChange` 强制刷新；有选区或 alternate buffer 时清除；
+只给 `isBgDefault() && !isInverse()` 的单元格铺色，正文按 `contentEnd` 裁剪、行尾空白单独
+tail range；先注册新 decoration 再释放旧集合（避免空帧），并在每帧校验 marker 是否被
+xterm 回收以自愈。
+`domain/cursorLineHighlight.ts`：主题背景混入 selection 色（`BLEND = 0.55`），最小对比度 4.5，
+不足时向黑/白回退。
+
+### 修改点
+
+- 新增 `src/terminal/cursorLineHighlight.ts`：移植纯函数（hex 解析同时兼容 `rgb()/rgba()`，
+  适配 termX 主题里的半透明 selectionBackground）+ 11 例单测。
+- `src/Terminal.tsx`：`CursorLineHighlighter` 补齐 tail ranges / contentEnd 裁剪、
+  `buffer.onBufferChange`、tracking 自愈；新增 `resolveCursorLineColor`，从终端主题
+  的 background/foreground/selectionBackground 派生（替换此前硬编码的 `#263449`/`#eef3fb`）。
+
+### 验证
+
+- `npm run test:run` 47 文件 / 497 用例（含新增 11 例）；`npm run build` 通过。
+- debug 版 + CDP 连 129 实测（`evidence/cursorline-31.json` + 5 张截图）：
+  暗色主题输出 60 行后 decoration 两段（正文 355px + 行尾 610px）；输入后左移光标，正文段
+  随内容增长到 487px；拖拽选区后 decoration 归零（选区存在即清除）；点掉选区并上滚，
+  decoration 置 0×0（光标行在视口外）；切浅色主题重连，decoration 恢复且主题派生色为
+  `#78bbff`（暗色 `#446399`，与截图像素取样一致）。
+
+### 踩坑
+
+- decoration 的底色由 xterm 渲染器**按单元格**绘制，`.xterm-decoration` DOM 元素本身透明
+  （`getComputedStyle` 恒为 `rgba(0,0,0,0)`），取证不能用计算样式，要用截图 + 同一纯函数算色。
+- 默认 DOM 渲染器只绘制到有内容的单元格，tail range 在视觉上不额外铺满行尾（canvas/WebGL
+  渲染器才会整行铺满）；语义保留 Netcatty 的 tail range，行为与渲染器差异无关。
+
+---
+
 ## 2026-11-05 — P2 #26（CLI 增量：SFTP 目录/元数据子命令）
 
 ### 对照（Netcatty）

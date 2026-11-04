@@ -292,6 +292,11 @@
     证据 `evidence/ime-compat-31.json`（Tauri 冻结 internals，IPC 计数取证不可行，已记录）。
     宽字符核验：xterm 默认 Unicode provider 覆盖 CJK（Netcatty 亦未用 unicode11），
     129 实测中文渲染完整，无需额外改动。
+    光标行高亮已完成（2026-11-05）：按 Netcatty `CursorLineHighlighter` 语义重写（pending→onRender、
+    选区/alternate buffer 清除、contentEnd 裁剪 + tail range、buffer change 与 tracking 自愈），
+    底色改由终端主题派生（background/foreground/selectionBackground，对比度 ≥4.5）；
+    debug + CDP 连 129 实测移动光标 / 选区 / 滚动 / 换主题四场景，
+    证据 `evidence/cursorline-31.json` + 5 张截图；门禁 497✓/build✓。
     剩余：命令黑名单 / 命令块脱敏依赖 Netcatty AI 执行器（termX 无 AI，置灰）。
   - 参考：`commandBlocklist.ts`、`cursorLineHighlight.ts`、`inheritedCwd.ts`。
 - [ ] ⏸ **38. 会话快照迁移（暂缓移植；口径修正为 AI 观察弹窗的活动会话接管）**
