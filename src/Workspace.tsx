@@ -65,6 +65,8 @@ interface Props {
   onOpenTool?: (tool: "sftp" | "forward") => void;
   /** 终端工具栏「终端设置」→ 打开设置中心。 */
   onOpenSettings?: () => void;
+  /** 工作区持久化 key；多窗口用独立 key，避免覆盖主窗口布局。 */
+  storageKey?: string;
 }
 
 function resolveActivePane(
@@ -178,7 +180,7 @@ function LayoutView({
 
 export const Workspace = forwardRef<WorkspaceHandle, Props>(
   function Workspace(
-    { onActivePane, onStatus, onSnapshot, onOpenTool, onOpenSettings },
+    { onActivePane, onStatus, onSnapshot, onOpenTool, onOpenSettings, storageKey },
     ref,
   ) {
     const [tabs, setTabs] = useState<Tab[]>([]);
@@ -192,7 +194,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
 
     // 启动即读一次；有记录先弹横幅，等用户决定是否恢复。
     const [restore, setRestore] = useState<SavedWorkspace | null>(() =>
-      loadWorkspace(),
+      loadWorkspace(storageKey),
     );
     // 无旧记录时可直接落盘；有旧记录则等用户点「恢复 / 忽略」后再写，
     // 否则首帧的空工作区会把旧布局覆盖掉。
@@ -409,7 +411,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
     }
 
     function skipRestore() {
-      clearWorkspace();
+      clearWorkspace(storageKey);
       setRestore(null);
       setHydrated(true);
     }
@@ -451,17 +453,20 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
     // 持久化：用户完成恢复决策后才开始覆盖旧记录
     useEffect(() => {
       if (!hydrated) return;
-      saveWorkspace({
-        version: 1,
-        activeTabId,
-        tabs: tabs.map(({ id, title, layout, connector }) => ({
-          id,
-          title,
-          layout,
-          connector,
-        })),
-      });
-    }, [tabs, activeTabId, hydrated]);
+      saveWorkspace(
+        {
+          version: 1,
+          activeTabId,
+          tabs: tabs.map(({ id, title, layout, connector }) => ({
+            id,
+            title,
+            layout,
+            connector,
+          })),
+        },
+        storageKey,
+      );
+    }, [tabs, activeTabId, hydrated, storageKey]);
 
     const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
     const activePaneId = activeTab

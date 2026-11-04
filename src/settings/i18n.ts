@@ -429,7 +429,7 @@ const zhCN: Record<string, string> = {
   "settings.sessionRestore.restoreTerminalCwdDesc": "termX 尚未持久化本地终端工作目录，重启后回到默认目录。",
   "settings.sshDeepLink.title": "SSH 深链",
   "settings.sshDeepLink.enable": "启用 ssh:// 深链",
-  "settings.sshDeepLink.enableDesc": "termX 未注册系统协议处理器，ssh:// 链接不会唤起应用。",
+  "settings.sshDeepLink.enableDesc": "安装包已声明 ssh:// / telnet:// 协议；链接会唤起已有实例并打开匹配主机的会话（命令行带 URL 可直接测试）。",
   "settings.jmsDeepLink.title": "JMS 深链",
   "settings.jmsDeepLink.enable": "启用 jms:// 深链",
   "settings.jmsDeepLink.enableDesc": "termX 未注册系统协议处理器，jms:// 链接不会唤起应用。",

@@ -4602,5 +4602,28 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 4. **CI 产物**：release 构建时用 `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 签名，生成 `.nsis.zip` / `.app.tar.gz` 及签名，汇总 `latest.json` 上传为 release 资产（路径与默认 endpoint 对应）。
 5. **前端接入**：`check()` 后显示版本与说明，`update.downloadAndInstall(cb)` 接进度条与重启按钮；错误码沿用 update_* 系列。
 
+## 2026-11-05 P1 #22 深链 / 单实例 / 托盘 / 多窗口
+
+### 单项结论
+
+- **单实例**：做了（真接）。`tauri-plugin-single-instance` 开 `deep-link` feature，且作为第一个 plugin 注册；第二实例启动时聚焦/还原主窗口，并把 argv 交给 deep-link。
+- **深链**：做了（真接 `tauri-plugin-deep-link`）。`tauri.conf.json` 声明 `ssh` / `telnet` / `termx` schemes，`capabilities/default.json` 加 `deep-link:default`；前端经 `client.ts` 的 `getCurrentDeepLinks` / `onDeepLink` 订阅，按 `ssh://user@host:port` 的 host/port 匹配已有 SSH 档案并新建会话，无匹配时状态栏提示。仅主窗口订阅，避免多窗口重复开标签。
+- **多窗口**：做了（接线）。`TopTabs` 右键菜单新增「在新窗口中打开」→ `client.openTabInNewWindow(JSON.stringify(connector))`；新窗口启动读取 `window.__rssh_clone` 恢复同连接标签。多窗口使用 `termx.workspace.v1.<windowLabel>` 独立持久化 key，避免覆盖主窗口布局。
+- **托盘**：置灰（未做）。缺少：`tauri` 开 `tray-icon` feature、可用的托盘图标资源、托盘菜单与「关闭到托盘」语义（`on_window_event` 需拦截 CloseRequested）、跨平台（Windows/macOS/Linux）差异处理；且本轮自动化环境无法真实点击托盘图标做验证。设置与转发总览继续保留置灰说明。
+
+### 实测（Windows debug + CDP）
+
+- 启动首实例 → 命令行再启 `rssh.exe "ssh://root@192.168.126.129:22"`：第二进程退出、`rssh` 进程数仍为 1，首实例新建标签「129」。
+- 右键标签「在新窗口中打开」：CDP 看到 2 个页面；主窗口 label `main`、新窗口 label `rssh-df7e…`，两窗口各自恢复标签「129」。
+- 证据：`evidence/deeplink-multiwindow.json`、`evidence/deeplink-multiwindow.png`（不入库）。
+
+### 边界（诚实说明）
+
+- 开发版通过命令行参数验证；系统级 `ssh://` 点击唤起依赖安装包完成协议注册（`desktop.schemes`），本轮未做安装包实测。
+- 深链目前只匹配已有 SSH 档案；`telnet://` / `termx://` 解析后无档案匹配时仅提示，不创建临时档案（JMS 深链仍无后端，保持置灰）。
+- `cargo add` 将 `tauri` 从 2.11 升到 2.12.5（single-instance 2.5.5 的最低要求），`Cargo.lock` 有大量升级；`cargo check --features server` 与 `cargo test --lib` 均通过。
+
+- 门禁：前端 452✓ / `npm run build` ✓ / `cargo check --features server` ✓ / `cargo test --lib` ✓。
+
 
 

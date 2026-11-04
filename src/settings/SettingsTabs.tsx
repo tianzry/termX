@@ -1812,7 +1812,7 @@ export function SystemTab() {
 
       <Section title={t("settings.sshDeepLink.title")}>
         <Row title={t("settings.sshDeepLink.enable")} desc={t("settings.sshDeepLink.enableDesc")}>
-          <Toggle checked={false} disabled onChange={() => {}} />
+          <Toggle checked disabled onChange={() => {}} />
         </Row>
       </Section>
 

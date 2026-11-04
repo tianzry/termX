@@ -73,9 +73,9 @@ function isPaneNode(v: unknown): v is PaneNode {
 }
 
 /** 读取上次工作区；无记录或结构损坏时返回 null。 */
-export function loadWorkspace(): SavedWorkspace | null {
+export function loadWorkspace(key: string = KEY): SavedWorkspace | null {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SavedWorkspace>;
     if (parsed.version !== VERSION || !Array.isArray(parsed.tabs)) return null;
@@ -99,17 +99,17 @@ export function loadWorkspace(): SavedWorkspace | null {
   }
 }
 
-export function saveWorkspace(state: SavedWorkspace): void {
+export function saveWorkspace(state: SavedWorkspace, key: string = KEY): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(state));
+    localStorage.setItem(key, JSON.stringify(state));
   } catch {
     /* 隐私模式或配额满时静默失败，不影响会话 */
   }
 }
 
-export function clearWorkspace(): void {
+export function clearWorkspace(key: string = KEY): void {
   try {
-    localStorage.removeItem(KEY);
+    localStorage.removeItem(key);
   } catch {
     /* ignore */
   }

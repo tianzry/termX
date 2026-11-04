@@ -117,4 +117,14 @@ describe("workspaceStore", () => {
     clearWorkspace();
     expect(loadWorkspace()).toBeNull();
   });
+
+  it("自定义 storageKey 与主窗口隔离（多窗口不覆盖主布局）", () => {
+    saveWorkspace(validWorkspace());
+    saveWorkspace(validWorkspace(), "termx.workspace.v1.rssh-a");
+    expect(loadWorkspace("termx.workspace.v1.rssh-a")?.activeTabId).toBe("t2");
+    expect(loadWorkspace()?.activeTabId).toBe("t2");
+    clearWorkspace("termx.workspace.v1.rssh-a");
+    expect(loadWorkspace("termx.workspace.v1.rssh-a")).toBeNull();
+    expect(loadWorkspace()).not.toBeNull();
+  });
 });

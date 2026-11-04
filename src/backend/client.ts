@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 
 /**
  * termX 前端 ↔ Tauri Rust 后端的统一桥接层（NFC 契约）。
@@ -410,6 +412,37 @@ export function setWindowBackgroundBlur(enabled: boolean): Promise<void> {
 /** 应用图标变体（如 "original" / "white-navy" / "rainbow"）。 */
 export function setAppIconVariant(variant: string): Promise<void> {
   return invoke("set_app_icon_variant", { variant });
+}
+
+// ── 深链 / 单实例 / 多窗口 ───────────────────────────────
+
+/**
+ * 订阅系统深链（`ssh://` / `telnet://` / `termx://`）。
+ *
+ * 第二个实例带 URL 启动时由 single-instance 插件转发给首实例，deep-link
+ * 插件再回调到这里；返回值是取消订阅函数。
+ */
+export function onDeepLink(cb: (urls: string[]) => void): Promise<UnlistenFn> {
+  return onOpenUrl(cb);
+}
+
+/** 冷启动时命令行里的深链 URL（没有则 null）。 */
+export function getCurrentDeepLinks(): Promise<string[] | null> {
+  return getCurrent();
+}
+
+/** 当前窗口 label（主窗口 `main`；多窗口为 `rssh-<uuid>`）。纯 Web 壳回落 main。 */
+export function currentWindowLabel(): string {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return "main";
+  }
+}
+
+/** 用同连接参数开一个新窗口；新窗口启动时读 `window.__rssh_clone`。 */
+export function openTabInNewWindow(clone: string): Promise<void> {
+  return invoke("open_tab_in_new_window", { clone });
 }
 
 // --- Snippets（P0 #5 阶段 A；字段对齐 Netcatty Snippet 子集，snake_case 镜像 serde） ---

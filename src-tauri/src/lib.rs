@@ -68,7 +68,21 @@ pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .try_init();
 
-    tauri::Builder::default()
+    // single-instance 必须是第一个注册的插件：第二个进程带着 `ssh://` 参数启动时，
+    // 它负责把参数交给首实例（后续 deep-link 插件再把它转成 onOpenUrl 事件）。
+    // 单独注册 deep-link 而不开 `deep-link` feature 的话，Windows/Linux 上事件
+    // 只会在新进程里触发，首实例收不到。
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())

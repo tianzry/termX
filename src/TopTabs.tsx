@@ -32,6 +32,8 @@ interface Props {
   onOpenSettings: () => void;
   /** 标签右键菜单：重命名 / 复制标签 / 重连 / 批量关闭 / 拖拽排序（对齐 Netcatty 会话标签菜单）。 */
   onRenameTab: (id: string, title: string) => void;
+  /** 用同连接参数在独立窗口打开（后端 `open_tab_in_new_window`）。 */
+  onOpenInNewWindow: (id: string) => void;
   onCloseOthers: (id: string) => void;
   onCloseLeft: (id: string) => void;
   onCloseRight: (id: string) => void;
@@ -67,6 +69,7 @@ export function TopTabs({
   onToggleHostTree,
   onOpenSettings,
   onRenameTab,
+  onOpenInNewWindow,
   onCloseOthers,
   onCloseLeft,
   onCloseRight,
@@ -225,6 +228,14 @@ export function TopTabs({
             }}
           >
             复制标签页
+          </button>
+          <button
+            onClick={() => {
+              onOpenInNewWindow(menu.id);
+              setMenu(null);
+            }}
+          >
+            在新窗口中打开
           </button>
           <button
             onClick={() => {

@@ -15,7 +15,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Workspace, type WorkspaceHandle } from "./Workspace";
 import type { PaneHandle } from "./TerminalPane";
-import type { Tab } from "./workspaceModel";
+import type { Tab, Connector } from "./workspaceModel";
+import { findProfileForHostLink } from "./notes/notesModel";
 import { TopTabs, type RootSurface } from "./TopTabs";
 import { HostSidebar } from "./HostSidebar";
 import { VaultView } from "./VaultView";
@@ -144,6 +145,10 @@ export default function App() {
   );
   const [recentIds, setRecentIds] = useState<string[]>(loadRecent);
   const [managerEditId, setManagerEditId] = useState<string | null>(null);
+  /** profiles 加载完成后再处理深链，避免「DB 还没读出来」误判无匹配主机。 */
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const [deepLinks, setDeepLinks] = useState<string[]>([]);
+  const handledDeepLinks = useRef(new Set<string>());
 
   const loadData = useCallback(async () => {
     try {
@@ -157,6 +162,8 @@ export default function App() {
       setCredentials(nextCredentials);
     } catch {
       /* 首次启动或 DB 为空时忽略 */
+    } finally {
+      setDataLoaded(true);
     }
   }, []);
 
@@ -266,6 +273,71 @@ export default function App() {
     });
   }
 
+  // 深链订阅：冷启动 URL 用 getCurrent，运行中由 single-instance 转发（onOpenUrl）。
+  // 只在主窗口订阅：deep-link 事件与 getCurrent 都是进程级，多窗口都订阅会重复开标签。
+  const windowLabel = api.currentWindowLabel();
+  useEffect(() => {
+    if (windowLabel !== "main") return;
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    void api
+      .getCurrentDeepLinks()
+      .then((urls) => {
+        if (alive && urls?.length) setDeepLinks((prev) => [...prev, ...urls]);
+      })
+      .catch(() => {});
+    void api
+      .onDeepLink((urls) => {
+        if (alive) setDeepLinks((prev) => [...prev, ...urls]);
+      })
+      .then((fn) => {
+        if (alive) unlisten = fn;
+        else fn();
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [windowLabel]);
+
+  // 深链 → 匹配已有 SSH 主机并新建会话；同一 URL 只处理一次。
+  useEffect(() => {
+    if (!dataLoaded) return;
+    for (const raw of deepLinks) {
+      if (handledDeepLinks.current.has(raw)) continue;
+      handledDeepLinks.current.add(raw);
+      const profile = findProfileForHostLink(profiles, raw);
+      if (!profile) {
+        setStatus(`深链未找到匹配主机：${raw}`);
+        continue;
+      }
+      connect(profile);
+    }
+  }, [dataLoaded, deepLinks, profiles]);
+
+  // 新窗口冷启动：后端把连接参数写进 `window.__rssh_clone`，这里恢复成标签。
+  useEffect(() => {
+    const clone = (window as unknown as { __rssh_clone?: string }).__rssh_clone;
+    if (!clone) return;
+    try {
+      const connector = JSON.parse(clone) as Connector;
+      if (connector && typeof connector === "object" && "kind" in connector) {
+        workspaceRef.current?.newTab(connector);
+      }
+    } catch {
+      /* 初始化脚本损坏时保持普通空窗口 */
+    }
+  }, []);
+
+  function openTabInNewWindow(id: string) {
+    const tab = tabs.find((item) => item.id === id);
+    if (!tab) return;
+    void api.openTabInNewWindow(JSON.stringify(tab.connector)).catch((e) => {
+      setStatus(String(e));
+    });
+  }
+
   const [showSerialModal, setShowSerialModal] = useState(false);
   const [showTelnetModal, setShowTelnetModal] = useState(false);
 
@@ -317,6 +389,7 @@ export default function App() {
           const tab = tabs.find((t) => t.id === id);
           if (tab) workspaceRef.current?.newTab(tab.connector);
         }}
+        onOpenInNewWindow={openTabInNewWindow}
         onNewTab={openLocal}
         onRenameTab={(id, title) => workspaceRef.current?.renameTab(id, title)}
         onCloseOthers={(id) => workspaceRef.current?.closeOthers(id)}
@@ -392,6 +465,11 @@ export default function App() {
           <div className={`nc-workspace${terminalActive ? "" : " hidden"}`}>
             <Workspace
               ref={workspaceRef}
+              storageKey={
+                windowLabel === "main"
+                  ? undefined
+                  : `termx.workspace.v1.${windowLabel}`
+              }
               onActivePane={onActivePane}
               onStatus={setStatus}
               onSnapshot={onSnapshot}
