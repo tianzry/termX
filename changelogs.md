@@ -29,8 +29,12 @@
 
 - `npm run test:run`：44 文件 / 468 用例全绿（含新增 `sftpFollowCwd.test.ts`）。
 - `npm run build`（tsc --noEmit + vite）通过。
-- 未重启 GUI 实测：跟随链路依赖 OSC 7 实时上报与真实 SFTP 会话，本轮由纯函数单测覆盖判定；
-  端到端 UI 复检留待下一次 GUI 启动（如需 129 实测再补）。
+- 端到端复检（2026-11-05，129 + CDP 驱动的 debug 版）：临时关闭应用锁并开启跟随开关（结束后均已恢复）。
+  远端用 `printf '\033]7;file://%s%s\007' "$HOSTNAME" "$PWD"` 上报 OSC 7；SFTP 面板首进
+  `/home/tianzry`，终端 `cd /tmp` 后自动跟到 `/tmp`。取证：`evidence/sftp-follow-129.png`
+  与 `evidence/sftp-follow-129.json`（`firstOpenPath` / `followedPath` / `passed: true`）。
+  「有传输进行时不抢目录」由 `transfers.some(status === "running")` → `hasActiveWork` 判定，
+  该分支由 `sftpFollowCwd.test.ts` 覆盖；真实传输起点依赖原生另存为/打开选择框，未做 UI 自动化。
 
 ### 踩坑
 
