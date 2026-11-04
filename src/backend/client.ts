@@ -1235,6 +1235,17 @@ export function forwardStats(activeId: string): Promise<ForwardStats> {
   return invoke<ForwardStats>("forward_stats", { activeId });
 }
 
+/** 当前窗口仍在运行的转发（Vault 总览与终端侧栏据此恢复运行态）。 */
+export interface ActiveForwardInfo {
+  active_id: string;
+  forward_id: string;
+  stats: ForwardStats;
+}
+
+export function forwardActiveList(): Promise<ActiveForwardInfo[]> {
+  return invoke<ActiveForwardInfo[]>("forward_active_list");
+}
+
 export function forwardRuleStart(
   activeId: string,
   ruleIndex: number,

@@ -117,6 +117,47 @@ pub async fn forward_start_impl(
     Ok(active_id)
 }
 
+#[derive(serde::Serialize)]
+pub struct ActiveForwardInfo {
+    pub active_id: String,
+    pub forward_id: String,
+    pub stats: fwd::ForwardStats,
+}
+
+/// 当前 owner 名下仍在运行的转发（供 Vault 总览 / 终端侧栏跨界面恢复运行态）。
+#[tauri::command]
+pub fn forward_active_list(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ActiveForwardInfo>> {
+    forward_active_list_impl(&state, &SessionOwner::Window(window.label().to_owned()))
+}
+
+pub fn forward_active_list_impl(
+    state: &AppState,
+    owner: &SessionOwner,
+) -> AppResult<Vec<ActiveForwardInfo>> {
+    let sessions = locked(&state.lifecycle_sessions)?;
+    let forwards = locked(&state.active_forwards)?;
+    let mut out = Vec::new();
+    for (active_id, record) in sessions.iter() {
+        if record.kind != SessionKind::Forward
+            || record.phase != SessionPhase::Ready
+            || &record.owner != owner
+        {
+            continue;
+        }
+        if let Some(handle) = forwards.get(active_id) {
+            out.push(ActiveForwardInfo {
+                active_id: active_id.clone(),
+                forward_id: handle.forward_id().to_owned(),
+                stats: handle.stats(),
+            });
+        }
+    }
+    Ok(out)
+}
+
 #[tauri::command]
 pub fn forward_stats(
     window: tauri::Window,

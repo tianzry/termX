@@ -921,6 +921,9 @@ fn dispatch(
                 Err(_) => Err(json!("fwd_not_found")),
             }
         }
+        "forward_active_list" => ok(crate::commands::forward::forward_active_list_impl(
+            state, owner,
+        )),
         "forward_stats" => {
             let active_id: String = arg(&args, "activeId")?;
             ok(crate::commands::forward::forward_stats_impl(

@@ -1814,6 +1814,14 @@ export function TerminalPane({
           </button>
           <button
             className="term-tool-btn"
+            title={onOpenTool ? "打开端口转发" : "端口转发面板不可用"}
+            disabled={!onOpenTool}
+            onClick={() => onOpenTool?.("forward")}
+          >
+            <Icon name="transfer" size={12} />
+          </button>
+          <button
+            className="term-tool-btn"
             disabled
             title="主机浏览器（尚未实现）"
           >

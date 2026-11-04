@@ -31,6 +31,8 @@ pub struct ConnTarget {
 }
 
 pub struct ForwardHandle {
+    /// 该活跃会话对应的转发规则条目 id（跨界面（Vault 总览 / 终端侧栏）识别用）。
+    forward_id: String,
     /// Present while this value owns the detached task. `stop()` transfers
     /// cancellation to the grace-period timer; an ordinary drop aborts now.
     abort: Option<tokio::task::AbortHandle>,
@@ -47,6 +49,7 @@ pub struct ForwardHandle {
 
 impl ForwardHandle {
     fn from_task(
+        forward_id: String,
         task: tokio::task::JoinHandle<()>,
         disconnect: Arc<Notify>,
         rules: Vec<Arc<RuleControl>>,
@@ -54,6 +57,7 @@ impl ForwardHandle {
         connected: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         Self {
+            forward_id,
             abort: Some(task.abort_handle()),
             disconnect,
             rules,
@@ -203,6 +207,10 @@ async fn accept_opt(
 }
 
 impl ForwardHandle {
+    pub fn forward_id(&self) -> &str {
+        &self.forward_id
+    }
+
     pub fn stats(&self) -> ForwardStats {
         let rules: Vec<_> = self
             .rules
@@ -953,7 +961,12 @@ pub async fn start(forward: Forward, target: ConnTarget) -> AppResult<ForwardHan
     });
 
     Ok(ForwardHandle::from_task(
-        task, disconnect, controls, commands, connected,
+        forward.id,
+        task,
+        disconnect,
+        controls,
+        commands,
+        connected,
     ))
 }
 
@@ -976,6 +989,7 @@ mod tests {
     fn test_handle(task: tokio::task::JoinHandle<()>, disconnect: Arc<Notify>) -> ForwardHandle {
         let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
         ForwardHandle::from_task(
+            "test".into(),
             task,
             disconnect,
             Vec::new(),
@@ -1007,6 +1021,7 @@ mod tests {
         let task = tokio::spawn(std::future::pending::<()>());
         let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
         let handle = ForwardHandle::from_task(
+            "test".into(),
             task,
             Arc::new(Notify::new()),
             vec![first, second],

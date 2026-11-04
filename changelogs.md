@@ -4026,3 +4026,45 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `cargo test --lib`：874 ✓（无新增 Rust 用例）
 - debug 重编 ✓ + CDP 实机复核（上述 129 正/负向、SFTP 列表、设置文案）
 - 提交 `ebec12c`，已推送（ssh.github.com:443），远端 main 核对为 `ebec12c` ✓
+
+---
+
+## 2026-11-04 · 端口转发：Vault 按主机分组总览 + 跨界面运行态
+
+### 修改点
+
+1. **后端 `forward_active_list`（新命令，双注册）**
+   - `ssh/forward.rs`：`ForwardHandle` 增加 `forward_id`（`from_task(forward_id, …)`），提供 `forward_id()` 供上层归属。
+   - `commands/forward.rs`：`ActiveForwardInfo { active_id, forward_id, stats }`；`forward_active_list(window, state)` + `forward_active_list_impl` 遍历 `lifecycle_sessions(kind=Forward/Ready/owner)` 与 `active_forwards`，逐条取 `handle.stats()`。
+   - `lib.rs` `generate_handler!` 与 `server.rs` dispatcher 双注册。
+2. **前端 API**：`backend/client.ts` 增 `ActiveForwardInfo` 与 `forwardActiveList()`。
+3. **纯逻辑 + 单测**：`domain/forwardOverview.ts`（`groupForwardsByHost` 按 profile_id 分组 / 未知主机回退 / 组内外按 zh-CN 名称排序 / `activeCount`、`ruleLabel`、`formatBytes`、`forwardSummary`、`activeFor`）+ `forwardOverview.test.ts` 4 例。
+4. **Vault 总览页**：`ForwardOverview.tsx` 挂到 `VaultView` 的「端口转发」导航（此前为禁用占位）；按主机分组卡片、条目级启动/停止、规则级启停、2s 轮询 `forward_active_list` 展示连接数/上下行/effective_port/error；空态引导到终端侧栏。
+5. **终端侧入口修复**：`ForwardPanel` 此前无任何 UI 入口（`toggleTool("forward")` 无调用点，等于假面板）。`TerminalPane` 右侧工具栏新增「打开端口转发」按钮（`transfer` 图标，`onOpenTool` 缺失时置灰并写明「端口转发面板不可用」）。
+6. **跨界面运行态**：`ForwardPanel.refresh()` 同时拉 `forwardActiveList()`，以后端运行态为权威；从 Vault 或其它界面启动的转发，重新打开侧栏后仍显示「停止/统计/规则状态」，不再依赖本地内存。
+7. **置灰能力（行内写明原因，不留假按钮）**：自动启动（ForwardRule 无 `auto_start`）、断线重连（无 `auto_reconnect`）、自定义监听地址（后端固定 127.0.0.1，无 `bind_address`）、托盘快捷开关（`lib.rs` 无 TrayIcon）。
+
+### 验证（debug 重编 + CDP + 实机链路）
+
+- Vault「端口转发」空态与置灰原因正常渲染；`evidence/fwd-overview-empty.png`。
+- 临时创建 `129 本地转发 18022→22`（local 127.0.0.1:18022 → 远端 127.0.0.1:22）：分组卡片显示主机 129 / 1 条目 / 1 运行中，`evidence/fwd-overview-loaded.png`、`fwd-overview-running.png`。
+- 条目启动后本机 `TcpClient(127.0.0.1:18022)` 连通并读到 `SSH-2.0-OpenSSH_10.0p2 Ubuntu`（真实经 129 拨号）。
+- 2s 轮询统计刷新为 `1 连接 · ↑0 B ↓42 B`，`evidence/fwd-overview-stats.png`。
+- 终端工具栏新按钮可打开 ForwardPanel，列表中同一转发显示「停止/统计 · 总流量 42 B ↓ · 1 连接 · 运行中」（跨界面运行态恢复），`evidence/fwd-panel-running.png`。
+- 规则级停止 → 状态 `stopped` 且 18022 关闭；规则级启动 → `active` 且端口重新可连。
+- 条目停止 → 端口关闭；删除后总览恢复空态、`list_forwards` 为 0，测试数据已清理。
+
+### 门禁
+
+- `npm run test:run`：33 文件 / 401 用例 ✓（新增 forwardOverview 4 例）
+- `npm run build` ✓
+- `cargo check --features server` ✓
+- `cargo test --lib`：874 ✓
+- debug `npm run tauri build -- --debug` ✓（构建前需先 `Stop-Process -Name rssh`，否则 rssh.exe 被占用导致 link 后替换失败）
+
+### 踩坑
+
+- `localeCompare(..., "zh-CN")` 按拼音排序，测试期望不能按 Unicode 码位写（甲 jiǎ → 未 wèi → 乙 yǐ）。
+- `formatBytes` 整数需去掉 `.0`（`5.0 MB` → `5 MB`），否则统计行观感不一致。
+- `userVisibleError` 只接收 `string`，catch 分支要 `String(e)`。
+- 构建 debug 时旧 `rssh.exe` 若仍在运行会 `failed to remove file`，先停止进程再重编。

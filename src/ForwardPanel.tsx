@@ -39,10 +39,25 @@ export function ForwardPanel() {
     setBusy(true);
     setErr("");
     try {
-      const [fs, ps] = await Promise.all([api.listForwards(), api.listProfiles()]);
+      const [fs, ps, act] = await Promise.all([
+        api.listForwards(),
+        api.listProfiles(),
+        api.forwardActiveList(),
+      ]);
       setForwards(fs);
       setProfiles(ps);
       setProfileId((cur) => cur || ps[0]?.id || "");
+      // 运行态以后端为权威：重新打开侧栏 / Vault 已启动的条目这里也能显示为运行中。
+      setActive((prev) => {
+        const next: Record<string, ActiveInfo> = {};
+        for (const a of act) {
+          next[a.forward_id] = {
+            activeId: a.active_id,
+            stats: prev[a.forward_id]?.stats ?? a.stats,
+          };
+        }
+        return next;
+      });
     } catch (e) {
       setErr(userVisibleError(String(e)));
     } finally {

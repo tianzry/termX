@@ -51,6 +51,7 @@ import {
 } from "./domain/localShellHost";
 import { Icon, type IconName } from "./ui/icons";
 import { LocalShellPanel } from "./LocalShellPanel";
+import { ForwardOverview } from "./ForwardOverview";
 import { useVaultHostMarquee } from "./useVaultHostMarquee";
 
 interface Props {
@@ -221,7 +222,7 @@ const navItems: Array<{
   { id: "monitor", label: "监控", icon: "activity" },
   { id: "keys", label: "钥匙串", icon: "key", enabled: true },
   { id: "proxies", label: "代理", icon: "network" },
-  { id: "port", label: "端口转发", icon: "transfer" },
+  { id: "port", label: "端口转发", icon: "transfer", enabled: true },
   { id: "snippets", label: "脚本", icon: "file-code", enabled: true },
   { id: "notes", label: "笔记", icon: "file-text", enabled: true },
   { id: "known-hosts", label: "已知主机", icon: "shield", enabled: true },
@@ -3882,6 +3883,8 @@ export function VaultView({
               </div>
               {kcTab === "system" ? <KeychainView /> : keysPanel()}
             </div>
+          ) : activeNav === "port" ? (
+            <ForwardOverview />
           ) : activeNav === "snippets" ? (
             <SnippetsView />
           ) : activeNav === "notes" ? (

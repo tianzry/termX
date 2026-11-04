@@ -184,6 +184,7 @@ pub fn run() {
             commands::forward::delete_forward,
             // forward active
             commands::forward::forward_start,
+            commands::forward::forward_active_list,
             commands::forward::forward_stats,
             commands::forward::forward_rule_start,
             commands::forward::forward_rule_stop,
