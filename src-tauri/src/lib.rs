@@ -345,6 +345,7 @@ pub fn run() {
             commands::sftp::sftp_cancel_transfer,
             commands::sftp::sftp_remove,
             commands::sftp::sftp_rename,
+            commands::sftp::sftp_copy,
             commands::sftp::sftp_stat,
             commands::sftp::sftp_lstat,
             commands::sftp::sftp_realpath,

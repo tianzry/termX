@@ -442,6 +442,96 @@ impl SftpHandle {
         })
     }
 
+    /// 同主机复制单个文件：远端读 → 远端写，64 KiB 分块流式，内存占用恒定。
+    /// 目标先写 `<dst>.part`，成功后替换，避免中断留下半截文件（与 upload_streaming 同策略）。
+    /// 目录复制暂不支持（前端只对文件提供入口），由调用方回 `sftp_io_failed`。
+    pub async fn copy_file(&self, src: &str, dst: &str) -> AppResult<u64> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let meta = self.sftp.metadata(src).await.map_err(|e| {
+            AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "metadata", "err": e.to_string() }),
+            )
+        })?;
+        if meta.is_dir() {
+            return Err(AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "copy", "err": "directories are not supported" }),
+            ));
+        }
+        if let Some((parent, _)) = dst.rsplit_once('/') {
+            if !parent.is_empty() {
+                self.mkdir_p(parent).await?;
+            }
+        }
+
+        let tmp = format!("{dst}.part");
+        let mut src_file = self.sftp.open(src).await.map_err(|e| {
+            AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "open", "err": e.to_string() }),
+            )
+        })?;
+        let mut dst_file = self.sftp.create(&tmp).await.map_err(|e| {
+            AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "create", "err": e.to_string() }),
+            )
+        })?;
+
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut written: u64 = 0;
+        let result = async {
+            loop {
+                let n = src_file.read(&mut buf).await.map_err(|e| {
+                    AppError::sftp(
+                        "sftp_io_failed",
+                        json!({ "op": "copy_read", "err": e.to_string() }),
+                    )
+                })?;
+                if n == 0 {
+                    break;
+                }
+                dst_file.write_all(&buf[..n]).await.map_err(|e| {
+                    AppError::sftp(
+                        "sftp_io_failed",
+                        json!({ "op": "copy_write", "err": e.to_string() }),
+                    )
+                })?;
+                written += n as u64;
+            }
+            Ok::<(), AppError>(())
+        }
+        .await;
+
+        let _ = src_file.shutdown().await;
+
+        match result {
+            Ok(()) => {
+                dst_file.shutdown().await.map_err(|e| {
+                    AppError::sftp(
+                        "sftp_io_failed",
+                        json!({ "op": "close", "err": e.to_string() }),
+                    )
+                })?;
+                // 部分服务器 rename 不允许覆盖已存在目标，先删再改名。
+                let _ = self.sftp.remove_file(dst).await;
+                self.sftp.rename(&tmp, dst).await.map_err(|e| {
+                    AppError::sftp(
+                        "sftp_io_failed",
+                        json!({ "op": "rename", "err": e.to_string() }),
+                    )
+                })?;
+                Ok(written)
+            }
+            Err(e) => {
+                let _ = self.sftp.remove_file(&tmp).await;
+                Err(e)
+            }
+        }
+    }
+
     pub async fn stat(&self, path: &str) -> AppResult<FileStat> {
         let meta = self.sftp.metadata(path).await.map_err(|e| {
             AppError::sftp(

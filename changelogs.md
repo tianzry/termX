@@ -4258,3 +4258,30 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - SearchAddon 的命中计数不是返回值，需订阅 `onDidChangeResults({ resultIndex, resultCount })`；`resultIndex === -1` 表示无激活项。
 - 合成 KeyboardEvent 无法向 PTY 输入（xterm 只认真实按键链路）；实测改走撰写栏（React 状态 + 应用自身写入路径）才可靠。
 - PowerShell here-string 写 JSON 会带 BOM，`cdp-run.js` 解析失败；job 文件改用 Write 工具落盘。
+
+---
+
+## 2026-11-04 — P1 #36 SFTP 同主机复制
+
+对照 Netcatty：`components/sftp/copyToOtherPane.ts`（同主机跨栏复制）与阶段 C 冲突策略（跳过/创建副本/替换）。
+
+### 修改点
+
+1. **后端** `SftpHandle::copy_file`（`ssh/sftp.rs`）：远端读 → 远端写，64 KiB 分块流式；目标先写 `<dst>.part`，成功后删旧文件再 rename（与 `upload_streaming` 同原子策略），失败清理 `.part`；目录复制明确拒绝（`sftp_io_failed / directories are not supported`）。
+2. **命令** `sftp_copy(sftp_id, src_path, dst_path) -> u64`，`lib.rs` + `server.rs` 双注册；前端 `api.sftpCopy`。
+3. **前端** `SftpPaneView` 远端文件右键新增「复制到…」：弹出目标路径输入（默认 `<原名> 副本.<ext>`，相对路径按当前目录拼接）；提交前 `sftp_stat` 探测目标，存在则复用 `SftpConflictDialog` 的 **跳过 / 创建副本 / 替换**：
+   - 替换 → 直接 `sftp_copy`（后端原子覆盖）
+   - 创建副本 → 依次探测 `name (1)`、`name (2)` …（最多 100 次）后复制
+   - 跳过 → 关闭
+4. 未支持：目录递归复制（菜单只对文件出现）；复制进度事件（同步命令无 progress，大文件期间仅按钮 busy）。
+
+### 验证
+
+- 门禁：`test:run` **411 ✓**、`npm run build` ✓、`cargo check --features server` ✓。
+- debug 重编 + 129 实测（`evidence/sftp-copy-129-live.txt`）：`sftp_connect` 到 192.168.126.129 → 上传 36B 测试文件 → `sftp_copy` 返回 **36 字节** → 下载副本内容与源 **完全一致**（`same:true`）→ 删除源/副本并 `sftp_close`。
+- 冲突对话框复用了既有组件与动作语义，未另造策略；替换分支未单独跑 129（后端覆盖逻辑与上传一致）。
+
+### 踩坑
+
+- CDP 里把 connect+upload+copy+download+cleanup 全塞进一个 async IIFE 会得到无信息的 `Uncaught`（Tauri 调用链较长时异常被包装）；拆成多步 eval、按阶段 catch 才拿得到真实错误。
+- `PaneConnection` 是 local/remote 联合类型，`isRemote` 布尔不参与收窄；复制函数需显式 `if (connection.kind !== "remote") return;`，冲突态里另存 `sftpId` 供 JSX 使用。

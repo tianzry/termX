@@ -1345,6 +1345,14 @@ async fn dispatch_async(
             )
             .await)
         }
+        "sftp_copy" => {
+            let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
+            ok(h.copy_file(
+                &arg::<String>(&args, "srcPath")?,
+                &arg::<String>(&args, "dstPath")?,
+            )
+            .await)
+        }
         "sftp_stat" => {
             let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
             ok(h.stat(&arg::<String>(&args, "path")?).await)

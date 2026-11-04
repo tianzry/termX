@@ -674,6 +674,18 @@ pub async fn sftp_rename(
     h.rename(&old_path, &new_path).await
 }
 
+/// 同主机复制单个文件（远端读 → 远端写），返回写入字节数。
+#[tauri::command]
+pub async fn sftp_copy(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    src_path: String,
+    dst_path: String,
+) -> AppResult<u64> {
+    let h = get_sftp(&state, &sftp_id)?;
+    h.copy_file(&src_path, &dst_path).await
+}
+
 #[tauri::command]
 pub async fn sftp_stat(
     state: State<'_, AppState>,

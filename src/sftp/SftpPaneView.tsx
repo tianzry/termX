@@ -61,6 +61,7 @@ import {
   SftpPromptDialog,
   type MenuItem,
 } from "./SftpPaneDialogs";
+import { SftpConflictDialog } from "./SftpConflictDialog";
 
 interface Row {
   name: string;
@@ -76,6 +77,7 @@ interface Row {
 
 type DialogState =
   | { type: "rename"; row: Row }
+  | { type: "copy"; row: Row }
   | { type: "delete"; row: Row }
   | { type: "mkdir" }
   | { type: "newFile" }
@@ -146,6 +148,12 @@ export function SftpPaneView({
 
   const isRemote = connection.kind === "remote";
   const join = isRemote ? joinRemotePath : joinLocalPath;
+  /** 同主机复制的同名冲突（复用 SftpConflictDialog 的 跳过/创建副本/替换 策略）。 */
+  const [copyConflict, setCopyConflict] = useState<{
+    src: string;
+    dst: string;
+    sftpId: string;
+  } | null>(null);
 
   // 上传完成自动刷新：订阅本面板入队项的状态事件（经 client.ts，R1）。
   const pathRef = useRef(path);
@@ -523,6 +531,73 @@ export function SftpPaneView({
     }
   };
 
+  /** 默认副本名：`a.txt` → `a 副本.txt`。 */
+  const copySuggestion = (name: string): string => {
+    const dot = name.lastIndexOf(".");
+    if (dot <= 0) return `${name} 副本`;
+    return `${name.slice(0, dot)} 副本${name.slice(dot)}`;
+  };
+
+  const doCopy = async (sftpId: string, src: string, dst: string) => {
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      await api.sftpCopy(sftpId, src, dst);
+      setCopyConflict(null);
+      setDialog(null);
+      void load(path);
+    } catch (e) {
+      setDialogError(userVisibleError(String(e)));
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  /** 同主机复制入口：目标存在时交给既有冲突策略（跳过 / 创建副本 / 替换）。 */
+  const runCopy = async (row: Row, target: string) => {
+    if (connection.kind !== "remote") return;
+    const raw = target.trim();
+    if (!raw) return;
+    const sftpId = connection.sftpId;
+    const src = join(path, row.name);
+    const dst = raw.startsWith("/") ? raw : join(path, raw);
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const existing = await api.sftpStat(sftpId, dst).catch(() => null);
+      if (existing) {
+        setCopyConflict({ src, dst, sftpId });
+        setDialog(null);
+        return;
+      }
+      await doCopy(sftpId, src, dst);
+    } catch (e) {
+      setDialogError(userVisibleError(String(e)));
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
+  /** 「创建副本」：按 `name (1)`、`name (2)` … 找第一个空位。 */
+  const copyWithUniqueName = async (sftpId: string, src: string, dst: string) => {
+    const slash = dst.lastIndexOf("/");
+    const dir = slash >= 0 ? dst.slice(0, slash) : "";
+    const name = dst.slice(slash + 1);
+    const dot = name.lastIndexOf(".");
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : "";
+    let candidate = dst;
+    for (let i = 1; i <= 100; i += 1) {
+      const probe = `${dir}/${stem} (${i})${ext}`;
+      const stat = await api.sftpStat(sftpId, probe).catch(() => null);
+      if (!stat) {
+        candidate = probe;
+        break;
+      }
+    }
+    await doCopy(sftpId, src, candidate);
+  };
+
   const runMkdir = async (name: string) => {
     setDialogBusy(true);
     setDialogError("");
@@ -628,6 +703,13 @@ export function SftpPaneView({
       }
       if (isRemote && !row.isDir) {
         menuItems.push({ label: "下载", onClick: () => void runDownload(row) });
+        menuItems.push({
+          label: "复制到…",
+          onClick: () => {
+            setDialogError("");
+            setDialog({ type: "copy", row });
+          },
+        });
       }
       menuItems.push({
         label: "重命名",
@@ -987,6 +1069,56 @@ export function SftpPaneView({
           error={dialogError}
           onClose={() => setDialog(null)}
           onSubmit={(v) => void runRename(dialog.row, v)}
+        />
+      )}
+      {dialog?.type === "copy" && (
+        <SftpPromptDialog
+          title={`复制 ${dialog.row.name} 到`}
+          initial={copySuggestion(dialog.row.name)}
+          confirmLabel="复制"
+          busy={dialogBusy}
+          error={dialogError}
+          onClose={() => setDialog(null)}
+          onSubmit={(v) => void runCopy(dialog.row, v)}
+        />
+      )}
+      {copyConflict && (
+        <SftpConflictDialog
+          conflict={
+            {
+              id: `copy-${copyConflict.dst}`,
+              sftp_id: copyConflict.sftpId,
+              batch_id: "copy",
+              direction: "upload",
+              // 复用现有对话框：标题取 local_path 的文件名，这里放目标名。
+              local_path: copyConflict.dst,
+              remote_path: copyConflict.dst,
+              size: 0,
+              status: "conflict",
+              priority: "normal",
+              seq: 0,
+              overwrite: false,
+              error: null,
+              created_at: Date.now(),
+            } as api.TransferItem
+          }
+          sameBatchCount={1}
+          busy={dialogBusy}
+          error={dialogError}
+          onResolve={(action) => {
+            if (action === "skip") {
+              setCopyConflict(null);
+              setDialogError("");
+            } else if (action === "replace") {
+              void doCopy(copyConflict.sftpId, copyConflict.src, copyConflict.dst);
+            } else {
+              void copyWithUniqueName(
+                copyConflict.sftpId,
+                copyConflict.src,
+                copyConflict.dst,
+              );
+            }
+          }}
         />
       )}
       {dialog?.type === "mkdir" && (

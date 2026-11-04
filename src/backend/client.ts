@@ -821,6 +821,14 @@ export function sftpRename(
   return invoke("sftp_rename", { sftpId, oldPath, newPath });
 }
 
+export function sftpCopy(
+  sftpId: string,
+  srcPath: string,
+  dstPath: string,
+): Promise<number> {
+  return invoke<number>("sftp_copy", { sftpId, srcPath, dstPath });
+}
+
 export function sftpStat(sftpId: string, path: string): Promise<FileStat> {
   return invoke<FileStat>("sftp_stat", { sftpId, path });
 }
