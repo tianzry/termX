@@ -182,6 +182,11 @@ pub fn run() {
             commands::forward::create_forward,
             commands::forward::update_forward,
             commands::forward::delete_forward,
+            // proxy library（Vault 代理库 CRUD + 密码走 SecretStore）
+            commands::proxy::list_proxy_profiles,
+            commands::proxy::save_proxy_profile,
+            commands::proxy::proxy_profile_password_get,
+            commands::proxy::delete_proxy_profile,
             // forward active
             commands::forward::forward_start,
             commands::forward::forward_active_list,

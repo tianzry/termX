@@ -108,6 +108,36 @@ pub struct Profile {
     /// 不走代理的主机列表（逗号分隔，语义见 `ssh::proxy::no_proxy_matches`）。
     #[serde(default)]
     pub proxy_no_proxy: Option<String>,
+    // ── 代理库阶段 B 新增字段（schema v40）──
+    /// 引用 `proxy_profiles` 表中的代理条目；Some 时连接层以库中配置为准，
+    /// 上面的内联 proxy_* 字段仅作库条目被删除后的回退。
+    #[serde(default)]
+    pub proxy_profile_id: Option<String>,
+}
+
+/// 代理库条目（对齐 Netcatty `ProxyProfile` 的 label + config 扁平化）：
+/// 一份可被多台主机复用的 HTTP / SOCKS5 代理配置。
+/// 密码不入表，走 SecretStore（key `proxy_profile:<id>`）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProxyProfile {
+    pub id: String,
+    pub label: String,
+    /// `http` / `socks5`。
+    pub proxy_type: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub username: Option<String>,
+    /// 不走代理的主机列表（逗号分隔），可为空。
+    #[serde(default)]
+    pub no_proxy: Option<String>,
+    #[serde(default)]
+    pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
+    /// 手动排序位（None = 按 updated_at 排序）。
+    #[serde(default)]
+    pub order: Option<i64>,
 }
 
 /// `protocol` 的 serde 默认值：历史数据全是 SSH 主机。

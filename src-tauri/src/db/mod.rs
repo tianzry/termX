@@ -11,6 +11,7 @@ pub mod highlight;
 pub mod notes;
 pub mod plugin;
 pub mod profile;
+pub mod proxy_profile;
 pub mod schema;
 pub mod secret;
 pub mod serial_profile;

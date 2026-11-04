@@ -4132,3 +4132,29 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - Vault 页主题 token 是 HSL 分量，内联样式必须写 `hsl(var(--x))`；直接 `var(--x)` 会静默变成无效颜色（无边框、透明背景）。
 - 表单在侧栏挂载早于 profiles 加载时，默认选中要做成 effect 迟到补值，不能只在 useState 初值里取第一项。
 
+---
+
+## 2026-11-04 · 代理库：Vault「代理」页 + 主机/连接管理器引用
+
+### 修改点
+
+1. **后端 schema v40**：新增 `proxy_profiles` 表（id/label/proxy_type/host/port/username/no_proxy/created_at/updated_at/order_index），`profiles` 增加 `proxy_profile_id`；旧库按 `version < 40` 增量迁移，表/列均有存在性守卫。
+2. **后端 CRUD**（`db/proxy_profile.rs`）：list/get/save/delete；保存前复用 `ProxyConfig::from_parts` 校验类型/主机/端口，label/host 去空白、username/no_proxy 空串归一 NULL；删除条目在同一事务内清空 `profiles.proxy_profile_id`，主机内联 `proxy_*` 保留为回退。4 例单测（roundtrip/非法端口与类型/删除清引用/排序）。
+3. **命令层**：`list_proxy_profiles` / `save_proxy_profile` / `proxy_profile_password_get` / `delete_proxy_profile`，密码走 SecretStore `proxy_profile:<id>`（与主机级 `proxy:<host_id>` 分命名空间）；null=不动、空串=清除；`lib.rs` 与 `server.rs` 双注册。
+4. **连接层解析**（`commands/session.rs::resolve_proxy_configs`）：主机有 `proxy_profile_id` 时以库配置 + 库密码为准；库条目已被删则回退主机内联配置，避免静默直连。
+5. **前端 Vault「代理」页**（`src/ProxyProfilesView.tsx`）：搜索 + 卡片列表（显示使用主机数）+ 右侧编辑表单（新建/编辑/密码留空保持/删除二次确认，提示会解除主机绑定）；页面底部置灰列明 4 项未移植能力（ProxyCommand、密钥串身份、分组级代理、拖拽排序）及原因。
+6. **主机编辑器与连接管理器接线**：代理区新增「代理来源」下拉（内联配置/直连 或 代理库条目）；选中库条目时隐藏内联字段并清空主机级代理密码，未选中时保持原有内联流程；保存写 `proxy_profile_id`。Vault 导航「代理」由 disabled 改为可用。
+
+### 门禁
+
+- `npm run test:run`：34 文件 / 407 用例 ✓
+- `npm run build` ✓
+- `cargo check --features server` ✓
+- `cargo test --lib`：878 ✓（新增 4 例代理库单测）
+
+### 踩坑
+
+- `Profile` 是 Rust struct 字面量构造，新增字段会波及所有测试/迁移构造点（本次一次补齐 8 处），`#[serde(default)]` 只保护反序列化。
+- 主机同时存内联代理与库引用时必须定义优先级；选择库引用即清空主机级 secret，避免两套密码长期不一致。
+
+

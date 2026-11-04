@@ -328,6 +328,22 @@ fn dispatch(
             &arg::<String>(&args, "id")?,
         )),
 
+        // ---- proxy library (Vault 代理库；密码走 SecretStore) ----
+        "list_proxy_profiles" => ok(crate::commands::proxy::list_impl(&state)),
+        "save_proxy_profile" => ok(crate::commands::proxy::save_impl(
+            &state,
+            &arg::<crate::models::ProxyProfile>(&args, "profile")?,
+            arg::<Option<String>>(&args, "password")?.as_deref(),
+        )),
+        "proxy_profile_password_get" => ok(crate::commands::proxy::password_get_impl(
+            &state,
+            &arg::<String>(&args, "id")?,
+        )),
+        "delete_proxy_profile" => ok(crate::commands::proxy::delete_impl(
+            &state,
+            &arg::<String>(&args, "id")?,
+        )),
+
         // ---- plugins (JCEF hosts the UI but has no asset protocol, so iframe
         //      loading is unavailable there; registry + exec still work) ----
         "plugins_root" => ok(Ok::<_, AppError>(

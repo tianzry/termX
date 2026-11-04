@@ -46,6 +46,8 @@ type ProfDraft = {
   algorithms?: api.SshAlgorithms;
   /** 主机级连接代理（密码单独落 SecretStore）。 */
   proxy: ProxyDraft;
+  /** 引用代理库条目；非空时以库配置为准。 */
+  proxy_profile_id: string;
 };
 
 type CredDraft = {
@@ -93,6 +95,7 @@ function emptyProfile(): ProfDraft {
     bastion_profile_id: "",
     agent_forwarding: false,
     proxy: { ...EMPTY_PROXY_DRAFT },
+    proxy_profile_id: "",
   };
 }
 
@@ -143,6 +146,12 @@ export function ConnectionManager({
   const [agentRunning, setAgentRunning] = useState<boolean | null>(null);
   /** 编辑档案时是否已存代理密码（决定密码框留空时的保存策略）。 */
   const proxySecretRef = useRef(false);
+  /** 代理库条目（档案表单可引用）。 */
+  const [proxyProfiles, setProxyProfiles] = useState<api.ProxyProfile[]>([]);
+
+  useEffect(() => {
+    api.listProxyProfiles().then(setProxyProfiles).catch(() => {});
+  }, []);
 
   async function checkAgent() {
     try {
@@ -195,6 +204,7 @@ export function ConnectionManager({
         bastion_profile_id: "",
         agent_forwarding: false,
         proxy: { ...EMPTY_PROXY_DRAFT },
+        proxy_profile_id: "",
       });
       opened.current = true;
     }
@@ -223,6 +233,7 @@ export function ConnectionManager({
       agent_forwarding: p.agent_forwarding,
       algorithms: p.algorithms,
       proxy: proxyDraftFromProfile(p),
+      proxy_profile_id: p.proxy_profile_id ?? "",
     });
     // 开关已开着的档案打开表单就探测一次，警告态不依赖用户再拨一下。
     setAgentRunning(null);
@@ -245,7 +256,7 @@ export function ConnectionManager({
       setErr("名称、主机、凭据均为必填");
       return;
     }
-    const proxyErr = proxyDraftError(d.proxy);
+    const proxyErr = d.proxy_profile_id ? null : proxyDraftError(d.proxy);
     if (proxyErr) {
       setErr(proxyErr);
       return;
@@ -264,15 +275,21 @@ export function ConnectionManager({
         group_id: d.group_id || null,
         agent_forwarding: d.agent_forwarding,
         algorithms: d.algorithms,
-        ...proxyProfileFields(d.proxy),
+        ...proxyProfileFields(d.proxy_profile_id ? EMPTY_PROXY_DRAFT : d.proxy),
+        proxy_profile_id: d.proxy_profile_id || null,
       };
       if (profiles.some((p) => p.id === d.id)) await api.updateProfile(profile);
       else await api.createProfile(profile);
-      // 代理密码走 SecretStore（`proxy:<profile_id>`）；undefined = 留空保持不变。
-      const proxySecret = proxyPasswordToSave(d.proxy, proxySecretRef.current);
-      if (proxySecret !== undefined) {
-        await api.setProfileProxyPassword(profile.id, proxySecret);
-        proxySecretRef.current = proxySecret !== null;
+      // 代理密码走 SecretStore（`proxy:<profile_id>`）；引用代理库时清掉主机级密码。
+      if (d.proxy_profile_id) {
+        await api.setProfileProxyPassword(profile.id, null);
+        proxySecretRef.current = false;
+      } else {
+        const proxySecret = proxyPasswordToSave(d.proxy, proxySecretRef.current);
+        if (proxySecret !== undefined) {
+          await api.setProfileProxyPassword(profile.id, proxySecret);
+          proxySecretRef.current = proxySecret !== null;
+        }
       }
       setProfDraft(null);
       onChanged();
@@ -557,95 +574,122 @@ export function ConnectionManager({
                         ))}
                     </select>
                   </label>
-                  <label>
-                    代理类型
+                  <label className="cm-wide">
+                    代理来源
                     <select
-                      value={profDraft.proxy.type}
+                      value={profDraft.proxy_profile_id}
                       onChange={(e) =>
                         setProfDraft({
                           ...profDraft,
-                          proxy: {
-                            ...profDraft.proxy,
-                            type: e.target.value as ProxyDraft["type"],
-                          },
+                          proxy_profile_id: e.target.value,
                         })
                       }
                     >
-                      <option value="none">无（直连）</option>
-                      <option value="http">HTTP 代理</option>
-                      <option value="socks5">SOCKS5 代理</option>
+                      <option value="">内联配置 / 直连</option>
+                      {proxyProfiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}（{p.proxy_type.toUpperCase()} {p.host}:{p.port}）
+                        </option>
+                      ))}
                     </select>
                   </label>
-                  {profDraft.proxy.type !== "none" && (
+                  {profDraft.proxy_profile_id ? (
+                    <div className="cm-wide" style={{ fontSize: 12, opacity: 0.8 }}>
+                      使用代理库条目；配置与密码在 Vault「代理」页统一维护。
+                    </div>
+                  ) : (
                     <>
                       <label>
-                        代理主机
-                        <input
-                          value={profDraft.proxy.host}
+                        代理类型
+                        <select
+                          value={profDraft.proxy.type}
                           onChange={(e) =>
                             setProfDraft({
                               ...profDraft,
-                              proxy: { ...profDraft.proxy, host: e.target.value },
+                              proxy: {
+                                ...profDraft.proxy,
+                                type: e.target.value as ProxyDraft["type"],
+                              },
                             })
                           }
-                        />
+                        >
+                          <option value="none">无（直连）</option>
+                          <option value="http">HTTP 代理</option>
+                          <option value="socks5">SOCKS5 代理</option>
+                        </select>
                       </label>
-                      <label>
-                        代理端口
-                        <input
-                          type="number"
-                          min={1}
-                          max={65535}
-                          value={profDraft.proxy.port}
-                          onChange={(e) =>
-                            setProfDraft({
-                              ...profDraft,
-                              proxy: { ...profDraft.proxy, port: e.target.value },
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        代理用户名（可选）
-                        <input
-                          value={profDraft.proxy.username}
-                          onChange={(e) =>
-                            setProfDraft({
-                              ...profDraft,
-                              proxy: { ...profDraft.proxy, username: e.target.value },
-                            })
-                          }
-                        />
-                      </label>
-                      <label>
-                        代理密码（可选）
-                        <input
-                          type="password"
-                          value={profDraft.proxy.password}
-                          placeholder={
-                            proxySecretRef.current ? "已保存（留空保持不变）" : ""
-                          }
-                          onChange={(e) =>
-                            setProfDraft({
-                              ...profDraft,
-                              proxy: { ...profDraft.proxy, password: e.target.value },
-                            })
-                          }
-                        />
-                      </label>
-                      <label className="cm-wide">
-                        不使用代理（逗号分隔）
-                        <input
-                          value={profDraft.proxy.noProxy}
-                          placeholder="localhost, 127.0.0.1"
-                          onChange={(e) =>
-                            setProfDraft({
-                              ...profDraft,
-                              proxy: { ...profDraft.proxy, noProxy: e.target.value },
-                            })
-                          }
-                        />
-                      </label>
+                      {profDraft.proxy.type !== "none" && (
+                        <>
+                          <label>
+                            代理主机
+                            <input
+                              value={profDraft.proxy.host}
+                              onChange={(e) =>
+                                setProfDraft({
+                                  ...profDraft,
+                                  proxy: { ...profDraft.proxy, host: e.target.value },
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            代理端口
+                            <input
+                              type="number"
+                              min={1}
+                              max={65535}
+                              value={profDraft.proxy.port}
+                              onChange={(e) =>
+                                setProfDraft({
+                                  ...profDraft,
+                                  proxy: { ...profDraft.proxy, port: e.target.value },
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            代理用户名（可选）
+                            <input
+                              value={profDraft.proxy.username}
+                              onChange={(e) =>
+                                setProfDraft({
+                                  ...profDraft,
+                                  proxy: { ...profDraft.proxy, username: e.target.value },
+                                })
+                              }
+                            />
+                          </label>
+                          <label>
+                            代理密码（可选）
+                            <input
+                              type="password"
+                              value={profDraft.proxy.password}
+                              placeholder={
+                                proxySecretRef.current ? "已保存（留空保持不变）" : ""
+                              }
+                              onChange={(e) =>
+                                setProfDraft({
+                                  ...profDraft,
+                                  proxy: { ...profDraft.proxy, password: e.target.value },
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="cm-wide">
+                            不使用代理（逗号分隔）
+                            <input
+                              value={profDraft.proxy.noProxy}
+                              placeholder="localhost, 127.0.0.1"
+                              onChange={(e) =>
+                                setProfDraft({
+                                  ...profDraft,
+                                  proxy: { ...profDraft.proxy, noProxy: e.target.value },
+                                })
+                              }
+                            />
+                          </label>
+                        </>
+                      )}
                     </>
                   )}
                   <label className="cm-wide">

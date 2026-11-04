@@ -255,6 +255,11 @@ pub fn proxy_secret_key(profile_id: &str) -> String {
     format!("proxy:{profile_id}")
 }
 
+/// 代理库条目密码：`proxy_profile:<id>`（与主机级 `proxy:<id>` 区分命名空间）。
+pub fn proxy_profile_secret_key(proxy_profile_id: &str) -> String {
+    format!("proxy_profile:{proxy_profile_id}")
+}
+
 pub fn setting_key(name: &str) -> String {
     format!("setting:{name}")
 }

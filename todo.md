@@ -39,6 +39,7 @@
 | 端口转发（local / remote / dynamic + 规则与统计） | ✅ | `src/ForwardPanel.tsx`、`commands/forward.rs` |
 | 连接 / 凭据 / 分组管理 | ✅ | `src/ConnectionManager.tsx` |
 | 主机级代理（HTTP / SOCKS5，密码走 SecretStore） | ✅ | `src/domain/proxyForm.ts`、`VaultView.tsx`、`ConnectionManager.tsx`、`ssh/proxy.rs` |
+| 代理库（`proxy_profiles` schema v40 + Vault 页 + 主机引用） | ✅ | `src/ProxyProfilesView.tsx`、`src-tauri/src/db/proxy_profile.rs`、`commands/proxy.rs` |
 | 系统代理 = 云同步 HTTP 代理（不改变 SSH） | ✅ | `commands/settings.rs http_client`、GitHub/WebDAV 构造 |
 | SFTP 独立连接沿用主机档案代理 | ✅ | `sftp_connect(profile_id)`、`SftpHandle::connect(proxy)` |
 | 多标签页 | ✅ | `src/Workspace.tsx`、`src/TerminalPane.tsx` |
@@ -202,9 +203,9 @@
   - 依据：netcatty `components/sftp/SftpBreadcrumb.tsx` / `SftpConflictDialog.tsx`；termX `SftpPanel.tsx` 为单栏、无面包屑、无冲突提示。
   - 冲突检测后端与冲突对话框前端已随 #10 阶段 A/C 完成（2026-11-03）；面包屑已随 #9 阶段 A 完成（2026-11-03，双栏 SftpPaneView）；同主机复制仍缺。
 - [ ] ⬜ **37. Vault 其余子页**
-  - 笔记、会话日志页、代理配置入口（当前导航为禁用占位）。
-  - 进度（2026-11-03）：笔记阶段 A ✅（列表/编辑/搜索/标签/置顶/删除，DB 持久化）；阶段 B ✅（Markdown 预览 + 最小格式工具栏、ssh 主机链接关联与跳转、分组路径与过滤、Markdown 导入导出；分享未做，Netcatty 亦无独立分享入口）。日志阶段 A/B ✅（列表/筛选/ANSI 详情/删除 + schema v38 索引 + 会话级录制开关 + 三格式导出落盘）；代理入口仍 ⬜。
-  - 依据：netcatty `components/notes/`、会话日志与代理配置入口；termX `VaultView.tsx` navItems 中 monitor/proxies/port 仍禁用，keys/snippets/notes/logs 已启用。
+  - 笔记、会话日志页、代理库入口（均已可用；仅 monitor 仍为禁用占位）。
+  - 进度（2026-11-04）：笔记阶段 A/B ✅；日志阶段 A/B ✅；代理库 ✅（Vault「代理」页列表/新建/编辑/删除 + schema v40 `proxy_profiles` + 单主/连接管理器引用 + 删除清引用；ProxyCommand/密钥串身份/分组级代理/拖拽排序置灰并写明原因）。
+  - 依据：netcatty `components/notes/`、会话日志与 `ProxyProfilesManager.tsx`；termX `VaultView.tsx` navItems 中 monitor 仍禁用，proxies 已启用。
 - [ ] ⬜ **39. SSH agent 转发（2026-11-02 范围修正纳入移植）**
   - 按 Netcatty 的代理/agent 转发界面与逻辑 1:1：agent 列表、转发开关、认证走 agent（以 Netcatty 实际行为为准）。
   - 与「代理」配置（#37 入口）一起排期，建议紧跟端口转发/代理模块，先后按依赖定。

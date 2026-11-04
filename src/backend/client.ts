@@ -80,6 +80,22 @@ export interface Profile {
   proxy_username?: string | null;
   /** 不走代理的域名 / IP（逗号分隔） */
   proxy_no_proxy?: string | null;
+  /** 引用代理库条目；设置后连接层以库配置为准（内联字段仅作回退） */
+  proxy_profile_id?: string | null;
+}
+
+/** 代理库条目（`list_proxy_profiles`），密码单独走 SecretStore。 */
+export interface ProxyProfile {
+  id: string;
+  label: string;
+  proxy_type: string;
+  host: string;
+  port: number;
+  username: string | null;
+  no_proxy: string | null;
+  created_at: number;
+  updated_at: number;
+  order: number | null;
 }
 
 /** 本机发现的可用 shell（后端 `discover_shells`，对齐 Netcatty 形状）。 */
@@ -1696,6 +1712,28 @@ export function getProfileProxyPassword(
   profileId: string,
 ): Promise<string | null> {
   return invoke<string | null>("profile_proxy_password_get", { profileId });
+}
+
+// ── 代理库（Vault「代理」页；密码走 SecretStore `proxy_profile:<id>`）──
+
+export function listProxyProfiles(): Promise<ProxyProfile[]> {
+  return invoke<ProxyProfile[]>("list_proxy_profiles");
+}
+
+/** upsert；password=null 表示不动既有密码，空串=清除。 */
+export function saveProxyProfile(
+  profile: ProxyProfile,
+  password: string | null,
+): Promise<void> {
+  return invoke("save_proxy_profile", { profile, password });
+}
+
+export function getProxyProfilePassword(id: string): Promise<string | null> {
+  return invoke<string | null>("proxy_profile_password_get", { id });
+}
+
+export function deleteProxyProfile(id: string): Promise<void> {
+  return invoke("delete_proxy_profile", { id });
 }
 
 /** 写入 / 移除主机连接代理密码；secret 传 null 或空串 = 清除。 */

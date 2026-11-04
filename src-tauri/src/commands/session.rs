@@ -423,23 +423,56 @@ pub(crate) fn resolve_proxy_configs(
 ) -> AppResult<std::collections::HashMap<String, crate::ssh::proxy::ProxyConfig>> {
     let mut map = std::collections::HashMap::new();
     for profile in profiles {
-        let Some(kind) = profile
-            .proxy_type
+        // 引用代理库条目时以库配置为准（密码走 `proxy_profile:<id>`）；
+        // 条目已被删除则回退到主机内联字段（密码走 `proxy:<host_id>`）。
+        let parts = if let Some(pid) = profile
+            .proxy_profile_id
             .as_deref()
             .filter(|s| !s.trim().is_empty())
-        else {
-            continue;
+        {
+            match crate::db::proxy_profile::get(&state.db, pid) {
+                Ok(pp) => Some((
+                    pp.proxy_type,
+                    pp.host,
+                    pp.port,
+                    pp.username,
+                    pp.no_proxy.unwrap_or_default(),
+                    crate::secret::proxy_profile_secret_key(pid),
+                )),
+                Err(_) => None,
+            }
+        } else {
+            None
         };
-        let password = state
-            .secret_store
-            .get(&crate::secret::proxy_secret_key(&profile.id))?;
+        let parts = match parts {
+            Some(p) => p,
+            None => {
+                let Some(kind) = profile
+                    .proxy_type
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                else {
+                    continue;
+                };
+                (
+                    kind.to_string(),
+                    profile.proxy_host.as_deref().unwrap_or("").to_string(),
+                    profile.proxy_port.unwrap_or(0),
+                    profile.proxy_username.clone(),
+                    profile.proxy_no_proxy.as_deref().unwrap_or("").to_string(),
+                    crate::secret::proxy_secret_key(&profile.id),
+                )
+            }
+        };
+        let (kind, host, port, username, no_proxy, secret_key) = parts;
+        let password = state.secret_store.get(&secret_key)?;
         let cfg = crate::ssh::proxy::ProxyConfig::from_parts(
-            kind,
-            profile.proxy_host.as_deref().unwrap_or(""),
-            profile.proxy_port.unwrap_or(0),
-            profile.proxy_username.as_deref(),
+            &kind,
+            &host,
+            port,
+            username.as_deref(),
             password.as_deref(),
-            profile.proxy_no_proxy.as_deref().unwrap_or(""),
+            &no_proxy,
         )?;
         map.insert(profile.id.clone(), cfg);
     }

@@ -11,6 +11,7 @@ pub mod localfs;
 pub mod notes;
 pub mod plugin;
 pub mod profile;
+pub mod proxy;
 #[cfg(desktop)]
 pub mod pty;
 #[cfg(desktop)]

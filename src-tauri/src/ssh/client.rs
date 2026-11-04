@@ -1117,6 +1117,7 @@ mod tests {
                 proxy_port: None,
                 proxy_username: None,
                 proxy_no_proxy: None,
+                proxy_profile_id: None,
             },
             credential: Credential {
                 id: "credential".into(),
@@ -1265,6 +1266,7 @@ mod tests {
                 proxy_port: None,
                 proxy_username: None,
                 proxy_no_proxy: None,
+                proxy_profile_id: None,
             },
             credential: Credential {
                 id: "smoke-credential".into(),
@@ -1402,6 +1404,7 @@ mod tests {
                 proxy_port: None,
                 proxy_username: None,
                 proxy_no_proxy: None,
+                proxy_profile_id: None,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1502,6 +1505,7 @@ mod tests {
                 proxy_port: None,
                 proxy_username: None,
                 proxy_no_proxy: None,
+                proxy_profile_id: None,
             },
             credential,
             bastion_chain: Vec::new(),

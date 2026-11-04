@@ -77,6 +77,7 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         proxy_port: None,
         proxy_username: None,
         proxy_no_proxy: None,
+        proxy_profile_id: None,
     };
     rssh_lib::db::profile::insert(conn, &p)?;
     println!("Profile '{}' created.", p.name);

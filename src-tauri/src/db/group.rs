@@ -221,6 +221,7 @@ mod tests {
             proxy_port: None,
             proxy_username: None,
             proxy_no_proxy: None,
+            proxy_profile_id: None,
         }
     }
 

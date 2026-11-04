@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 39;
+const SCHEMA_VERSION: u32 = 40;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -833,6 +833,30 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             if !column_exists(conn, "profiles", col)? {
                 conn.execute_batch(&format!("ALTER TABLE profiles ADD COLUMN {col} {decl};"))?;
             }
+        }
+    }
+
+    if version < 40 {
+        // 代理库（对齐 Netcatty ProxyProfilesManager）：一份代理配置可被多台
+        // 主机复用；密码不入表，走 SecretStore `proxy_profile:<id>`。
+        // profiles.proxy_profile_id 引用库条目；条目删除时由 db 层清空引用，
+        // 内联 proxy_* 字段保留为回退（防止库条目丢失导致主机直连）。
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS proxy_profiles (
+                 id          TEXT PRIMARY KEY,
+                 label       TEXT NOT NULL,
+                 proxy_type  TEXT NOT NULL DEFAULT 'http',
+                 host        TEXT NOT NULL,
+                 port        INTEGER NOT NULL,
+                 username    TEXT,
+                 no_proxy    TEXT,
+                 created_at  INTEGER NOT NULL DEFAULT 0,
+                 updated_at  INTEGER NOT NULL DEFAULT 0,
+                 order_index INTEGER
+             );",
+        )?;
+        if table_exists(conn, "profiles")? && !column_exists(conn, "profiles", "proxy_profile_id")? {
+            conn.execute_batch("ALTER TABLE profiles ADD COLUMN proxy_profile_id TEXT;")?;
         }
     }
 
