@@ -4,6 +4,7 @@ import {
   collectNoteTags,
   createNoteSaveQueue,
   draftToNote,
+  extractNoteOutline,
   filterNotes,
   matchesNoteSearch,
   noteSummary,
@@ -136,5 +137,26 @@ describe("notesModel", () => {
     queue.cancel();
     await vi.advanceTimersByTimeAsync(600);
     expect(saved).toHaveLength(1);
+  });
+});
+
+describe("extractNoteOutline", () => {
+  it("提取各级标题与行号，忽略非标题行", () => {
+    const outline = extractNoteOutline("# 顶部\n正文\n## 二级\n### 三级 ###");
+    expect(outline).toEqual([
+      { level: 1, text: "顶部", line: 0 },
+      { level: 2, text: "二级", line: 2 },
+      { level: 3, text: "三级", line: 3 },
+    ]);
+  });
+
+  it("跳过围栏代码块中的 # 行", () => {
+    const outline = extractNoteOutline("# A\n```\n# 注释\n```\n## B");
+    expect(outline.map((item) => item.text)).toEqual(["A", "B"]);
+  });
+
+  it("空内容与纯 # 返回空数组", () => {
+    expect(extractNoteOutline("")).toEqual([]);
+    expect(extractNoteOutline("#\n##")).toEqual([]);
   });
 });

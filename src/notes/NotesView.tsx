@@ -24,6 +24,7 @@ import {
   collectNoteTags,
   createNoteSaveQueue,
   draftToNote,
+  extractNoteOutline,
   filterNotes,
   findProfileForHostLink,
   noteSummary,
@@ -81,6 +82,7 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
   const [tagFilter, setTagFilter] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [mode, setMode] = useState<"edit" | "preview">("edit");
+  const [outlineOn, setOutlineOn] = useState(true);
   const [hostPicker, setHostPicker] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -389,6 +391,28 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
     () => filterNotes(notes, { query, tag: tagFilter, group: groupFilter }),
     [notes, query, tagFilter, groupFilter],
   );
+  const outline = useMemo(
+    () => extractNoteOutline(draft?.content ?? ""),
+    [draft?.content],
+  );
+
+  const jumpToLine = useCallback(
+    (line: number) => {
+      if (!draft) return;
+      if (mode !== "edit") setMode("edit");
+      const el = contentRef.current;
+      if (!el) return;
+      const index = draft.content
+        .split(/\r?\n/)
+        .slice(0, line)
+        .reduce((sum, text) => sum + text.length + 1, 0);
+      el.focus();
+      el.setSelectionRange(index, index);
+      const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 20;
+      el.scrollTop = Math.max(0, line * lineHeight - lineHeight * 2);
+    },
+    [draft, mode],
+  );
 
   return (
     <div className="notes-page">
@@ -615,6 +639,14 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
                 >
                   预览
                 </button>
+                <button
+                  type="button"
+                  className={`notes-mode-btn${outlineOn ? " active" : ""}`}
+                  title={outlineOn ? "隐藏大纲" : "显示大纲"}
+                  onClick={() => setOutlineOn((prev) => !prev)}
+                >
+                  大纲
+                </button>
               </div>
               {mode === "edit" && (
                 <div className="notes-toolbar">
@@ -664,23 +696,41 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
               </div>
             )}
 
-            {mode === "edit" ? (
-              <textarea
-                ref={contentRef}
-                className="notes-content"
-                value={draft.content}
-                onChange={(e) => patchDraft({ content: e.target.value })}
-                placeholder="正文（Markdown 原文）"
-                spellCheck={false}
-              />
-            ) : (
-              <div className="notes-preview">
-                <MarkdownPreview
-                  content={draft.content}
-                  onOpenHostHref={onOpenHost ? handleHostHref : undefined}
+            <div className="notes-body">
+              {outlineOn && outline.length > 0 && (
+                <aside className="notes-outline">
+                  {outline.map((item) => (
+                    <button
+                      key={`${item.line}-${item.text}`}
+                      type="button"
+                      className="notes-outline-item"
+                      style={{ paddingLeft: 8 + (item.level - 1) * 12 }}
+                      title={item.text}
+                      onClick={() => jumpToLine(item.line)}
+                    >
+                      {item.text}
+                    </button>
+                  ))}
+                </aside>
+              )}
+              {mode === "edit" ? (
+                <textarea
+                  ref={contentRef}
+                  className="notes-content"
+                  value={draft.content}
+                  onChange={(e) => patchDraft({ content: e.target.value })}
+                  placeholder="正文（Markdown 原文）"
+                  spellCheck={false}
                 />
-              </div>
-            )}
+              ) : (
+                <div className="notes-preview">
+                  <MarkdownPreview
+                    content={draft.content}
+                    onOpenHostHref={onOpenHost ? handleHostHref : undefined}
+                  />
+                </div>
+              )}
+            </div>
 
             {(err || notice) && (
               <p className={`notes-message${err ? " error" : ""}`}>

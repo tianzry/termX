@@ -241,3 +241,32 @@ export function createNoteSaveQueue(
     },
   };
 }
+
+export interface NoteOutlineItem {
+  level: number;
+  text: string;
+  /** 0 基行号，用于编辑器跳转。 */
+  line: number;
+}
+
+/** 提取 Markdown 标题大纲（跳过 ``` / ~~~ 围栏代码块）；对齐 Netcatty NoteOutline。 */
+export function extractNoteOutline(content: string): NoteOutlineItem[] {
+  const items: NoteOutlineItem[] = [];
+  let fence: string | null = null;
+  const lines = content.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      fence = fence === null ? marker : fence === marker ? null : fence;
+      continue;
+    }
+    if (fence) continue;
+    const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading && heading[2].trim()) {
+      items.push({ level: heading[1].length, text: heading[2].trim(), line: i });
+    }
+  }
+  return items;
+}

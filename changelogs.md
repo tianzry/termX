@@ -3892,3 +3892,26 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `cargo check --features server` ✓（4 个既有 warning）
 - `cargo test --lib`：874 ✓
 - debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：脚本页 5 条 / 2 个分组 / 1 个命名分组显示「重命名 / 删除分组」→ 新建片段侧栏标题与 9 个字段 → 点击「重命名」弹出模态，标题「重命名分组」，输入预填 `ops` ✓
+
+## 2026-11-04 — 全应用逐功能比对第八轮（笔记）
+
+对照 `Netcatty/components/notes/NotesManager.tsx`、`NoteToolbar.tsx`、`NoteOutline.tsx`、`NoteTitleInput.tsx`、`NoteSourceEditor.tsx`、`NoteExportMenu.tsx`、`noteClipboardPaste.ts`、`noteImageLayout.ts`、`noteCodeTooltips.ts`、`noteMathRenderer.ts`、`components/host/HostNotesEditor.tsx` 与本项目 `src/notes/NotesView.tsx`、`notesModel.ts`、`MarkdownPreview.tsx`、`markdownModel.ts` 比对。
+
+| 项 | Netcatty | termX 本轮前 | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 大纲（标题层级导航） | `NoteOutline` 侧栏，点击跳转 | 无 | 交互 | 新增「大纲」按钮 + 侧栏：`extractNoteOutline` 解析 1–6 级标题、跳过 ``` / ~~~ 围栏代码块、按层级缩进；点击定位到编辑器对应行（预览态自动切回原文） |
+| 富文本编辑器与语法高亮（MDXEditor） | 有 | 等宽 textarea | 视觉 | 未实现（不引入 MDXEditor 依赖，保持零依赖策略），登记待人工 |
+| 格式工具栏全量（链接/图片/表格/数学/删除线/撤销） | 约 20 项 | 8 项（H1/H2/加粗/斜体/列表/引用/代码） | 交互 | 未实现，登记待人工 |
+| 源文件模式切换（NoteSourceEditor） | 有 | 无（原文即 textarea） | — | 差异化实现，无需改 |
+| 导出菜单（Markdown / HTML / PDF / 批量） | 有 | 当前 `.md` + 全部目录导出 | 交互 | PDF/HTML 未实现，登记待人工 |
+| 图片粘贴/布局、代码块 tooltip、数学渲染 | 有 | 无 | 视觉 | 未实现，登记待人工 |
+| 主机级笔记（HostNotesEditor / HostNotesIndicator） | 有（主机卡片显示笔记图标） | 无 | 行为 | 未实现，登记待人工 |
+| 搜索/分组/标签筛选、置顶、CRUD、主机深链、保存防抖 | 有 | 有 | — | 复核通过 |
+
+### 门禁
+
+- `npm run test:run`：31 文件 / 391 用例 ✓（新增 3 条大纲解析用例）
+- `npm run build` ✓
+- `cargo check --features server` ✓（4 个既有 warning）
+- `cargo test --lib`：874 ✓
+- debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：进入笔记页 → 有编辑器与「大纲」按钮 → 注入 `# 标题A / ## 标题B` 后大纲出现两项（层级缩进）→ 点击首项后编辑器选区回到行首（line 0）✓
