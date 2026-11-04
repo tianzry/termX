@@ -30,6 +30,10 @@ export function KeychainView() {
   const [dialog, setDialog] = useState<DialogState>(null);
   // null = 尚未取到（契约上后端不抛错，仅极端情况如命令未注册兜底）。
   const [agent, setAgent] = useState<SshAgentStatus | null>(null);
+  const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -110,12 +114,18 @@ export function KeychainView() {
   };
 
   const remove = (e: SshFileKeyEntry) => {
-    if (!window.confirm(`删除密钥 ${e.name}？将移除 ~/.ssh/${e.name} 与同名 .pub，不可恢复。`)) return;
+    setConfirmDelete(e.name);
+  };
+
+  const confirmRemove = () =>
     void run(async () => {
-      await api.keychainDeleteFileKey(e.name);
+      const name = confirmDelete;
+      if (!name) return;
+      await api.keychainDeleteFileKey(name);
+      setConfirmDelete(null);
+      setSelected(null);
       await refresh();
     });
-  };
 
   const setDefault = (e: SshFileKeyEntry) =>
     void run(async () => {
@@ -125,6 +135,15 @@ export function KeychainView() {
     });
 
   const agentText = agent ? describeAgentStatus(agent) : null;
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? entries.filter((e) =>
+        [e.name, e.fingerprint, keyTypeLabel(e.key_type), e.path].some((v) =>
+          v.toLowerCase().includes(q),
+        ),
+      )
+    : entries;
+  const current = selected ? (entries.find((e) => e.name === selected) ?? null) : null;
 
   return (
     <div className="kc-file-pane">
@@ -154,8 +173,29 @@ export function KeychainView() {
       <div className="kc-file-toolbar">
         <div className="kc-file-title">
           系统密钥<span className="kc-file-sub">~/.ssh</span>
+          <span className="kc-file-sub">共 {entries.length} 项</span>
         </div>
         <div className="kc-file-actions">
+          <input
+            className="kc-key-search"
+            value={search}
+            onChange={(ev) => setSearch(ev.target.value)}
+            placeholder="搜索名称 / 指纹 / 类型"
+          />
+          <button
+            className={viewMode === "list" ? "active" : ""}
+            aria-pressed={viewMode === "list"}
+            onClick={() => setViewMode("list")}
+          >
+            列表
+          </button>
+          <button
+            className={viewMode === "grid" ? "active" : ""}
+            aria-pressed={viewMode === "grid"}
+            onClick={() => setViewMode("grid")}
+          >
+            网格
+          </button>
           <button
             disabled={busy}
             onClick={() =>
@@ -187,12 +227,53 @@ export function KeychainView() {
       {err && <div className="kc-file-err">{err}</div>}
       {notice && <div className="kc-file-notice">{notice}</div>}
 
+      {current && (
+        <div className="kc-key-detail">
+          <div className="kc-key-detail-head">
+            <span className="kc-file-name">
+              {current.name}
+              {current.is_default && <span className="kc-file-badge">默认</span>}
+              {current.encrypted && <span className="kc-file-badge kc-file-badge-dim">加密</span>}
+            </span>
+            <button onClick={() => setSelected(null)}>关闭</button>
+          </div>
+          <div className="kc-key-detail-meta">
+            <span>类型：{keyTypeLabel(current.key_type)}</span>
+            <span>指纹：{current.fingerprint || "指纹不可得"}</span>
+            <span>路径：{current.path}</span>
+          </div>
+          <label className="kc-key-detail-label">
+            公钥
+            <textarea rows={5} readOnly value={current.public_key || "（不可得）"} />
+          </label>
+          <div className="kc-file-dialog-actions">
+            <button disabled={busy || !current.public_key} onClick={() => void copyPublic(current)}>
+              复制公钥
+            </button>
+            {!current.is_default && (
+              <button disabled={busy} onClick={() => setDefault(current)}>
+                设为默认
+              </button>
+            )}
+            <button disabled={busy} className="kc-file-danger" onClick={() => remove(current)}>
+              删除
+            </button>
+          </div>
+        </div>
+      )}
+
       {entries.length === 0 ? (
         <div className="kc-file-empty">未发现私钥。可生成新密钥或导入已有密钥。</div>
+      ) : filtered.length === 0 ? (
+        <div className="kc-file-empty">没有匹配的密钥。</div>
       ) : (
-        <div className="kc-file-list">
-          {entries.map((e) => (
-            <div key={e.name} className="kc-file-row">
+        <div className={`kc-file-list${viewMode === "grid" ? " kc-file-grid" : ""}`}>
+          {filtered.map((e) => (
+            <div
+              key={e.name}
+              className={`kc-file-row${selected === e.name ? " selected" : ""}`}
+              onClick={() => setSelected(e.name)}
+            >
               <div className="kc-file-main">
                 <span className="kc-file-name">
                   {e.name}
@@ -203,7 +284,7 @@ export function KeychainView() {
                   {keyTypeLabel(e.key_type)} · {e.fingerprint || "指纹不可得"} · {e.path}
                 </span>
               </div>
-              <div className="kc-file-row-actions">
+              <div className="kc-file-row-actions" onClick={(ev) => ev.stopPropagation()}>
                 {!e.is_default && (
                   <button disabled={busy} onClick={() => setDefault(e)}>
                     设为默认
@@ -335,6 +416,22 @@ export function KeychainView() {
               </button>
               <button disabled={busy} onClick={submitDialog}>
                 {dialog.mode === "generate" ? "生成并保存" : "导入"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmDelete && (
+        <div className="kc-file-dialog-backdrop">
+          <div className="kc-file-dialog">
+            <h3>删除密钥</h3>
+            <div className="kc-file-hint">
+              将移除 ~/.ssh/{confirmDelete} 与同名 .pub，不可恢复。
+            </div>
+            <div className="kc-file-dialog-actions">
+              <button onClick={() => setConfirmDelete(null)}>取消</button>
+              <button disabled={busy} className="kc-file-danger" onClick={confirmRemove}>
+                删除
               </button>
             </div>
           </div>

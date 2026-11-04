@@ -3843,3 +3843,27 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `cargo check --features server` ✓（4 个既有 warning）
 - `cargo test --lib`：874 ✓
 - debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测系统 tab 节顺序：软件更新 / 开机自启动 / 网络代理 / 凭据保护 / 崩溃日志 / 会话日志 / 启动与会话恢复 / SSH 深链 / JMS 深链 / 资源管理器右键菜单 / SSH 调试日志 / 全局热键与托盘 / 临时文件 / 应用锁 ✓
+
+## 2026-11-04 — 全应用逐功能比对第六轮（钥匙串）
+
+对照 `Netcatty/components/KeychainManager.tsx`、`KeychainEditPanel.tsx`、`KeychainExportPanel.tsx`、`keychain/GenerateStandardPanel.tsx`、`keychain/ImportKeyPanel.tsx`、`keychain/KeyCard.tsx`、`keychain/ViewKeyPanel.tsx` 与本项目 `src/keychain/KeychainView.tsx`、`src/domain/keychainModel.ts` 比对。
+
+| 项 | Netcatty | termX 本轮前 | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 头部搜索（名称/指纹/类型） | 有，面板打开时隐藏 | 无 | 交互 | 新增搜索框，匹配名称/指纹/类型/路径；无结果提示 |
+| 列表/网格视图切换 | 下拉切换 grid/list | 仅列表 | 视觉 | 新增「列表 / 网格」按钮（`aria-pressed`），网格卡片布局 |
+| 条目计数 | section 标题右侧计数 | 无 | 视觉 | 标题补「共 N 项」 |
+| 密钥详情面板（公钥全文/类型/指纹/路径 + 复制/设默认/删除） | 有 ViewKeyPanel | 只有行内三项操作 | 交互 | 点击行/卡片打开详情面板，公钥只读文本域 + 三个操作 |
+| 删除确认 | 应用内模态 | `window.confirm` | 交互 | 改为应用内确认弹窗，展示将删除的 `.ssh/<name>` 与 `.pub` |
+| 新建身份（identities 区、用户名+私钥） | 有，独立分区 | 无（后端无身份模型） | 行为 | 未实现，登记待人工 |
+| 证书 / 安全密钥（FIDO、resident、verify） | 有 | 后端无对应能力 | 行为 | 未实现（不放置灰控件），登记待人工 |
+| 导出到主机（选主机/文件名/位置/脚本、exportAndAttach） | 有 | 无 | 行为 | 未实现（依赖主机批量脚本通道），登记待人工 |
+| 拖拽排序、编辑面板（label/public key/certificate） | 有 | 无 | 交互 | 未实现（后端无 label 元数据），登记待人工 |
+
+### 门禁
+
+- `npm run test:run`：31 文件 / 382 用例 ✓
+- `npm run build` ✓
+- `cargo check --features server` ✓（4 个既有 warning）
+- `cargo test --lib`：874 ✓
+- debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：进入钥匙串 → 网格模式 1 张卡片、标题「共 1 项」→ 点击卡片详情面板显示 类型 Ed25519 / 指纹 SHA256:… / 路径 ~/.ssh/id_ed25519 / 公钥全文 → 搜索 `zzz` 后 0 行并显示「没有匹配的密钥。」✓
