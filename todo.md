@@ -124,6 +124,7 @@
   - 主题（浅/深/跟随系统 + 终端主题）、字体与字号、快捷键、语言（i18n）、窗口透明度。
   - 实现：`src/settings/`（settingsModel/keyBindings/i18n/settingsStore/SettingsDialog/SettingsTabs）+ 自启动命令（Windows 注册表，双注册）。
   - 已知残留（见 changelogs 2026-11-03 实机比对节）：en 字典仅 14 键、主题预设库仅内置、透明度 CSS 近似、更新器/崩溃日志等未移植。
+  - 终端 tab 置灰清理（2026-11-05，见 changelogs）：解除 `altAsMeta` / `optionArrowWordJump` / `preserveSelectionOnInput` / `oscNotifications` 四项；剩余置灰项改为逐项原因（Kitty 键盘协议、本地 ConPTY、剪贴板图片上传、clear 清回滚、提示符换行、动态标签标题、内置浏览器、本地 Shell 侧边栏）。
   - 参考：`components/settings/`、`application/state/fontStore.ts`、`customThemeStore.ts`。
 - [x] ✅ **32. 主机「测试连接」**
   - 已实现：composer 头部「测试连接」(zap) → 先落库 → `ssh_connect`，监听

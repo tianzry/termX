@@ -66,6 +66,8 @@ export interface TerminalSettings {
   cursorBarWidth: number;
   highlightCursorLine: boolean;
   altAsMeta: boolean;
+  /** macOS：Option+←/→ 发送 Meta-b / Meta-f，让 Shell 按单词跳转。 */
+  optionArrowWordJump: boolean;
   scrollOnInput: boolean;
   scrollOnOutput: boolean;
   scrollOnKeyPress: boolean;
@@ -216,6 +218,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   cursorBarWidth: 2,
   highlightCursorLine: false,
   altAsMeta: false,
+  optionArrowWordJump: false,
   scrollOnInput: true,
   scrollOnOutput: false,
   scrollOnKeyPress: false,
@@ -399,6 +402,7 @@ function normalizeTerminal(raw: unknown): TerminalSettings {
     cursorBarWidth: clampCursorBarWidth(r.cursorBarWidth),
     highlightCursorLine: pickBool(r.highlightCursorLine, d.highlightCursorLine),
     altAsMeta: pickBool(r.altAsMeta, d.altAsMeta),
+    optionArrowWordJump: pickBool(r.optionArrowWordJump, d.optionArrowWordJump),
     scrollOnInput: pickBool(r.scrollOnInput, d.scrollOnInput),
     scrollOnOutput: pickBool(r.scrollOnOutput, d.scrollOnOutput),
     scrollOnKeyPress: pickBool(r.scrollOnKeyPress, d.scrollOnKeyPress),

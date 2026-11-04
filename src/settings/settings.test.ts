@@ -43,6 +43,10 @@ describe("normalizeSettings", () => {
     expect(s.terminal.rightClickBehavior).toBe("context-menu");
     expect(s.terminal.middleClickBehavior).toBe("paste");
     expect(s.terminal.shiftEnterNewlineEnabled).toBe(true);
+    expect(s.terminal.optionArrowWordJump).toBe(false);
+    expect(normalizeSettings({ terminal: { optionArrowWordJump: true } }).terminal.optionArrowWordJump).toBe(
+      true,
+    );
   });
 
   it("旧版右键 / 中键 / 断开提示取值迁移到 Netcatty 枚举", () => {

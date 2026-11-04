@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-11-05 — P2 终端设置 tab：解除 4 项置灰 + 剩余项原因具体化
+
+- 先逐行核对终端设置 tab 的置灰项，能落地的按 Netcatty 语义实现：
+  - `altAsMeta`：解除置灰；`Terminal.tsx` 早已把它映射到 xterm `macOptionIsMeta`，只是 UI 被误置灰。
+  - `optionArrowWordJump`：模型新增字段（默认 false，`normalizeSettings` 透传）；`Terminal.tsx` 在
+    macOS 下把裸 Option+←/→ 映射为 Meta-b / Meta-f，其它修饰键组合仍走 xterm 默认。
+  - `preserveSelectionOnInput`：解除置灰；在终端 textarea 的 keydown/keypress（capture）记录选区，
+    microtask 后若选区已被 xterm 清除则恢复（行号越界保护同 Netcatty）。
+  - `oscNotifications`：解除置灰；新增 `src/terminal/oscNotifications.ts`（OSC 9 / 777 notify /
+    99 分片组装、文本清洗、标题回落、`off/unfocused/always` 判定，6 例单测），`Terminal.tsx`
+    注册三个 OSC handler 并用 Web Notification 弹窗；`unfocused` 以窗口焦点为准。
+- 确实做不了的仍置灰，但把通用「未移植」换成逐项原因（中英双语新键
+  `settings.terminal.unsupported.*`）：Kitty 键盘协议（xterm.js 无 CSI-u 编码）、
+  `shiftEnterForceText`（无本地 ConPTY）、剪贴板图片上传（缺 SFTP 回填通道）、
+  `clearWipesScrollback`（xterm 无只清视口的 API）、`forcePromptNewLine`（无提示符状态跟踪）、
+  动态标签标题（无 OSC 0/2→标签通道）、链接打开方式（无内置浏览器）、本地 Shell 侧边栏（无本地 Shell 会话）。
+- 验证（debug 实机 + CDP，`evidence/settings-terminal-apply/verify.json` + 同名 png）：
+  - apply：四项控件 `disabled=false`，点击后 `altAsMeta/optionArrowWordJump/preserveSelectionOnInput=true`、
+    `oscNotifications=unfocused`，`get_setting settings.center.v1` 读回一致。
+  - 杀掉进程重启后再打开设置：四项仍为上述值且控件可用（持久化生效）。
+  - 门禁：`npm run test:run` 526✓ / 50 文件，`npm run build` ✓。
+
+---
+
+
 ## 2026-11-05 — P2 监控扩项（逐核 CPU / 磁盘 I/O / Top 进程）
 
 - 后端 `commands/monitor.rs`：仍是一条只读 shell 脚本 + 一次 `exec_once`，新增三段真实来源采集：

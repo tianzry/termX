@@ -772,7 +772,6 @@ export function TerminalTab() {
   const fonts = useFontList();
   const term = s.terminal;
   const patch = (p: Partial<typeof term>) => updateSettings({ terminal: { ...term, ...p } });
-  const unsupported = t("settings.terminal.row.unsupported");
 
   const fontOptions = [
     { value: "auto", label: t("settings.terminal.font.auto") },
@@ -1000,13 +999,16 @@ export function TerminalTab() {
       </Section>
 
       <Section title={t("settings.terminal.section.keyboard")}>
-        <Row title={t("settings.terminal.keyboard.altAsMeta")} desc={`${t("settings.terminal.keyboard.altAsMeta.desc")} ${unsupported}`}>
-          <Toggle disabled checked={term.altAsMeta} onChange={(v) => patch({ altAsMeta: v })} />
+        <Row title={t("settings.terminal.keyboard.altAsMeta")} desc={t("settings.terminal.keyboard.altAsMeta.desc")}>
+          <Toggle checked={term.altAsMeta} onChange={(v) => patch({ altAsMeta: v })} />
         </Row>
-        <Row title={t("settings.terminal.keyboard.optionArrowWordJump")} desc={`${t("settings.terminal.keyboard.optionArrowWordJump.desc")} ${unsupported}`}>
-          <Toggle disabled checked={false} onChange={() => {}} />
+        <Row title={t("settings.terminal.keyboard.optionArrowWordJump")} desc={t("settings.terminal.keyboard.optionArrowWordJump.desc")}>
+          <Toggle
+            checked={term.optionArrowWordJump}
+            onChange={(v) => patch({ optionArrowWordJump: v })}
+          />
         </Row>
-        <Row title={t("settings.terminal.keyboard.kittyProtocol")} desc={`${t("settings.terminal.keyboard.kittyProtocol.desc")} ${unsupported}`}>
+        <Row title={t("settings.terminal.keyboard.kittyProtocol")} desc={`${t("settings.terminal.keyboard.kittyProtocol.desc")} ${t("settings.terminal.unsupported.kitty")}`}>
           <Toggle disabled checked={false} onChange={() => {}} />
         </Row>
       </Section>
@@ -1090,7 +1092,7 @@ export function TerminalTab() {
         </Row>
         <Row
           title={t("settings.terminal.behavior.autoUploadClipboardImage")}
-          desc={`${t("settings.terminal.behavior.autoUploadClipboardImage.desc")} ${unsupported}`}
+          desc={`${t("settings.terminal.behavior.autoUploadClipboardImage.desc")} ${t("settings.terminal.unsupported.imageUpload")}`}
         >
           <Toggle disabled checked={false} onChange={() => {}} />
         </Row>
@@ -1134,7 +1136,7 @@ export function TerminalTab() {
         </Row>
         <Row
           title={t("settings.terminal.behavior.shiftEnterForceText")}
-          desc={`${t("settings.terminal.behavior.shiftEnterForceText.desc")} ${unsupported}`}
+          desc={`${t("settings.terminal.behavior.shiftEnterForceText.desc")} ${t("settings.terminal.unsupported.win32")}`}
         >
           <Toggle
             disabled
@@ -1144,19 +1146,22 @@ export function TerminalTab() {
         </Row>
         <Row
           title={t("settings.terminal.behavior.clearWipesScrollback")}
-          desc={`${t("settings.terminal.behavior.clearWipesScrollback.desc")} ${unsupported}`}
+          desc={`${t("settings.terminal.behavior.clearWipesScrollback.desc")} ${t("settings.terminal.unsupported.clearScrollback")}`}
         >
           <Toggle disabled checked={term.clearWipesScrollback} onChange={() => {}} />
         </Row>
         <Row
           title={t("settings.terminal.behavior.preserveSelectionOnInput")}
-          desc={`${t("settings.terminal.behavior.preserveSelectionOnInput.desc")} ${unsupported}`}
+          desc={t("settings.terminal.behavior.preserveSelectionOnInput.desc")}
         >
-          <Toggle disabled checked={false} onChange={() => {}} />
+          <Toggle
+            checked={term.preserveSelectionOnInput}
+            onChange={(v) => patch({ preserveSelectionOnInput: v })}
+          />
         </Row>
         <Row
           title={t("settings.terminal.behavior.forcePromptNewLine")}
-          desc={`${t("settings.terminal.behavior.forcePromptNewLine.desc")} ${unsupported}`}
+          desc={`${t("settings.terminal.behavior.forcePromptNewLine.desc")} ${t("settings.terminal.unsupported.promptNewLine")}`}
         >
           <Toggle disabled checked={false} onChange={() => {}} />
         </Row>
@@ -1173,7 +1178,7 @@ export function TerminalTab() {
         </Row>
         <Row
           title={t("settings.terminal.behavior.dynamicTabTitle")}
-          desc={`${t("settings.terminal.behavior.dynamicTabTitle.desc")} ${unsupported}`}
+          desc={`${t("settings.terminal.behavior.dynamicTabTitle.desc")} ${t("settings.terminal.unsupported.dynamicTitle")}`}
         >
           <Select
             disabled
@@ -1188,12 +1193,11 @@ export function TerminalTab() {
         </Row>
         <Row
           title={t("settings.terminal.behavior.oscNotifications")}
-          desc={`${t("settings.terminal.behavior.oscNotifications.desc")} ${unsupported}`}
+          desc={t("settings.terminal.behavior.oscNotifications.desc")}
         >
           <Select
-            disabled
             value={term.oscNotifications}
-            onChange={() => {}}
+            onChange={(v) => patch({ oscNotifications: v as typeof term.oscNotifications })}
             options={[
               { value: "always", label: t("settings.terminal.behavior.oscNotifications.always") },
               { value: "unfocused", label: t("settings.terminal.behavior.oscNotifications.unfocused") },
@@ -1215,7 +1219,7 @@ export function TerminalTab() {
         </Row>
         <Row
           title={t("settings.terminal.behavior.linkBrowser")}
-          desc={`${t("settings.terminal.behavior.linkBrowser.desc")} ${unsupported}`}
+          desc={`${t("settings.terminal.behavior.linkBrowser.desc")} ${t("settings.terminal.unsupported.linkBrowser")}`}
         >
           <Select
             disabled

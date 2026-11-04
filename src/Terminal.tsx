@@ -13,6 +13,14 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { ImageAddon } from "@xterm/addon-image";
 import { resolveInlineImageAddonOptions } from "./terminal/inlineImages";
 import { resolveCursorLineHighlightBackground } from "./terminal/cursorLineHighlight";
+import {
+  Osc99Assembler,
+  parseOsc777Payload,
+  parseOsc9Payload,
+  resolveOscNotificationPresentation,
+  shouldShowOscNotification,
+  type OscNotification,
+} from "./terminal/oscNotifications";
 import "@xterm/xterm/css/xterm.css";
 import * as api from "./backend/client";
 import { isFindShortcut, linkModifierAllows } from "./terminal/linkActivation";
@@ -42,6 +50,10 @@ interface Props {
 }
 
 const DEFAULT_FONT_STACK = "Menlo, Monaco, Consolas, 'Courier New', monospace";
+
+/** Option+方向键映射仅对 macOS 生效（对照 Netcatty optionArrowWordJump 的 isMac 门控）。 */
+const IS_MAC_PLATFORM =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform);
 
 /** 终端主字体解析：auto → 默认栈；否则选中字体 + CJK 回退字体。 */
 function resolveFontFamily(s: AppSettings): string {
@@ -421,6 +433,20 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
         return false;
       }
       if (
+        IS_MAC_PLATFORM &&
+        s.terminal.optionArrowWordJump &&
+        e.type === "keydown" &&
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        (e.key === "ArrowLeft" || e.key === "ArrowRight")
+      ) {
+        // Meta-b / Meta-f：readline/zle 按单词移动光标。
+        onDataRef.current?.(e.key === "ArrowLeft" ? "\u001bb" : "\u001bf");
+        return false;
+      }
+      if (
         s.terminal.shiftEnterNewlineEnabled &&
         e.type === "keydown" &&
         e.key === "Enter" &&
@@ -478,6 +504,24 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
     };
     textarea?.addEventListener("paste", onPaste, true);
 
+    // 输入时保留选区（对照 Netcatty preserveSelectionOnInput）：xterm 在键入后
+    // 会清掉选区，这里在两个事件后用一个 microtask 把选区放回去。
+    const preserveSelectionOnInput = () => {
+      const s = getSettings();
+      if (!s.terminal.preserveSelectionOnInput || !term.hasSelection()) return;
+      const sel = term.getSelectionPosition();
+      if (!sel) return;
+      const length = (sel.end.y - sel.start.y) * term.cols + (sel.end.x - sel.start.x);
+      queueMicrotask(() => {
+        if (term.hasSelection()) return;
+        // 回滚缓冲裁剪后旧行号可能越界。
+        if (sel.start.y >= term.buffer.active.length) return;
+        term.select(sel.start.x, sel.start.y, length);
+      });
+    };
+    textarea?.addEventListener("keydown", preserveSelectionOnInput, true);
+    textarea?.addEventListener("keypress", preserveSelectionOnInput, true);
+
     // OSC 52 剪贴板（远程程序读写本机剪贴板）。
     const osc52 = term.parser.registerOscHandler(52, (payload) => {
       const s = getSettings();
@@ -519,6 +563,45 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
     });
     disposables.push(osc52);
 
+    // OSC 9 / 777 / 99 桌面通知（对照 Netcatty terminalOscNotifications）。
+    const emitOscNotification = (notification: OscNotification | null) => {
+      if (!notification) return;
+      const s = getSettings();
+      const windowFocused = typeof document !== "undefined" && document.hasFocus();
+      if (!shouldShowOscNotification(s.terminal.oscNotifications, windowFocused)) return;
+      const { title, body } = resolveOscNotificationPresentation(notification);
+      if (!body) return;
+      try {
+        if (typeof Notification === "undefined") return;
+        if (Notification.permission === "granted") {
+          new Notification(title, { body });
+        } else if (Notification.permission !== "denied") {
+          void Notification.requestPermission()
+            .then((permission) => {
+              if (permission === "granted") new Notification(title, { body });
+            })
+            .catch(() => {});
+        }
+      } catch {
+        // WebView 不支持桌面通知时静默跳过，不影响终端本身。
+      }
+    };
+    const osc99Assembler = new Osc99Assembler();
+    disposables.push(
+      term.parser.registerOscHandler(9, (data) => {
+        emitOscNotification(parseOsc9Payload(data));
+        return true;
+      }),
+      term.parser.registerOscHandler(777, (data) => {
+        emitOscNotification(parseOsc777Payload(data));
+        return true;
+      }),
+      term.parser.registerOscHandler(99, (data) => {
+        emitOscNotification(osc99Assembler.consume(data));
+        return true;
+      }),
+    );
+
     // 设置变更（字体 / 光标 / 主题等）实时同步到已打开的终端。
     const unsubSettings = subscribeSettings(() => {
       const s = getSettings();
@@ -546,6 +629,8 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       unsubSettings();
       ro.disconnect();
       textarea?.removeEventListener("paste", onPaste, true);
+      textarea?.removeEventListener("keydown", preserveSelectionOnInput, true);
+      textarea?.removeEventListener("keypress", preserveSelectionOnInput, true);
       highlighter.dispose();
       disposables.forEach((d) => d.dispose());
       term.dispose();
