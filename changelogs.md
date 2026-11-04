@@ -3937,3 +3937,25 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `cargo check --features server` ✓（4 个既有 warning）
 - `cargo test --lib`：874 ✓
 - debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：进入「日志」页 11 条记录 → 打开首条 → 点两次 `A+` 后内容区 `font-size` 13px → 15px，控件标签同步 15px ✓
+
+## 2026-11-04 — 全应用逐功能比对第十轮（已知主机）
+
+对照 `Netcatty/components/KnownHostsManager.tsx` 与本项目 `VaultView.tsx` 已知主机面板（`kh*` 状态、`khCard`、扫描/导入/删除、搜索/排序/网格列表切换）逐项复核。此前该面板已按 1:1 移植，本轮只做对照与运行复核，无代码改动。
+
+| 项 | Netcatty | termX | 级别 | 结论 |
+| --- | --- | --- | --- | --- |
+| 搜索（主机名/密钥指纹/注释） | 有（`useDeferredValue`） | 有 | — | 通过 |
+| 网格 / 列表视图与排序（manual/name/added/lastUsed） | 有 | 有（持久化 `termx.vault.khView.v1`） | — | 通过 |
+| 扫描系统 known_hosts / 导入文件 / 删除确认 | 有 | 有（后端 `known_hosts_scan_system/import_file/remove`） | — | 通过 |
+| 导入时过滤公共服务器（github 等）并提示数量 | 有 | 导入直接合并，不区分公共主机 | 行为 | 未实现（过滤需后端在合并前判定），登记待人工 |
+| 渲染上限（RENDER_LIMIT + 加载更多） | 有 | 一次渲染全部（本地文件通常仅数十条） | — | 数据量小，不做分页 |
+| 条目字段（host:port / 密钥类型 / 指纹 / 注释 / 添加时间） | 有 | 有 | — | 通过 |
+| 空态与无匹配提示 | 有 | 有 | — | 通过 |
+
+### 门禁
+
+- `npm run test:run`：31 文件 / 391 用例 ✓
+- `npm run build` ✓
+- `cargo check --features server` ✓（4 个既有 warning）
+- `cargo test --lib`：874 ✓
+- debug 实例 CDP 实测：进入「已知主机」→ 6 条卡片，含扫描/导入按钮与搜索框 → 搜索 `zzz` 后 0 条并显示空态 ✓
