@@ -201,6 +201,12 @@ const ERROR_MESSAGES: Record<
   serde_failed: (p) => `数据解析失败：${str(p, "err")}`,
   fwd_session_closed: () => "端口转发会话已关闭。",
   fwd_rule_stopped_unexpectedly: () => "端口转发规则意外停止。",
+  // ── 更新检查 ──
+  update_invalid_endpoint: () => "更新源地址无效（需要 http/https URL）。",
+  update_http_failed: () => "无法访问更新源，请检查网络或地址。",
+  update_http_status: () => "更新源返回错误状态码。",
+  update_invalid_json: () => "更新源返回的 latest.json 格式无效。",
+  update_missing_version: () => "latest.json 缺少版本号。",
 };
 
 /**

@@ -716,6 +716,31 @@ export async function appVersion(): Promise<string> {
   return getVersion();
 }
 
+/** `check_update` 返回：只读检查，不下载 / 不安装。 */
+export interface UpdateCheckResult {
+  current_version: string;
+  latest_version: string;
+  available: boolean;
+  platform_supported: boolean;
+  platform: string;
+  notes: string | null;
+  pub_date: string | null;
+  url: string | null;
+  signature: string | null;
+  endpoint: string;
+}
+
+/**
+ * 检查更新：读取 Tauri updater 兼容的 `latest.json` 并比较版本。
+ * `endpoint` 为空时走后端默认源（可被 `TERMX_UPDATE_ENDPOINT` 覆盖）。
+ */
+export function checkUpdate(
+  endpoint: string | null,
+  currentVersion: string,
+): Promise<UpdateCheckResult> {
+  return invoke<UpdateCheckResult>("check_update", { endpoint, currentVersion });
+}
+
 // ── 事件订阅 ──────────────────────────────────────────────
 
 export function onTerminalData(

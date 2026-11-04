@@ -8,14 +8,17 @@
 import { useEffect, useRef, useState } from "react";
 import {
   appVersion,
+  checkUpdate,
   getAutoLaunch,
   listFonts,
   secretBackend,
   setAutoLaunch,
   setSetting,
   type FontInfo,
+  type UpdateCheckResult,
 } from "../backend/client";
 import { Icon } from "../ui/icons";
+import { userVisibleError } from "../domain/sshErrors";
 import { settingsT } from "./i18n";
 import {
   BINDING_CATEGORY_ORDER,
@@ -379,12 +382,30 @@ export function ApplicationTab() {
   const t = useT();
   const [version, setVersion] = useState("—");
   const [copied, setCopied] = useState<string | null>(null);
+  const [checkState, setCheckState] = useState<{
+    status: "idle" | "checking" | "done" | "error";
+    result?: UpdateCheckResult;
+    error?: string;
+  }>({ status: "idle" });
 
   useEffect(() => {
     appVersion()
       .then(setVersion)
       .catch(() => setVersion("—"));
   }, []);
+
+  const check = async () => {
+    setCheckState({ status: "checking" });
+    try {
+      const result = await checkUpdate(null, version);
+      setCheckState({ status: "done", result });
+    } catch (e) {
+      setCheckState({
+        status: "error",
+        error: userVisibleError(e instanceof Error ? e.message : String(e)),
+      });
+    }
+  };
 
   const copy = (key: string, url: string) => {
     navigator.clipboard
@@ -396,15 +417,63 @@ export function ApplicationTab() {
       .catch(() => {});
   };
 
+  const updateStatus =
+    checkState.status === "done" && checkState.result
+      ? checkState.result.available
+        ? `${t("settings.update.available")} · v${checkState.result.latest_version}`
+        : t("settings.update.upToDate")
+      : null;
+
   return (
     <div>
       <Section title={t("settings.update.title")}>
         <Row title={t("settings.update.currentVersion")}>
           <span className="nc-set-value">{version}</span>
         </Row>
-        <Row title={t("settings.application.checkUpdates")}>
-          <button className="nc-set-btn" disabled title={t("settings.update.notPorted")}>
-            {t("settings.application.checkUpdates")}
+        <Row title={t("settings.application.checkUpdates")} desc={updateStatus ?? undefined}>
+          <button
+            className="nc-set-btn"
+            disabled={checkState.status === "checking" || version === "—"}
+            onClick={() => void check()}
+          >
+            {checkState.status === "checking"
+              ? t("settings.update.checking")
+              : t("settings.application.checkUpdates")}
+          </button>
+        </Row>
+        {checkState.status === "done" && checkState.result && (
+          <>
+            <Row title={t("settings.update.latestVersion")}>
+              <span className="nc-set-value">v{checkState.result.latest_version}</span>
+            </Row>
+            <Row
+              title={t("settings.update.platform")}
+              desc={
+                checkState.result.platform_supported
+                  ? undefined
+                  : t("settings.update.noPlatform")
+              }
+            >
+              <span className="nc-set-value">{checkState.result.platform}</span>
+            </Row>
+            {checkState.result.notes && (
+              <Row title={t("settings.update.notes")}>
+                <span className="nc-set-value">{checkState.result.notes}</span>
+              </Row>
+            )}
+          </>
+        )}
+        {checkState.status === "error" && (
+          <Row title={t("settings.update.checkFailed")} desc={checkState.error}>
+            <span />
+          </Row>
+        )}
+        <Row
+          title={t("settings.update.install")}
+          desc={t("settings.update.installMissing")}
+        >
+          <button className="nc-set-btn" disabled>
+            {t("settings.update.install")}
           </button>
         </Row>
       </Section>

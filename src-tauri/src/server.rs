@@ -1778,6 +1778,11 @@ async fn dispatch_async(
         "fetch_latest_release_tag" => {
             ok(crate::commands::update::fetch_latest_release_tag(arg(&args, "repo")?).await)
         }
+        "check_update" => ok(crate::commands::update::check_update(
+            optional_string_arg(&args, "endpoint")?,
+            arg(&args, "currentVersion")?,
+        )
+        .await),
 
         // ---- fonts (fontdb scan; the impl runs it on a blocking thread) ----
         "list_fonts" => ok(Ok::<_, AppError>(

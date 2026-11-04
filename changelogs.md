@@ -4569,4 +4569,38 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 自动登录写入不走前端 `onData`，因此不会触发本地回显；密码也不会被本地回显到屏幕（服务端是否回显由 WILL ECHO 决定）。
 - 真实 Telnet 设备未实测（本机无硬件）；Netcatty 完成后的启动命令回调在 termX 无对应延迟命令通道，未接。
 
+---
+
+## 2026-11-05 — P1 #21 自动更新（检查链路；安装置灰）
+
+### 可行性判定
+
+- 仓库现状：只有 `fetch_latest_release_tag`（GitHub HTML 重定向取 tag）；**没有** `tauri-plugin-updater`、`plugins.updater.pubkey`、update endpoint 配置，也没有已签名安装包 / `latest.json` 的 CI 产物。按“不造假实现”原则：检查更新做成真实 HTTP + 版本比较；下载安装保持置灰并写明缺什么、怎么补。
+
+### 修改点
+
+1. **后端 `check_update`**（`src-tauri/src/commands/update.rs`）：GET Tauri updater 兼容的 `latest.json`；仅允许 http/https；按 `platform_key()`（windows-x86_64 / windows-aarch64 / darwin-* / linux-*）取 `platforms` 条目；`version_gt` 支持 `v` 前缀与预发布比较；返回 `current_version / latest_version / available / platform_supported / platform / notes / pub_date / url / signature / endpoint`。只读，不下载、不安装。
+2. **源地址**：默认 `https://github.com/tianzry/termX/releases/latest/download/latest.json`（CI 产出后即生效）；`TERMX_UPDATE_ENDPOINT` 环境变量可覆盖，便于本地 / 自建源联调。`lib.rs` generate_handler 与 `server.rs` headless 转发双注册。
+3. **前端**：`client.ts` 新增 `checkUpdate` / `UpdateCheckResult`；设置「应用 → 软件更新」由占位禁用改为真实检查，展示当前版本、检查状态、发现新版本 / 已是最新、最新版本、发布平台、更新说明与错误文案；`下载并安装` 保持置灰，行内提示缺少签名公钥 / endpoint / CI 产物。新增 5 个 update 错误码的 i18n 映射。
+4. **单测**：版本比较（v 前缀、预发布、跨段）、`latest.json` 形状解析、平台键命名。
+
+### 验证
+
+- 本地 `python -m http.server 8081` 提供 `evidence/updates/latest.json`（v0.0.2，windows-x86_64 / darwin-aarch64 产物）与 mock `.nsis.zip`；应用以 `TERMX_UPDATE_ENDPOINT=http://127.0.0.1:8081/latest.json` 启动，设置 → 应用 → 检查更新后显示：当前 0.0.1、「发现新版本 · v0.0.2」、最新版本 v0.0.2、平台 windows-x86_64、说明文本；安装按钮置灰且显示缺失原因。
+- 证据：`evidence/update-check.json`、`update-check-before.png`、`update-check-result.png`。
+- 门禁：前端 451✓ / `npm run build` ✓ / `cargo check --features server` ✓ / `cargo test --lib` 890✓。
+
+### 未完成边界（诚实说明）
+
+- 未接 `tauri-plugin-updater`，因此没有真实的下载 / 签名校验 / 安装 / 重启链路；本地 mock 包不是可执行安装器，签名是占位串。
+
+### 恢复路径（后续要做真自动更新时的步骤）
+
+1. **生成签名密钥**（私钥不入库）：`npx tauri signer generate -w ~/.tauri/termX.key`，得到 `termX.key`（私钥）与 `termX.key.pub`（公钥）。
+2. **写入公钥**：`src-tauri/tauri.conf.json` → `plugins.updater.pubkey` = 公钥内容；`bundle.createUpdaterArtifacts` = `true`。
+3. **安装插件**：`npm i @tauri-apps/plugin-updater` + `cargo add tauri-plugin-updater`；`lib.rs` 注册 `.plugin(tauri_plugin_updater::Builder::new().build())`；capabilities 加 `updater:default`。
+4. **CI 产物**：release 构建时用 `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 签名，生成 `.nsis.zip` / `.app.tar.gz` 及签名，汇总 `latest.json` 上传为 release 资产（路径与默认 endpoint 对应）。
+5. **前端接入**：`check()` 后显示版本与说明，`update.downloadAndInstall(cb)` 接进度条与重启按钮；错误码沿用 update_* 系列。
+
+
 

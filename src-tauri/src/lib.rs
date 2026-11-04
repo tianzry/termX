@@ -398,6 +398,7 @@ pub fn run() {
             commands::external::open_external_url,
             // update check (cross-platform — separate mod from window)
             commands::update::fetch_latest_release_tag,
+            commands::update::check_update,
             // sync
             commands::sync::export_config,
             commands::sync::import_config,
