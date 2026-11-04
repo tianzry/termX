@@ -204,6 +204,36 @@ pub fn merge_import(db: &Db, ss: &dyn SecretStore, data_dir: &Path, data: &Value
             }
         }
     }
+    if let Some(arr) = data["profile_env_vars"].as_array() {
+        for item in arr {
+            let Some(profile_id) = item["profile_id"].as_str() else {
+                errors.push(ImportError {
+                    kind: "profile_env",
+                    name: None,
+                    code: "parse_failed".into(),
+                });
+                continue;
+            };
+            match serde_json::from_value::<Vec<crate::db::profile_env::EnvVar>>(
+                item["vars"].clone(),
+            ) {
+                Ok(vars) => {
+                    if let Err(e) = crate::db::profile_env::replace(db, profile_id, &vars) {
+                        errors.push(ImportError {
+                            kind: "profile_env",
+                            name: Some(profile_id.to_string()),
+                            code: e.code().to_string(),
+                        });
+                    }
+                }
+                Err(_) => errors.push(ImportError {
+                    kind: "profile_env",
+                    name: Some(profile_id.to_string()),
+                    code: "parse_failed".into(),
+                }),
+            }
+        }
+    }
     if let Some(arr) = data["serial_profiles"].as_array() {
         for item in arr {
             match serde_json::from_value::<SerialProfile>(item.clone()) {
@@ -695,6 +725,17 @@ fn build_payload_inner(
     // were removed: "sync everything" is now expressed as "select all groups".
     let mut profiles = profile::list(db)?;
     retain_by_groups(&mut profiles, prefs, |p| p.group_id.as_deref());
+    // 主机级环境变量跟 profile 走；独立键避免改变 profiles 的 JSON 结构
+    // （旧客户端能继续解析，新客户端按 profile_id 回填）。
+    let env_payload: Vec<serde_json::Value> = profiles
+        .iter()
+        .map(|p| {
+            let vars = crate::db::profile_env::list(db, &p.id).unwrap_or_default();
+            json!({ "profile_id": p.id, "vars": vars })
+        })
+        .filter(|item| item["vars"].as_array().is_some_and(|a| !a.is_empty()))
+        .collect();
+    out.insert("profile_env_vars".into(), json!(env_payload));
     out.insert("profiles".into(), to_val(profiles)?);
 
     // credentials + groups are the referential closure of the always-exported

@@ -26,6 +26,7 @@ import type {
   Credential,
   CredentialType,
   DiscoveredShell,
+  EnvVar,
   Group,
   KnownHostEntry,
   Profile,
@@ -170,6 +171,8 @@ type ComposerDraft = {
   mfa: boolean;
   /** `~/.ssh` 下的私钥文件名（auth_method=key 时生效）。 */
   key_file: string;
+  /** 主机级环境变量（SSH SetEnv，需远端 AcceptEnv 放行）。 */
+  env_vars: EnvVar[];
   init_command: string;
   /** 转发本机 SSH Agent（对齐 Netcatty agentForwarding）。 */
   agent_forwarding: boolean;
@@ -243,6 +246,18 @@ const newHostMenu: Array<{ label: string; icon: IconName; enabled?: boolean }> =
   { label: "导入", icon: "upload" },
   { label: "导出", icon: "download" },
 ];
+
+/** 主机编辑器里的轻量文本按钮（环境变量增删）。 */
+const ENV_BTN_STYLE: CSSProperties = {
+  padding: "2px 8px",
+  fontSize: 11,
+  borderRadius: 6,
+  border: "1px solid hsl(var(--border))",
+  background: "transparent",
+  color: "hsl(var(--muted-foreground))",
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
 
 const SORT_LABEL: Record<SortMode, string> = {
   manual: "手动顺序",
@@ -1558,6 +1573,7 @@ export function VaultView({
       save_password: true,
       mfa: false,
       key_file: "",
+      env_vars: [],
       init_command: "",
       agent_forwarding: false,
       sftp_protocol: "auto",
@@ -1601,6 +1617,7 @@ export function VaultView({
       save_password: true,
       mfa,
       key_file: "",
+      env_vars: [],
       init_command: p.init_command ?? "",
       agent_forwarding: p.agent_forwarding ?? false,
       sftp_protocol:
@@ -1619,6 +1636,15 @@ export function VaultView({
       proxy: proxyDraftFromProfile(p),
       proxy_profile_id: p.proxy_profile_id ?? "",
     });
+    // 环境变量在独立表中，异步补齐（避免打开编辑器被 DB 查询阻塞）。
+    void api
+      .listProfileEnv(p.id)
+      .then((vars) => {
+        setComposer((prev) =>
+          prev && prev.id === p.id ? { ...prev, env_vars: vars } : prev,
+        );
+      })
+      .catch(() => {});
     if (cred) {
       // 取回原 secret：密码框留空时原样回填；已有保存密码则显示掩码（D7）。
       void api
@@ -1809,6 +1835,10 @@ export function VaultView({
           composerProxySecretRef.current = proxySecret !== null;
         }
       }
+      await api.saveProfileEnv(
+        base.id,
+        d.env_vars.filter((v) => v.name.trim()),
+      );
       setHostTags(base.id, parsedTags);
       return base;
     } catch (e) {
@@ -4569,6 +4599,68 @@ export function VaultView({
               <section className="host-details-section">
                 <div className="host-details-section-head">
                   <Icon name="terminal-square" size={13} />
+                  <span>环境变量</span>
+                  <span className="host-setting-hint" style={{ marginLeft: "auto" }}>
+                    {composer.env_vars.length} 项
+                  </span>
+                </div>
+                {composer.env_vars.map((env, index) => (
+                  <div key={index} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                    <input
+                      placeholder="名称，如 LANG"
+                      value={env.name}
+                      style={{ flex: "0 0 40%" }}
+                      onChange={(e) => {
+                        const next = [...composer.env_vars];
+                        next[index] = { ...next[index], name: e.target.value };
+                        setComposer({ ...composer, env_vars: next });
+                      }}
+                    />
+                    <input
+                      placeholder="值"
+                      value={env.value}
+                      style={{ flex: 1, minWidth: 0 }}
+                      onChange={(e) => {
+                        const next = [...composer.env_vars];
+                        next[index] = { ...next[index], value: e.target.value };
+                        setComposer({ ...composer, env_vars: next });
+                      }}
+                    />
+                    <button
+                      type="button"
+                      style={ENV_BTN_STYLE}
+                      onClick={() =>
+                        setComposer({
+                          ...composer,
+                          env_vars: composer.env_vars.filter((_, i) => i !== index),
+                        })
+                      }
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  style={ENV_BTN_STYLE}
+                  onClick={() =>
+                    setComposer({
+                      ...composer,
+                      env_vars: [...composer.env_vars, { name: "", value: "" }],
+                    })
+                  }
+                >
+                  + 添加变量
+                </button>
+                <p className="host-setting-hint">
+                  连接时通过 SSH SetEnv 发送；远端 sshd 需在 AcceptEnv 放行对应变量
+                  （OpenSSH 默认只放行 LANG / LC_*），否则会被静默丢弃。
+                </p>
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="terminal-square" size={13} />
                   <span>启动命令</span>
                 </div>
                 <textarea
@@ -4582,6 +4674,23 @@ export function VaultView({
                 <p className="host-setting-hint">
                   会话建立后自动发送到终端执行（换行结尾）。
                 </p>
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="shield" size={13} />
+                  <span>高级字段（Netcatty 有，termX 置灰）</span>
+                </div>
+                <ul
+                  className="host-setting-hint"
+                  style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.8 }}
+                >
+                  <li>字符集 / 主题 / 字体 / 字号：终端解码与外观目前是全局设置，主机档案无对应后端字段。</li>
+                  <li>启动命令运行模式（逐行 / 等待提示符）：后端只按换行一次发送。</li>
+                  <li>登录脚本 / 连接脚本 / 输出触发器：依赖脚本引擎（#13）。</li>
+                  <li>Mosh / EternalTerminal / X11 转发：后端未实现对应传输。</li>
+                  <li>设备类型 / OS 覆盖：仅影响 Netcatty 的展示与网络设备原始命令模式。</li>
+                </ul>
               </section>
             </div>
 

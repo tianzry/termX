@@ -255,10 +255,23 @@ fn dispatch(
             &state.db,
             &arg::<Profile>(&args, "profile")?,
         )),
-        "delete_profile" => ok(crate::db::profile::delete(
-            &state.db,
-            &arg::<String>(&args, "id")?,
-        )),
+        "delete_profile" => {
+            let id: String = arg(&args, "id")?;
+            ok((|| -> AppResult<()> {
+                crate::db::profile::delete(&state.db, &id)?;
+                crate::db::profile_env::delete_for_profile(&state.db, &id)?;
+                Ok(())
+            })())
+        }
+        "profile_env_list" => {
+            let id: String = arg(&args, "profileId")?;
+            ok(crate::db::profile_env::list(&state.db, &id))
+        }
+        "profile_env_save" => {
+            let id: String = arg(&args, "profileId")?;
+            let vars = arg::<Vec<crate::db::profile_env::EnvVar>>(&args, "vars")?;
+            ok(crate::db::profile_env::replace(&state.db, &id, &vars))
+        }
         "ssh_algorithm_catalog" => ok(Ok::<_, AppError>(crate::ssh::algorithms::catalog())),
         // List the local shells the host offers (pure engine, no UI).
         "refresh_shells" => ok(crate::commands::pty::refresh_shells()),
@@ -1979,6 +1992,7 @@ async fn ssh_connect(
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
     crate::commands::session::apply_ssh_runtime_settings(state).map_err(err_value)?;
     let init_command = profile.init_command.clone();
+    let env_vars = crate::db::profile_env::list(&state.db, &profile.id).unwrap_or_default();
     let recording_path =
         crate::commands::settings::recording_path_for(state, &profile.name).map_err(err_value)?;
     let emitter = headless_host(state, tx);
@@ -2000,6 +2014,7 @@ async fn ssh_connect(
             prompt_session_id,
             known_hosts_path,
             timeout_secs,
+            env_vars,
         })
         .await
     })

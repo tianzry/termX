@@ -2,6 +2,7 @@ use serde_json::json;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
+use crate::db::profile_env::EnvVar;
 use crate::models::{Credential, Profile, SshAlgorithmCatalog};
 use crate::secret::cred_secret_key;
 use crate::state::AppState;
@@ -27,8 +28,26 @@ pub fn update_profile(state: State<AppState>, profile: Profile) -> Result<(), Ap
 }
 
 #[tauri::command]
+pub fn profile_env_list(
+    state: State<AppState>,
+    profile_id: String,
+) -> AppResult<Vec<EnvVar>> {
+    crate::db::profile_env::list(&state.db, &profile_id)
+}
+
+#[tauri::command]
+pub fn profile_env_save(
+    state: State<AppState>,
+    profile_id: String,
+    vars: Vec<EnvVar>,
+) -> AppResult<()> {
+    crate::db::profile_env::replace(&state.db, &profile_id, &vars)
+}
+
+#[tauri::command]
 pub fn delete_profile(state: State<AppState>, id: String) -> Result<(), AppError> {
     crate::db::profile::delete(&state.db, &id)?;
+    crate::db::profile_env::delete_for_profile(&state.db, &id)?;
     // 档案级 secret 与 metadata 同生命周期：档案没了就清掉，避免孤儿密文。
     state.secret_store.delete(&crate::secret::totp_secret_key(&id))?;
     state.secret_store.delete(&crate::secret::proxy_secret_key(&id))?;

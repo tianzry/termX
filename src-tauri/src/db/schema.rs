@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 40;
+const SCHEMA_VERSION: u32 = 41;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -858,6 +858,22 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         if table_exists(conn, "profiles")? && !column_exists(conn, "profiles", "proxy_profile_id")? {
             conn.execute_batch("ALTER TABLE profiles ADD COLUMN proxy_profile_id TEXT;")?;
         }
+    }
+
+    if version < 41 {
+        // 主机级环境变量（对齐 Netcatty environmentVariables）。独立表而非
+        // profiles 列：条目有序、可重复，且不改变 Profile 的 JSON 结构。
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS profile_env_vars (
+                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                 profile_id  TEXT NOT NULL,
+                 name        TEXT NOT NULL,
+                 value       TEXT NOT NULL DEFAULT '',
+                 sort_index  INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE INDEX IF NOT EXISTS idx_profile_env_vars_profile
+                 ON profile_env_vars(profile_id);",
+        )?;
     }
 
     if version < SCHEMA_VERSION {

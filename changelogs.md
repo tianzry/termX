@@ -4362,3 +4362,29 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 
 - 自动拉取是否开启由 SecretStore 中是否存在 `sync_*_auto_pull_password` 决定，不存在单独的 enabled 键；UI 必须从 `get_sync_auto_pull_status` 读，不能写普通设置键。
 - GitHub Token / WebDAV 密码必须走 `set_setting` 的 `is_secret_setting` 白名单（`github_token` / `webdav_password`），否则会落到明文设置表。
+
+---
+
+## 2026-11-04 — P1 #34 主机表单高级字段（主机级环境变量 + 置灰对齐）
+
+对照 Netcatty `domain/models/connection.ts` Host 模型与 `components/HostDetailsAdvancedSections.tsx`。只补后端有能力支撑的字段，其余逐项置灰写原因。
+
+### 修改点
+
+1. 后端新增 `profile_env_vars` 表（schema v41）：独立表存主机级环境变量，避免改动 `Profile` JSON wire contract；`db/profile_env.rs` 提供 `list` / `replace` / `delete_for_profile`，保留填写顺序、允许同名不同值、跳过空名与非 `[A-Za-z0-9_]` 名。
+2. 命令 `profile_env_list` / `profile_env_save` 双注册（`lib.rs` + `server.rs`）；`delete_profile` 在两条适配器里都级联清理该主机环境变量。
+3. 连接链路：`ssh_connect` 与 headless connect 读取主机环境变量 → `ConnectParams.env_vars` → russh 通道 `set_env`，在 `request_pty` / shell 之前发送。
+4. 云同步 payload 顶层新增 `profile_env_vars`（`[{ profile_id, vars }]`），只导出非空项；导入按 profile 校验后 `replace`，坏数据记 `parse_failed` / `ImportError(kind=profile_env)`；`profiles` 结构不变（旧客户端可读）。
+5. 前端：`client.ts` 新增 `EnvVar` 与 `listProfileEnv` / `saveProfileEnv`；Vault 主机编辑器新增「环境变量」section（名称/值输入、增删、SetEnv/AcceptEnv 提示；编辑时异步加载，保存时全量替换），并新增置灰 section「高级字段（Netcatty 有，termX 置灰）」逐项写原因（字符集、主题/字体/字号覆盖、启动命令运行模式、登录/连接脚本/输出触发器、Mosh/ET/X11、设备类型/OS 覆盖）。
+
+### 验证
+
+- 门禁：`npm run test:run` **425 ✓**（新增 `profile_env` 相关覆盖不涉及前端）、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` **884 ✓**（含 `replace_keeps_order_and_skips_invalid_names`）。
+- 129 真机（CDP，`evidence/host-advanced-verify.json`、`evidence/host-advanced-env.png`）：带高级字段（`init_command` + 主机级 `LC_ALL=C`）连接成功（sessionId `61d93c54-…`），`init_command` 写入 `/tmp/termx-advanced-marker`，内容 `TERMX-INIT-OK / LANG=en_US.UTF-8 / LC_ALL=C`；exec 对照通道 `BASELINE_LC_ALL=` 为空，证明 SetEnv 只作用于 shell 通道。
+- 129 sshd `AcceptEnv LANG LC_* COLORTERM NO_COLOR`；编辑面板 UI 断言包含「环境变量」与置灰 section，截图落盘。
+
+### 踩坑
+
+- 首次用 `LANG=zh_CN.UTF-8` 验证会误判失败：远端 `/etc/default/locale` 与 login shell 会把 `LANG` 重置回服务端默认 `en_US.UTF-8`，即使 SetEnv 已被 sshd 接受。证明 SetEnv 要用不被 profile 覆盖的 `LC_*`，并与 exec 通道的 baseline 对照。
+- `set_env` 必须在 `request_pty` / shell 之前调用；russh 的 `want_reply=false` 不会把拒绝抛到用户层，因此置灰/提示区必须写明「需远端 sshd `AcceptEnv` 放行」。
+- headless dispatcher 里 `delete_profile` 的 `?` 无法直接转 `serde_json::Value`，需要闭包返回 `AppResult<()>` 再 `ok(...)`。

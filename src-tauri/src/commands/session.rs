@@ -157,6 +157,7 @@ pub async fn ssh_connect(
     };
 
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
+    let env_vars = crate::db::profile_env::list(&state.db, &profile.id).unwrap_or_default();
     let init_command = profile.init_command.clone();
     let result = client::run_blocking_ssh(move || async move {
         client::connect(client::ConnectParams {
@@ -174,6 +175,7 @@ pub async fn ssh_connect(
             prompt_session_id,
             known_hosts_path,
             timeout_secs,
+            env_vars,
         })
         .await
     })

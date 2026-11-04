@@ -1694,6 +1694,20 @@ export function deleteProfile(id: string): Promise<void> {
   return invoke("delete_profile", { id });
 }
 
+/** 主机级环境变量（SSH SetEnv；需远端 sshd AcceptEnv 放行）。 */
+export interface EnvVar {
+  name: string;
+  value: string;
+}
+
+export function listProfileEnv(profileId: string): Promise<EnvVar[]> {
+  return invoke("profile_env_list", { profileId });
+}
+
+export function saveProfileEnv(profileId: string, vars: EnvVar[]): Promise<void> {
+  return invoke("profile_env_save", { profileId, vars });
+}
+
 /** 列表不返回 secret（避免无谓 keychain 查询）；编辑时用 getCredential 取全量。 */
 export function listCredentials(): Promise<Credential[]> {
   return invoke<Credential[]>("list_credentials");

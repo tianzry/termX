@@ -1138,6 +1138,7 @@ mod tests {
             prompt_session_id: Some(session_id.clone()),
             known_hosts_path: dir.path().join("known_hosts"),
             timeout_secs: 1,
+            env_vars: Vec::new(),
         };
 
         // Close the peer before the SSH handshake: connect still emits its real
@@ -1287,6 +1288,7 @@ mod tests {
             prompt_session_id: None,
             known_hosts_path: PathBuf::from(known_hosts_path),
             timeout_secs: 10,
+            env_vars: Vec::new(),
         };
 
         let result = timeout(Duration::from_secs(15), connect(params))
@@ -1418,6 +1420,7 @@ mod tests {
             prompt_session_id: Some(session_id),
             known_hosts_path,
             timeout_secs: 10,
+            env_vars: Vec::new(),
         })
         .await
     }
@@ -1519,6 +1522,7 @@ mod tests {
             prompt_session_id: Some(session_id.clone()),
             known_hosts_path: PathBuf::from(known_hosts),
             timeout_secs: 10,
+            env_vars: Vec::new(),
         }));
 
         // 循环回填 password，直到 connect 结束（PAM 可能多轮 InfoRequest）。
@@ -1843,6 +1847,8 @@ pub struct ConnectParams {
     pub prompt_session_id: Option<String>,
     pub known_hosts_path: PathBuf,
     pub timeout_secs: u64,
+    /// 主机级环境变量；在打开 shell 前按 SSH `SetEnv` 发送。
+    pub env_vars: Vec<crate::db::profile_env::EnvVar>,
 }
 
 /// All inputs are owned, so the returned future carries no caller borrows and
@@ -1863,6 +1869,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         prompt_session_id,
         known_hosts_path,
         timeout_secs,
+        env_vars,
     } = params;
     let log: LogFn = match log_session_id.clone() {
         Some(sid) => {
@@ -1930,6 +1937,21 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         match channel.agent_forward(false).await {
             Ok(()) => log("Agent forwarding requested.".to_owned()),
             Err(e) => log(format!("Agent forwarding request failed: {e}")),
+        }
+    }
+
+    // 主机级环境变量：SetEnv 必须在 shell 请求之前发。OpenSSH 默认只放行
+    // AcceptEnv 白名单（通常是 LANG/LC_*），其余变量会被服务端静默丢弃；
+    // 这里只负责发送，是否生效取决于远端 sshd 配置。
+    for env in &env_vars {
+        if env.name.trim().is_empty() {
+            continue;
+        }
+        if let Err(err) = channel
+            .set_env(false, env.name.clone(), env.value.clone())
+            .await
+        {
+            log(format!("SetEnv {} failed: {err}", env.name));
         }
     }
 
