@@ -192,6 +192,43 @@ enum SftpCmd {
         local: String,
         remote: String,
     },
+    /// Print the remote home directory
+    Home {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+    },
+    /// Create a remote directory
+    Mkdir {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+        path: String,
+    },
+    /// Remove a remote file or directory (recursive)
+    Rm {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+        path: String,
+    },
+    /// Rename / move a remote path
+    Mv {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+        old: String,
+        new: String,
+    },
+    /// Show metadata for a remote path
+    Stat {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+        path: String,
+    },
+    /// Change remote permissions (octal, e.g. 644)
+    Chmod {
+        #[arg(add = ArgValueCompleter::new(commands::completions::complete_profiles))]
+        profile: String,
+        path: String,
+        mode: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -378,6 +415,18 @@ fn main() {
                 local,
                 remote,
             } => commands::sftp::cmd_put(&conn, &profile, &local, &remote),
+            SftpCmd::Home { profile } => commands::sftp::cmd_home(&conn, &profile),
+            SftpCmd::Mkdir { profile, path } => commands::sftp::cmd_mkdir(&conn, &profile, &path),
+            SftpCmd::Rm { profile, path } => commands::sftp::cmd_rm(&conn, &profile, &path),
+            SftpCmd::Mv { profile, old, new } => {
+                commands::sftp::cmd_mv(&conn, &profile, &old, &new)
+            }
+            SftpCmd::Stat { profile, path } => commands::sftp::cmd_stat(&conn, &profile, &path),
+            SftpCmd::Chmod {
+                profile,
+                path,
+                mode,
+            } => commands::sftp::cmd_chmod(&conn, &profile, &path, &mode),
         },
         Some(Cmd::Config { action }) => commands::config::cmd_config(&conn, action),
         Some(Cmd::Completions { .. }) => unreachable!("handled before database initialization"),

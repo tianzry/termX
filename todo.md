@@ -219,6 +219,9 @@
   - 已完成（2026-11-05，`rssh-cli`）：`snippet list|show|add|rm`（读写 `snippets.json`，
     `filter_snippets` 单测）、`sftp ls|get|put`（复用 lib `SftpHandle`，密码/私钥非交互，
     内联代理可用）；129 实测 ls 33 项、put/get 33B SHA256 一致。
+  - 2026-11-05 增量：`sftp home|mkdir|rm|mv|stat|chmod`（`parse_octal_mode` 单测；
+    129 实测 mkdir→stat 0775→chmod 0700→mv→rm，非法 `999` 报 `sftp_invalid_mode`；
+    证据 `evidence/cli-26-e2e.txt`）。`cargo test --bin rssh-cli --features cli` 9✓。
   - 置灰：会话级 `list/read/write/send` 需运行中应用的 RPC 桥（Netcatty `netcattyRpcClient.cjs`），
     termX 桌面端无此通道；`--json` / `--session` 与之绑定；传输不接跳板链与 `proxy_profile_id`。
 - [x] ✅ **34. 主机表单高级字段**（2026-11-04 完成）

@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-11-05 — P2 #26（CLI 增量：SFTP 目录/元数据子命令）
+
+### 对照（Netcatty）
+
+`netcatty-tool-cli` 的 `sftp` 子命令集含 list/read/write/download/upload/mkdir/delete/rename/
+stat/chmod/home；termX `rssh-cli` 此前只有 `ls/get/put`，其余走不到运行中应用的 RPC 桥。
+
+### 修改点
+
+- `src/bin/rssh/main.rs`：`SftpCmd` 新增 `Home` / `Mkdir` / `Rm` / `Mv` / `Stat` / `Chmod`
+  （全部带 profile 补全），并接入 dispatch。
+- `src/bin/rssh/commands/sftp.rs`：抽出 `open(Target)` 复用连接参数；新增五个命令实现
+  （`rm` 走 `SftpHandle::remove`，目录递归、符号链接只删名；`stat` 输出 type/size/mtime/
+  permissions）；新增纯函数 `parse_octal_mode`（接受 `644`/`0755`/`0o755`，拒绝 `999`/
+  `10000`/`u+rwx`，错误码 `sftp_invalid_mode`）。
+
+### 验证
+
+- `cargo test --bin rssh-cli --features cli`：9 passed（含新增 `octal_mode_accepts_common_forms`
+  / `octal_mode_rejects_invalid`）。
+- 129 实测（`evidence/cli-26-e2e.txt`）：`home` → `/home/tianzry`；`mkdir` → `stat`
+  （directory/0775）→ `chmod 700` → `stat` 变 0700 → `mv` → `stat` 新名 → 非法 `999`
+  报 `sftp_invalid_mode` → `rm` → 最终 `stat` 报 `sftp_io_failed`（文件已不存在，预期）。
+
+### 置灰（不变）
+
+会话级 `list/read/write/send`、`exec`、`--session` 仍依赖运行中应用的 RPC 桥（termX 桌面端无
+`netcattyRpcClient` 等价通道）；`--json` 与这些命令绑定，未单独提供。
+
+---
+
 ## 2026-11-05 — P2 #31（子项：输入兼容模式 / 中文 IME 逐字发送 + 宽字符核验）
 
 ### 对照（Netcatty）
