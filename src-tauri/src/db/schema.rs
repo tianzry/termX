@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 43;
+const SCHEMA_VERSION: u32 = 44;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -909,6 +909,28 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if version < 44 && table_exists(conn, "profiles")? {
+        // 串口主机（protocol == "serial"）：保存连接弹窗的串口参数快照。
+        // 全部可空：非串口主机与旧库都不写，读回 None 由前端回落默认值。
+        for (col, decl) in [
+            ("serial_port", "TEXT"),
+            ("serial_baud", "INTEGER"),
+            ("serial_data_bits", "INTEGER"),
+            ("serial_parity", "TEXT"),
+            ("serial_stop_bits", "REAL"),
+            ("serial_flow", "TEXT"),
+            ("serial_local_echo", "INTEGER"),
+            ("serial_line_mode", "INTEGER"),
+            ("serial_backspace", "TEXT"),
+            ("serial_byte_backspace", "INTEGER"),
+            ("serial_charset", "TEXT"),
+        ] {
+            if !column_exists(conn, "profiles", col)? {
+                conn.execute_batch(&format!("ALTER TABLE profiles ADD COLUMN {col} {decl};"))?;
+            }
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1060,6 +1082,51 @@ mod tests {
         let value: Option<bool> = conn
             .query_row(
                 "SELECT ssh_input_compatibility FROM profiles WHERE id = 'h'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, None);
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_44_adds_profile_serial_columns() {
+        // v43 老库：串口列必须新增且可空，旧行保持 NULL（由前端回落默认值），
+        // 不把非串口主机误标成串口配置。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+             INSERT INTO profiles VALUES ('h', 'legacy');
+             PRAGMA user_version = 43;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        // 幂等：同一版本再跑一次不应报错。
+        migrate(&conn).unwrap();
+
+        for col in [
+            "serial_port",
+            "serial_baud",
+            "serial_data_bits",
+            "serial_parity",
+            "serial_stop_bits",
+            "serial_flow",
+            "serial_local_echo",
+            "serial_line_mode",
+            "serial_backspace",
+            "serial_byte_backspace",
+            "serial_charset",
+        ] {
+            assert!(column_exists(&conn, "profiles", col).unwrap(), "missing {col}");
+        }
+        let value: Option<String> = conn
+            .query_row(
+                "SELECT serial_port FROM profiles WHERE id = 'h'",
                 [],
                 |row| row.get(0),
             )

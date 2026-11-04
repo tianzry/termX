@@ -58,6 +58,7 @@ import {
 } from "./domain/localShellHost";
 import { Icon, type IconName } from "./ui/icons";
 import { LocalShellPanel } from "./LocalShellPanel";
+import { SerialHostPanel } from "./serial/SerialHostPanel";
 import { ForwardOverview } from "./ForwardOverview";
 import { MonitorView } from "./monitor/MonitorView";
 import { SyncView } from "./sync/SyncView";
@@ -645,6 +646,8 @@ export function VaultView({
   const [localShellSetting, setLocalShellSetting] = useState("");
   /** 本地终端面板：null = 关闭；"new" = 新建；否则为编辑目标。 */
   const [localPanel, setLocalPanel] = useState<Profile | "new" | null>(null);
+  /** 串口主机编辑面板：null = 关闭；否则为编辑目标。 */
+  const [serialPanel, setSerialPanel] = useState<Profile | null>(null);
 
   const {
     marqueeRect,
@@ -996,7 +999,7 @@ export function VaultView({
   }
 
   function fullSubtitle(p: Profile): string {
-    if (p.protocol === "local") return subtitle(p);
+    if (p.protocol === "local" || p.protocol === "serial") return subtitle(p);
     return `${subtitle(p)}:${p.port}`;
   }
 
@@ -3252,6 +3255,10 @@ export function VaultView({
           <span className="nc-avatar lg local">
             <Icon name="terminal" size={20} />
           </span>
+        ) : p.protocol === "serial" ? (
+          <span className="nc-avatar lg serial" title="串口主机">
+            <Icon name="usb" size={20} />
+          </span>
         ) : (
           <span className="nc-avatar lg" style={avatarStyle(p.name)}>
             {initial(p.name)}
@@ -3277,6 +3284,7 @@ export function VaultView({
             onClick={(e) => {
               e.stopPropagation();
               if (p.protocol === "local") setLocalPanel(p);
+              else if (p.protocol === "serial") setSerialPanel(p);
               else openComposerForEdit(p);
             }}
           >
@@ -4940,6 +4948,18 @@ export function VaultView({
             }}
           />
         )}
+
+        {serialPanel !== null && (
+          <SerialHostPanel
+            initial={serialPanel}
+            onClose={() => setSerialPanel(null)}
+            onSaved={() => {
+              setSerialPanel(null);
+              onDataChanged();
+              showToast("已保存串口主机");
+            }}
+          />
+        )}
       </div>
 
       {totpDialog && composer && (
@@ -5130,6 +5150,7 @@ export function VaultView({
               const p = ctxMenu.profile;
               setCtxMenu(null);
               if (p.protocol === "local") setLocalPanel(p);
+              else if (p.protocol === "serial") setSerialPanel(p);
               else openComposerForEdit(p);
             }}
           >
@@ -5408,6 +5429,10 @@ export function VaultView({
                   {p.protocol === "local" ? (
                     <span className="nc-avatar local">
                       <Icon name="terminal" size={10} />
+                    </span>
+                  ) : p.protocol === "serial" ? (
+                    <span className="nc-avatar serial" title="串口主机">
+                      <Icon name="usb" size={10} />
                     </span>
                   ) : (
                     <span className="nc-avatar sm" style={avatarStyle(p.name)}>

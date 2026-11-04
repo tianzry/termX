@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-11-05 — 收尾审计 P2 两项（串口保存为主机 / 终端系统监控）
+
+### 1 串口配置保存为主机（schema v44）
+
+- 后端：`db/schema.rs` 新增 v44 迁移，仅 `ALTER TABLE profiles ADD COLUMN` 11 个可空串口列
+  （`serial_port/baud/data_bits/parity/stop_bits/flow/local_echo/line_mode/backspace/byte_backspace/charset`）；
+  `models.rs` Profile 全字段 `serde(default)`；`db/profile.rs` 的 PROFILE_COLUMNS / row_to_profile /
+  insert / upsert / update 全链路补齐；旧结构体字面量同步补字段（ssh/client、bastion、forward、sync、CLI）。
+  无新增命令（`create_profile/update_profile` 直接反序列化 Profile，`server.rs` 无需双注册）。
+- 前端：`client.ts` Profile 增加串口字段；`domain/serialFormConfig.ts` 增加
+  `serialProfileSnapshot` / `serialFormFromProfile`（NULL 回落默认值）；`SerialConnectModal` 增加
+  「保存为主机」+ 主机名（默认 `串口 <port>`）；`App.saveSerialHost` 先建真实凭据（type none）再
+  `createProfile`（protocol="serial"、host=串口名、port=0、全量串口列），失败提示但不阻断连接。
+- Vault：`connect(profile)` 新增 `protocol === "serial"` 分支，按档案重建 `SerialSessionConfig` 并开
+  `kind:"serial"` 标签；主机卡片显示 usb 图标与 `COM3 · 115200 bps` 副标题；新增
+  `src/serial/SerialHostPanel.tsx` 编辑名称与全部串口参数；`vaultTransfer` 白名单同步串口字段。
+- 验证（COM1 实机 + CDP，`evidence/p2-serial-monitor.json`、`p2-serial-open3.json` 与截图）：
+  弹窗填 COM1 + 勾保存 → `list_profiles` 出现 `protocol:"serial"`、`serial_port:"COM1"`、
+  `serial_baud:115200` 等全字段且 credential_id 非空；Vault 主机列表出现「串口验证 COM1 / COM1 ·
+  115200 bps」；从 Vault 打开后新建同名串口标签，报「打开串口 COM1 失败：拒绝访问。」——说明真实走了
+  串口打开链路（COM1 被占用/无权限），档案与连接路径均生效。
+
+### 2 终端「系统监控」按钮
+
+- `TerminalPane.tsx`：`canMonitor = systemEligible && status === "connected" && sidRef.current != null`；
+  按钮据状态给出准确 title（仅 SSH / 连接后可用 / 会话未就绪），非 SSH 仍不渲染按钮；断开时自动关闭浮层。
+- 新增 `src/monitor/SessionMonitorPopover.tsx`：打开即 `api.monitorSample(sessionId, 8000)`，此后 3s
+  轮询（请求未完成不重入，卸载/关闭清理）；失败走 `userVisibleError`，`supported=false` 显示
+  `unsupported_reason`，`warnings` 弱化列出；四项 CPU/内存/磁盘（最多 3 分区 + 超出计数）/网络速率；
+  首次速率为 null 显示 `--`，不造数。`monitorModel` 增加 `limitDisks` 纯函数 + 2 例单测。
+- 验证（129 + CDP，`evidence/p2-monitor.json` 与截图 `p2-monitor-popover.png`）：
+  连接 129 后按钮启用，浮层首帧 CPU `--`、网络 `--`（等待首个速率窗口），3 秒后刷新为
+  `CPU 0.7% / 2 核`、`内存 36.9%（1.2 / 3.3 GiB）`、两块磁盘（CDROM 100%、94% 17.3/19.5 GB）、
+  `网络 ↓747 B/s ↑737 B/s`，页脚「每 3 秒刷新」——数据全部来自 `monitor_sample`，无新增采集逻辑。
+
+### 门禁
+
+- `npm run test:run`：49 文件 / 515 用例全绿；`npm run build` 通过；
+  `cargo check --all-targets` + `cargo build --no-default-features` 通过；`cargo test --lib db::` 147 通过
+  （含 v44 迁移与串口字段往返/覆盖为 NULL 用例）。
+
+---
+
 ## 2026-11-05 — 收尾审计 P1 五项修复（顶栏/导入导出/同步 tab/侧栏/录制）
 
 对照审计清单（本文件上一节）逐项落地，均保持前端小改动；仅新增一个只读 Rust 命令。

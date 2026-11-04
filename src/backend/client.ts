@@ -63,7 +63,7 @@ export interface Profile {
   totp_regex?: string | null;
   /** 连接时把本机 SSH Agent 转发给远端（serde 默认 false） */
   agent_forwarding: boolean;
-  /** 协议类型：`ssh`（默认）/ `local`（本地 shell 主机，走 PTY） */
+  /** 协议类型：`ssh`（默认）/ `local`（本地 shell 主机，走 PTY）/ `serial`（串口主机） */
   protocol?: string;
   /** 本地主机：选中的 shell 命令；空 = 跟随 设置 → 终端 的默认本地 Shell */
   local_shell?: string | null;
@@ -89,6 +89,19 @@ export interface Profile {
    * null / 缺省 = 老数据，SSH 主机视为开启；新主机表单默认 false。
    */
   ssh_input_compatibility?: boolean | null;
+  // ── 串口主机（protocol === "serial"，schema v44）──
+  // host 存串口路径、port 固定 0；以下字段是连接弹窗的参数快照。
+  serial_port?: string | null;
+  serial_baud?: number | null;
+  serial_data_bits?: number | null;
+  serial_parity?: string | null;
+  serial_stop_bits?: number | null;
+  serial_flow?: string | null;
+  serial_local_echo?: boolean | null;
+  serial_line_mode?: boolean | null;
+  serial_backspace?: string | null;
+  serial_byte_backspace?: boolean | null;
+  serial_charset?: string | null;
 }
 
 /** 代理库条目（`list_proxy_profiles`），密码单独走 SecretStore。 */

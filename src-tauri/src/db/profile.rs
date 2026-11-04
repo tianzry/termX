@@ -37,6 +37,17 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         proxy_no_proxy: row.get(27)?,
         proxy_profile_id: row.get(28)?,
         ssh_input_compatibility: row.get(29)?,
+        serial_port: row.get(30)?,
+        serial_baud: row.get(31)?,
+        serial_data_bits: row.get(32)?,
+        serial_parity: row.get(33)?,
+        serial_stop_bits: row.get(34)?,
+        serial_flow: row.get(35)?,
+        serial_local_echo: row.get(36)?,
+        serial_line_mode: row.get(37)?,
+        serial_backspace: row.get(38)?,
+        serial_byte_backspace: row.get(39)?,
+        serial_charset: row.get(40)?,
     })
 }
 
@@ -85,7 +96,11 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset";
+
+
+
+
 
 pub fn list(db: &Db) -> AppResult<Vec<Profile>> {
     let conn = db.lock()?;
@@ -156,8 +171,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, \
          protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, \
          proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, \
-         ssh_input_compatibility) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30) \
+         ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -171,7 +186,12 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          proxy_type=excluded.proxy_type, proxy_host=excluded.proxy_host, proxy_port=excluded.proxy_port, \
          proxy_username=excluded.proxy_username, proxy_no_proxy=excluded.proxy_no_proxy, \
          proxy_profile_id=excluded.proxy_profile_id, \
-         ssh_input_compatibility=excluded.ssh_input_compatibility",
+         ssh_input_compatibility=excluded.ssh_input_compatibility, \
+         serial_port=excluded.serial_port, serial_baud=excluded.serial_baud, serial_data_bits=excluded.serial_data_bits, \
+         serial_parity=excluded.serial_parity, serial_stop_bits=excluded.serial_stop_bits, serial_flow=excluded.serial_flow, \
+         serial_local_echo=excluded.serial_local_echo, serial_line_mode=excluded.serial_line_mode, \
+         serial_backspace=excluded.serial_backspace, serial_byte_backspace=excluded.serial_byte_backspace, \
+         serial_charset=excluded.serial_charset",
         params![
             p.id,
             p.name,
@@ -202,7 +222,18 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.proxy_username,
             p.proxy_no_proxy,
             p.proxy_profile_id,
-            p.ssh_input_compatibility
+            p.ssh_input_compatibility,
+            p.serial_port,
+            p.serial_baud,
+            p.serial_data_bits,
+            p.serial_parity,
+            p.serial_stop_bits,
+            p.serial_flow,
+            p.serial_local_echo,
+            p.serial_line_mode,
+            p.serial_backspace,
+            p.serial_byte_backspace,
+            p.serial_charset
         ],
     )?;
     Ok(())
@@ -223,7 +254,9 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
          sftp_protocol=?9, sftp_sudo=?10, sftp_encoding=?11, icon_source=?12, icon_color=?13, totp_auto_submit=?14, totp_regex=?15, \
          protocol=?16, local_shell=?17, local_shell_args=?18, local_shell_name=?19, local_shell_icon=?20, local_start_dir=?21, \
          agent_forwarding=?22, proxy_type=?23, proxy_host=?24, proxy_port=?25, proxy_username=?26, proxy_no_proxy=?27, \
-         proxy_profile_id=?28, ssh_input_compatibility=?29 WHERE id=?30",
+         proxy_profile_id=?28, ssh_input_compatibility=?29, serial_port=?30, serial_baud=?31, serial_data_bits=?32, \
+         serial_parity=?33, serial_stop_bits=?34, serial_flow=?35, serial_local_echo=?36, serial_line_mode=?37, \
+         serial_backspace=?38, serial_byte_backspace=?39, serial_charset=?40 WHERE id=?41",
         params![
             p.name,
             p.host,
@@ -254,6 +287,17 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.proxy_no_proxy,
             p.proxy_profile_id,
             p.ssh_input_compatibility,
+            p.serial_port,
+            p.serial_baud,
+            p.serial_data_bits,
+            p.serial_parity,
+            p.serial_stop_bits,
+            p.serial_flow,
+            p.serial_local_echo,
+            p.serial_line_mode,
+            p.serial_backspace,
+            p.serial_byte_backspace,
+            p.serial_charset,
             p.id
         ],
     )?;
@@ -323,6 +367,17 @@ mod tests {
             proxy_no_proxy: None,
             proxy_profile_id: None,
             ssh_input_compatibility: None,
+            serial_port: None,
+            serial_baud: None,
+            serial_data_bits: None,
+            serial_parity: None,
+            serial_stop_bits: None,
+            serial_flow: None,
+            serial_local_echo: None,
+            serial_line_mode: None,
+            serial_backspace: None,
+            serial_byte_backspace: None,
+            serial_charset: None,
         }
     }
 
@@ -436,6 +491,58 @@ mod tests {
         p.ssh_input_compatibility = None;
         update(&db, &p).unwrap();
         assert_eq!(get(&db, "p1").unwrap().ssh_input_compatibility, None);
+    }
+
+    /// v44 串口主机字段：insert / upsert / update 三条写入路径都要落库，
+    /// 非串口主机保持 None（旧库读回不误伤）。
+    #[test]
+    fn serial_profile_fields_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = mk("s1", "串口 COM3");
+        p.protocol = "serial".into();
+        p.host = "COM3".into();
+        p.port = 0;
+        p.serial_port = Some("COM3".into());
+        p.serial_baud = Some(115200);
+        p.serial_data_bits = Some(8);
+        p.serial_parity = Some("even".into());
+        p.serial_stop_bits = Some(1.5);
+        p.serial_flow = Some("hardware".into());
+        p.serial_local_echo = Some(true);
+        p.serial_line_mode = Some(true);
+        p.serial_backspace = Some("ctrl-h".into());
+        p.serial_byte_backspace = Some(true);
+        p.serial_charset = Some("GBK".into());
+
+        insert(&db, &p).unwrap();
+        let got = get(&db, "s1").unwrap();
+        assert_eq!(got.protocol, "serial");
+        assert_eq!(got.host, "COM3");
+        assert_eq!(got.port, 0);
+        assert_eq!(got.serial_port.as_deref(), Some("COM3"));
+        assert_eq!(got.serial_baud, Some(115200));
+        assert_eq!(got.serial_data_bits, Some(8));
+        assert_eq!(got.serial_parity.as_deref(), Some("even"));
+        assert_eq!(got.serial_stop_bits, Some(1.5));
+        assert_eq!(got.serial_flow.as_deref(), Some("hardware"));
+        assert_eq!(got.serial_local_echo, Some(true));
+        assert_eq!(got.serial_line_mode, Some(true));
+        assert_eq!(got.serial_backspace.as_deref(), Some("ctrl-h"));
+        assert_eq!(got.serial_byte_backspace, Some(true));
+        assert_eq!(got.serial_charset.as_deref(), Some("GBK"));
+
+        // upsert 覆盖：把串口帧设置改回 NULL，读回必须是 None 而不是旧值。
+        p.serial_parity = None;
+        p.serial_line_mode = None;
+        insert(&db, &p).unwrap();
+        let got = get(&db, "s1").unwrap();
+        assert_eq!(got.serial_parity, None);
+        assert_eq!(got.serial_line_mode, None);
+
+        // update 路径同样带上全部串口列。
+        p.serial_baud = Some(9600);
+        update(&db, &p).unwrap();
+        assert_eq!(get(&db, "s1").unwrap().serial_baud, Some(9600));
     }
 
     #[test]

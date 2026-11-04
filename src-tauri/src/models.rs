@@ -120,6 +120,31 @@ pub struct Profile {
     /// 新主机表单默认 false（标准模式）。
     #[serde(default)]
     pub ssh_input_compatibility: Option<bool>,
+    // ── 串口主机字段（schema v44）──
+    // protocol == "serial" 的主机：host 存串口路径、port 固定 0；下列字段是
+    // 连接弹窗的参数快照。全部可空：非串口主机不写，旧库读回 None。
+    #[serde(default)]
+    pub serial_port: Option<String>,
+    #[serde(default)]
+    pub serial_baud: Option<u32>,
+    #[serde(default)]
+    pub serial_data_bits: Option<u8>,
+    #[serde(default)]
+    pub serial_parity: Option<String>,
+    #[serde(default)]
+    pub serial_stop_bits: Option<f64>,
+    #[serde(default)]
+    pub serial_flow: Option<String>,
+    #[serde(default)]
+    pub serial_local_echo: Option<bool>,
+    #[serde(default)]
+    pub serial_line_mode: Option<bool>,
+    #[serde(default)]
+    pub serial_backspace: Option<String>,
+    #[serde(default)]
+    pub serial_byte_backspace: Option<bool>,
+    #[serde(default)]
+    pub serial_charset: Option<String>,
 }
 
 /// 代理库条目（对齐 Netcatty `ProxyProfile` 的 label + config 扁平化）：

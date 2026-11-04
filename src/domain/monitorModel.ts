@@ -3,7 +3,7 @@
  * 所有"缺数据"一律返回 null / "--"，不补零、不臆造。
  */
 
-import type { MonitorSample } from "../backend/client";
+import type { MonitorDisk, MonitorSample } from "../backend/client";
 
 export interface MonitorPoint {
   at: number;
@@ -103,6 +103,18 @@ export function buildTrendGeometry(
   }
   if (path) segments.push({ path, x: lastX, y: lastY, firstX });
   return { segments, max, start, end };
+}
+
+export interface DiskPreview {
+  shown: MonitorDisk[];
+  extra: number;
+}
+
+/** 浮层只展示前 max 个分区，其余给出计数（不静默丢弃）。 */
+export function limitDisks(disks: MonitorDisk[], max = 3): DiskPreview {
+  if (max <= 0) return { shown: [], extra: disks.length };
+  if (disks.length <= max) return { shown: disks, extra: 0 };
+  return { shown: disks.slice(0, max), extra: disks.length - max };
 }
 
 export function formatPercent(value: number | null | undefined): string {

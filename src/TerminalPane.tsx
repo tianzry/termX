@@ -19,6 +19,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
+import { SessionMonitorPopover } from "./monitor/SessionMonitorPopover";
 import {
   SNIPPETS_CHANGED_EVENT,
   isScriptSnippet,
@@ -220,6 +221,8 @@ export function TerminalPane({
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /** 工具栏「系统监控」浮层开关（仅 SSH 已连接会话可用）。 */
+  const [monitorOpen, setMonitorOpen] = useState(false);
   /** ZMODEM 传输提示（检测 / 进度 / 完成 / 错误），空闲为 null。 */
   const [zmodemState, setZmodemState] = useState<ZmodemEvent | null>(null);
   /** 文件拖拽悬停在终端上时显示投放蒙层。 */
@@ -359,6 +362,11 @@ export function TerminalPane({
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [moreOpen]);
+
+  /** 会话断开 / 重连时关闭系统监控浮层（轮询随组件卸载一起清理）。 */
+  useEffect(() => {
+    if (!isSsh || status !== "connected") setMonitorOpen(false);
+  }, [isSsh, status]);
 
   /** 目录追踪只在活动 SSH 会话上有意义；断开后清空。 */
   useEffect(() => {
@@ -1780,6 +1788,16 @@ export function TerminalPane({
   const canReconnect = status !== "connecting";
   // 系统监控只出现在远端 SSH 会话（netcatty isSystemSidebarEligible 排除本地 / 串口 / Telnet）
   const systemEligible = tab.connector.kind === "ssh";
+  // 采样接口需要已建立的 SSH 会话 id；按钮只在已连接时启用，其余状态写明原因。
+  const monitorSid = systemEligible && status === "connected" ? sidRef.current : null;
+  const monitorDisabledReason = !systemEligible
+    ? "仅 SSH 会话"
+    : status !== "connected"
+      ? "连接后可用"
+      : !monitorSid
+        ? "会话未就绪"
+        : null;
+  const canMonitor = monitorDisabledReason === null;
 
   /**
    * 「更多」菜单的可用条件与置灰原因（对照 Netcatty TerminalToolbar）：
@@ -2105,13 +2123,26 @@ export function TerminalPane({
             )}
           </div>
           {systemEligible && (
-            <button
-              className="term-tool-btn"
-              disabled
-              title="系统监控（尚未实现）"
-            >
-              <Icon name="activity" size={12} />
-            </button>
+            <div className="term-monitor-anchor">
+              <button
+                className={`term-tool-btn${monitorOpen ? " active" : ""}`}
+                disabled={!canMonitor}
+                title={
+                  monitorDisabledReason
+                    ? `系统监控（${monitorDisabledReason}）`
+                    : "系统监控"
+                }
+                onClick={() => setMonitorOpen((v) => !v)}
+              >
+                <Icon name="activity" size={12} />
+              </button>
+              {monitorOpen && monitorSid && (
+                <SessionMonitorPopover
+                  sessionId={monitorSid}
+                  onClose={() => setMonitorOpen(false)}
+                />
+              )}
+            </div>
           )}
           <button
             className="term-tool-btn"

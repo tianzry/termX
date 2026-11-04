@@ -158,6 +158,54 @@ describe("parseVaultImport", () => {
       local_shell: "bash",
     });
   });
+
+  it("串口主机允许 port=0，导出 / 导入保留串口参数", () => {
+    const text = buildVaultExport(
+      [
+        profile({
+          id: "s1",
+          name: "串口 COM3",
+          host: "COM3",
+          port: 0,
+          protocol: "serial",
+          serial_port: "COM3",
+          serial_baud: 115200,
+          serial_data_bits: 8,
+          serial_parity: "even",
+          serial_stop_bits: 1.5,
+          serial_flow: "rts/cts",
+          serial_local_echo: true,
+          serial_line_mode: true,
+          serial_backspace: "ctrl-h",
+          serial_byte_backspace: true,
+          serial_charset: "GBK",
+        }),
+      ],
+      [],
+      {},
+      "2026-11-05T00:00:00.000Z",
+    );
+    const result = parseVaultImport(text);
+    expect(result.ok).toBe(true);
+    expect(result.hosts[0]).toMatchObject({
+      id: "s1",
+      name: "串口 COM3",
+      host: "COM3",
+      port: 0,
+      protocol: "serial",
+      serial_port: "COM3",
+      serial_baud: 115200,
+      serial_data_bits: 8,
+      serial_parity: "even",
+      serial_stop_bits: 1.5,
+      serial_flow: "rts/cts",
+      serial_local_echo: true,
+      serial_line_mode: true,
+      serial_backspace: "ctrl-h",
+      serial_byte_backspace: true,
+      serial_charset: "GBK",
+    });
+  });
 });
 
 describe("findConflicts", () => {
@@ -219,6 +267,33 @@ describe("导入构造", () => {
       group_id: "g9",
       init_command: "cd /srv",
       icon_color: "#0af",
+    });
+  });
+
+  it("串口导入档案带 protocol=serial 与串口列", () => {
+    const serial = parseVaultImport(
+      JSON.stringify({
+        version: 1,
+        hosts: [
+          {
+            name: "串口 COM3",
+            host: "COM3",
+            port: 0,
+            protocol: "serial",
+            serial_baud: 9600,
+            serial_charset: "UTF-8",
+          },
+        ],
+      }),
+    ).hosts[0];
+    const p = importedHostToProfile(serial, "new-cred", null, "new-id");
+    expect(p).toMatchObject({
+      protocol: "serial",
+      host: "COM3",
+      port: 0,
+      serial_port: "COM3",
+      serial_baud: 9600,
+      serial_charset: "UTF-8",
     });
   });
 

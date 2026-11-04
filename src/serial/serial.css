@@ -250,6 +250,20 @@
   border-top: 1px solid #e5e7eb;
 }
 
+.serial-panel-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.serial-save-host {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+}
+
 .serial-check-row {
   display: flex;
   align-items: center;

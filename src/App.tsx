@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Workspace, type WorkspaceHandle } from "./Workspace";
 import type { PaneHandle } from "./TerminalPane";
-import type { Tab, Connector } from "./workspaceModel";
+import { newId, type Tab, type Connector } from "./workspaceModel";
 import { findProfileForHostLink } from "./notes/notesModel";
 import { TopTabs, type RootSurface } from "./TopTabs";
 import { HostSidebar } from "./HostSidebar";
@@ -45,6 +45,12 @@ import {
   resolveHostDefaultLocalShell,
   resolveShellSetting,
 } from "./domain/localShellHost";
+import {
+  serialFormFromProfile,
+  toSerialConfig,
+} from "./domain/serialFormConfig";
+import type { SerialProfileSnapshot } from "./domain/serialFormConfig";
+import { userVisibleError } from "./domain/sshErrors";
 
 type Tool = "sftp" | "forward" | null;
 
@@ -258,10 +264,56 @@ export default function App() {
     })();
   }
 
+  /** 串口弹窗勾选「保存为主机」：先建 real 凭据（Profile 不变量要求非空 id），再落档案。 */
+  async function saveSerialHost(
+    name: string,
+    snapshot: SerialProfileSnapshot,
+  ): Promise<void> {
+    const credentialId = newId();
+    await api.createCredential({
+      id: credentialId,
+      name: `${name} (${snapshot.serial_port})`,
+      username: "",
+      type: "none",
+      secret: null,
+      save_to_remote: false,
+    });
+    await api.createProfile({
+      id: newId(),
+      name,
+      host: snapshot.serial_port,
+      port: 0,
+      credential_id: credentialId,
+      bastion_profile_id: null,
+      init_command: null,
+      group_id: null,
+      agent_forwarding: false,
+      protocol: "serial",
+      ...snapshot,
+    });
+    await loadData();
+  }
+
   function connect(profile: Profile) {
     setSurface(null);
     setSideOpen(true);
     setRecentIds((prev) => saveRecent(profile.id, prev));
+    if (profile.protocol === "serial") {
+      const form = serialFormFromProfile(profile);
+      workspaceRef.current?.newTab({
+        kind: "serial",
+        session: {
+          port: form.port,
+          config: toSerialConfig(form),
+          lineMode: form.lineMode,
+          localEcho: form.localEcho,
+          backspaceBehavior: form.backspaceBehavior,
+          byteOrientedBackspace: form.byteOrientedBackspace,
+        },
+        name: profile.name,
+      });
+      return;
+    }
     if (profile.protocol === "local") {
       void (async () => {
         let localShellSetting = "";
@@ -535,14 +587,31 @@ export default function App() {
         <SerialConnectModal
           open={showSerialModal}
           onClose={() => setShowSerialModal(false)}
-          onConnect={(session) => {
+          onConnect={(session, saveHost) => {
             setShowSerialModal(false);
             setSurface(null);
-            workspaceRef.current?.newTab({
-              kind: "serial",
-              session,
-              name: `串口 ${session.port}`,
-            });
+            const openSerialTab = () =>
+              workspaceRef.current?.newTab({
+                kind: "serial",
+                session,
+                name: saveHost?.name || `串口 ${session.port}`,
+              });
+            if (!saveHost) {
+              openSerialTab();
+              return;
+            }
+            // 保存失败只提示，不阻断本次连接。
+            void (async () => {
+              try {
+                await saveSerialHost(saveHost.name, saveHost.snapshot);
+              } catch (e) {
+                setStatus(
+                  `串口主机保存失败：${userVisibleError(String(e))}`,
+                );
+              } finally {
+                openSerialTab();
+              }
+            })();
           }}
         />
       )}

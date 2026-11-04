@@ -5,7 +5,8 @@
  * 底部取消 + 连接。
  *
  * 与 Netcatty 的取舍：
- * - termX 无 host 模型，「保存配置」一组不复刻（不做假入口）；
+ * - 「保存为主机」已支持：勾选后连接前写入串口主机档案（protocol="serial"），
+ *   可从 Vault 主机列表重新打开；保存失败只提示、不阻断本次连接。
  * - 自动登录属于 Netcatty 主机编辑面板，不在连接弹窗内；termX 同样不放入。
  * - 命名管道后端 crate 无法打开，这里仍明确禁用 / 报错。
  */
@@ -28,16 +29,24 @@ import {
   isWindowsNamedPipePath,
   resolveSerialForm,
   serialFormErrors,
+  serialProfileSnapshot,
   toSerialConfig,
 } from "../domain/serialFormConfig";
-import type { SerialFormValues } from "../domain/serialFormConfig";
+import type {
+  SerialFormValues,
+  SerialProfileSnapshot,
+} from "../domain/serialFormConfig";
 import type { SerialSessionConfig } from "../workspaceModel";
 import "./serial.css";
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  onConnect: (session: SerialSessionConfig) => void;
+  /** saveHost 存在 = 用户勾选「保存为主机」，连接前先建凭据 / 档案。 */
+  onConnect: (
+    session: SerialSessionConfig,
+    saveHost?: { name: string; snapshot: SerialProfileSnapshot },
+  ) => void;
 }
 
 export function SerialConnectModal({ open, onClose, onConnect }: Props) {
@@ -45,6 +54,8 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
   const [form, setForm] = useState<SerialFormValues>(() => resolveSerialForm());
   const [baudText, setBaudText] = useState("115200");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [saveHost, setSaveHost] = useState(false);
+  const [hostName, setHostName] = useState("");
   const [loadingPorts, setLoadingPorts] = useState(false);
   const [err, setErr] = useState("");
   const aliveRef = useRef(true);
@@ -85,6 +96,8 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
   useEffect(() => {
     if (!open) return;
     setErr("");
+    setSaveHost(false);
+    setHostName("");
     void refreshPorts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -106,14 +119,23 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
       return;
     }
     const port = form.port.trim();
-    onConnect({
-      port,
-      config: toSerialConfig(form),
-      lineMode: form.lineMode,
-      localEcho: form.localEcho,
-      backspaceBehavior: form.backspaceBehavior,
-      byteOrientedBackspace: form.byteOrientedBackspace,
-    });
+    const trimmedHostName = hostName.trim();
+    onConnect(
+      {
+        port,
+        config: toSerialConfig(form),
+        lineMode: form.lineMode,
+        localEcho: form.localEcho,
+        backspaceBehavior: form.backspaceBehavior,
+        byteOrientedBackspace: form.byteOrientedBackspace,
+      },
+      saveHost
+        ? {
+            name: trimmedHostName || `串口 ${port}`,
+            snapshot: serialProfileSnapshot(form),
+          }
+        : undefined,
+    );
   }
 
   return (
@@ -426,6 +448,41 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
                     </datalist>
                   </div>
                 </div>
+              </div>
+            )}
+          </div>
+
+          <div className="serial-save-host">
+            <div className="serial-check-row">
+              <div>
+                <label htmlFor="serial-save-host">{SERIAL_TEXT.saveHost}</label>
+                <p className="serial-hint">{SERIAL_TEXT.saveHostDesc}</p>
+              </div>
+              <input
+                type="checkbox"
+                id="serial-save-host"
+                checked={saveHost}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setSaveHost(checked);
+                  if (checked && !hostName.trim()) {
+                    setHostName(`串口 ${form.port.trim()}`);
+                  }
+                }}
+              />
+            </div>
+            {saveHost && (
+              <div className="serial-field">
+                <label htmlFor="serial-host-name">{SERIAL_TEXT.hostName}</label>
+                <input
+                  id="serial-host-name"
+                  type="text"
+                  placeholder={`串口 ${form.port.trim()}`}
+                  value={hostName}
+                  onChange={(e) => setHostName(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
               </div>
             )}
           </div>

@@ -2879,6 +2879,13 @@ button:disabled {
   border: 1px solid hsl(var(--primary));
 }
 
+/* 串口主机：usb glyph + 青色底，与本地终端的蓝色区分。 */
+.nc-avatar.serial {
+  color: #ffffff;
+  background: #0f766e;
+  border: 1px solid #0f766e;
+}
+
 /* 分组树视图 */
 .vault-tree {
   display: flex;
@@ -3138,6 +3145,11 @@ button:disabled {
 .nc-tree-avatar.local {
   color: #ffffff;
   background: hsl(var(--primary));
+}
+
+.nc-tree-avatar.serial {
+  color: #ffffff;
+  background: #0f766e;
 }
 
 .nc-count {
@@ -4503,6 +4515,176 @@ button:disabled {
   font-size: 11px;
   font-weight: 600;
   color: hsl(var(--muted-foreground));
+}
+
+/* 终端工具栏「系统监控」浮层：锚定在 activity 按钮下方，样式沿用卡片色板。 */
+.term-monitor-anchor {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.term-monitor-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 264px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  color: hsl(var(--foreground));
+  box-shadow:
+    0 8px 20px -8px rgb(0 0 0 / 0.35),
+    0 2px 6px -2px rgb(0 0 0 / 0.2);
+  animation: term-menu-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top left;
+  font-size: 11px;
+  user-select: none;
+}
+
+.term-monitor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.term-monitor-title {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.term-monitor-close {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.term-monitor-close:hover {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+
+.term-monitor-host,
+.term-monitor-muted {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-monitor-error {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: hsl(var(--destructive) / 0.08);
+  color: hsl(var(--destructive));
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.term-monitor-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.term-monitor-card,
+.term-monitor-section {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+}
+
+.term-monitor-label {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.term-monitor-value {
+  margin-top: 2px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.term-monitor-detail {
+  margin-top: 2px;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-monitor-disk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.term-monitor-disk-empty {
+  margin-top: 4px;
+}
+
+.term-monitor-disk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.term-monitor-disk-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-monitor-disk-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.term-monitor-net-row {
+  display: flex;
+  gap: 14px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.term-monitor-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.85;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.term-monitor-foot {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.75;
+  font-size: 10px;
 }
 
 .term-record-dot {

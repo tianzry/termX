@@ -268,12 +268,20 @@ export function HostSidebar({
                   <button
                     className="nc-tree-row nc-tree-host"
                     key={p.id}
-                    title={`${p.name} · ${p.host}:${p.port}`}
+                    title={`${p.name} · ${
+                      p.protocol === "serial"
+                        ? p.serial_port ?? p.host
+                        : `${p.host}:${p.port}`
+                    }`}
                     onClick={() => onConnect(p)}
                   >
                     {p.protocol === "local" ? (
                       <span className="nc-tree-avatar local">
                         <Icon name="terminal" size={11} />
+                      </span>
+                    ) : p.protocol === "serial" ? (
+                      <span className="nc-tree-avatar serial" title="串口主机">
+                        <Icon name="usb" size={11} />
                       </span>
                     ) : (
                       <span

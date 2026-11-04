@@ -119,6 +119,27 @@ describe("createLocalShellHost", () => {
 });
 
 describe("getLocalShellHostSubtitle / getVaultHostRowSubtitle", () => {
+  it("串口主机副标题显示串口路径与波特率（旧库回落到 host）", () => {
+    expect(
+      getVaultHostRowSubtitle({
+        protocol: "serial",
+        local_shell_name: null,
+        host: "COM3",
+        serial_port: "COM3",
+        serial_baud: 115200,
+      }),
+    ).toBe("COM3 · 115200 bps");
+    expect(
+      getVaultHostRowSubtitle({
+        protocol: "serial",
+        local_shell_name: null,
+        host: "/dev/ttyUSB0",
+        serial_port: null,
+        serial_baud: null,
+      }),
+    ).toBe("/dev/ttyUSB0");
+  });
+
   it("本地主机副标题 = 保存的 shell 名，缺省回退「本地终端」", () => {
     expect(
       getLocalShellHostSubtitle({ local_shell_name: "CMD" }),

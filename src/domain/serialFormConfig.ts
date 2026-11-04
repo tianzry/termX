@@ -135,6 +135,9 @@ export const SERIAL_TEXT = {
   autoLoginPassword: "密码",
   autoLoginUsernamePlaceholder: "留空则不启用",
   autoLoginPasswordPlaceholder: "可为空（空密码设备）",
+  saveHost: "保存为主机",
+  saveHostDesc: "将当前串口配置保存到 Vault，之后可从主机列表直接打开",
+  hostName: "主机名称",
 } as const;
 
 /** 12 档常用波特率，可自定义任意正整数。 */
@@ -215,6 +218,91 @@ export function resolveSerialForm(
   }
   if (!merged.charset) merged.charset = SERIAL_FORM_DEFAULTS.charset;
   return merged;
+}
+
+/** 串口主机档案快照（Profile 的 serial_* 列），写入时由表单生成。 */
+export interface SerialProfileSnapshot {
+  serial_port: string;
+  serial_baud: number;
+  serial_data_bits: number;
+  serial_parity: string;
+  serial_stop_bits: number;
+  serial_flow: string;
+  serial_local_echo: boolean;
+  serial_line_mode: boolean;
+  serial_backspace: string;
+  serial_byte_backspace: boolean;
+  serial_charset: string;
+}
+
+/** 表单 → Profile 串口列（flow / backspace 存界面取值，连接时再映射后端）。 */
+export function serialProfileSnapshot(
+  values: SerialFormValues,
+): SerialProfileSnapshot {
+  return {
+    serial_port: values.port.trim(),
+    serial_baud: values.baudRate,
+    serial_data_bits: values.dataBits,
+    serial_parity: values.parity,
+    serial_stop_bits: values.stopBits,
+    serial_flow: values.flowControl,
+    serial_local_echo: values.localEcho,
+    serial_line_mode: values.lineMode,
+    serial_backspace: values.backspaceBehavior,
+    serial_byte_backspace: values.byteOrientedBackspace,
+    serial_charset: values.charset.trim(),
+  };
+}
+
+/** Profile 串口列（或旧库 NULL）→ 表单值；缺省项回落到 SERIAL_FORM_DEFAULTS。 */
+export function serialFormFromProfile(
+  profile: SerialProfileSnapshotLike & { host?: string },
+): SerialFormValues {
+  const saved: Partial<SerialFormValues> = {};
+  const port = profile.serial_port ?? profile.host ?? "";
+  if (port) saved.port = port;
+  if (typeof profile.serial_baud === "number") saved.baudRate = profile.serial_baud;
+  if (SERIAL_DATA_BITS.includes(profile.serial_data_bits as 5 | 6 | 7 | 8)) {
+    saved.dataBits = profile.serial_data_bits as 5 | 6 | 7 | 8;
+  }
+  if (SERIAL_STOP_BITS.includes(profile.serial_stop_bits as 1 | 1.5 | 2)) {
+    saved.stopBits = profile.serial_stop_bits as 1 | 1.5 | 2;
+  }
+  if (SERIAL_PARITY_OPTIONS.some((o) => o.value === profile.serial_parity)) {
+    saved.parity = profile.serial_parity as SerialParity;
+  }
+  if (SERIAL_FLOW_CONTROL_OPTIONS.some((o) => o.value === profile.serial_flow)) {
+    saved.flowControl = profile.serial_flow as SerialFlowControl;
+  }
+  if (typeof profile.serial_local_echo === "boolean") {
+    saved.localEcho = profile.serial_local_echo;
+  }
+  if (typeof profile.serial_line_mode === "boolean") {
+    saved.lineMode = profile.serial_line_mode;
+  }
+  if (profile.serial_backspace === "ctrl-h") {
+    saved.backspaceBehavior = "ctrl-h";
+  }
+  if (typeof profile.serial_byte_backspace === "boolean") {
+    saved.byteOrientedBackspace = profile.serial_byte_backspace;
+  }
+  if (profile.serial_charset) saved.charset = profile.serial_charset;
+  return resolveSerialForm(saved);
+}
+
+/** Profile 串口列的宽松输入（后端返回 number / boolean，旧库可能为 null）。 */
+export interface SerialProfileSnapshotLike {
+  serial_port?: string | null;
+  serial_baud?: number | null;
+  serial_data_bits?: number | null;
+  serial_parity?: string | null;
+  serial_stop_bits?: number | null;
+  serial_flow?: string | null;
+  serial_local_echo?: boolean | null;
+  serial_line_mode?: boolean | null;
+  serial_backspace?: string | null;
+  serial_byte_backspace?: boolean | null;
+  serial_charset?: string | null;
 }
 
 /** Netcatty 流控取值 → termX 后端取值。 */

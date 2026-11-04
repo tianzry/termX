@@ -46,6 +46,18 @@ export type VaultExportHost = {
   local_shell_name?: string | null;
   local_shell_icon?: string | null;
   local_start_dir?: string | null;
+  /** 串口主机（protocol === "serial"）的非敏感参数快照。 */
+  serial_port?: string | null;
+  serial_baud?: number | null;
+  serial_data_bits?: number | null;
+  serial_parity?: string | null;
+  serial_stop_bits?: number | null;
+  serial_flow?: string | null;
+  serial_local_echo?: boolean | null;
+  serial_line_mode?: boolean | null;
+  serial_backspace?: string | null;
+  serial_byte_backspace?: boolean | null;
+  serial_charset?: string | null;
   tags?: string[];
 };
 
@@ -107,6 +119,21 @@ const toExportHost = (
   ...(p.local_shell_name ? { local_shell_name: p.local_shell_name } : {}),
   ...(p.local_shell_icon ? { local_shell_icon: p.local_shell_icon } : {}),
   ...(p.local_start_dir ? { local_start_dir: p.local_start_dir } : {}),
+  ...(p.protocol === "serial"
+    ? {
+        serial_port: p.serial_port ?? p.host,
+        serial_baud: p.serial_baud ?? null,
+        serial_data_bits: p.serial_data_bits ?? null,
+        serial_parity: p.serial_parity ?? null,
+        serial_stop_bits: p.serial_stop_bits ?? null,
+        serial_flow: p.serial_flow ?? null,
+        serial_local_echo: p.serial_local_echo ?? false,
+        serial_line_mode: p.serial_line_mode ?? false,
+        serial_backspace: p.serial_backspace ?? null,
+        serial_byte_backspace: p.serial_byte_backspace ?? false,
+        serial_charset: p.serial_charset ?? null,
+      }
+    : {}),
   ...(tags.length ? { tags } : {}),
 });
 
@@ -170,6 +197,17 @@ export type VaultImportHost = {
   local_shell_name: string | null;
   local_shell_icon: string | null;
   local_start_dir: string | null;
+  serial_port: string | null;
+  serial_baud: number | null;
+  serial_data_bits: number | null;
+  serial_parity: string | null;
+  serial_stop_bits: number | null;
+  serial_flow: string | null;
+  serial_local_echo: boolean | null;
+  serial_line_mode: boolean | null;
+  serial_backspace: string | null;
+  serial_byte_backspace: boolean | null;
+  serial_charset: string | null;
   tags: string[];
 };
 
@@ -189,6 +227,32 @@ function parsePort(value: unknown): number | null {
     return n >= 1 && n <= 65535 ? n : null;
   }
   return null;
+}
+
+/** 串口主机 port 固定 0，允许 0–65535；其它协议仍走 parsePort（1–65535）。 */
+function parseSerialPort(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return 0;
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value >= 0 && value <= 65535 ? value : null;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const n = Number(value.trim());
+    return n >= 0 && n <= 65535 ? n : null;
+  }
+  return null;
+}
+
+function optionalInt(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= min &&
+    value <= max
+    ? value
+    : null;
+}
+
+function optionalBool(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function stringArray(value: unknown): string[] {
@@ -221,7 +285,11 @@ function sanitizeHost(value: unknown): VaultImportHost | null {
   if (!isObjectRecord(value)) return null;
   const name = trimmed(value.name);
   const host = trimmed(value.host);
-  const port = parsePort(value.port);
+  const rawProtocol = trimmed(value.protocol);
+  const protocol =
+    rawProtocol === "local" || rawProtocol === "serial" ? rawProtocol : "ssh";
+  const port =
+    protocol === "serial" ? parseSerialPort(value.port) : parsePort(value.port);
   if (!name || !host || port === null) return null;
   return {
     id: trimmed(value.id) || `${name}@${host}:${port}`,
@@ -231,7 +299,7 @@ function sanitizeHost(value: unknown): VaultImportHost | null {
     group_id: optionalString(value.group_id),
     username: trimmed(value.username),
     auth_method: trimmed(value.auth_method) || "none",
-    protocol: trimmed(value.protocol) === "local" ? "local" : "ssh",
+    protocol,
     init_command: optionalString(value.init_command),
     icon_source: optionalString(value.icon_source),
     icon_color: optionalString(value.icon_color),
@@ -253,6 +321,22 @@ function sanitizeHost(value: unknown): VaultImportHost | null {
     local_shell_name: optionalString(value.local_shell_name),
     local_shell_icon: optionalString(value.local_shell_icon),
     local_start_dir: optionalString(value.local_start_dir),
+    serial_port: optionalString(value.serial_port),
+    serial_baud: optionalInt(value.serial_baud, 1, 4_000_000),
+    serial_data_bits: optionalInt(value.serial_data_bits, 5, 8),
+    serial_parity: optionalString(value.serial_parity),
+    serial_stop_bits:
+      typeof value.serial_stop_bits === "number" &&
+      Number.isFinite(value.serial_stop_bits) &&
+      value.serial_stop_bits > 0
+        ? value.serial_stop_bits
+        : null,
+    serial_flow: optionalString(value.serial_flow),
+    serial_local_echo: optionalBool(value.serial_local_echo),
+    serial_line_mode: optionalBool(value.serial_line_mode),
+    serial_backspace: optionalString(value.serial_backspace),
+    serial_byte_backspace: optionalBool(value.serial_byte_backspace),
+    serial_charset: optionalString(value.serial_charset),
     tags: stringArray(value.tags),
   };
 }
@@ -396,7 +480,9 @@ export function importedHostToProfile(
     bastion_profile_id: null,
     init_command: host.init_command,
     group_id: groupId,
-    ...(host.protocol === "local" ? { protocol: "local" } : {}),
+    ...(host.protocol === "local" || host.protocol === "serial"
+      ? { protocol: host.protocol }
+      : {}),
     ...(host.icon_source ? { icon_source: host.icon_source } : {}),
     ...(host.icon_color ? { icon_color: host.icon_color } : {}),
     ...(host.sftp_protocol ? { sftp_protocol: host.sftp_protocol } : {}),
@@ -415,6 +501,21 @@ export function importedHostToProfile(
     ...(host.local_shell_name ? { local_shell_name: host.local_shell_name } : {}),
     ...(host.local_shell_icon ? { local_shell_icon: host.local_shell_icon } : {}),
     ...(host.local_start_dir ? { local_start_dir: host.local_start_dir } : {}),
+    ...(host.protocol === "serial"
+      ? {
+          serial_port: host.serial_port ?? host.host,
+          serial_baud: host.serial_baud,
+          serial_data_bits: host.serial_data_bits,
+          serial_parity: host.serial_parity,
+          serial_stop_bits: host.serial_stop_bits,
+          serial_flow: host.serial_flow,
+          serial_local_echo: host.serial_local_echo,
+          serial_line_mode: host.serial_line_mode,
+          serial_backspace: host.serial_backspace,
+          serial_byte_backspace: host.serial_byte_backspace,
+          serial_charset: host.serial_charset,
+        }
+      : {}),
   };
 }
 
@@ -451,6 +552,22 @@ export function applyImportedHost(
     agent_forwarding: host.agent_forwarding,
     ...(host.ssh_input_compatibility !== null
       ? { ssh_input_compatibility: host.ssh_input_compatibility }
+      : {}),
+    ...(host.protocol === "serial"
+      ? {
+          protocol: "serial" as const,
+          serial_port: host.serial_port ?? host.host,
+          serial_baud: host.serial_baud,
+          serial_data_bits: host.serial_data_bits,
+          serial_parity: host.serial_parity,
+          serial_stop_bits: host.serial_stop_bits,
+          serial_flow: host.serial_flow,
+          serial_local_echo: host.serial_local_echo,
+          serial_line_mode: host.serial_line_mode,
+          serial_backspace: host.serial_backspace,
+          serial_byte_backspace: host.serial_byte_backspace,
+          serial_charset: host.serial_charset,
+        }
       : {}),
   };
 }

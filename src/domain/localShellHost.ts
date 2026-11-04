@@ -57,14 +57,29 @@ export interface VaultHostRowSubtitleOptions {
   sshSubtitle?: string;
 }
 
+/** 串口主机副标题：串口路径 + 波特率（旧库 serial_* 为空时回落到 host）。 */
+export const getSerialHostSubtitle = (
+  profile: Partial<
+    Pick<Profile, "host" | "serial_port" | "serial_baud">
+  >,
+): string => {
+  const port = profile.serial_port?.trim() || profile.host?.trim() || "";
+  if (!port) return "串口";
+  return profile.serial_baud ? `${port} · ${profile.serial_baud} bps` : port;
+};
+
 /** Vault 卡 / 行共用的副标题。 */
 export const getVaultHostRowSubtitle = (
-  profile: Pick<Profile, "protocol" | "local_shell_name">,
+  profile: Pick<Profile, "protocol" | "local_shell_name"> &
+    Partial<Pick<Profile, "host" | "serial_port" | "serial_baud">>,
   options?: VaultHostRowSubtitleOptions,
-): string =>
-  profile.protocol === "local"
-    ? getLocalShellHostSubtitle(profile, options?.localFallback)
-    : options?.sshSubtitle ?? "";
+): string => {
+  if (profile.protocol === "local") {
+    return getLocalShellHostSubtitle(profile, options?.localFallback);
+  }
+  if (profile.protocol === "serial") return getSerialHostSubtitle(profile);
+  return options?.sshSubtitle ?? "";
+};
 
 /**
  * 把 localShell 设置值解析成命令 + 参数（对齐 Netcatty resolveShellSetting）。

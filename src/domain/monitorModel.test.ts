@@ -8,6 +8,7 @@ import {
   formatPercent,
   formatRate,
   formatUptime,
+  limitDisks,
 } from "./monitorModel";
 
 function sample(overrides: Partial<MonitorSample>): MonitorSample {
@@ -86,6 +87,28 @@ describe("buildTrendGeometry", () => {
     const geometry = buildTrendGeometry(points, "rx", 60, 10_000, 2);
     expect(geometry.segments).toHaveLength(1);
     expect(geometry.max).toBeGreaterThan(1000);
+  });
+});
+
+describe("limitDisks", () => {
+  const disk = (mount: string) => ({
+    mount_point: mount,
+    filesystem: "ext4",
+    used_gb: 1,
+    total_gb: 2,
+    percent: 50,
+  });
+
+  it("超过上限时只展示前 max 个并给出剩余计数", () => {
+    const preview = limitDisks([disk("/"), disk("/data"), disk("/home"), disk("/var"), disk("/tmp")]);
+    expect(preview.shown).toHaveLength(3);
+    expect(preview.extra).toBe(2);
+  });
+
+  it("未超过上限时不显示剩余计数", () => {
+    const preview = limitDisks([disk("/"), disk("/data")]);
+    expect(preview.shown).toHaveLength(2);
+    expect(preview.extra).toBe(0);
   });
 });
 
