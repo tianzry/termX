@@ -3,7 +3,7 @@
 //! 对标 Netcatty 契约（`globalTransferScheduler` / `TransferTask` /
 //! `SftpConflictDialog`，见 `../Netcatty`）：
 //! - **队列中心**：持久化排队项（`sftp_transfer_queue` 表，schema v35）、
-//!   全局并发上限（settings key `sftp_transfer_concurrency`，默认 2、上限 8）、
+//!   全局并发上限（settings key `sftp_transfer_concurrency`，默认 6、上限 16）、
 //!   暂停 / 恢复、优先级重排、取消；
 //! - **进度事件**：复用既有 `sftp:progress:<transfer_id>`（upload/download_streaming
 //!   已按 transfer_id 发出）；状态变化另发 `sftp:transfer_updated:<id>`；
@@ -38,8 +38,8 @@ use crate::ssh::sftp::{SftpHandle, CANCELLED_CODE};
 use crate::state::AppState;
 
 /// 默认全局并发（Netcatty `netcatty_sftp_transfer_concurrency_v1` 的对位）。
-pub const DEFAULT_CONCURRENCY: usize = 2;
-pub const MAX_CONCURRENCY: usize = 8;
+pub const DEFAULT_CONCURRENCY: usize = 6;
+pub const MAX_CONCURRENCY: usize = 16;
 const CONCURRENCY_KEY: &str = "sftp_transfer_concurrency";
 /// 自动重命名尝试上限（防 `file (copy)`…(copy N) 死循环）。
 const MAX_RENAME_ATTEMPTS: u32 = 50;

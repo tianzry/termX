@@ -22,6 +22,7 @@ import type {
   TransferStatus,
 } from "../backend/client";
 import { errorMessageFor, userVisibleError } from "../domain/sshErrors";
+import { updateSettings, useSettings } from "../settings/settingsStore";
 import {
   canCancel,
   canPause,
@@ -36,12 +37,12 @@ import {
 import { Icon } from "../ui/icons";
 import { SftpConflictDialog } from "./SftpConflictDialog";
 
-const CONCURRENCY_KEY = "sftp_transfer_concurrency";
 const MIN_CONCURRENCY = 1;
-const MAX_CONCURRENCY = 8;
+const MAX_CONCURRENCY = 16;
+const DEFAULT_CONCURRENCY = 6;
 
 function clampConcurrency(n: number): number {
-  if (!Number.isFinite(n)) return 2;
+  if (!Number.isFinite(n)) return DEFAULT_CONCURRENCY;
   return Math.min(MAX_CONCURRENCY, Math.max(MIN_CONCURRENCY, Math.round(n)));
 }
 
@@ -79,7 +80,9 @@ function StatusIcon({ status }: { status: TransferStatus }) {
 export function SftpQueuePanel() {
   const [items, setItems] = useState<TransferItem[]>([]);
   const [progress, setProgress] = useState<Record<string, TransferProgress>>({});
-  const [concurrency, setConcurrency] = useState(2);
+  // 并发数由设置中心「SFTP」tab 持有（单一来源），此处只做展示与调整入口。
+  const settings = useSettings();
+  const concurrency = settings.sftpTransferConcurrency;
   const [error, setError] = useState("");
   const [conflictBusy, setConflictBusy] = useState(false);
   const [conflictError, setConflictError] = useState("");
@@ -90,9 +93,6 @@ export function SftpQueuePanel() {
     let unlisten: (() => void) | null = null;
     void api.sftpTransferList().then((list) => {
       if (alive) setItems(list);
-    }).catch(() => {});
-    void api.getSetting(CONCURRENCY_KEY).then((v) => {
-      if (alive && v) setConcurrency(clampConcurrency(Number(v)));
     }).catch(() => {});
     void api.onSftpQueueChanged((snapshot) => setItems(snapshot)).then((u) => {
       if (alive) unlisten = u;
@@ -194,8 +194,8 @@ export function SftpQueuePanel() {
 
   const changeConcurrency = (value: number) => {
     const next = clampConcurrency(value);
-    setConcurrency(next);
-    run(api.sftpTransferSetConcurrency(next));
+    // 持久化 + 即时下发后端由设置 store 的副作用统一处理。
+    updateSettings({ sftpTransferConcurrency: next });
   };
 
   const resolveConflict = (

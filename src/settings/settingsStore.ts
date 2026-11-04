@@ -13,6 +13,7 @@ import {
   setSetting,
   setWindowBackgroundBlur,
   setWindowOpacity,
+  sftpTransferSetConcurrency,
 } from "../backend/client";
 import {
   type AppSettings,
@@ -57,7 +58,15 @@ export async function loadSettings(): Promise<void> {
   loadStarted = true;
   try {
     const raw = await getSetting(SETTINGS_STORAGE_KEY);
-    if (raw) current = normalizeSettings(JSON.parse(raw));
+    let parsed: Record<string, unknown> | null = raw ? JSON.parse(raw) : null;
+    // 旧版并发数存在独立 key（SFTP 队列面板写入），首次升级时迁移，避免被默认 6 覆盖。
+    if (!parsed || parsed.sftpTransferConcurrency === undefined) {
+      const legacy = await getSetting("sftp_transfer_concurrency");
+      if (legacy) {
+        parsed = { ...(parsed ?? {}), sftpTransferConcurrency: Number(legacy) };
+      }
+    }
+    if (parsed) current = normalizeSettings(parsed);
   } catch {
     current = DEFAULT_SETTINGS;
   }
@@ -275,7 +284,22 @@ function applyThemeTokens(s: AppSettings, mode: "light" | "dark"): void {
   for (const key of THEME_VARS) root.style.setProperty(`--${key}`, values[key]);
 }
 
+/** 上次下发的 SFTP 并发（哨兵 -1 = 未下发）；相同则跳过。 */
+let sftpConcurrencyApplied = -1;
+
+/** SFTP 设置即时生效：并发上限同步到后端传输中心（后端会把值持久化到 db）。 */
+function applySftpSettings(s: AppSettings): void {
+  if (sftpConcurrencyApplied === s.sftpTransferConcurrency) return;
+  const target = s.sftpTransferConcurrency;
+  sftpConcurrencyApplied = target;
+  void sftpTransferSetConcurrency(target).catch(() => {
+    // 无传输中心（单测 / headless）时保持哨兵可重试。
+    if (sftpConcurrencyApplied === target) sftpConcurrencyApplied = -1;
+  });
+}
+
 export function applySideEffects(s: AppSettings): void {
+  applySftpSettings(s);
   if (typeof document === "undefined") return;
   const root = document.documentElement;
 

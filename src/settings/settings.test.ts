@@ -100,6 +100,24 @@ describe("normalizeSettings", () => {
   });
 });
 
+describe("SFTP 设置", () => {
+  it("双击行为 / 隐藏文件 / 并发数默认、枚举校验与 clamp（对照 Netcatty）", () => {
+    expect(DEFAULT_SETTINGS.sftpDoubleClickBehavior).toBe("open");
+    expect(DEFAULT_SETTINGS.sftpShowHiddenFiles).toBe(false);
+    expect(DEFAULT_SETTINGS.sftpTransferConcurrency).toBe(6);
+    expect(
+      normalizeSettings({ sftpDoubleClickBehavior: "transfer" }).sftpDoubleClickBehavior,
+    ).toBe("transfer");
+    expect(
+      normalizeSettings({ sftpDoubleClickBehavior: "nope" }).sftpDoubleClickBehavior,
+    ).toBe("open");
+    expect(normalizeSettings({ sftpShowHiddenFiles: true }).sftpShowHiddenFiles).toBe(true);
+    expect(normalizeSettings({ sftpTransferConcurrency: 0 }).sftpTransferConcurrency).toBe(1);
+    expect(normalizeSettings({ sftpTransferConcurrency: 99 }).sftpTransferConcurrency).toBe(16);
+    expect(normalizeSettings({ sftpTransferConcurrency: "x" }).sftpTransferConcurrency).toBe(6);
+  });
+});
+
 describe("keyBindings", () => {
   it("默认绑定 id 唯一且覆盖五个分类", () => {
     const ids = DEFAULT_KEY_BINDINGS.map((b) => b.id);

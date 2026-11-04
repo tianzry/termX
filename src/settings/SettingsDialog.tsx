@@ -17,6 +17,7 @@ import {
   PlaceholderTab,
   ShortcutsTab,
   SystemTab,
+  SftpTab,
   TerminalTab,
 } from "./SettingsTabs";
 
@@ -42,7 +43,7 @@ const TABS: TabDef[] = [
   { id: "appearance", icon: "palette" },
   { id: "terminal", icon: "terminal-square" },
   { id: "shortcuts", icon: "keyboard" },
-  { id: "file-associations", icon: "file-type", disabled: true },
+  { id: "file-associations", icon: "file-type" },
   { id: "ai", icon: "sparkles", disabled: true },
   { id: "sync", icon: "cloud", disabled: true },
   { id: "system", icon: "hard-drive" },
@@ -152,8 +153,9 @@ export function SettingsDialog({
           {tab === "appearance" && <AppearanceTab />}
           {tab === "terminal" && <TerminalTab />}
           {tab === "shortcuts" && <ShortcutsTab />}
+          {tab === "file-associations" && <SftpTab />}
           {tab === "system" && <SystemTab />}
-          {(tab === "file-associations" || tab === "ai" || tab === "sync") && <PlaceholderTab tab={tab} />}
+          {(tab === "ai" || tab === "sync") && <PlaceholderTab tab={tab} />}
         </div>
       </div>
     </div>

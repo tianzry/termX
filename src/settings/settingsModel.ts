@@ -19,6 +19,7 @@ export type Osc52ClipboardMode = "off" | "write-only" | "read-write" | "prompt";
 export type LinkModifier = "none" | "ctrl" | "alt" | "meta";
 export type LinkBrowser = "netcatty" | "system";
 export type ProxyMode = "system" | "direct" | "custom";
+export type SftpDoubleClickBehavior = "open" | "transfer";
 export type SessionLogFormat = "txt" | "raw" | "html";
 export type HotkeyScheme = "mac" | "pc";
 export type UiLanguage = "zh-CN" | "en";
@@ -140,6 +141,12 @@ export interface AppSettings {
   networkProxy: NetworkProxySettings;
   sessionLogs: SessionLogsSettings;
   sshDebugLogsEnabled: boolean;
+  /** SFTP 双击行为（对照 Netcatty settings.sftp.doubleClickBehavior）。 */
+  sftpDoubleClickBehavior: SftpDoubleClickBehavior;
+  /** SFTP 默认显示隐藏文件（对照 Netcatty settings.sftp.showHiddenFiles）。 */
+  sftpShowHiddenFiles: boolean;
+  /** 同一目标同时传输的文件数上限（对照 Netcatty settings.sftp.transferConcurrency）。 */
+  sftpTransferConcurrency: number;
 }
 
 export const SETTINGS_STORAGE_KEY = "settings.center.v1";
@@ -152,6 +159,23 @@ export const MAX_TERMINAL_SCROLLBACK = 100000;
 export const UNLIMITED_SCROLLBACK_CAP = 50000;
 
 export const DEFAULT_WORD_SEPARATORS = "`~!@#$%^&*()-=+[]{}\\|;:'\",.<>/?";
+
+/** SFTP 传输并发：1–16，默认 6（对照 Netcatty domain/sftpTransferConcurrency.ts）。 */
+export const MIN_SFTP_TRANSFER_CONCURRENCY = 1;
+export const MAX_SFTP_TRANSFER_CONCURRENCY = 16;
+export const DEFAULT_SFTP_TRANSFER_CONCURRENCY = 6;
+
+export function clampSftpTransferConcurrency(value: unknown): number {
+  if (value === null || value === undefined || value === "") {
+    return DEFAULT_SFTP_TRANSFER_CONCURRENCY;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_SFTP_TRANSFER_CONCURRENCY;
+  return Math.min(
+    MAX_SFTP_TRANSFER_CONCURRENCY,
+    Math.max(MIN_SFTP_TRANSFER_CONCURRENCY, Math.round(n)),
+  );
+}
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   scrollback: 3000,
@@ -238,6 +262,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   networkProxy: { mode: "system", url: "", bypass: "" },
   sessionLogs: { enabled: false, format: "txt", timestamps: false },
   sshDebugLogsEnabled: false,
+  sftpDoubleClickBehavior: "open",
+  sftpShowHiddenFiles: false,
+  sftpTransferConcurrency: DEFAULT_SFTP_TRANSFER_CONCURRENCY,
 };
 
 /** 窗口透明度 clamp 到 [0.5, 1]（对照 Netcatty clampWindowOpacity）。 */
@@ -473,5 +500,12 @@ export function normalizeSettings(raw: unknown): AppSettings {
       timestamps: pickBool(logsRaw.timestamps, d.sessionLogs.timestamps),
     },
     sshDebugLogsEnabled: pickBool(r.sshDebugLogsEnabled, d.sshDebugLogsEnabled),
+    sftpDoubleClickBehavior: pickOne(
+      r.sftpDoubleClickBehavior,
+      ["open", "transfer"] as const,
+      d.sftpDoubleClickBehavior,
+    ),
+    sftpShowHiddenFiles: pickBool(r.sftpShowHiddenFiles, d.sftpShowHiddenFiles),
+    sftpTransferConcurrency: clampSftpTransferConcurrency(r.sftpTransferConcurrency),
   };
 }

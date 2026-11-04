@@ -26,8 +26,10 @@ import {
 } from "./keyBindings";
 import type { AppIconVariant } from "./settingsModel";
 import {
+  MAX_SFTP_TRANSFER_CONCURRENCY,
   MAX_TERMINAL_FONT_SIZE,
   MAX_TERMINAL_SCROLLBACK,
+  MIN_SFTP_TRANSFER_CONCURRENCY,
   MIN_TERMINAL_FONT_SIZE,
   clampCursorBarWidth,
   clampScrollback,
@@ -1160,6 +1162,161 @@ export function TerminalTab() {
 }
 
 // ── 快捷键 ────────────────────────────────────────────────
+
+/**
+ * SFTP tab：逐项对照 Netcatty SettingsFileAssociationsTab。
+ * 能落地的项（双击行为 / 隐藏文件 / 侧栏自动打开 / 传输并发）即时生效并持久化；
+ * 其余项保留控件并置灰，desc 追加未实现原因。
+ */
+export function SftpTab() {
+  const s = useSettings();
+  const t = useT();
+  const unsupported = t("settings.sftp.unsupported");
+  const withReason = (desc: string) => `${desc} ${unsupported}`;
+
+  return (
+    <div>
+      <Section title={t("settings.sftp.doubleClickBehavior")}>
+        <Row
+          title={t("settings.sftp.doubleClickBehavior")}
+          desc={t("settings.sftp.doubleClickBehavior.desc")}
+        >
+          <Select
+            value={s.sftpDoubleClickBehavior}
+            onChange={(v) =>
+              updateSettings({ sftpDoubleClickBehavior: v as "open" | "transfer" })
+            }
+            options={[
+              { value: "open", label: t("settings.sftp.doubleClickBehavior.open") },
+              { value: "transfer", label: t("settings.sftp.doubleClickBehavior.transfer") },
+            ]}
+          />
+        </Row>
+        <Row
+          title={t("settings.sftp.defaultViewMode")}
+          desc={withReason(t("settings.sftp.defaultViewMode.desc"))}
+        >
+          <Select
+            value="list"
+            onChange={() => {}}
+            disabled
+            options={[
+              { value: "list", label: t("settings.sftp.defaultViewMode.list") },
+              { value: "tree", label: t("settings.sftp.defaultViewMode.tree") },
+            ]}
+          />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.sftp.showHiddenFiles")}>
+        <Row
+          title={t("settings.sftp.showHiddenFiles")}
+          desc={t("settings.sftp.showHiddenFiles.desc")}
+        >
+          <Toggle
+            checked={s.sftpShowHiddenFiles}
+            onChange={(v) => updateSettings({ sftpShowHiddenFiles: v })}
+          />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.sftp.autoSync")}>
+        <Row title={t("settings.sftp.autoSync")} desc={withReason(t("settings.sftp.autoSync.desc"))}>
+          <Toggle checked={false} onChange={() => {}} disabled />
+        </Row>
+        <Row
+          title={t("settings.sftp.compressedUpload")}
+          desc={withReason(t("settings.sftp.compressedUpload.desc"))}
+        >
+          <Toggle checked={true} onChange={() => {}} disabled />
+        </Row>
+        <Row
+          title={t("settings.sftp.followTerminalCwd")}
+          desc={withReason(t("settings.sftp.followTerminalCwd.desc"))}
+        >
+          <Toggle checked={false} onChange={() => {}} disabled />
+        </Row>
+        <Row
+          title={t("settings.sftp.autoOpenSidebar")}
+          desc={t("settings.sftp.autoOpenSidebar.desc")}
+        >
+          <Toggle
+            checked={s.sidePanelAutoOpen}
+            onChange={(v) => updateSettings({ sidePanelAutoOpen: v })}
+          />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.sftp.transferConcurrency")}>
+        <Row
+          title={t("settings.sftp.transferConcurrency")}
+          desc={t("settings.sftp.transferConcurrency.desc")}
+        >
+          <div className="nc-set-slider">
+            <input
+              type="range"
+              min={MIN_SFTP_TRANSFER_CONCURRENCY}
+              max={MAX_SFTP_TRANSFER_CONCURRENCY}
+              value={s.sftpTransferConcurrency}
+              onChange={(e) =>
+                updateSettings({ sftpTransferConcurrency: Number(e.target.value) })
+              }
+            />
+            <span className="nc-set-value">{s.sftpTransferConcurrency}</span>
+          </div>
+        </Row>
+        <Row
+          title={t("settings.sftp.skipUnchanged")}
+          desc={withReason(t("settings.sftp.skipUnchanged.desc"))}
+        >
+          <Toggle checked={true} onChange={() => {}} disabled />
+        </Row>
+        <Row
+          title={t("settings.ssh.transportIdleTtl")}
+          desc={withReason(t("settings.ssh.transportIdleTtl.desc"))}
+        >
+          <Select
+            value="5m"
+            onChange={() => {}}
+            disabled
+            options={[
+              { value: "1m", label: t("settings.ssh.transportIdleTtl.1m") },
+              { value: "5m", label: t("settings.ssh.transportIdleTtl.5m") },
+              { value: "15m", label: t("settings.ssh.transportIdleTtl.15m") },
+              { value: "30m", label: t("settings.ssh.transportIdleTtl.30m") },
+              { value: "never", label: t("settings.ssh.transportIdleTtl.never") },
+            ]}
+          />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.sftpFileAssociations.title")}>
+        <Row
+          title={t("settings.sftp.defaultOpener")}
+          desc={withReason(t("settings.sftp.defaultOpener.desc"))}
+        >
+          <Select
+            value="ask"
+            onChange={() => {}}
+            disabled
+            options={[
+              { value: "ask", label: t("settings.sftp.defaultOpener.ask") },
+              { value: "builtin", label: t("settings.sftp.defaultOpener.builtin") },
+            ]}
+          />
+        </Row>
+        <Row
+          title={t("settings.sftpFileAssociations.title")}
+          desc={withReason(t("settings.sftpFileAssociations.desc"))}
+        >
+          <span className="nc-set-row-desc">
+            {t("settings.sftpFileAssociations.noAssociations")}
+          </span>
+        </Row>
+      </Section>
+    </div>
+  );
+}
 
 export function ShortcutsTab() {
   const s = useSettings();

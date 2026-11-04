@@ -3959,3 +3959,30 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `cargo check --features server` ✓（4 个既有 warning）
 - `cargo test --lib`：874 ✓
 - debug 实例 CDP 实测：进入「已知主机」→ 6 条卡片，含扫描/导入按钮与搜索框 → 搜索 `zzz` 后 0 条并显示空态 ✓
+
+## 2026-11-04 — 第二步：设置 → SFTP tab 一比一复刻
+
+对照 `Netcatty/components/settings/tabs/SettingsFileAssociationsTab.tsx`（及其依赖 `useSftpFileAssociations`、`domain/sftpTransferConcurrency.ts`）逐项列清单，并与本项目 `src/settings/`、`src/sftp/`、`src-tauri/src/sftp/transfer_center.rs` 对照落地。tab 由占位改为真实内容（导航项解除禁用）。
+
+| 项 | Netcatty | termX 本轮前 | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 双击行为 open / transfer | 默认 open；transfer=传到对侧焦点面板 | 固定打开内置编辑器 | 行为 | 落地：`sftpDoubleClickBehavior`；transfer 复用拖动载荷入队传输到对侧活动面板（本地↔远端支持，无对侧标签或同类型面板回落打开） |
+| 默认视图模式 list / tree | 默认 list | 仅列表视图 | 行为 | 置灰 + 行内原因（无树视图实现） |
+| 显示隐藏文件 | 默认关 | 面板内临时开关，默认关 | 行为 | 落地：`sftpShowHiddenFiles` 作为新面板默认值，设置变更即时覆盖 |
+| 自动同步到远程 | 默认关 | 无外部编辑回写同步 | 行为 | 置灰 + 行内原因 |
+| 文件夹压缩传输 | 默认开 | 后端 SFTP 无压缩传输 | 行为 | 置灰 + 行内原因 |
+| 追随终端目录 | 默认关 | SFTP 独立标签，无 CWD 联动 | 行为 | 置灰 + 行内原因 |
+| 连接时自动打开侧栏 | 默认关 | 已有 `sidePanelAutoOpen`（终端侧栏接通） | — | 落地：该开关双向绑定同一设置，终端连接后自动开 SFTP 侧栏 |
+| 传输并发数 1–16 | 默认 6 / 上限 16 | 传输队列面板 1–8 / 默认 2，独立持久化 | 行为 | 落地：`sftpTransferConcurrency` 单一来源（设置 store 副作用下发后端并持久化）；后端 `DEFAULT_CONCURRENCY` 2→6、`MAX_CONCURRENCY` 8→16；队列面板改为读写设置 store |
+| 跳过未改文件 | 默认开（size+mtime 比对） | 后端传输中心无跳过判定 | 行为 | 置灰 + 行内原因 |
+| SSH 连接保活时间 1/5/15/30/永不 | 默认 5 分钟 | 无共享传输池 idle TTL | 行为 | 置灰 + 行内原因（展示 5 分钟默认值） |
+| 默认文件打开方式 ask / 内置编辑器 | 默认 ask | 固定内置编辑器 + 右键系统程序 | 交互 | 置灰 + 行内原因（无应用选择器） |
+| 文件关联表 | 按扩展名指定应用 | 无按扩展名打开入口 | 行为 | 保留空态区域并置灰 + 行内原因 |
+
+### 门禁
+
+- `npm run test:run`：31 文件 / 392 用例 ✓
+- `npm run build` ✓
+- `cargo check --features server` ✓（4 个既有 warning）
+- `cargo test --lib`：874 ✓
+- debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：SFTP 导航可用 → 12 行齐全，双击值 open、视图 list（禁用）、并发滑杆 1–16 值 6、6 个开关禁用状态与上述一致 → 改为 transfer / 12 / 隐藏文件开 / 侧栏自动打开 → 刷新应用重开设置，四项仍为 transfer / 12 / on / on ✓ → 已还原 open / 6 / off / off

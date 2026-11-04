@@ -26,6 +26,7 @@ import * as api from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import { SftpEditorDialog } from "../editor/EditorDialog";
 import { isKnownBinaryFile } from "../editor/editorFile";
+import { useSettings } from "../settings/settingsStore";
 import { Icon } from "../ui/icons";
 import {
   breadcrumbSegments,
@@ -97,9 +98,20 @@ interface Props {
   connection: PaneConnection;
   /** 导航成功后回写 tab 的当前路径（切 tab 再回来保持位置）。 */
   onPathChange: (path: string) => void;
+  /** 双击行为 = 传输到另一侧时，把文件交给 SftpView 入队（同栏拖动载荷）。
+   *  返回 false 表示无法传输（对侧无标签 / 同类型面板），调用方回落打开文件。 */
+  onTransferFile?: (payload: SftpDragPayload) => boolean;
+  /** 递增触发重新加载（对侧传输完成后刷新列表）。 */
+  refreshKey?: number;
 }
 
-export function SftpPaneView({ connection, onPathChange }: Props) {
+export function SftpPaneView({
+  connection,
+  onPathChange,
+  onTransferFile,
+  refreshKey = 0,
+}: Props) {
+  const settings = useSettings();
   const [path, setPath] = useState(connection.path);
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
@@ -115,8 +127,8 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   const [notice, setNotice] = useState("");
   /** 远端外部打开后的临时文件路径记录（key=远端路径），供后续「保存后回传」。 */
   const externalTemps = useRef(new Map<string, string>());
-  /** 显示隐藏文件（本地看 hidden 属性，远端按点前缀约定）。 */
-  const [showHidden, setShowHidden] = useState(false);
+  /** 显示隐藏文件（本地看 hidden 属性，远端按点前缀约定）；初值取设置默认。 */
+  const [showHidden, setShowHidden] = useState(settings.sftpShowHiddenFiles);
   /** 名称过滤（对齐 Netcatty 工具栏 filter）：不改变底层列表，仅影响渲染。 */
   const [showFilter, setShowFilter] = useState(false);
   const [filter, setFilter] = useState("");
@@ -194,6 +206,17 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 设置里的隐藏文件默认值即时生效（覆盖面板内临时开关）。
+  useEffect(() => {
+    setShowHidden(settings.sftpShowHiddenFiles);
+  }, [settings.sftpShowHiddenFiles]);
+
+  // 对侧传输完成 → 刷新当前列表。
+  useEffect(() => {
+    if (refreshKey > 0) void load(pathRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
+
   // ── 导航 / 工具行（面包屑、排序、隐藏开关）──────────────
 
   /** 过滤 + 排序后的可见行（隐藏开关 / 列头排序不触发重新加载）。 */
@@ -207,11 +230,20 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
     [rows, showHidden, filter, sortField, sortOrder],
   );
 
-  /** 双击 / 回车激活：目录进入，文件开内置编辑器（已知二进制不开）。 */
+  /** 双击 / 回车激活：目录进入；文件按设置「打开」或「传输到另一侧」。 */
   const activateRow = (row: Row) => {
     if (row.isDir) {
       void load(join(path, row.name));
       return;
+    }
+    if (settings.sftpDoubleClickBehavior === "transfer" && onTransferFile) {
+      const handled = onTransferFile({
+        side: connection.kind,
+        sftpId: connection.kind === "remote" ? connection.sftpId : undefined,
+        fromPath: path,
+        names: [row.name],
+      });
+      if (handled) return;
     }
     if (!isKnownBinaryFile(row.name)) setEditorRow(row);
   };

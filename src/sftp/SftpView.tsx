@@ -17,6 +17,7 @@ import { SftpPaneView } from "./SftpPaneView";
 import { SftpQueuePanel } from "./SftpQueuePanel";
 import { SftpTabBar } from "./SftpTabBar";
 import {
+  buildDropTransferTasks,
   buildPickerSections,
   connectBranch,
   detectLocalOs,
@@ -27,6 +28,7 @@ import {
   type PaneConnection,
   type PickerItem,
   type SftpConnectTarget,
+  type SftpDragPayload,
   type SftpPaneTab,
   type SftpSide,
 } from "./sftpModel";
@@ -54,6 +56,11 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
   const [pickerSide, setPickerSide] = useState<SftpSide | null>(null);
   const [pickerTerm, setPickerTerm] = useState("");
   const [busySide, setBusySide] = useState<SftpSide | null>(null);
+  /** 对侧传输完成后递增，触发对应面板重新加载。 */
+  const [refreshKeys, setRefreshKeys] = useState<Record<SftpSide, number>>({
+    left: 0,
+    right: 0,
+  });
   const [errors, setErrors] = useState<Record<SftpSide, string>>({
     left: "",
     right: "",
@@ -213,6 +220,56 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
     [setSide],
   );
 
+  // ── 双击「传输到另一侧」（对照 Netcatty startTransfer 到对侧活动面板）──
+
+  const transferSubs = useRef(new Map<string, () => void>());
+
+  const transferToOtherSide = useCallback(
+    (fromSide: SftpSide, payload: SftpDragPayload): boolean => {
+      const other: SftpSide = fromSide === "left" ? "right" : "left";
+      const { tabs, activeTabId } = sides[other];
+      const tab = tabs.find((t) => t.id === activeTabId);
+      if (!tab) return false;
+      const tasks = buildDropTransferTasks({
+        payload,
+        destKind: tab.connection.kind,
+        destSftpId:
+          tab.connection.kind === "remote" ? tab.connection.sftpId : undefined,
+        targetDir: tab.connection.path,
+      });
+      if (!tasks || tasks.length === 0) return false;
+      void api
+        .sftpTransferEnqueue(tasks)
+        .then((created) => {
+          for (const item of created) {
+            void api
+              .onSftpTransferUpdated(item.id, (it) => {
+                if (it.status !== "completed" && it.status !== "skipped") return;
+                transferSubs.current.get(item.id)?.();
+                transferSubs.current.delete(item.id);
+                setRefreshKeys((prev) => ({
+                  ...prev,
+                  [other]: prev[other] + 1,
+                }));
+              })
+              .then((u) => transferSubs.current.set(item.id, u));
+          }
+        })
+        .catch(() => {});
+      return true;
+    },
+    [sides],
+  );
+
+  // 卸载时回收双击传输的订阅。
+  useEffect(() => {
+    const subs = transferSubs.current;
+    return () => {
+      for (const u of subs.values()) u();
+      subs.clear();
+    };
+  }, []);
+
   // ── 主机选择器 ─────────────────────────────────────────
 
   const openPicker = useCallback((side: SftpSide) => {
@@ -291,6 +348,8 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
               key={activeTab.id}
               connection={activeTab.connection}
               onPathChange={(path) => updateTabPath(side, activeTab.id, path)}
+              onTransferFile={(payload) => transferToOtherSide(side, payload)}
+              refreshKey={refreshKeys[side]}
             />
           )
         )}
