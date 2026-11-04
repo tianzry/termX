@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 41;
+const SCHEMA_VERSION: u32 = 42;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -876,6 +876,28 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    if version < 42 {
+        // 端口转发对齐 Netcatty：规则级监听地址（bindAddress）与条目级
+        // autoStart / autoReconnect（后者三态：NULL = 未设置，跟随 autoStart）。
+        if table_exists(conn, "forwards")? {
+            if !column_exists(conn, "forwards", "auto_start")? {
+                conn.execute_batch(
+                    "ALTER TABLE forwards ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0;",
+                )?;
+            }
+            if !column_exists(conn, "forwards", "auto_reconnect")? {
+                conn.execute_batch("ALTER TABLE forwards ADD COLUMN auto_reconnect INTEGER;")?;
+            }
+        }
+        if table_exists(conn, "forward_rules")?
+            && !column_exists(conn, "forward_rules", "bind_address")?
+        {
+            conn.execute_batch(
+                "ALTER TABLE forward_rules ADD COLUMN bind_address TEXT NOT NULL DEFAULT '';",
+            )?;
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1194,7 +1216,10 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(columns, ["id", "name", "profile_id", "group_id"]);
+        assert_eq!(
+            columns,
+            ["id", "name", "profile_id", "group_id", "auto_start", "auto_reconnect"]
+        );
 
         let legacy_triggers: u32 = conn
             .query_row(

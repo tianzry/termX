@@ -4388,3 +4388,30 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 首次用 `LANG=zh_CN.UTF-8` 验证会误判失败：远端 `/etc/default/locale` 与 login shell 会把 `LANG` 重置回服务端默认 `en_US.UTF-8`，即使 SetEnv 已被 sshd 接受。证明 SetEnv 要用不被 profile 覆盖的 `LC_*`，并与 exec 通道的 baseline 对照。
 - `set_env` 必须在 `request_pty` / shell 之前调用；russh 的 `want_reply=false` 不会把拒绝抛到用户层，因此置灰/提示区必须写明「需远端 sshd `AcceptEnv` 放行」。
 - headless dispatcher 里 `delete_profile` 的 `?` 无法直接转 `serde_json::Value`，需要闭包返回 `AppResult<()>` 再 `ok(...)`。
+
+---
+
+## 2026-11-04 — P1 #16 端口转发高级能力（监听地址 / 自动启动 / 断线重连）
+
+对照 Netcatty `domain/models/portForwarding.ts`、`components/port-forwarding/` 与 `application/state/usePortForwardingAutoStart.ts`。
+
+### 修改点
+
+1. 后端 schema v42：`forward_rules.bind_address`（TEXT，默认空）+ `forwards.auto_start`（INTEGER NOT NULL DEFAULT 0）+ `forwards.auto_reconnect`（INTEGER NULL 三态）。`models.rs` 的 `ForwardRule` / `Forward` 同步加字段（`#[serde(default)]`，旧数据与旧同步包可读）。
+2. `ssh/forward.rs`：`bind_loopback` → `bind_listener(port, bind_address)`；空值保持原行为（IPv4 必需 + IPv6 尽力），非空（如 `0.0.0.0` / `::1` / LAN IP）只绑该地址；remote 规则把 `bind_address` 透传给 `tcpip_forward`（空 = sshd 默认）。
+3. `db/forward.rs`：读写新列；新增 `auto_flags_and_bind_address_roundtrip` 单测（含 `auto_reconnect` 未设置保持 NULL）。`sync/config.rs`、CLI 导入、测试夹具同步补齐字段。
+4. 前端 `ForwardForm`：每条规则新增「监听地址」（local/dynamic 默认 127.0.0.1、remote 由 sshd 决定）+ 条目级「启动时自动运行」「断线自动重连」两个开关（三态提示“未设置：跟随自动运行”）；`forwardDraft` 增加字段与地址校验；`ruleLabel` 展示自定义监听地址。
+5. 新增 `src/forwardSupervisor.ts`（对齐 Netcatty 渲染层实现）：每 2.5s 轮询 `list_forwards` + `forward_active_list`；`auto_start` 每个应用生命周期拉起一次；`auto_reconnect`（未设置跟随 `auto_start`）在意外断开后有限 5 次重连；UI 手动停止通过 `noteForwardStopped` 移出期望集合，避免被回拉；`App` 挂载 `useForwardSupervisor`。
+6. 托盘快捷开关**不移植**：未启用 Tauri `tray-icon` 特性、无托盘图标/菜单；总览页置灰写明原因，其余置灰项删除。
+
+### 验证
+
+- 门禁：`npm run test:run` **433 ✓**（新增 `forwardSupervisor` 7 例、`forwardDraft` 监听地址与 `ruleLabel` 用例）、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` **885 ✓**。
+- 129 真机（CDP + PowerShell）：创建转发（local 18099 → 127.0.0.1:22，`bind_address=0.0.0.0`，`auto_start=true`，`auto_reconnect=true`）→ 落库字段回读一致；页面 reload 后监督器自动拉起，规则 `active`；`Get-NetTCPConnection` 显示监听 `0.0.0.0:18099`，实际 TCP 连接读到 `SSH-2.0-OpenSSH` banner（真实流量，不只是截图）；绕过 UI 直接 `forward_stop` 模拟掉线，7s 后自动重连为新的 active_id；清理后端口关闭、条目与运行态均清零。证据：`evidence/forward-advanced-phase1.json`、`forward-advanced-phase2.json`、`forward-advanced-form.png`。
+
+### 踩坑
+
+- `auto_reconnect` 必须是三态 `Option<bool>`：用 bool 默认 false 会把 Netcatty `autoReconnect ?? autoStart` 的跟随语义压成“永不重连”。DB 必须允许 NULL，UI 未触碰时保持 NULL。
+- 自动重连必须区分“手动停止”和“意外断开”；仅靠 `forward_active_list` 轮询无法区分，所有 UI 停止入口都要先 `noteForwardStopped`，否则用户停掉的条目会被监督器拉回。
+- 启动进程若由一次性 shell 会话 `Start-Process` 启动，会被工具回收；debug 应用必须用后台 shell 前台运行才能保住 WebView2 + CDP 9222。
+- 自定义 `0.0.0.0` 时不要再尝试 `::1` 二次绑定（否则 IPv6 监听会与 v4 通配地址冲突或产生误导性的第二条监听）。

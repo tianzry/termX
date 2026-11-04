@@ -26,11 +26,13 @@ const TYPE_LABEL: Record<string, string> = {
 
 export function ruleLabel(rule: Forward["rules"][number]): string {
   const type = TYPE_LABEL[rule.type] ?? rule.type;
-  if (rule.type === "dynamic") return `${type} · 127.0.0.1:${rule.local_port}`;
+  // 自定义监听地址（Netcatty bindAddress）直接展示；空 = 默认 loopback / sshd 默认。
+  const bind = rule.bind_address?.trim() || "127.0.0.1";
+  if (rule.type === "dynamic") return `${type} · ${bind}:${rule.local_port}`;
   if (rule.type === "remote") {
-    return `${type} · 远端 ${rule.remote_host}:${rule.remote_port} → 本地 :${rule.local_port}`;
+    return `${type} · 远端 ${bind}:${rule.local_port} → ${rule.remote_host}:${rule.remote_port}`;
   }
-  return `${type} · 127.0.0.1:${rule.local_port} → ${rule.remote_host}:${rule.remote_port}`;
+  return `${type} · ${bind}:${rule.local_port} → ${rule.remote_host}:${rule.remote_port}`;
 }
 
 /** 按 profile_id 分组；无档案的归入「未知主机」，组内与组间都按名称排序。 */

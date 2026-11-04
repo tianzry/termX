@@ -24,7 +24,7 @@ fn type_str(ft: ForwardType) -> &'static str {
 
 fn rules(conn: &rusqlite::Connection, id: &str) -> AppResult<Vec<ForwardRule>> {
     let mut stmt = conn.prepare(
-        "SELECT type, local_port, remote_host, remote_port FROM forward_rules WHERE forward_id = ?1 ORDER BY position",
+        "SELECT type, local_port, remote_host, remote_port, bind_address FROM forward_rules WHERE forward_id = ?1 ORDER BY position",
     )?;
     let rows = stmt.query_map(params![id], |row| {
         Ok(ForwardRule {
@@ -32,6 +32,7 @@ fn rules(conn: &rusqlite::Connection, id: &str) -> AppResult<Vec<ForwardRule>> {
             local_port: row.get::<_, u32>(1)? as u16,
             remote_host: row.get(2)?,
             remote_port: row.get::<_, u32>(3)? as u16,
+            bind_address: row.get(4)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -85,7 +86,7 @@ pub fn get(db: &Db, id: &str) -> AppResult<Forward> {
     let conn = db.lock()?;
     let mut forward = conn
         .query_row(
-            "SELECT id, name, profile_id, group_id FROM forwards WHERE id = ?1",
+            "SELECT id, name, profile_id, group_id, auto_start, auto_reconnect FROM forwards WHERE id = ?1",
             params![id],
             |row| {
                 Ok(Forward {
@@ -94,6 +95,8 @@ pub fn get(db: &Db, id: &str) -> AppResult<Forward> {
                     profile_id: row.get(2)?,
                     group_id: row.get(3)?,
                     rules: Vec::new(),
+                    auto_start: row.get::<_, i64>(4)? != 0,
+                    auto_reconnect: row.get::<_, Option<i64>>(5)?.map(|v| v != 0),
                 })
             },
         )
@@ -110,7 +113,7 @@ pub fn get(db: &Db, id: &str) -> AppResult<Forward> {
 pub fn list(db: &Db) -> AppResult<Vec<Forward>> {
     let conn = db.lock()?;
     let mut stmt =
-        conn.prepare("SELECT id, name, profile_id, group_id FROM forwards ORDER BY name ASC")?;
+        conn.prepare("SELECT id, name, profile_id, group_id, auto_start, auto_reconnect FROM forwards ORDER BY name ASC")?;
     let rows = stmt.query_map([], |row| {
         Ok(Forward {
             id: row.get(0)?,
@@ -118,6 +121,8 @@ pub fn list(db: &Db) -> AppResult<Vec<Forward>> {
             profile_id: row.get(2)?,
             group_id: row.get(3)?,
             rules: Vec::new(),
+            auto_start: row.get::<_, i64>(4)? != 0,
+            auto_reconnect: row.get::<_, Option<i64>>(5)?.map(|v| v != 0),
         })
     })?;
     let mut forwards = rows.collect::<Result<Vec<_>, _>>()?;
@@ -132,16 +137,17 @@ fn write(conn: &rusqlite::Connection, f: &Forward, update_only: bool) -> AppResu
     validate_name(&f.name)?;
     validate_rules(&f.rules)?;
 
+    let auto_reconnect = f.auto_reconnect.map(|v| if v { 1i64 } else { 0i64 });
     if update_only {
         conn.execute(
-            "UPDATE forwards SET name=?1, profile_id=?2, group_id=?3 WHERE id=?4",
-            params![f.name, f.profile_id, f.group_id, f.id],
+            "UPDATE forwards SET name=?1, profile_id=?2, group_id=?3, auto_start=?4, auto_reconnect=?5 WHERE id=?6",
+            params![f.name, f.profile_id, f.group_id, f.auto_start as i64, auto_reconnect, f.id],
         )?;
     } else {
         conn.execute(
-            "INSERT INTO forwards (id, name, profile_id, group_id) VALUES (?1, ?2, ?3, ?4) \
-             ON CONFLICT(id) DO UPDATE SET name=excluded.name, profile_id=excluded.profile_id, group_id=excluded.group_id",
-            params![f.id, f.name, f.profile_id, f.group_id],
+            "INSERT INTO forwards (id, name, profile_id, group_id, auto_start, auto_reconnect) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, profile_id=excluded.profile_id, group_id=excluded.group_id, auto_start=excluded.auto_start, auto_reconnect=excluded.auto_reconnect",
+            params![f.id, f.name, f.profile_id, f.group_id, f.auto_start as i64, auto_reconnect],
         )?;
     }
     conn.execute(
@@ -150,8 +156,8 @@ fn write(conn: &rusqlite::Connection, f: &Forward, update_only: bool) -> AppResu
     )?;
     for (position, rule) in f.rules.iter().enumerate() {
         conn.execute(
-            "INSERT INTO forward_rules (forward_id, position, type, local_port, remote_host, remote_port) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![f.id, position as u32, type_str(rule.forward_type), rule.local_port as u32, rule.remote_host, rule.remote_port as u32],
+            "INSERT INTO forward_rules (forward_id, position, type, local_port, remote_host, remote_port, bind_address) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![f.id, position as u32, type_str(rule.forward_type), rule.local_port as u32, rule.remote_host, rule.remote_port as u32, rule.bind_address],
         )?;
     }
     Ok(())
@@ -205,7 +211,10 @@ mod tests {
                 local_port: 8080,
                 remote_host: "127.0.0.1".into(),
                 remote_port: 80,
+                bind_address: String::new(),
             }],
+            auto_start: false,
+            auto_reconnect: None,
         }
     }
 
@@ -219,6 +228,25 @@ mod tests {
         // A row inserted without a group stays ungrouped (NULL → None).
         insert(&db, &mk("f2", "beta", ForwardType::Local)).unwrap();
         assert_eq!(get(&db, "f2").unwrap().group_id, None);
+    }
+
+    #[test]
+    fn auto_flags_and_bind_address_roundtrip() {
+        let db = Db::open_in_memory().unwrap();
+        let mut f = mk("f1", "alpha", ForwardType::Local);
+        f.auto_start = true;
+        f.auto_reconnect = Some(false);
+        f.rules[0].bind_address = "0.0.0.0".into();
+        insert(&db, &f).unwrap();
+
+        let got = get(&db, "f1").unwrap();
+        assert!(got.auto_start);
+        assert_eq!(got.auto_reconnect, Some(false));
+        assert_eq!(got.rules[0].bind_address, "0.0.0.0");
+
+        // 未显式设置的 auto_reconnect 必须保持 NULL（跟随 auto_start 的三态）。
+        insert(&db, &mk("f2", "beta", ForwardType::Local)).unwrap();
+        assert_eq!(get(&db, "f2").unwrap().auto_reconnect, None);
     }
 
     #[test]
@@ -270,6 +298,7 @@ mod tests {
             local_port: 3000,
             remote_host: "localhost".into(),
             remote_port: 9000,
+            bind_address: String::new(),
         });
         insert(&db, &f).unwrap();
         assert_eq!(get(&db, "f1").unwrap().rules, f.rules);
@@ -284,6 +313,7 @@ mod tests {
             local_port: 1080,
             remote_host: "127.0.0.1".into(),
             remote_port: 0,
+            bind_address: String::new(),
         });
         insert(&db, &original).unwrap();
 
@@ -364,6 +394,7 @@ mod tests {
             local_port: 8080,
             remote_host: "127.0.0.1".into(),
             remote_port: 0,
+            bind_address: String::new(),
         });
         assert_eq!(
             insert(&db, &duplicate).unwrap_err().code(),
@@ -381,6 +412,7 @@ mod tests {
             local_port: 1001,
             remote_host: "127.0.0.1".into(),
             remote_port: duplicate.rules[0].remote_port,
+            bind_address: String::new(),
         });
 
         assert_eq!(

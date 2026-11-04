@@ -97,6 +97,8 @@ fn parse_forward_import(value: Value) -> serde_json::Result<Forward> {
         profile_id: legacy.profile_id,
         group_id: legacy.group_id,
         rules: vec![legacy.rule],
+        auto_start: false,
+        auto_reconnect: None,
     })
 }
 

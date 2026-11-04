@@ -78,6 +78,11 @@ export function ForwardForm({
   const [rules, setRules] = useState<ForwardRule[]>(
     initial ? initial.rules.map((r) => ({ ...r })) : [],
   );
+  const [autoStart, setAutoStart] = useState(initial?.auto_start ?? false);
+  // 三态：null = 跟随 autoStart（对齐 Netcatty autoReconnect ?? autoStart）。
+  const [autoReconnect, setAutoReconnect] = useState<boolean | null>(
+    initial?.auto_reconnect ?? null,
+  );
   const [err, setErr] = useState("");
 
   // 侧栏先于 listProfiles 渲染：档案晚到时自动补默认选中，避免空下拉。
@@ -96,6 +101,8 @@ export function ForwardForm({
       name: name.trim(),
       profile_id: profileId,
       rules,
+      auto_start: autoStart,
+      auto_reconnect: autoReconnect,
     };
     const message = validateForwardDraft(draft);
     if (message) {
@@ -108,6 +115,8 @@ export function ForwardForm({
       if (!initial) {
         setName("");
         setRules([]);
+        setAutoStart(false);
+        setAutoReconnect(null);
       }
     } catch (e) {
       setErr(userVisibleError(String(e)));
@@ -233,6 +242,19 @@ export function ForwardForm({
                 删除
               </button>
             </div>
+            <label style={{ ...labelStyle, maxWidth: 320 }}>
+              监听地址
+              <input
+                style={inputStyle}
+                placeholder={
+                  r.type === "remote"
+                    ? "默认：由 sshd 决定（127.0.0.1）"
+                    : "默认：仅本机 127.0.0.1"
+                }
+                value={r.bind_address ?? ""}
+                onChange={(e) => patchRule(i, { bind_address: e.target.value })}
+              />
+            </label>
           </div>
         ))}
 
@@ -250,6 +272,31 @@ export function ForwardForm({
           </div>
         )}
 
+        <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 12 }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={autoStart}
+              onChange={(e) => setAutoStart(e.target.checked)}
+            />
+            启动时自动运行
+          </label>
+          <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={autoReconnect ?? autoStart}
+              onChange={(e) => setAutoReconnect(e.target.checked)}
+              title="断开后自动重连（最多 5 次）；默认跟随“启动时自动运行”"
+            />
+            断线自动重连
+          </label>
+          {autoReconnect === null && (
+            <span style={{ color: "hsl(var(--muted-foreground))" }}>
+              未设置：跟随自动运行
+            </span>
+          )}
+        </div>
+
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
             style={btnStyle}
@@ -257,7 +304,13 @@ export function ForwardForm({
             onClick={() =>
               setRules((rs) => [
                 ...rs,
-                { type: "local", local_port: 0, remote_host: "127.0.0.1", remote_port: 22 },
+                {
+                  type: "local",
+                  local_port: 0,
+                  remote_host: "127.0.0.1",
+                  remote_port: 22,
+                  bind_address: "",
+                },
               ])
             }
           >

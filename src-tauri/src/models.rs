@@ -365,6 +365,11 @@ pub struct ForwardRule {
     pub local_port: u16,
     pub remote_host: String,
     pub remote_port: u16,
+    /// 监听地址（对齐 Netcatty `bindAddress`）。空 = 默认：local / dynamic 绑
+    /// 127.0.0.1（并尽力绑 ::1），remote 交给 sshd 默认（"127.0.0.1"）。
+    /// 非空时按给定地址单独监听。
+    #[serde(default)]
+    pub bind_address: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,6 +380,13 @@ pub struct Forward {
     /// Optional group membership — shares the same `groups` table as profiles.
     pub group_id: Option<String>,
     pub rules: Vec<ForwardRule>,
+    /// 应用启动后自动拉起（对齐 Netcatty `autoStart`）。
+    #[serde(default)]
+    pub auto_start: bool,
+    /// 意外断开后自动重连（对齐 Netcatty `autoReconnect`，有上限）。
+    /// `None` = 未显式设置，语义上跟随 `auto_start`。
+    #[serde(default)]
+    pub auto_reconnect: Option<bool>,
 }
 
 /// Saved serial console — a peer of `Profile`/`Forward`. No secret, no FK: just
@@ -945,7 +957,10 @@ mod tests {
                 local_port: 8080,
                 remote_host: "db.internal".into(),
                 remote_port: 5432,
+                bind_address: String::new(),
             }],
+            auto_start: false,
+            auto_reconnect: None,
         };
 
         let json = serde_json::to_value(&forward).unwrap();
@@ -960,8 +975,11 @@ mod tests {
                     "type": "local",
                     "local_port": 8080,
                     "remote_host": "db.internal",
-                    "remote_port": 5432
-                }]
+                    "remote_port": 5432,
+                    "bind_address": ""
+                }],
+                "auto_start": false,
+                "auto_reconnect": null
             })
         );
 

@@ -24,6 +24,7 @@ import { SftpPanel } from "./SftpPanel";
 import { SerialConnectModal } from "./serial/SerialConnectModal";
 import { TelnetConnectModal } from "./telnet/TelnetConnectModal";
 import { ForwardPanel } from "./ForwardPanel";
+import { useForwardSupervisor } from "./forwardSupervisor";
 import { ConnectionManager } from "./ConnectionManager";
 import { SftpView } from "./sftp/SftpView";
 import type { ConnectedHostEntry } from "./sftp/sftpModel";
@@ -89,6 +90,8 @@ function saveRecent(id: string, prev: string[]): string[] {
 export default function App() {
   const workspaceRef = useRef<WorkspaceHandle>(null);
   const settings = useSettings();
+  // 端口转发 auto_start / auto_reconnect（对齐 Netcatty 渲染层监督器）。
+  useForwardSupervisor();
 
   const [status, setStatus] = useState("就绪");
   const [surface, setSurface] = useState<RootSurface>("vault");

@@ -3,6 +3,7 @@ import * as api from "./backend/client";
 import { userVisibleError } from "./domain/sshErrors";
 import type { Forward, ForwardRule, ForwardStats } from "./backend/client";
 import { ForwardForm, type ForwardDraft } from "./ForwardForm";
+import { noteForwardStarted, noteForwardStopped } from "./forwardSupervisor";
 
 interface ActiveInfo {
   activeId: string;
@@ -110,6 +111,8 @@ export function ForwardPanel() {
           profile_id: draft.profile_id,
           group_id: editing.group_id,
           rules: draft.rules,
+          auto_start: draft.auto_start,
+          auto_reconnect: draft.auto_reconnect,
         });
         setEditing(null);
       } else {
@@ -119,6 +122,8 @@ export function ForwardPanel() {
           profile_id: draft.profile_id,
           group_id: null,
           rules: draft.rules,
+          auto_start: draft.auto_start,
+          auto_reconnect: draft.auto_reconnect,
         });
       }
       await refresh();
@@ -152,6 +157,8 @@ export function ForwardPanel() {
         profile_id: f.profile_id,
         group_id: f.group_id,
         rules: f.rules.map((r) => ({ ...r })),
+        auto_start: f.auto_start ?? false,
+        auto_reconnect: f.auto_reconnect ?? null,
       });
       await refresh();
     } catch (e) {
@@ -168,6 +175,7 @@ export function ForwardPanel() {
       const info = active[f.id];
       if (info) {
         try {
+          noteForwardStopped(f.id);
           await api.forwardStop(info.activeId);
         } catch {
           /* 忽略 */
@@ -192,6 +200,7 @@ export function ForwardPanel() {
     setBusy(true);
     setErr("");
     try {
+      noteForwardStarted(f.id);
       const activeId = await api.forwardStart(f.id);
       setActive((a) => ({ ...a, [f.id]: { activeId, stats: null } }));
       const s = await api.forwardStats(activeId);
@@ -209,6 +218,7 @@ export function ForwardPanel() {
     setBusy(true);
     setErr("");
     try {
+      noteForwardStopped(f.id);
       await api.forwardStop(info.activeId);
       setActive((a) => {
         const next = { ...a };

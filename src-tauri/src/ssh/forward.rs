@@ -174,11 +174,24 @@ enum RuleCommand {
     },
 }
 
-/// Bind a local-forward listener on loopback for both families. IPv4
-/// (127.0.0.1) is required; IPv6 (::1) is best-effort and simply skipped on
-/// hosts without an IPv6 stack. Both stay loopback-only — a local forward is
-/// never exposed to the network.
-async fn bind_loopback(port: u16) -> AppResult<(TcpListener, Option<TcpListener>)> {
+/// Bind a local-forward listener. An empty `bind_address` keeps the historic
+/// loopback-only behavior: IPv4 (127.0.0.1) required, IPv6 (::1) best-effort
+/// (skipped on hosts without an IPv6 stack). A non-empty address (Netcatty
+/// `bindAddress`, e.g. `0.0.0.0` or a LAN IP) binds that address only.
+async fn bind_listener(
+    port: u16,
+    bind_address: &str,
+) -> AppResult<(TcpListener, Option<TcpListener>)> {
+    let address = bind_address.trim();
+    if !address.is_empty() && address != "127.0.0.1" {
+        let listener = TcpListener::bind((address, port)).await.map_err(|e| {
+            AppError::ssh(
+                "ssh_port_bind_failed",
+                json!({ "port": port, "addr": address, "err": e.to_string() }),
+            )
+        })?;
+        return Ok((listener, None));
+    }
     let v4 = TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| {
         AppError::ssh(
             "ssh_port_bind_failed",
@@ -610,7 +623,10 @@ async fn prepare_remote_rule(
             }
             guard.routes.insert(requested_port, tx.clone());
         }
-        if let Err(error) = handle.tcpip_forward("", requested_port).await {
+        if let Err(error) = handle
+            .tcpip_forward(rule.bind_address.trim(), requested_port)
+            .await
+        {
             locked(routes)?.routes.remove(&requested_port);
             return Err(AppError::ssh(
                 "ssh_tcpip_forward_failed",
@@ -630,7 +646,7 @@ async fn prepare_remote_rule(
         }
         guard.pending = Some(tx.clone());
     }
-    match handle.tcpip_forward("", 0).await {
+    match handle.tcpip_forward(rule.bind_address.trim(), 0).await {
         Ok(bound_port) => {
             let mut guard = locked(routes)?;
             guard.pending = None;
@@ -653,10 +669,10 @@ async fn prepare_rule(
     routes: &client::ForwardedChannelRouter,
 ) -> AppResult<PreparedRule> {
     match rule.forward_type {
-        ForwardType::Local => bind_loopback(rule.local_port)
+        ForwardType::Local => bind_listener(rule.local_port, &rule.bind_address)
             .await
             .map(|(v4, v6)| PreparedRule::Local(rule, v4, v6)),
-        ForwardType::Dynamic => bind_loopback(rule.local_port)
+        ForwardType::Dynamic => bind_listener(rule.local_port, &rule.bind_address)
             .await
             .map(|(v4, v6)| PreparedRule::Dynamic(rule, v4, v6)),
         ForwardType::Remote => prepare_remote_rule(rule, handle, routes).await,
@@ -1005,12 +1021,14 @@ mod tests {
             local_port: 8080,
             remote_host: "db".into(),
             remote_port: 5432,
+            bind_address: String::new(),
         }));
         let second = Arc::new(RuleControl::new(ForwardRule {
             forward_type: ForwardType::Dynamic,
             local_port: 1080,
             remote_host: "127.0.0.1".into(),
             remote_port: 0,
+            bind_address: String::new(),
         }));
         first.bytes_tx.store(12, Ordering::Relaxed);
         first.bytes_rx.store(34, Ordering::Relaxed);
@@ -1334,7 +1352,10 @@ mod tests {
                 local_port,
                 remote_host: "127.0.0.1".into(),
                 remote_port: echo_port,
+                bind_address: String::new(),
             }],
+            auto_start: false,
+            auto_reconnect: None,
         };
         let target = ConnTarget {
             proxy_configs: Default::default(),

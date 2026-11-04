@@ -1354,6 +1354,8 @@ export interface ForwardRule {
   local_port: number;
   remote_host: string;
   remote_port: number;
+  /** 监听地址（对齐 Netcatty bindAddress）；空 = 默认 loopback / sshd 默认。 */
+  bind_address?: string;
 }
 
 export interface Forward {
@@ -1362,6 +1364,10 @@ export interface Forward {
   profile_id: string;
   group_id: string | null;
   rules: ForwardRule[];
+  /** 应用启动后自动拉起（对齐 Netcatty autoStart）。 */
+  auto_start?: boolean;
+  /** 意外断开后自动重连（对齐 Netcatty autoReconnect）；null/未设置 = 跟随 auto_start。 */
+  auto_reconnect?: boolean | null;
 }
 
 export type ForwardRuleStatus =

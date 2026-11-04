@@ -156,6 +156,8 @@ pub fn cmd_add_forward(conn: &CliCtx) -> AppResult<()> {
         profile_id,
         group_id: None,
         rules,
+        auto_start: false,
+        auto_reconnect: None,
     };
     rssh_lib::db::forward::insert(conn, &f)?;
     println!("Forward '{}' created.", f.name);
@@ -194,6 +196,7 @@ pub(crate) fn prompt_forward_rule(current: Option<&ForwardRule>) -> ForwardRule 
             local_port,
             remote_host: "127.0.0.1".into(),
             remote_port: 0,
+            bind_address: current.map(|r| r.bind_address.clone()).unwrap_or_default(),
         };
     }
 
@@ -212,6 +215,7 @@ pub(crate) fn prompt_forward_rule(current: Option<&ForwardRule>) -> ForwardRule 
         local_port,
         remote_host: prompt_default("Remote host", default_host),
         remote_port: prompt_port("Remote port", &default_remote_port),
+        bind_address: current.map(|r| r.bind_address.clone()).unwrap_or_default(),
     }
 }
 

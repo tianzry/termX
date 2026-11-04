@@ -54,8 +54,17 @@ describe("forwardOverview", () => {
       "本地 · 127.0.0.1:8080 → db:5432",
     );
     expect(ruleLabel({ type: "remote", local_port: 80, remote_host: "web", remote_port: 8080 })).toBe(
-      "远程 · 远端 web:8080 → 本地 :80",
+      "远程 · 远端 127.0.0.1:80 → web:8080",
     );
+    expect(
+      ruleLabel({
+        type: "local",
+        local_port: 8080,
+        remote_host: "db",
+        remote_port: 5432,
+        bind_address: "0.0.0.0",
+      }),
+    ).toBe("本地 · 0.0.0.0:8080 → db:5432");
     expect(ruleLabel({ type: "dynamic", local_port: 1080, remote_host: "", remote_port: 0 })).toBe(
       "SOCKS5 · 127.0.0.1:1080",
     );

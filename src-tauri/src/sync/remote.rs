@@ -238,6 +238,7 @@ mod tests {
                 local_port: 8080,
                 remote_host: "db.internal".into(),
                 remote_port: 5432,
+                bind_address: String::new(),
             }]
         );
     }

@@ -958,11 +958,14 @@ mod tests {
             name: format!("fwd-{id}"),
             profile_id: "p".into(),
             group_id: group.map(String::from),
+            auto_start: false,
+            auto_reconnect: None,
             rules: vec![crate::models::ForwardRule {
                 forward_type: ForwardType::Local,
                 local_port: 8080,
                 remote_host: "127.0.0.1".into(),
                 remote_port: 80,
+                bind_address: String::new(),
             }],
         }
     }

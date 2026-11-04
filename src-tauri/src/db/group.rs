@@ -448,11 +448,14 @@ mod tests {
                 name: "fwd1".into(),
                 profile_id: "p1".into(),
                 group_id: Some("g1".into()),
+                auto_start: false,
+                auto_reconnect: None,
                 rules: vec![ForwardRule {
                     forward_type: ForwardType::Local,
                     local_port: 8080,
                     remote_host: "127.0.0.1".into(),
                     remote_port: 80,
+                    bind_address: String::new(),
                 }],
             },
         )

@@ -14,6 +14,7 @@ import {
   ruleLabel,
 } from "./domain/forwardOverview";
 import { ForwardForm, type ForwardDraft } from "./ForwardForm";
+import { noteForwardStarted, noteForwardStopped } from "./forwardSupervisor";
 import { Icon } from "./ui/icons";
 
 const cardStyle: CSSProperties = {
@@ -61,20 +62,9 @@ function readView(): ViewMode {
 /** Netcatty 有、termX 尚未具备的能力：置灰并写明原因，不做假按钮。 */
 const UNSUPPORTED = [
   {
-    title: "自动启动",
-    reason: "后端 ForwardRule 无 auto_start 字段，当前只能手动启动。",
-  },
-  {
-    title: "断线重连",
-    reason: "无 auto_reconnect 字段；SSH 断开后需重新启动转发。",
-  },
-  {
-    title: "自定义监听地址",
-    reason: "本地监听固定 127.0.0.1（后端无 bind_address 字段）。",
-  },
-  {
     title: "托盘快捷开关",
-    reason: "termX 未创建系统托盘（lib.rs 无 TrayIcon），无法提供托盘菜单。",
+    reason:
+      "termX 未启用 Tauri 托盘（Cargo.toml 未开 tray-icon 特性、无托盘图标与菜单）；本轮不新增托盘基础设施，请在主窗口启停。",
   },
 ];
 
@@ -194,7 +184,11 @@ export function ForwardOverview() {
   };
 
   const toggleForward = (f: api.Forward, info: api.ActiveForwardInfo | undefined) => {
-    if (info) return run(`f:${f.id}`, () => api.forwardStop(info.active_id));
+    if (info) {
+      noteForwardStopped(f.id);
+      return run(`f:${f.id}`, () => api.forwardStop(info.active_id));
+    }
+    noteForwardStarted(f.id);
     return run(`f:${f.id}`, () => api.forwardStart(f.id));
   };
 
@@ -221,6 +215,8 @@ export function ForwardOverview() {
           profile_id: draft.profile_id,
           group_id: target.group_id,
           rules: draft.rules,
+          auto_start: draft.auto_start,
+          auto_reconnect: draft.auto_reconnect,
         });
       } else {
         await api.createForward({
@@ -229,6 +225,8 @@ export function ForwardOverview() {
           profile_id: draft.profile_id,
           group_id: null,
           rules: draft.rules,
+          auto_start: draft.auto_start,
+          auto_reconnect: draft.auto_reconnect,
         });
       }
       setForm(null);
@@ -246,6 +244,8 @@ export function ForwardOverview() {
         profile_id: f.profile_id,
         group_id: f.group_id,
         rules: f.rules.map((r) => ({ ...r })),
+        auto_start: f.auto_start ?? false,
+        auto_reconnect: f.auto_reconnect ?? null,
       }),
     );
 
@@ -257,6 +257,7 @@ export function ForwardOverview() {
       for (const f of forwards) {
         if (activeFor(active, f.id)) continue;
         try {
+          noteForwardStarted(f.id);
           await api.forwardStart(f.id);
         } catch (e) {
           failures.push(`${f.name}：${userVisibleError(String(e))}`);
@@ -276,6 +277,7 @@ export function ForwardOverview() {
     try {
       for (const info of active) {
         try {
+          noteForwardStopped(info.forward_id);
           await api.forwardStop(info.active_id);
         } catch (e) {
           failures.push(userVisibleError(String(e)));
@@ -297,6 +299,7 @@ export function ForwardOverview() {
       const info = activeFor(active, f.id);
       if (info) {
         try {
+          noteForwardStopped(f.id);
           await api.forwardStop(info.active_id);
         } catch {
           /* 已断开时忽略 */
