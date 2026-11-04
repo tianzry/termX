@@ -3691,3 +3691,40 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 | 中·右键选词把 `translateToString` 的字符下标当单元格列，CJK / 宽字符偏移 | 按 `getCell` 的 `getWidth` 建立「字符 → 起始列」映射，选区起止与长度都按单元格计算 |
 
 复跑门禁：`npm run test:run` 31 文件 / **379✓**、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` **874✓**。
+
+## 2026-11-04 — 全应用逐功能比对第一轮（Vault 首页与分组 + 主机新建/编辑/连接）
+
+> 基准：Netcatty 源码（`components/vault/`、`components/HostDetailsPanel.tsx`、`components/host/HostTreeGroupDeleteDialog.tsx`、`application/state/useVaultHostDeletion.ts`、`application/app/AppShell.tsx`）+ termX debug 实机（129 CDP 截图）。
+> Netcatty 运行实例不可用，逐项为源码取证 + termX 实机验证。
+
+### 差异清单（功能逻辑 / UI）
+
+| 模块 | 项目 | 判定 | 处理 |
+| --- | --- | --- | --- |
+| Vault 分组 | 删除分组原为原生 `confirm`，且固定「主机变未分组」；Netcatty 为应用内 `HostTreeGroupDeleteDialog`，带「同时删除该分组下的所有主机」勾选 | 行为不一致 + 交互不一致 | 新增 `GroupDeleteDialog`：单组/批量标题与文案、分组路径、勾选（仅组内有主机时显示）、取消/删除；确认后删组，勾选时一并删组内主机并清理置顶/标签/选择状态 |
+| Vault 分组 | 新建的空分组在首页/树中不显示（`count > 0` 过滤），导致无法重命名/删除；Netcatty `displayedGroups` 包含空分组 | 行为不一致 | 去掉空分组过滤：网格显示「0 台主机」卡片，树视图保留空分组节点；「未分组」仍仅在有主机时出现 |
+| Vault 分组 | 多选删除原统一 `confirm`（主机 + 分组混删） | 交互不一致 | 对齐 Netcatty：只选主机 → 直接批量删除（不弹确认）；含分组 → 走分组删除对话框（勾选删除组内主机，并包含已选主机） |
+| Vault 主机 | 单台主机删除原为原生 `confirm` | 交互不一致 | 改为应用内确认框，标题对齐 Netcatty「删除主机“{name}”？」，取消/删除 |
+| 主机表单 | 详情面板默认宽 380；Netcatty `HostDetailsPanel` 为 `w-[420px]` | 视觉偏差 | 默认读数改为 420（仍保留用户拖动后的本地记忆） |
+| 主机表单 | 头部测试/保存/关闭图标 15px；Netcatty 16px | 视觉偏差 | 改为 16px |
+| 主机表单 | `Profile.init_command` 后端已生效（`server.rs` 连接后写入命令 + 换行），但 Vault 表单无入口，仅旧 `ConnectionManager` 能填 | 功能逻辑缺口 | 新增「启动命令」分区（`terminal-square` 图标 + 3 行等宽 textarea + 说明），保存后重连生效 |
+| 主机表单 | 缺少 Netcatty 的痛点分区：SFTP 文件协议/Sudo/文件名编码、图标、备注（主机关联笔记）、自动化连接脚本、外观/mosh/X11/算法/keepalive/超时/设备类型/环境变量/代理/跳板、启动命令 runMode | 功能逻辑缺口 | 未实现项不放假控件：SFTP/图标字段后端未被消费、代理与跳板属暂停范围、备注属 notes「关联主机」缺口、自动化脚本为 Netcatty 新能力；全部登记 TODO 后续项 |
+
+### 复核无差异
+
+- Vault 首页：三视图（网格/列表/树）、关键字搜索、7 种排序、标签筛选、置顶、最近连接、多选批量、右键菜单（连接/SFTP/浏览器/编辑/复制/复制地址/复制账号密码/置顶/删除）、快速连接与快速切换器、框选与方向键导航。
+- 新建流程实测：新建 → 填名称/地址 → 保存 → 卡片出现；编辑回填正常；重复主机名、地址为空时保存按钮禁用与 Netcatty 一致。
+
+### 实机验证（129 CDP，debug 重编后）
+
+- 空分组：新建 `r1-g2` 后首页显示「0 台主机」卡片，树视图保留节点。
+- 分组删除：对话框 448px，勾选文案横排；勾选后同时删除组内主机，组与主机均消失。
+- 主机删除：应用内确认框；取消保留、确认删除。
+- 启动命令：`echo r1` 保存后重开编辑回填一致。
+- 连接流程：右键 129 → 连接，直达终端标签并出现 shell 提示符。
+
+### 门禁
+
+- `npm run test:run` 31 文件 / **379✓**、`npm run build` ✓。
+- `cargo check --features server` ✓、`cargo test --lib` **874✓**（本轮无 Rust 改动）。
+- 代理 WIP `d633866` / `60d8deb` 与端口转发未触碰。

@@ -394,12 +394,13 @@ function clampPanelWidth(n: number): number {
   return Math.min(HOST_PANEL_MAX, Math.max(HOST_PANEL_MIN, n));
 }
 
+/** 主机详情面板默认宽 420（对齐 Netcatty HostDetailsPanel w-[420px]）。 */
 function readPanelWidth(): number {
   try {
     const n = Number(localStorage.getItem(HOST_PANEL_W_KEY));
-    return Number.isFinite(n) && n > 0 ? clampPanelWidth(n) : 380;
+    return Number.isFinite(n) && n > 0 ? clampPanelWidth(n) : 420;
   } catch {
-    return 380;
+    return 420;
   }
 }
 
@@ -464,6 +465,61 @@ function initial(name: string): string {
 
 function viewIcon(mode: ViewMode): IconName {
   return mode === "grid" ? "grid" : mode === "list" ? "list" : "network";
+}
+
+/** 分组删除确认（对齐 Netcatty HostTreeGroupDeleteDialog：可勾选同时删除组内主机）。 */
+function GroupDeleteDialog({
+  bulk,
+  names,
+  hostCount,
+  onCancel,
+  onConfirm,
+}: {
+  bulk: boolean;
+  names: string[];
+  hostCount: number;
+  onCancel: () => void;
+  onConfirm: (withHosts: boolean) => void;
+}) {
+  const [withHosts, setWithHosts] = useState(false);
+  return (
+    <div className="modal-mask" onMouseDown={onCancel}>
+      <div className="modal kh-delete-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <h3 className="kh-delete-title">
+          <Icon name="alert-triangle" size={18} />
+          {bulk ? "删除所选分组" : "删除分组"}
+        </h3>
+        <p className="kh-delete-desc">
+          {bulk
+            ? "这将永久删除所选分组，并把其中的主机移动到根级别。"
+            : "这将永久删除该分组并将所有主机移动到根级别。"}
+        </p>
+        {!bulk && names[0] && (
+          <p className="kh-delete-desc">
+            分组：<span className="vault-delete-path">{names[0]}</span>
+          </p>
+        )}
+        {hostCount > 0 && (
+          <label className="vault-delete-check">
+            <input
+              type="checkbox"
+              checked={withHosts}
+              onChange={(e) => setWithHosts(e.target.checked)}
+            />
+            <span>
+              {bulk ? "同时删除所选分组下的所有主机" : "同时删除该分组下的所有主机"}
+            </span>
+          </label>
+        )}
+        <div className="modal-actions">
+          <button onClick={onCancel}>取消</button>
+          <button className="danger" onClick={() => onConfirm(withHosts)}>
+            删除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function VaultView({
@@ -612,6 +668,14 @@ export function VaultView({
   const [khScanning, setKhScanning] = useState(false);
   /** 删除确认对话框目标（对齐 netcatty VaultDeleteConfirmDialog）。 */
   const [khDelete, setKhDelete] = useState<KnownHostEntry | null>(null);
+  /** 主机删除确认（对齐 Netcatty ConfirmDialog：应用内模态，不用原生 confirm）。 */
+  const [hostDelete, setHostDelete] = useState<Profile | null>(null);
+  /** 分组删除确认（对齐 Netcatty HostTreeGroupDeleteDialog：可勾选同时删主机）。 */
+  const [groupDelete, setGroupDelete] = useState<{
+    ids: string[];
+    names: string[];
+    hostIds: string[];
+  } | null>(null);
   /** 卡片右键菜单（两项：转换为主机 / 删除）。 */
   const [khCtx, setKhCtx] = useState<{
     entry: KnownHostEntry;
@@ -962,13 +1026,12 @@ export function VaultView({
           ),
         );
 
-  const groupTiles: GroupTile[] = groups
-    .map((g) => ({
-      id: g.id,
-      name: g.name,
-      count: visible.filter((p) => p.group_id === g.id).length,
-    }))
-    .filter((g) => g.count > 0);
+  // 对齐 Netcatty：空分组也要展示（否则新建后无法重命名/删除）。
+  const groupTiles: GroupTile[] = groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    count: visible.filter((p) => p.group_id === g.id).length,
+  }));
   const ungroupedCount = visible.filter(
     (p) => !p.group_id || !groupById.has(p.group_id),
   ).length;
@@ -989,7 +1052,8 @@ export function VaultView({
         visible.filter((p) => !p.group_id || !groupById.has(p.group_id)),
       ),
     },
-  ].filter((s) => s.hosts.length > 0);
+    // 对齐 Netcatty：树视图同样保留空分组节点；「未分组」仅在确有主机时出现。
+  ].filter((s) => (s.id === "__ungrouped" ? s.hosts.length > 0 : true));
 
   // 最近连接：按记录顺序，排除已置顶（避免与「已置顶」重复），最多 6 条。
   const recentProfiles = settings.showRecentHosts
@@ -1094,8 +1158,7 @@ export function VaultView({
     setCtxMenu(null);
   }
 
-  async function deleteHost(p: Profile) {
-    if (!confirm(`删除主机「${p.name}」？`)) return;
+  async function performDeleteHost(p: Profile) {
     try {
       await api.deleteProfile(p.id);
       setPinnedIds((prev) => prev.filter((x) => x !== p.id));
@@ -1112,13 +1175,23 @@ export function VaultView({
 
   async function deleteSelected() {
     if (selected.size === 0 && selectedGroups.size === 0) return;
-    const label = `删除选中的 ${selected.size} 台主机${
-      selectedGroups.size ? `和 ${selectedGroups.size} 个分组` : ""
-    }？`;
-    if (!confirm(label)) return;
+    if (selectedGroups.size > 0) {
+      // 对齐 Netcatty：选了分组 → 弹分组删除确认（可勾选同时删除组内主机）。
+      const ids = Array.from(selectedGroups);
+      setGroupDelete({
+        ids,
+        names: groups.filter((g) => selectedGroups.has(g.id)).map((g) => g.name),
+        hostIds: [
+          ...profiles.filter((p) => p.group_id && selectedGroups.has(p.group_id)).map((p) => p.id),
+          ...Array.from(selected),
+        ],
+      });
+      return;
+    }
+    // 对齐 Netcatty：只选主机时直接批量删除，不再弹确认。
+    const ids = Array.from(selected);
     try {
-      for (const id of selected) await api.deleteProfile(id);
-      for (const id of selectedGroups) await api.deleteGroup(id);
+      for (const id of ids) await api.deleteProfile(id);
     } catch {
       /* 忽略单条失败，后续统一刷新 */
     }
@@ -1258,24 +1331,51 @@ export function VaultView({
     }
   }
 
-  async function deleteGroupById(id: string, name: string) {
-    const count = profiles.filter((p) => p.group_id === id).length;
-    const label = count
-      ? `删除分组「${name}」？组内 ${count} 台主机将变为未分组。`
-      : `删除分组「${name}」？`;
-    if (!confirm(label)) return;
+  function requestGroupDelete(id: string, name: string) {
+    setGroupDelete({
+      ids: [id],
+      names: [name],
+      hostIds: profiles.filter((p) => p.group_id === id).map((p) => p.id),
+    });
+  }
+
+  async function confirmGroupDelete(deleteHosts: boolean) {
+    const target = groupDelete;
+    setGroupDelete(null);
+    if (!target) return;
+    const ids = new Set(target.ids);
     try {
-      await api.deleteGroup(id);
-      if (activeGroupId === id) setActiveGroupId(null);
-      setSelectedGroups((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      onDataChanged();
+      if (deleteHosts) {
+        for (const hostId of target.hostIds) await api.deleteProfile(hostId);
+      }
+      for (const id of ids) await api.deleteGroup(id);
     } catch {
       showToast("删除分组失败");
+      onDataChanged();
+      return;
     }
+    if (activeGroupId && ids.has(activeGroupId)) setActiveGroupId(null);
+    setSelectedGroups((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+    if (deleteHosts) {
+      const removed = new Set(target.hostIds);
+      setPinnedIds((prev) => prev.filter((id) => !removed.has(id)));
+      setTags((prev) => {
+        const next = { ...prev };
+        for (const id of removed) delete next[id];
+        return next;
+      });
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of removed) next.delete(id);
+        return next;
+      });
+    }
+    exitSelectMode();
+    onDataChanged();
   }
 
   function setHostTags(id: string, next: string[]) {
@@ -3793,7 +3893,7 @@ export function VaultView({
                   }
                   onClick={() => void startConnectionTest()}
                 >
-                  <Icon name="zap" size={15} />
+                  <Icon name="zap" size={16} />
                 </button>
                 <button
                   className="nc-icon-btn"
@@ -3805,14 +3905,14 @@ export function VaultView({
                   }
                   onClick={() => void saveComposer()}
                 >
-                  <Icon name="check" size={15} />
+                  <Icon name="check" size={16} />
                 </button>
                 <button
                   className="nc-icon-btn"
                   title="关闭面板"
                   onClick={() => setComposer(null)}
                 >
-                  <Icon name="x" size={15} />
+                  <Icon name="x" size={16} />
                 </button>
               </div>
             </header>
@@ -4255,6 +4355,24 @@ export function VaultView({
                   能打开这个保险库的人会同时得到验证码和密码。请只在个人设备上使用。
                 </p>
               </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="terminal-square" size={13} />
+                  <span>启动命令</span>
+                </div>
+                <textarea
+                  rows={3}
+                  placeholder="连接成功后自动执行的命令"
+                  value={composer.init_command}
+                  onChange={(e) =>
+                    setComposer({ ...composer, init_command: e.target.value })
+                  }
+                />
+                <p className="host-setting-hint">
+                  会话建立后自动发送到终端执行（换行结尾）。
+                </p>
+              </section>
             </div>
 
             <footer className="vault-composer-foot">
@@ -4529,7 +4647,7 @@ export function VaultView({
             onClick={() => {
               const p = ctxMenu.profile;
               setCtxMenu(null);
-              void deleteHost(p);
+              setHostDelete(p);
             }}
           >
             <Icon name="trash" size={14} />
@@ -4566,7 +4684,7 @@ export function VaultView({
             onClick={() => {
               const g = groupCtx.group;
               setGroupCtx(null);
-              void deleteGroupById(g.id, g.name);
+              requestGroupDelete(g.id, g.name);
             }}
           >
             <Icon name="trash" size={14} />
@@ -4690,6 +4808,43 @@ export function VaultView({
             </div>
           </div>
         </div>
+      )}
+
+      {hostDelete && (
+        <div className="modal-mask" onMouseDown={() => setHostDelete(null)}>
+          <div
+            className="modal kh-delete-modal"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h3 className="kh-delete-title">
+              <Icon name="alert-triangle" size={18} />
+              删除主机“{hostDelete.name}”？
+            </h3>
+            <div className="modal-actions">
+              <button onClick={() => setHostDelete(null)}>取消</button>
+              <button
+                className="danger"
+                onClick={() => {
+                  const p = hostDelete;
+                  setHostDelete(null);
+                  void performDeleteHost(p);
+                }}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {groupDelete && (
+        <GroupDeleteDialog
+          bulk={groupDelete.ids.length > 1}
+          names={groupDelete.names}
+          hostCount={groupDelete.hostIds.length}
+          onCancel={() => setGroupDelete(null)}
+          onConfirm={(withHosts) => void confirmGroupDelete(withHosts)}
+        />
       )}
 
       {switcher && (

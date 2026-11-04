@@ -49,6 +49,7 @@
 | Known Hosts 管理页（列表 / 搜索 / 删除 / 转主机档案） | ✅ | `src/VaultView.tsx`、`src-tauri/src/ssh/known_hosts.rs` |
 | 本地终端（shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel + local 头像体系） | ✅ | `src/LocalShellPanel.tsx`、`src/domain/localShellHost.ts`、`src-tauri/src/terminal/shell_discovery.rs` |
 | 设置中心（5 tab 1:1 + 3 占位 + 自启动命令 + 实机比对 + review 修复） | ✅ | `src/settings/`（model/store/i18n/keyBindings/Dialog/Tabs）、`src-tauri/src/commands/settings.rs` |
+| 全应用逐功能比对·第一轮（Vault 首页与分组、主机新建/编辑/连接） | ✅ | `src/VaultView.tsx`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
 
 ---
 
@@ -184,6 +185,7 @@
 - [ ] ⬜ **34. 主机表单高级字段**
   - 至少补：环境变量、字符集、启动命令执行模式、主题/字体覆盖、图标；向 netcatty Host 模型字段面对齐。
   - 依据：netcatty `domain/models/connection.ts` Host 约 30 字段；termX 表单仅 11 个（名称/地址/端口/凭据/分组/标签/登录方式/用户名/密码/密钥文件/启动命令）。
+  - 进度（2026-11-04 全应用比对第一轮）：Vault 表单已补「启动命令」textarea（`init_command` 后端连接后写入生效）；仍缺 Netcatty 的 SFTP 文件协议/Sudo/文件名编码（`sftp_*` 字段当前无后端消费，禁止先做假控件）、图标（`icon_source/icon_color` 无消费方）、启动命令 runMode（`lineDelay`/`paste`，后端无对应语义）、环境变量/算法/keepalive/超时/设备类型/外观覆盖；备注（Netcatty 为主机关联笔记）与自动化连接脚本队列另属 #37 / 新能力。
 - [x] ✅ **35. 串口 1:1 重做**
   - ✅ 阶段 A（2026-11-03）：`serialFormConfig.ts` 对照表 + `serialInput.ts` 输入语义 + `SerialPanel` 常量表驱动重构；本地 commit `7a29ed3`。
   - ✅ 阶段 B（2026-11-03）：间距/标签/主按钮视觉复检并修正；补卸载时串口句柄释放与 `serial_not_found` 文案；本机 COM1 真实打开 + 行模式/本地回显/退格手测通过；门禁 294✓/build✓/cargo check(server)✓/836✓；commit `be07732` 已 push（远端 main=`be07732`）。

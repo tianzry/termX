@@ -5219,6 +5219,27 @@ button:disabled {
   box-shadow: 0 0 0 3px hsl(var(--primary) / 0.12);
 }
 
+.vault-composer-body textarea {
+  width: 100%;
+  min-height: 76px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 6px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+}
+
+.vault-composer-body textarea:focus {
+  border-color: hsl(var(--primary) / 0.6);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.12);
+}
+
 .vault-composer-link {
   align-self: flex-start;
   padding: 0;
@@ -6066,7 +6087,8 @@ button:disabled {
 }
 
 .kh-delete-modal {
-  width: 400px;
+  /* 对齐 Netcatty DialogContent sm:max-w-md（448px）。 */
+  width: 448px;
 }
 
 .kh-delete-title {
@@ -6106,6 +6128,35 @@ button:disabled {
 
 .kh-delete-modal .modal-actions button.danger:hover:not(:disabled) {
   background: #b3251b;
+}
+
+.modal .vault-delete-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #16202b;
+  word-break: break-all;
+}
+
+.modal .vault-delete-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #16202b;
+  cursor: pointer;
+  user-select: none;
+}
+
+.modal .vault-delete-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  flex-shrink: 0;
+  accent-color: hsl(var(--primary));
 }
 
 /* ── 钥匙串页（对齐 netcatty KeychainManager） ───────────── */
