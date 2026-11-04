@@ -165,6 +165,7 @@ impl SftpHandle {
         credential: Credential,
         known_hosts_path: PathBuf,
         timeout_secs: u64,
+        proxy: Option<crate::ssh::proxy::ProxyConfig>,
     ) -> AppResult<Self> {
         let dial = client::DialCtx {
             config: crate::ssh::client::default_client_config(),
@@ -175,8 +176,8 @@ impl SftpHandle {
             progress: None,
             // SFTP 后台连接不参与 agent 转发（转发只由终端会话按档案开关发起）。
             agent_forwarding: false,
-            // SFTP 后台连接暂不走主机代理（阶段 B 补齐）。
-            proxy: None,
+            // 独立连接沿用主机档案的代理配置（终端 / SFTP 一致）。
+            proxy,
         };
         let mut handle = client::ssh_connect(dial, host, port).await?;
 

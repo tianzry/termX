@@ -243,23 +243,55 @@ pub fn recording_path_for_manual(state: &AppState, name: &str) -> AppResult<std:
 }
 
 /// 设置中心的系统代理（`settings.center.v1` 里的 `networkProxy`）。
-/// 只有 `custom` 且有 URL 才生效；`system` / `direct` 对 SSH 视为直连
-/// （SSH 没有操作系统级代理概念）。主机档案自带代理时优先用档案的。
-pub fn system_proxy_config(state: &AppState) -> Option<crate::ssh::proxy::ProxyConfig> {
+///
+/// 对齐 Netcatty：只作用于云同步 / AI 等 HTTP(S) 请求，不改变 SSH
+/// （SSH 的代理来自主机档案）。`system` = 跟随操作系统 / 环境变量，
+/// `direct` = 强制直连，`custom` = 指定 URL + 绕过列表。
+fn network_proxy_setting(state: &AppState) -> (String, String, String) {
     const SETTINGS_KEY: &str = "settings.center.v1";
-    let raw = crate::db::settings::get(&state.db, SETTINGS_KEY)
-        .ok()
-        .flatten()?;
-    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let raw = match crate::db::settings::get(&state.db, SETTINGS_KEY) {
+        Ok(Some(raw)) => raw,
+        _ => return ("system".into(), String::new(), String::new()),
+    };
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return ("system".into(), String::new(), String::new()),
+    };
     let proxy = &value["networkProxy"];
-    if proxy["mode"].as_str()? != "custom" {
-        return None;
-    }
-    crate::ssh::proxy::ProxyConfig::from_url(
-        proxy["url"].as_str().unwrap_or(""),
-        proxy["bypass"].as_str().unwrap_or(""),
+    (
+        proxy["mode"].as_str().unwrap_or("system").to_string(),
+        proxy["url"].as_str().unwrap_or("").trim().to_string(),
+        proxy["bypass"].as_str().unwrap_or("").to_string(),
     )
-    .ok()
+}
+
+/// 按设置中心的网络代理构造 reqwest 客户端（云同步 / AI 等 HTTP 请求用）。
+pub fn http_client(
+    state: &AppState,
+    builder: reqwest::ClientBuilder,
+) -> AppResult<reqwest::Client> {
+    let (mode, url, bypass) = network_proxy_setting(state);
+    let builder = match mode.as_str() {
+        "direct" => builder.no_proxy(),
+        "custom" if !url.is_empty() => {
+            let mut proxy = reqwest::Proxy::all(&url)
+                .map_err(|e| {
+                    AppError::config("network_proxy_invalid", serde_json::json!({ "err": e.to_string() }))
+                })?;
+            if !bypass.trim().is_empty() {
+                proxy = proxy.no_proxy(reqwest::NoProxy::from_string(&bypass));
+            }
+            builder.proxy(proxy)
+        }
+        // system 或 custom 但 URL 为空：沿用 reqwest 的系统 / 环境变量代理。
+        _ => builder,
+    };
+    builder.build().map_err(|e| {
+        AppError::other(
+            "http_client_build_failed",
+            serde_json::json!({ "err": e.to_string() }),
+        )
+    })
 }
 
 // ── 开机自启动（设置中心 · 系统 tab）──────────────────────

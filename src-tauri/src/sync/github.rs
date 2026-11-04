@@ -31,6 +31,16 @@ impl GitHubSync {
         Self::with_client(token, repo_slug, branch, API_BASE, reqwest::Client::new())
     }
 
+    /// 与 `from_settings` 相同，但使用调用方构造的 HTTP 客户端（可带系统代理）。
+    pub fn from_settings_with_client(
+        token: &str,
+        repo_slug: &str,
+        branch: &str,
+        client: reqwest::Client,
+    ) -> AppResult<Self> {
+        Self::with_client(token, repo_slug, branch, API_BASE, client)
+    }
+
     fn with_client(
         token: &str,
         repo_slug: &str,

@@ -193,7 +193,19 @@ pub async fn sync_check_remotes_impl(state: &AppState) -> AppResult<SyncCheckRes
 async fn probe_github(state: &AppState) -> ProviderProbe {
     use crate::sync::github::GitHubSync;
 
-    let runtime = run_db_blocking(state, |db, ss| {
+    let client =
+        match crate::commands::settings::http_client(state, reqwest::Client::builder()) {
+            Ok(c) => c,
+            Err(err) => {
+                let mut observation = ProviderObservation::empty();
+                observation.error = Some(err.to_string());
+                return ProviderProbe {
+                    observation,
+                    auto_pull: false,
+                };
+            }
+        };
+    let runtime = run_db_blocking(state, move |db, ss| {
         let enabled = crate::db::settings::get(&db, "sync_github_enabled")?.as_deref() != Some("0");
         let sync = if enabled {
             match (
@@ -203,7 +215,9 @@ async fn probe_github(state: &AppState) -> ProviderProbe {
                 (Some(token), Some(repo)) if !token.is_empty() && !repo.is_empty() => {
                     let branch = crate::db::settings::get(&db, "github_branch")?
                         .unwrap_or_else(|| "main".into());
-                    Some(GitHubSync::from_settings(&token, &repo, &branch)?)
+                    Some(GitHubSync::from_settings_with_client(
+                        &token, &repo, &branch, client,
+                    )?)
                 }
                 _ => None,
             }
@@ -327,7 +341,19 @@ async fn pull_provider(
 async fn probe_webdav(state: &AppState) -> ProviderProbe {
     use crate::sync::webdav::WebDavSync;
 
-    let runtime = run_db_blocking(state, |db, ss| {
+    let client = match crate::commands::settings::http_client(state, WebDavSync::client_builder())
+    {
+        Ok(c) => c,
+        Err(err) => {
+            let mut observation = ProviderObservation::empty();
+            observation.error = Some(err.to_string());
+            return ProviderProbe {
+                observation,
+                auto_pull: false,
+            };
+        }
+    };
+    let runtime = run_db_blocking(state, move |db, ss| {
         let enabled = crate::db::settings::get(&db, "sync_webdav_enabled")?.as_deref() == Some("1");
         let sync = if enabled {
             match (
@@ -339,10 +365,11 @@ async fn probe_webdav(state: &AppState) -> ProviderProbe {
                 {
                     let username =
                         crate::db::settings::get(&db, "webdav_username")?.unwrap_or_default();
-                    Some(WebDavSync::from_settings(
+                    Some(WebDavSync::from_settings_with_client(
                         &url,
                         &username,
                         &webdav_password,
+                        client,
                     )?)
                 }
                 _ => None,
@@ -536,7 +563,8 @@ pub async fn github_push_impl(state: &AppState, password: String) -> AppResult<(
     })
     .await?;
 
-    let sync = GitHubSync::from_settings(&token, &repo, &branch)?;
+    let client = crate::commands::settings::http_client(state, reqwest::Client::builder())?;
+    let sync = GitHubSync::from_settings_with_client(&token, &repo, &branch, client)?;
     push_with_remote(state, &sync, &password).await.map(|_| ())
 }
 
@@ -563,7 +591,8 @@ pub async fn github_pull_impl(state: &AppState, password: String) -> AppResult<(
     })
     .await?;
 
-    let sync = GitHubSync::from_settings(&token, &repo, &branch)?;
+    let client = crate::commands::settings::http_client(state, reqwest::Client::builder())?;
+    let sync = GitHubSync::from_settings_with_client(&token, &repo, &branch, client)?;
     pull_with_remote(state, &sync, &password).await.map(|_| ())
 }
 
@@ -592,7 +621,8 @@ pub async fn webdav_push_impl(state: &AppState, password: String) -> AppResult<(
     })
     .await?;
 
-    let sync = WebDavSync::from_settings(&url, &username, &wd_password)?;
+    let client = crate::commands::settings::http_client(state, WebDavSync::client_builder())?;
+    let sync = WebDavSync::from_settings_with_client(&url, &username, &wd_password, client)?;
     push_with_remote(state, &sync, &password).await.map(|_| ())
 }
 
@@ -616,7 +646,8 @@ pub async fn webdav_pull_impl(state: &AppState, password: String) -> AppResult<(
     })
     .await?;
 
-    let sync = WebDavSync::from_settings(&url, &username, &wd_password)?;
+    let client = crate::commands::settings::http_client(state, WebDavSync::client_builder())?;
+    let sync = WebDavSync::from_settings_with_client(&url, &username, &wd_password, client)?;
     pull_with_remote(state, &sync, &password).await.map(|_| ())
 }
 

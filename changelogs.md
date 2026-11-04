@@ -3986,3 +3986,42 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `cargo check --features server` ✓（4 个既有 warning）
 - `cargo test --lib`：874 ✓
 - debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：SFTP 导航可用 → 12 行齐全，双击值 open、视图 list（禁用）、并发滑杆 1–16 值 6、6 个开关禁用状态与上述一致 → 改为 transfer / 12 / 隐藏文件开 / 侧栏自动打开 → 刷新应用重开设置，四项仍为 transfer / 12 / on / on ✓ → 已还原 open / 6 / off / off
+
+---
+
+## 2026-11-04 — 代理收口（主机表单 / 连接弹窗 / 系统代理语义 / SFTP 独立连接）
+
+### 背景
+
+d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Profile 代理字段、SecretStore `proxy:<profile_id>`、连接层逐跳代理都已具备），缺的是前端入口与语义收口。本轮不动后端已有的拨号实现，只补表单与对齐 Netcatty 的系统代理语义。
+
+### 修改点
+
+1. **新增 `src/domain/proxyForm.ts`（纯逻辑，前后端表单共用）**
+   - `ProxyDraft { type: none|http|socks5, host, port, username, password, noProxy }`
+   - `proxyDraftFromProfile` / `proxyDraftError`（主机必填、端口 1–65535、填密码必须填用户名）/ `proxyProfileFields`（none 时全清空）/ `proxyPasswordToSave`（留空=保持原密码、无用户名或 none=清除、有输入=覆盖）。
+2. **Vault 主机编辑器**（[VaultView.tsx](file:///g:/AiCode/termX/termX/src/VaultView.tsx)）：新增「代理」分区（类型 / 主机 / 端口 / 用户名 / 密码 / 不使用代理 + 密码提示），编辑时回填 Profile 代理字段并从 SecretStore 读密码（只显示「已保存（留空保持不变）」）；保存时先校验再写 Profile，密码按上述策略写 `set_profile_proxy_password`。已保存代理库一行置灰并写明「Netcatty 代理库复用尚未移植」。
+3. **连接管理器**（[ConnectionManager.tsx](file:///g:/AiCode/termX/termX/src/ConnectionManager.tsx)）：同一套代理字段与保存策略接入 `ProfDraft`（新建/编辑均可用）。
+4. **系统代理语义对齐 Netcatty**
+   - 后端 `resolve_proxy_configs` 去掉系统代理 fallback：SSH / 堡垒链只认主机档案代理，不再被设置中心系统代理影响。
+   - `commands/settings.rs` 新增 `http_client(state, builder)`：system=跟随系统 / enviroment，direct=强制直连，custom=Proxy::all(url)+NoProxy 绕过列表；GitHub / WebDAV 的 probe/pull/push 全部改用它构造 reqwest 客户端（对齐 Netcatty「只影响云同步 / AI 的 HTTP，不改 SSH」）。
+   - 设置中心「系统 → 网络代理」文案同步更新：说明只作用于 GitHub / WebDAV 同步与 AI，SSH 代理在主机档案配置。
+5. **SFTP 独立连接结论：支持**
+   - `sftp_connect` 新增可选 `profile_id`；有档案则解析该主机代理（无则直连），`SftpHandle::connect` 接收 `Option<ProxyConfig>` 并在 DialCtx 中透传；桌面命令与 server 双入口同步（`profileId`）。
+   - 前端 `sftpConnect(..., profileId)`，`SftpView` 把所选档案 id 传入，不再需要「置灰」。
+
+### 验证
+
+- 129 经代理实连：Vault 编辑 129 → HTTP 127.0.0.1:7897 → 保存 → 连接成功（提示符 `tianzry@tianzry-VMware-Virtual-Platform`）。
+- 负向证据：把代理端口改成 7898 后连接失败（断连提示「按 Enter 重新连接 / 关闭会话 / 重新开始」），改回 7897 后恢复成功 → 证明代理端口确实参与拨号而非摆设。
+- SFTP 独立连接（picker 选「129 · 192.168.126.129」非复用会话）→ `/home/tianzry` 列表正常返回，命令签名与前端参数接通。
+- 系统代理文案：设置中心 → 系统 → 网络代理，说明行已按 Netcatty 语义显示。
+- 待人工：连接管理器弹窗的代理分区分支未做逐控件截图（入口在终端侧栏「新建主机」，CU 侧栏开关坐标不稳定）；代理库复用 / ProxyCommand 仍未移植（已置灰）。
+
+### 门禁
+
+- `npm run test:run`：32 文件 / 397 用例 ✓（新增 proxyForm 5 例）
+- `npm run build` ✓
+- `cargo check --features server` ✓（4 个既有 warning）
+- `cargo test --lib`：874 ✓（无新增 Rust 用例）
+- debug 重编 ✓ + CDP 实机复核（上述 129 正/负向、SFTP 列表、设置文案）

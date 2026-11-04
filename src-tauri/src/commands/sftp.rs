@@ -56,6 +56,8 @@ pub async fn sftp_connect(
     username: String,
     auth_type: String,
     secret: Option<String>,
+    // 档案 id：有则沿用该主机的代理配置（无 / 不同档案 = 直连）。
+    profile_id: Option<String>,
 ) -> AppResult<String> {
     let reservation = crate::commands::lifecycle::reserve_generated_resource(
         &state,
@@ -79,8 +81,17 @@ pub async fn sftp_connect(
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
     // 独立 SFTP 连接同样要刷新主机密钥校验策略（否则会残留终端连接的取值）。
     crate::commands::session::apply_ssh_runtime_settings(&state)?;
+    let proxy = match profile_id.as_deref() {
+        Some(pid) => {
+            let profile = crate::db::profile::get(&state.db, pid)?;
+            crate::commands::session::resolve_proxy_configs(&state, &[&profile])?
+                .get(pid)
+                .cloned()
+        }
+        None => None,
+    };
     let handle = crate::ssh::client::run_blocking_ssh(move || async move {
-        SftpHandle::connect(host, port, cred, known_hosts_path, timeout_secs).await
+        SftpHandle::connect(host, port, cred, known_hosts_path, timeout_secs, proxy).await
     })
     .await?;
     reservation.activate(crate::commands::lifecycle::ReadySession::Sftp(Arc::new(
@@ -817,9 +828,10 @@ mod live_tests {
         let cred = Credential { secret, ..cred_row };
 
         let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
-        let handle = SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15)
-            .await
-            .expect("sftp connect");
+        let handle =
+            SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15, None)
+                .await
+                .expect("sftp connect");
 
         let (host, _rx) = crate::ssh::test_support::headless_host();
         let dir = format!("/tmp/termx-live-{}", std::process::id());
@@ -966,7 +978,7 @@ mod live_tests {
 
         let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
         let handle = Arc::new(
-            SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15)
+            SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15, None)
                 .await
                 .expect("sftp connect"),
         );
@@ -1179,9 +1191,10 @@ mod live_tests {
             .expect("decrypt credential secret");
         let cred = Credential { secret, ..cred_row };
         let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
-        let handle = SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15)
-            .await
-            .expect("sftp connect");
+        let handle =
+            SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15, None)
+                .await
+                .expect("sftp connect");
 
         let (host, _rx) = crate::ssh::test_support::headless_host();
         let dir = format!("/tmp/termx-live-editor-{}", std::process::id());

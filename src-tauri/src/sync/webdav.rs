@@ -32,17 +32,30 @@ impl std::fmt::Debug for WebDavSync {
 }
 
 impl WebDavSync {
-    pub fn from_settings(url: &str, username: &str, password: &str) -> AppResult<Self> {
-        let client = Client::builder()
+    /// WebDAV 使用的客户端模板（超时 + UA）；调用方可再叠加系统代理。
+    pub fn client_builder() -> reqwest::ClientBuilder {
+        Client::builder()
             .timeout(DEFAULT_TIMEOUT)
             .user_agent(format!("rssh/{}", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| {
-                AppError::other(
-                    "webdav_client_build_failed",
-                    json!({ "err": error_chain(&e) }),
-                )
-            })?;
+    }
+
+    pub fn from_settings(url: &str, username: &str, password: &str) -> AppResult<Self> {
+        let client = Self::client_builder().build().map_err(|e| {
+            AppError::other(
+                "webdav_client_build_failed",
+                json!({ "err": error_chain(&e) }),
+            )
+        })?;
+        Self::with_client(url, username, password, client)
+    }
+
+    /// 与 `from_settings` 相同，但使用调用方构造的 HTTP 客户端（可带系统代理）。
+    pub fn from_settings_with_client(
+        url: &str,
+        username: &str,
+        password: &str,
+        client: Client,
+    ) -> AppResult<Self> {
         Self::with_client(url, username, password, client)
     }
 

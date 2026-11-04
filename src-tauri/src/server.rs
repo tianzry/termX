@@ -2112,8 +2112,22 @@ async fn sftp_connect(
         .unwrap_or(crate::ssh::client::DEFAULT_CONNECT_TIMEOUT);
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
     crate::commands::session::apply_ssh_runtime_settings(state).map_err(err_value)?;
+    let profile_id = args
+        .get("profileId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let proxy = match profile_id.as_deref() {
+        Some(pid) => {
+            let profile = crate::db::profile::get(&state.db, pid).map_err(err_value)?;
+            crate::commands::session::resolve_proxy_configs(state, &[&profile])
+                .map_err(err_value)?
+                .get(pid)
+                .cloned()
+        }
+        None => None,
+    };
     let handle = crate::ssh::client::run_blocking_ssh(move || async move {
-        SftpHandle::connect(host, port, cred, known_hosts_path, timeout_secs).await
+        SftpHandle::connect(host, port, cred, known_hosts_path, timeout_secs, proxy).await
     })
     .await
     .map_err(err_value)?;

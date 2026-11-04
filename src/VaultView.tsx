@@ -33,6 +33,14 @@ import type {
 import { newId } from "./workspaceModel";
 import { userVisibleError } from "./domain/sshErrors";
 import { shellDisplayName } from "./domain/shellName";
+import {
+  EMPTY_PROXY_DRAFT,
+  proxyDraftError,
+  proxyDraftFromProfile,
+  proxyPasswordToSave,
+  proxyProfileFields,
+  type ProxyDraft,
+} from "./domain/proxyForm";
 import { KeychainView } from "./keychain/KeychainView";
 import { SnippetsView } from "./snippets/SnippetsView";
 import { NotesView } from "./notes/NotesView";
@@ -170,6 +178,8 @@ type ComposerDraft = {
   icon_color: string;
   totp_auto_submit: boolean;
   totp_regex: string;
+  /** 主机级连接代理（密码单独落 SecretStore）。 */
+  proxy: ProxyDraft;
 };
 
 /** 登录方式 + MFA → termX Credential 类型。auto→agent（先系统密钥再本地密钥）。 */
@@ -637,6 +647,7 @@ export function VaultView({
   const [keyFiles, setKeyFiles] = useState<string[]>([]);
   /** 绑定凭据的原始 secret（getCredential 取回）；密码框留空时原样回填，避免误删。 */
   const composerSecretRef = useRef<string | null>(null);
+  const composerProxySecretRef = useRef(false);
   /** 「+ 密钥 / 证书 / 本地密钥」菜单与当前选择器类型。 */
   const [credMenu, setCredMenu] = useState(false);
   const [credPick, setCredPick] = useState<CredPick>(null);
@@ -1519,6 +1530,7 @@ export function VaultView({
     setShowPassword(false);
     setPassMasked(false);
     composerSecretRef.current = null;
+    composerProxySecretRef.current = false;
     setCredMenu(false);
     setCredPick(null);
     setCredSearch("");
@@ -1546,6 +1558,7 @@ export function VaultView({
       icon_color: "",
       totp_auto_submit: true,
       totp_regex: "",
+      proxy: { ...EMPTY_PROXY_DRAFT },
     });
     setNewMenu(false);
   }
@@ -1555,6 +1568,7 @@ export function VaultView({
     setShowPassword(false);
     setPassMasked(false);
     composerSecretRef.current = null;
+    composerProxySecretRef.current = false;
     setCredMenu(false);
     setCredSearch("");
     const cred = credentials.find((c) => c.id === p.credential_id);
@@ -1592,6 +1606,7 @@ export function VaultView({
       icon_color: p.icon_color ?? "",
       totp_auto_submit: p.totp_auto_submit ?? true,
       totp_regex: p.totp_regex ?? "",
+      proxy: proxyDraftFromProfile(p),
     });
     if (cred) {
       // 取回原 secret：密码框留空时原样回填；已有保存密码则显示掩码（D7）。
@@ -1613,6 +1628,14 @@ export function VaultView({
       .getProfileTotp(p.id)
       .then((s) => setTotpConfigured(Boolean(s)))
       .catch(() => setTotpConfigured(false));
+    void api
+      .getProfileProxyPassword(p.id)
+      .then((s) => {
+        composerProxySecretRef.current = Boolean(s);
+      })
+      .catch(() => {
+        composerProxySecretRef.current = false;
+      });
     setCtxMenu(null);
   }
 
@@ -1680,6 +1703,11 @@ export function VaultView({
       setComposerErr("证书认证尚未移植，请选择其他登录方式");
       return null;
     }
+    const proxyErr = proxyDraftError(d.proxy);
+    if (proxyErr) {
+      setComposerErr(proxyErr);
+      return null;
+    }
     const effType = effectiveCredType(d);
     const username = d.username.trim();
     if (!d.credential_id && !username) {
@@ -1743,6 +1771,7 @@ export function VaultView({
         totp_auto_submit: d.totp_auto_submit,
         totp_regex: d.totp_regex.trim() || null,
         agent_forwarding: d.agent_forwarding,
+        ...proxyProfileFields(d.proxy),
       };
       const isEdit = profiles.some((p) => p.id === d.id);
       if (isEdit) {
@@ -1755,6 +1784,13 @@ export function VaultView({
       } else {
         await api.createProfile(base);
         setOrder((prev) => [...prev, base.id]);
+      }
+      // 代理密码不落 Profile：沿用既有 SecretStore 键 `proxy:<profile_id>`；
+      // undefined = 编辑时留空且原来有密码（保持不变）。
+      const proxySecret = proxyPasswordToSave(d.proxy, composerProxySecretRef.current);
+      if (proxySecret !== undefined) {
+        await api.setProfileProxyPassword(base.id, proxySecret);
+        composerProxySecretRef.current = proxySecret !== null;
       }
       setHostTags(base.id, parsedTags);
       return base;
@@ -4313,6 +4349,122 @@ export function VaultView({
                     );
                   })()
                 )}
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="network" size={13} />
+                  <span>代理</span>
+                </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">代理类型</span>
+                  <select
+                    value={composer.proxy.type}
+                    onChange={(e) =>
+                      setComposer({
+                        ...composer,
+                        proxy: {
+                          ...composer.proxy,
+                          type: e.target.value as ProxyDraft["type"],
+                        },
+                      })
+                    }
+                  >
+                    <option value="none">无（直连）</option>
+                    <option value="http">HTTP 代理</option>
+                    <option value="socks5">SOCKS5 代理</option>
+                  </select>
+                </div>
+                {composer.proxy.type !== "none" && (
+                  <>
+                    <div className="host-setting-row">
+                      <span className="host-setting-label">代理主机</span>
+                      <input
+                        value={composer.proxy.host}
+                        placeholder="IP 或 主机名"
+                        onChange={(e) =>
+                          setComposer({
+                            ...composer,
+                            proxy: { ...composer.proxy, host: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="host-setting-row">
+                      <span className="host-setting-label">代理端口</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={65535}
+                        inputMode="numeric"
+                        value={composer.proxy.port}
+                        placeholder={composer.proxy.type === "http" ? "8080" : "1080"}
+                        onChange={(e) =>
+                          setComposer({
+                            ...composer,
+                            proxy: { ...composer.proxy, port: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="host-setting-row">
+                      <span className="host-setting-label">代理用户名</span>
+                      <input
+                        value={composer.proxy.username}
+                        placeholder="可选"
+                        onChange={(e) =>
+                          setComposer({
+                            ...composer,
+                            proxy: { ...composer.proxy, username: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="host-setting-row">
+                      <span className="host-setting-label">代理密码</span>
+                      <input
+                        type="password"
+                        value={composer.proxy.password}
+                        placeholder={
+                          composerProxySecretRef.current
+                            ? "已保存（留空保持不变）"
+                            : "可选"
+                        }
+                        onChange={(e) =>
+                          setComposer({
+                            ...composer,
+                            proxy: { ...composer.proxy, password: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="host-setting-row">
+                      <span className="host-setting-label">不使用代理</span>
+                      <input
+                        value={composer.proxy.noProxy}
+                        placeholder="localhost, 127.0.0.1"
+                        onChange={(e) =>
+                          setComposer({
+                            ...composer,
+                            proxy: { ...composer.proxy, noProxy: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                    <p className="host-setting-hint">
+                      逗号分隔的域名 / IP / host:port 不经代理。代理密码保存在系统密钥库，不写入主机档案。
+                    </p>
+                  </>
+                )}
+                <div
+                  className="host-setting-row"
+                  aria-disabled="true"
+                  title="Netcatty 的代理库（保存多个代理配置并在主机间复用）尚未移植，当前按主机内联填写。"
+                  style={{ opacity: 0.55, cursor: "not-allowed" }}
+                >
+                  <span className="host-setting-label">已保存的代理配置</span>
+                  <span className="host-setting-hint">未移植</span>
+                </div>
               </section>
 
               <section className="host-details-section">

@@ -38,6 +38,9 @@
 | Telnet 会话 | ✅ | `src/telnet/TelnetConnectModal.tsx`、`src/TerminalPane.tsx`、`commands/telnet.rs` |
 | 端口转发（local / remote / dynamic + 规则与统计） | ✅ | `src/ForwardPanel.tsx`、`commands/forward.rs` |
 | 连接 / 凭据 / 分组管理 | ✅ | `src/ConnectionManager.tsx` |
+| 主机级代理（HTTP / SOCKS5，密码走 SecretStore） | ✅ | `src/domain/proxyForm.ts`、`VaultView.tsx`、`ConnectionManager.tsx`、`ssh/proxy.rs` |
+| 系统代理 = 云同步 HTTP 代理（不改变 SSH） | ✅ | `commands/settings.rs http_client`、GitHub/WebDAV 构造 |
+| SFTP 独立连接沿用主机档案代理 | ✅ | `sftp_connect(profile_id)`、`SftpHandle::connect(proxy)` |
 | 多标签页 | ✅ | `src/Workspace.tsx`、`src/TerminalPane.tsx` |
 | 分屏（水平 / 垂直 + 拖拽） | ✅ | `src/workspaceModel.ts`、`src/Workspace.tsx` |
 | 会话恢复（localStorage + 恢复横幅） | ✅ | `src/backend/workspaceStore.ts` |

@@ -413,14 +413,14 @@ fn get_session(state: &State<'_, AppState>, session_id: &str) -> AppResult<clien
     session_handle(state, session_id)
 }
 
-/// 目标 + 堡垒每一跳的代理配置。档案自带（type/host/port/username + SecretStore
-/// 里的密码）优先；没有档案级配置时退回设置中心的系统代理（仅 custom 模式）。
-/// 结果按 `profile_id` 建表，连接层逐跳查表，堡垒链不会和张贴的代理错位。
+/// 目标 + 堡垒每一跳的代理配置。只采用档案自带配置（type/host/port/username +
+/// SecretStore 密码）；设置中心的系统代理只作用于云同步 / AI 的 HTTP 请求，
+/// 不改变 SSH（对齐 Netcatty）。结果按 `profile_id` 建表，连接层逐跳查表，
+/// 堡垒链不会和张贴的代理错位。
 pub(crate) fn resolve_proxy_configs(
     state: &AppState,
     profiles: &[&Profile],
 ) -> AppResult<std::collections::HashMap<String, crate::ssh::proxy::ProxyConfig>> {
-    let fallback = crate::commands::settings::system_proxy_config(state);
     let mut map = std::collections::HashMap::new();
     for profile in profiles {
         let Some(kind) = profile
@@ -428,9 +428,6 @@ pub(crate) fn resolve_proxy_configs(
             .as_deref()
             .filter(|s| !s.trim().is_empty())
         else {
-            if let Some(cfg) = &fallback {
-                map.insert(profile.id.clone(), cfg.clone());
-            }
             continue;
         };
         let password = state

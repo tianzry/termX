@@ -162,6 +162,7 @@ export function SftpView({ profiles, credentials, connectedHosts }: Props) {
           credential.username,
           credential.type,
           credential.secret,
+          profile.id,
         );
         try {
           const home = await api.sftpHome(sftpId);

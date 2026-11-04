@@ -732,13 +732,15 @@ export function onSshProgress(
 
 // ── SFTP ─────────────────────────────────────────────────
 
-/** 独立 TCP 建 SFTP（host/port/username + auth_type/secret）。 */
+/** 独立 TCP 建 SFTP（host/port/username + auth_type/secret）。
+ *  传 profileId 时沿用该主机档案的连接代理（密码由后端读 SecretStore）。 */
 export function sftpConnect(
   host: string,
   port: number,
   username: string,
   authType: CredentialType,
   secret: string | null,
+  profileId?: string | null,
 ): Promise<string> {
   return invoke<string>("sftp_connect", {
     host,
@@ -746,6 +748,7 @@ export function sftpConnect(
     username,
     authType,
     secret,
+    profileId: profileId ?? null,
   });
 }
 
