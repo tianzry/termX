@@ -21,6 +21,11 @@ import {
   scriptTriggerNote,
 } from "./snippetsModel";
 import {
+  clearScriptTriggers,
+  subscribeScriptTriggers,
+  type ScriptTriggerEntry,
+} from "./scriptTriggerLog";
+import {
   buildSnippetExportPayload,
   describeImportStats,
   mergeSnippetImport,
@@ -43,9 +48,11 @@ type Draft = {
   kind: SnippetKind;
   multiLineRunMode: RunMode;
   language: string;
-  /** "" = 手动；onConnect / onOutput 仅保留数据，阶段 A 不自动执行。 */
+  /** "" = 手动；onConnect / onOutput 由终端窗格在渲染层自动执行（阶段 B）。 */
   trigger: "" | "onConnect" | "onOutput";
   triggerPattern: string;
+  targets: string[];
+  targetsAllHosts: boolean;
 };
 
 function toDraft(s: Snippet): Draft {
@@ -66,6 +73,8 @@ function toDraft(s: Snippet): Draft {
     language: s.language || "shell",
     trigger: s.trigger === "onConnect" || s.trigger === "onOutput" ? s.trigger : "",
     triggerPattern: s.trigger_pattern || "",
+    targets: s.targets ?? [],
+    targetsAllHosts: s.targets_all_hosts === true,
   };
 }
 
@@ -84,6 +93,8 @@ function emptyDraft(): Draft {
     language: "shell",
     trigger: "",
     triggerPattern: "",
+    targets: [],
+    targetsAllHosts: false,
   };
 }
 
@@ -100,6 +111,10 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   const [pkgRename, setPkgRename] = useState<{ from: string; to: string } | null>(null);
   /** 最近一次运行的脚本（横幅 + 停止 / 暂停 / 恢复）；切换活动终端时清空。 */
   const [run, setRun] = useState<{ name: string; paneId: string } | null>(null);
+  /** onConnect 目标主机选择用的主机列表。 */
+  const [hosts, setHosts] = useState<{ id: string; name: string; host: string }[]>([]);
+  /** 自动触发日志（内存，跨终端窗格共享）。 */
+  const [triggerLog, setTriggerLog] = useState<ScriptTriggerEntry[]>([]);
   const importRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -119,6 +134,23 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   useEffect(() => {
     setRun(null);
   }, [activeHandle]);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .listProfiles()
+      .then((list) => {
+        if (alive) {
+          setHosts(list.map((p) => ({ id: p.id, name: p.name, host: p.host })));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => subscribeScriptTriggers(setTriggerLog), []);
 
   /** 保存全量列表并通知终端侧刷新；成功后执行 onDone。 */
   const persist = useCallback(
@@ -248,6 +280,8 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
         draft.kind === "script" && draft.trigger === "onOutput"
           ? draft.triggerPattern.trim()
           : "",
+      targets: draft.kind === "script" ? draft.targets : [],
+      targets_all_hosts: draft.kind === "script" ? draft.targetsAllHosts : false,
     };
     const list = isNew
       ? [...snippets, next]
@@ -405,6 +439,36 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
         </span>
       </div>
 
+      <div className="snippets-trigger-log">
+        <div className="snippets-trigger-log-head">
+          <span>自动触发日志（{triggerLog.length}）</span>
+          <button
+            onClick={() => clearScriptTriggers()}
+            disabled={!triggerLog.length}
+          >
+            清空
+          </button>
+        </div>
+        {triggerLog.length === 0 ? (
+          <p>暂无记录；onConnect / onOutput 脚本触发后会显示在这里。</p>
+        ) : (
+          <ul>
+            {triggerLog.slice(-6).reverse().map((e, i) => (
+              <li key={`${e.at}-${i}`}>
+                <span className={`snippets-trigger-status ${e.status}`}>
+                  {e.status === "done" ? "完成" : e.status === "error" ? "失败" : "执行中"}
+                </span>
+                <span>
+                  {new Date(e.at).toLocaleTimeString()} ·{" "}
+                  {e.kind === "onConnect" ? "连接触发" : "输出触发"} · {e.name}
+                </span>
+                <span className="snippets-trigger-detail">{e.detail}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="snippets-body">
         {snippets.length === 0 ? (
           <div className="snippets-empty">
@@ -445,7 +509,7 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
                             className="snippets-flag-badge"
                             title={scriptTriggerNote(s.trigger)}
                           >
-                            自动触发未生效
+                            自动触发
                           </span>
                         ) : null}
                         {s.shortkey && (
@@ -589,15 +653,52 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
                     }}
                   >
                     <option value="manual">手动运行（在脚本页点「运行」）</option>
-                    <option value="onConnect" disabled>
-                      连接后自动执行（未移植）
-                    </option>
-                    <option value="onOutput" disabled>
-                      输出匹配自动执行（未移植）
-                    </option>
+                    <option value="onConnect">连接后自动执行（仅 SSH）</option>
+                    <option value="onOutput">输出匹配自动执行</option>
                   </select>
                   <em>{scriptTriggerNote(draft.trigger)}</em>
                 </label>
+                {draft.trigger === "onConnect" && (
+                  <div className="snippets-target-field">
+                    <span>目标主机</span>
+                    <label className="snippets-inline-check">
+                      <input
+                        type="checkbox"
+                        checked={draft.targetsAllHosts}
+                        onChange={(e) =>
+                          setDraft({ ...draft, targetsAllHosts: e.target.checked })
+                        }
+                      />
+                      所有主机
+                    </label>
+                    {!draft.targetsAllHosts && (
+                      <div className="snippets-target-list">
+                        {hosts.length === 0 ? (
+                          <em>本机还没有主机；未选择目标时不会自动执行。</em>
+                        ) : (
+                          hosts.map((h) => (
+                            <label key={h.id} className="snippets-inline-check">
+                              <input
+                                type="checkbox"
+                                checked={draft.targets.includes(h.id)}
+                                onChange={(e) =>
+                                  setDraft({
+                                    ...draft,
+                                    targets: e.target.checked
+                                      ? [...draft.targets, h.id]
+                                      : draft.targets.filter((x) => x !== h.id),
+                                  })
+                                }
+                              />
+                              {h.name}（{h.host}）
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    )}
+                    <em>目标主机命中时，连接建立并出现提示符后按顺序执行。</em>
+                  </div>
+                )}
                 {draft.trigger === "onOutput" && (
                   <label>
                     <span>触发模式（正则）</span>
@@ -607,11 +708,16 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
                         setDraft({ ...draft, triggerPattern: e.target.value })
                       }
                       placeholder="sudo.*password"
-                      disabled
                     />
-                    <em>仅保留数据：输出匹配引擎未移植，不会自动触发。</em>
+                    <em>同一会话同一脚本只触发一次；正则无效时不会触发。</em>
                   </label>
                 )}
+                <em>
+                  屏幕等待指令：`#@wait-prompt [ms]`、`#@wait-text &lt;文本&gt; [ms]`、
+                  `#@wait-regex &lt;正则&gt; [ms]`（基于本机终端缓冲）。
+                  未移植并置灰：录制回放、nct.dialog（主进程回调）、nct.progress /
+                  nct.session.startLog（宿主能力）。
+                </em>
               </>
             )}
             <label>

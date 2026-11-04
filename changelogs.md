@@ -4460,3 +4460,27 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 页面重新加载后可能恢复上一个终端标签，连接检测应优先激活已有标签，而不是盲目点主机卡片。
 - `pgrep -f <标记>` 会匹配到 `ssh_exec` 自己的 `sh -c` 命令行（其中含标记串），验证暂停/停止需改用 `pgrep -x sleep` 等进程名精确匹配。
 
+---
+
+## 2026-11-04 — P1 #13 脚本系统 · 阶段 B（自动触发 + 屏幕等待）
+
+### 修改点
+
+1. 可行性结论：onConnect / onOutput / 屏幕等待全部放在渲染层实现（连接成功回调 + 下行业务输出 + xterm 缓冲），不依赖主进程；录制回放、`nct.dialog`（主进程原生对话框回调）、`nct.progress` / `startLog`（宿主级进度与日志宿主）不具备宿主能力，置灰并在行内写明原因，不造假。
+2. 数据模型：`Snippet` 增加 `targets: Vec<String>` / `targets_all_hosts: bool`（`#[serde(default)]`，`snippets.json` 向后兼容）；`client.ts` 类型、`snippetsTransfer` 导入导出清洗同步透传。
+3. 新增 `src/snippets/scriptRunner.ts`：脚本内屏幕等待指令 `#@wait-prompt [ms]` / `#@wait-text <文本> [ms]` / `#@wait-regex <正则> [ms]`，以「进入等待时的缓冲长度」为基线做增量匹配（避免旧输出误命中），默认 30s，超时抛错；未知 `#@xxx` 保留为命令行不静默丢弃。6 例单测。
+4. 新增 `src/snippets/scriptTriggerLog.ts`：内存环形日志（100 条）+ 订阅/清空，失败也记录真实原因。
+5. `TerminalPane.tsx`：连接成功 → `runOnConnectScripts()`（先等提示符 ≤6s，超时也继续；按 `targets` / `targets_all_hosts` 过滤）；下行 `writeTerminalOutput` → 300ms 防抖 `checkOutputTriggers()`（取缓冲末 4000 字符匹配 `trigger_pattern`，同一会话同一脚本只触发一次，断开清空）。
+6. `SnippetsView.tsx`：触发方式全部启用；onConnect 提供「所有主机」与主机多选；onOutput 提供正则输入；运行条下新增自动触发日志面板（状态 / 时间 / 类型 / 脚本 / 详情，最近 6 条 + 清空）；行内写明屏幕等待指令与不可移植置灰项。
+
+### 验证
+
+- 门禁：`npm run test:run` 441 ✓、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` ✓。
+- 129 真机（CDP，`evidence/script-stageb-129.js`）：保存后 reload 回读 `trigger=onConnect` / `targets=[129 id]` 持久化；连接 129 后 onConnect 自动执行，脚本内 `#@wait-text` 命中回显后继续，独立 SSH exec 回读 `/tmp/termx-stageb-connect-*` 得到 `TERMX-STAGEB-CONNECT` + 主机名；终端输入 `echo TERMX-OUTPUT-42` 触发 onOutput，回读 `/tmp/termx-stageb-output-*` 为 `TERMX-STAGEB-OUTPUT`；再发 `TERMX-OUTPUT-77` 日志仍只有 1 次输出触发（去重）；目标主机不匹配的负例脚本未触发。触发日志 4 行（连接/输出各「执行中 + 完成」）。证据：`evidence/script-stageb-129.json`、`script-stageb-log.png`。
+
+### 踩坑
+
+- 触发日志每条触发写两行（执行中 + 完成），断言「只触发一次」要按脚本名统计条目（2 行/次），不能直接数关键词。
+- 页面 reload 后若恢复的是已在连接的会话，shell 可能仍在校验/初始化阶段：一次复跑出现 `#@wait-text` 5s 超时（日志如实记为「失败」）；onConnect 脚本等待窗口应按主机初始化耗时留足（默认 30s），不要依赖 5s 级短超时。
+- xterm 的 `write()` 是异步的，写命令与读缓冲判断要给远端回显留时间；等待逻辑必须轮询而非一次读取。
+

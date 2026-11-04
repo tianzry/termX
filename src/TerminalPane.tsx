@@ -23,9 +23,12 @@ import {
   SNIPPETS_CHANGED_EVENT,
   isScriptSnippet,
   parseShortkey,
+  resolveScriptTrigger,
   shortkeyMatches,
   snippetWritePlan,
 } from "./snippets/snippetsModel";
+import { parseScriptBlocks, runScriptBlocks } from "./snippets/scriptRunner";
+import { appendScriptTrigger } from "./snippets/scriptTriggerLog";
 import "./snippets/snippets.css";
 import type {
   AuthOverride,
@@ -252,6 +255,15 @@ export function TerminalPane({
   >([]);
   /** 片段 / 脚本列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
   const [snippets, setSnippets] = useState<api.Snippet[]>([]);
+  /** 自动触发用最新快照（异步回调里避免闭包旧值）。 */
+  const snippetsRef = useRef<api.Snippet[]>([]);
+  /** 本会话已触发的 onOutput 脚本（同一会话只触发一次）。 */
+  const firedOutputRef = useRef<Set<string>>(new Set());
+  const outputCheckTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    snippetsRef.current = snippets;
+  }, [snippets]);
+
   useEffect(() => {
     let alive = true;
     const load = () => {
@@ -386,6 +398,107 @@ export function TerminalPane({
     }
   }
 
+  /** 屏幕等待 / 自动触发：终端缓冲全文（xterm buffer translateToString）。 */
+  function termBufferText(): string {
+    const term = controllerRef.current?.term;
+    if (!term) return "";
+    const buf = term.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buf.length; i += 1) {
+      lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+    }
+    return lines.join("\n");
+  }
+
+  /** 自动触发目标判定：全部主机，或脚本 targets 含当前 Profile.id。 */
+  function scriptAppliesToThisHost(s: api.Snippet): boolean {
+    if (s.kind !== "script") return false;
+    if (s.targets_all_hosts) return true;
+    return !!(sshProfileId && (s.targets ?? []).includes(sshProfileId));
+  }
+
+  /** 执行一个自动触发脚本并写入触发日志（失败也记录，不伪造成功）。 */
+  async function runAutoScript(
+    s: api.Snippet,
+    kind: "onConnect" | "onOutput",
+  ): Promise<void> {
+    const detail = kind === "onConnect" ? "连接建立" : `输出匹配 /${s.trigger_pattern}/`;
+    appendScriptTrigger({ kind, name: s.name, paneId, detail, status: "started" });
+    onStatus(`自动触发脚本：${s.name}`);
+    const handle = runScriptBlocks(parseScriptBlocks(s.command), {
+      write: (t) => {
+        if (aliveRef.current) writeToPane(t);
+      },
+      readBuffer: termBufferText,
+    });
+    try {
+      await handle.done;
+      appendScriptTrigger({ kind, name: s.name, paneId, detail: "完成", status: "done" });
+    } catch (e) {
+      const msg = userVisibleError(String(e));
+      appendScriptTrigger({ kind, name: s.name, paneId, detail: msg, status: "error" });
+      onStatus(`脚本自动触发失败：${msg}`);
+    }
+  }
+
+  /** 连接建立后按顺序执行 onConnect 脚本（仅 SSH 会话）。 */
+  async function runOnConnectScripts(): Promise<void> {
+    if (!isSsh) return;
+    firedOutputRef.current = new Set();
+    let all = snippetsRef.current;
+    if (!all.length) all = await api.loadSnippets().catch(() => []);
+    const scripts = all.filter(
+      (s) =>
+        isScriptSnippet(s) &&
+        resolveScriptTrigger(s.trigger) === "onConnect" &&
+        scriptAppliesToThisHost(s),
+    );
+    for (const s of scripts) {
+      // 刚连接时 init_command 可能仍在执行，先等提示符（最多 6s，超时也继续）。
+      try {
+        await runScriptBlocks([{ kind: "wait-prompt", timeoutMs: 6000 }], {
+          write: (t) => {
+            if (aliveRef.current) writeToPane(t);
+          },
+          readBuffer: termBufferText,
+        }).done;
+      } catch {
+        // 提示符未就绪也继续执行连接脚本，避免静默跳过。
+      }
+      await runAutoScript(s, "onConnect");
+    }
+  }
+
+  /** 终端输出 → 防抖匹配 onOutput 脚本；同一会话同一脚本只触发一次。 */
+  async function checkOutputTriggers(): Promise<void> {
+    if (!isSsh || !sshProfileId) return;
+    const text = termBufferText().slice(-4000);
+    if (!text) return;
+    for (const s of snippetsRef.current) {
+      if (!isScriptSnippet(s) || resolveScriptTrigger(s.trigger) !== "onOutput") continue;
+      if (!scriptAppliesToThisHost(s)) continue;
+      if (!s.trigger_pattern || firedOutputRef.current.has(s.id)) continue;
+      let re: RegExp;
+      try {
+        re = new RegExp(s.trigger_pattern, "m");
+      } catch {
+        continue;
+      }
+      if (!re.test(text)) continue;
+      firedOutputRef.current.add(s.id);
+      await runAutoScript(s, "onOutput");
+    }
+  }
+
+  function scheduleOutputTriggerCheck() {
+    if (!isSsh || !sshProfileId) return;
+    if (outputCheckTimerRef.current !== null) return;
+    outputCheckTimerRef.current = window.setTimeout(() => {
+      outputCheckTimerRef.current = null;
+      void checkOutputTriggers();
+    }, 300);
+  }
+
   /** 下行字节 → 文本（按会话编码）；串口由后端按串口配置解码，走原字节流。 */
   function writeTerminalOutput(bytes: Uint8Array) {
     const term = controllerRef.current?.term;
@@ -395,7 +508,10 @@ export function TerminalPane({
       return;
     }
     const text = decoderRef.current.decode(bytes);
-    if (text) term.write(text);
+    if (text) {
+      term.write(text);
+      scheduleOutputTriggerCheck();
+    }
   }
 
   /**
@@ -935,6 +1051,7 @@ export function TerminalPane({
       await api.onTerminalData(domain, sid, writeTerminalOutput),
       await api.onTerminalClose(domain, sid, (info: CloseInfo) => {
         transportRef.current = null;
+        firedOutputRef.current = new Set();
         notifySession(null);
         const suffix = info.signal
           ? `被信号 ${info.signal} 终止`
@@ -966,6 +1083,8 @@ export function TerminalPane({
     controllerRef.current?.fit.fit();
     controllerRef.current?.term.focus();
     maybeAutoOpenSidePanel();
+    // 阶段 B：连接建立后执行 onConnect 脚本（仅当前主机目标命中时）。
+    void runOnConnectScripts();
   }
 
   /** 连接成功后按设置自动打开侧边栏（termX 目前仅支持 SFTP 面板）。 */

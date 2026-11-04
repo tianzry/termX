@@ -702,6 +702,12 @@ pub struct Snippet {
     /// onOutput 的正则模式；阶段 A 只存不执行（输出匹配引擎未移植）。
     #[serde(default)]
     pub trigger_pattern: String,
+    /// onConnect 的目标主机 id 列表（Profile.id）。
+    #[serde(default)]
+    pub targets: Vec<String>,
+    /// onConnect 是否对全部主机生效（对齐 Netcatty targetsAllHosts）。
+    #[serde(default)]
+    pub targets_all_hosts: bool,
 }
 
 // --- Note ---

@@ -115,6 +115,104 @@ button.snippets-primary:disabled {
   opacity: 0.8;
 }
 
+/* 自动触发目标选择 + 触发日志。 */
+.snippets-target-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.snippets-target-field > span {
+  font-weight: 600;
+  color: hsl(var(--nc-muted));
+}
+
+.snippets-target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.snippets-inline-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.snippets-trigger-log {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.snippets-trigger-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: hsl(var(--nc-muted));
+}
+
+.snippets-trigger-log-head button {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--nc-border));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.snippets-trigger-log p {
+  margin: 0;
+  opacity: 0.75;
+}
+
+.snippets-trigger-log ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.snippets-trigger-log li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.snippets-trigger-status {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  border: 1px solid hsl(var(--nc-border));
+}
+
+.snippets-trigger-status.done {
+  color: hsl(var(--nc-ok, 142 60% 45%));
+}
+
+.snippets-trigger-status.error {
+  color: hsl(var(--nc-danger, 0 65% 55%));
+}
+
+.snippets-trigger-detail {
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .snippets-body {
   display: flex;
   flex-direction: column;

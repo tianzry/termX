@@ -196,9 +196,9 @@ describe("scriptTrigger", () => {
     expect(resolveScriptTrigger("onOutput")).toBe("onOutput");
   });
 
-  it("自动触发说明写明未移植原因", () => {
-    expect(scriptTriggerNote("onConnect")).toContain("连接生命周期钩子");
-    expect(scriptTriggerNote("onOutput")).toContain("输出匹配引擎");
+  it("自动触发说明写明生效条件", () => {
+    expect(scriptTriggerNote("onConnect")).toContain("目标主机");
+    expect(scriptTriggerNote("onOutput")).toContain("同一会话同一脚本只触发一次");
     expect(scriptTriggerNote("manual")).toContain("手动运行");
   });
 });

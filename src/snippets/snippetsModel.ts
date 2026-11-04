@@ -144,17 +144,16 @@ export function resolveScriptTrigger(raw: string | undefined | null): ScriptTrig
 }
 
 /**
- * 触发方式行内说明。阶段 A 只打通手动运行链路：
- * onConnect 需要连接生命周期钩子、onOutput 需要输出匹配引擎，均未移植，
- * 数据字段保留（导入导出不丢），但不会自动执行。
+ * 触发方式行内说明。阶段 B 已在渲染层实现 onConnect / onOutput：
+ * 连接建立后按目标主机执行、输出匹配正则后触发（同一会话只触发一次）。
  */
 export function scriptTriggerNote(raw: string | undefined | null): string {
   const trigger = resolveScriptTrigger(raw);
   if (trigger === "onConnect") {
-    return "连接后自动执行未移植（需要连接生命周期钩子），当前只能手动运行。";
+    return "连接建立后自动执行（仅 SSH 会话）：勾选目标主机或「所有主机」后生效。";
   }
   if (trigger === "onOutput") {
-    return "输出匹配自动执行未移植（需要输出匹配引擎），当前只能手动运行。";
+    return "终端输出匹配该正则时自动执行；同一会话同一脚本只触发一次。";
   }
   return "手动运行：在脚本页选中活动终端后点「运行」。";
 }

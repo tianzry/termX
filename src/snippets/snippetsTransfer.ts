@@ -1,8 +1,8 @@
 // Snippets 导入导出（P0 #5 阶段 B）。
 // 格式对齐 Netcatty `domain/snippetTransfer.ts`：kind="netcatty.snippets"，
 // version 1/2/3 均可导入，导出写 3；条目用 label（termX 内部字段名 name）。
-// 仅迁移 termX 已支持的字段：targets / targetGroups / order 等留档不导入；
-// language / trigger / triggerPattern 随数据保留（阶段 A 只执行 manual）。
+// 仅迁移 termX 已支持的字段：targetGroups / order 等留档不导入；
+// language / trigger / triggerPattern / targets 随数据保留。
 // 纯逻辑、无 IO；单测见 snippetsTransfer.test.ts。
 import type { Snippet } from "../backend/client";
 import { normalizeLineEndings } from "./snippetsModel";
@@ -25,6 +25,8 @@ export type SnippetExportItem = {
   language?: string;
   trigger?: "manual" | "onConnect" | "onOutput";
   triggerPattern?: string;
+  targets?: string[];
+  targetsAllHosts?: boolean;
 };
 
 export type SnippetExportPayload = {
@@ -83,6 +85,8 @@ const toExportItem = (s: Snippet): SnippetExportItem => ({
     ? { trigger: s.trigger }
     : {}),
   ...(s.trigger_pattern ? { triggerPattern: s.trigger_pattern } : {}),
+  ...(s.targets?.length ? { targets: s.targets } : {}),
+  ...(s.targets_all_hosts ? { targetsAllHosts: true } : {}),
 });
 
 export function buildSnippetExportPayload(
@@ -135,6 +139,12 @@ function sanitizeImportItem(value: unknown): SnippetExportItem | null {
     value.trigger === "onConnect" || value.trigger === "onOutput" ? value.trigger : "";
   const triggerPattern =
     typeof value.triggerPattern === "string" ? value.triggerPattern.trim() : "";
+  const targets = Array.isArray(value.targets)
+    ? value.targets.filter(
+        (t): t is string => typeof t === "string" && t.trim().length > 0,
+      )
+    : [];
+  const targetsAllHosts = value.targetsAllHosts === true;
   return {
     label,
     command: value.command,
@@ -150,6 +160,8 @@ function sanitizeImportItem(value: unknown): SnippetExportItem | null {
     ...(language ? { language } : {}),
     ...(trigger ? { trigger } : {}),
     ...(triggerPattern ? { triggerPattern } : {}),
+    ...(targets.length ? { targets } : {}),
+    ...(targetsAllHosts ? { targetsAllHosts: true } : {}),
   };
 }
 
@@ -244,6 +256,8 @@ function toImportedSnippet(item: SnippetExportItem, id: string): Snippet {
     language: item.language ?? "",
     trigger: item.trigger ?? "",
     trigger_pattern: item.triggerPattern ?? "",
+    targets: item.targets ?? [],
+    targets_all_hosts: item.targetsAllHosts === true,
   };
 }
 

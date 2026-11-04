@@ -244,6 +244,8 @@ describe("mergeSnippetImport", () => {
       language: "",
       trigger: "",
       trigger_pattern: "",
+      targets: [],
+      targets_all_hosts: false,
     });
   });
 

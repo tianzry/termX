@@ -423,6 +423,10 @@ export interface Snippet {
   trigger: string;
   /** onOutput 的正则模式；阶段 A 只存不执行。 */
   trigger_pattern: string;
+  /** onConnect 的目标主机 id 列表（阶段 B 使用）。 */
+  targets?: string[];
+  /** onConnect 是否对全部主机生效。 */
+  targets_all_hosts?: boolean;
 }
 
 export function loadSnippets(): Promise<Snippet[]> {
