@@ -425,64 +425,95 @@ fn get_session(state: &State<'_, AppState>, session_id: &str) -> AppResult<clien
 /// SecretStore 密码）；设置中心的系统代理只作用于云同步 / AI 的 HTTP 请求，
 /// 不改变 SSH（对齐 Netcatty）。结果按 `profile_id` 建表，连接层逐跳查表，
 /// 堡垒链不会和张贴的代理错位。
+///
+/// 解析顺序（对齐 Netcatty）：主机自身 `proxy_profile_id` → 分组默认
+/// `groups.proxy_profile_id` → 主机内联 proxy_*；都没有则直连不插入表。
 pub(crate) fn resolve_proxy_configs(
     state: &AppState,
     profiles: &[&Profile],
 ) -> AppResult<std::collections::HashMap<String, crate::ssh::proxy::ProxyConfig>> {
+    let non_empty = |value: Option<&str>| -> Option<String> {
+        value
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
     let mut map = std::collections::HashMap::new();
     for profile in profiles {
-        // 引用代理库条目时以库配置为准（密码走 `proxy_profile:<id>`）；
-        // 条目已被删除则回退到主机内联字段（密码走 `proxy:<host_id>`）。
-        let parts = if let Some(pid) = profile
-            .proxy_profile_id
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-        {
-            match crate::db::proxy_profile::get(&state.db, pid) {
-                Ok(pp) => Some((
-                    pp.proxy_type,
-                    pp.host,
-                    pp.port,
-                    pp.username,
-                    pp.no_proxy.unwrap_or_default(),
-                    crate::secret::proxy_profile_secret_key(pid),
-                )),
-                Err(_) => None,
+        let mut cfg: Option<crate::ssh::proxy::ProxyConfig> = None;
+
+        // 1) 主机绑定的代理库条目；主机未绑定（或指向已删除条目）时继承分组默认。
+        let library_id = non_empty(profile.proxy_profile_id.as_deref()).or_else(|| {
+            let group_id = non_empty(profile.group_id.as_deref())?;
+            let group = crate::db::group::get(&state.db, &group_id).ok()?;
+            non_empty(group.proxy_profile_id.as_deref())
+        });
+        if let Some(pid) = library_id {
+            if let Ok(pp) = crate::db::proxy_profile::get(&state.db, &pid) {
+                if pp.proxy_type.trim().eq_ignore_ascii_case("command") {
+                    cfg = Some(crate::ssh::proxy::ProxyConfig::from_command(
+                        pp.command.as_deref().unwrap_or_default(),
+                    )?);
+                } else {
+                    // 钥匙串身份优先于手填用户名与代理密码（对齐 Netcatty）。
+                    let (username, password) =
+                        match non_empty(pp.identity_id.as_deref()) {
+                            Some(identity_id) => {
+                                let cred = crate::db::credential::get(
+                                    &state.db,
+                                    &identity_id,
+                                )
+                                .map_err(|_| {
+                                    AppError::config(
+                                        "proxy_identity_missing",
+                                        json!({ "id": &identity_id }),
+                                    )
+                                })?;
+                                let secret = state
+                                    .secret_store
+                                    .get(&cred_secret_key(&identity_id))?;
+                                (Some(cred.username), secret)
+                            }
+                            None => (
+                                pp.username.clone(),
+                                state
+                                    .secret_store
+                                    .get(&crate::secret::proxy_profile_secret_key(&pid))?,
+                            ),
+                        };
+                    cfg = Some(crate::ssh::proxy::ProxyConfig::from_parts(
+                        &pp.proxy_type,
+                        &pp.host,
+                        pp.port,
+                        username.as_deref(),
+                        password.as_deref(),
+                        pp.no_proxy.as_deref().unwrap_or_default(),
+                    )?);
+                }
             }
-        } else {
-            None
-        };
-        let parts = match parts {
-            Some(p) => p,
-            None => {
-                let Some(kind) = profile
-                    .proxy_type
-                    .as_deref()
-                    .filter(|s| !s.trim().is_empty())
-                else {
-                    continue;
-                };
-                (
-                    kind.to_string(),
-                    profile.proxy_host.as_deref().unwrap_or("").to_string(),
-                    profile.proxy_port.unwrap_or(0),
-                    profile.proxy_username.clone(),
-                    profile.proxy_no_proxy.as_deref().unwrap_or("").to_string(),
-                    crate::secret::proxy_secret_key(&profile.id),
-                )
-            }
-        };
-        let (kind, host, port, username, no_proxy, secret_key) = parts;
-        let password = state.secret_store.get(&secret_key)?;
-        let cfg = crate::ssh::proxy::ProxyConfig::from_parts(
-            &kind,
-            &host,
-            port,
-            username.as_deref(),
-            password.as_deref(),
-            &no_proxy,
-        )?;
-        map.insert(profile.id.clone(), cfg);
+            // 库条目已不存在时回退到主机内联字段（保持旧行为）。
+        }
+
+        // 2) 主机内联 proxy_*（比如库条目被删除后的回退）。
+        if cfg.is_none() {
+            let Some(kind) = non_empty(profile.proxy_type.as_deref()) else {
+                continue;
+            };
+            let password =
+                state.secret_store.get(&crate::secret::proxy_secret_key(&profile.id))?;
+            cfg = Some(crate::ssh::proxy::ProxyConfig::from_parts(
+                &kind,
+                profile.proxy_host.as_deref().unwrap_or(""),
+                profile.proxy_port.unwrap_or(0),
+                profile.proxy_username.as_deref(),
+                password.as_deref(),
+                profile.proxy_no_proxy.as_deref().unwrap_or(""),
+            )?);
+        }
+
+        if let Some(cfg) = cfg {
+            map.insert(profile.id.clone(), cfg);
+        }
     }
     Ok(map)
 }

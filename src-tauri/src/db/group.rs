@@ -73,7 +73,8 @@ fn reconcile_sync_filter_for_group_delete(conn: &rusqlite::Connection, id: &str)
 pub fn list(db: &Db) -> AppResult<Vec<Group>> {
     let conn = db.lock()?;
     let mut stmt = conn.prepare(
-        "SELECT id, name, color, sort_order, terminal_waves_enabled FROM groups ORDER BY sort_order ASC, name ASC",
+        "SELECT id, name, color, sort_order, terminal_waves_enabled, proxy_profile_id \
+         FROM groups ORDER BY sort_order ASC, name ASC",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(Group {
@@ -82,6 +83,7 @@ pub fn list(db: &Db) -> AppResult<Vec<Group>> {
             color: row.get(2)?,
             sort_order: row.get(3)?,
             terminal_waves_enabled: row.get(4)?,
+            proxy_profile_id: row.get(5)?,
         })
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -90,7 +92,8 @@ pub fn list(db: &Db) -> AppResult<Vec<Group>> {
 pub fn get(db: &Db, id: &str) -> AppResult<Group> {
     let conn = db.lock()?;
     conn.query_row(
-        "SELECT id, name, color, sort_order, terminal_waves_enabled FROM groups WHERE id = ?1",
+        "SELECT id, name, color, sort_order, terminal_waves_enabled, proxy_profile_id \
+         FROM groups WHERE id = ?1",
         params![id],
         |row| {
             Ok(Group {
@@ -99,6 +102,7 @@ pub fn get(db: &Db, id: &str) -> AppResult<Group> {
                 color: row.get(2)?,
                 sort_order: row.get(3)?,
                 terminal_waves_enabled: row.get(4)?,
+                proxy_profile_id: row.get(5)?,
             })
         },
     )
@@ -108,10 +112,25 @@ pub fn get(db: &Db, id: &str) -> AppResult<Group> {
 pub fn insert_tx(conn: &rusqlite::Connection, g: &Group) -> AppResult<()> {
     validate_name(&g.name)?;
     let color = normalize_group_color(&g.color)?;
+    let proxy_profile_id = g
+        .proxy_profile_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     conn.execute(
-        "INSERT INTO groups (id, name, color, sort_order, terminal_waves_enabled) VALUES (?1, ?2, ?3, ?4, ?5) \
-         ON CONFLICT(id) DO UPDATE SET name=excluded.name, color=excluded.color, sort_order=excluded.sort_order, terminal_waves_enabled=excluded.terminal_waves_enabled",
-        params![g.id, g.name, color, g.sort_order, g.terminal_waves_enabled],
+        "INSERT INTO groups (id, name, color, sort_order, terminal_waves_enabled, proxy_profile_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT(id) DO UPDATE SET name=excluded.name, color=excluded.color, \
+          sort_order=excluded.sort_order, terminal_waves_enabled=excluded.terminal_waves_enabled, \
+          proxy_profile_id=excluded.proxy_profile_id",
+        params![
+            g.id,
+            g.name,
+            color,
+            g.sort_order,
+            g.terminal_waves_enabled,
+            proxy_profile_id
+        ],
     )?;
     Ok(())
 }
@@ -124,10 +143,23 @@ pub fn insert(db: &Db, g: &Group) -> AppResult<()> {
 pub fn update(db: &Db, g: &Group) -> AppResult<()> {
     validate_name(&g.name)?;
     let color = normalize_group_color(&g.color)?;
+    let proxy_profile_id = g
+        .proxy_profile_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let conn = db.lock()?;
     conn.execute(
-        "UPDATE groups SET name=?1, color=?2, sort_order=?3, terminal_waves_enabled=?4 WHERE id=?5",
-        params![g.name, color, g.sort_order, g.terminal_waves_enabled, g.id],
+        "UPDATE groups SET name=?1, color=?2, sort_order=?3, terminal_waves_enabled=?4, \
+         proxy_profile_id=?5 WHERE id=?6",
+        params![
+            g.name,
+            color,
+            g.sort_order,
+            g.terminal_waves_enabled,
+            proxy_profile_id,
+            g.id
+        ],
     )?;
     Ok(())
 }
@@ -186,6 +218,7 @@ mod tests {
             color: "#FF0000".into(),
             sort_order: 0,
             terminal_waves_enabled: false,
+            proxy_profile_id: None,
         }
     }
 

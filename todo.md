@@ -40,6 +40,7 @@
 | 连接 / 凭据 / 分组管理 | ✅ | `src/ConnectionManager.tsx` |
 | 主机级代理（HTTP / SOCKS5，密码走 SecretStore） | ✅ | `src/domain/proxyForm.ts`、`VaultView.tsx`、`ConnectionManager.tsx`、`ssh/proxy.rs` |
 | 代理库（`proxy_profiles` schema v40 + Vault 页 + 主机引用） | ✅ | `src/ProxyProfilesView.tsx`、`src-tauri/src/db/proxy_profile.rs`、`commands/proxy.rs` |
+| 代理库四项（schema v45：分组默认 / 钥匙串身份 / 拖拽排序 / ProxyCommand） | ✅ | `db/schema.rs`、`db/group.rs`、`db/proxy_profile.rs`、`ssh/proxy.rs`、`commands/session.rs`、`commands/proxy.rs`、`src/VaultView.tsx`、`src/ProxyProfilesView.tsx`、`src/backend/client.ts`；`cargo check` + `db::`/`ssh::proxy` 测试 + `tsc` 通过 |
 | 系统代理 = 云同步 HTTP 代理（不改变 SSH） | ✅ | `commands/settings.rs http_client`、GitHub/WebDAV 构造 |
 | SFTP 独立连接沿用主机档案代理 | ✅ | `sftp_connect(profile_id)`、`SftpHandle::connect(proxy)` |
 | 多标签页 | ✅ | `src/Workspace.tsx`、`src/TerminalPane.tsx` |
@@ -244,7 +245,7 @@
   - 笔记、会话日志页、代理库入口、监控页均可从 Vault 侧栏进入（2026-11-05 核对：
     `VaultView.tsx` navItems 四项全启用，MonitorView/NotesView/LogsView/ProxiesView 均已挂载；
     monitor 在 #14 即已启用，原「仅 monitor 仍为禁用占位」描述过期）。
-  - 进度（2026-11-04）：笔记阶段 A/B ✅；日志阶段 A/B ✅；代理库 ✅（Vault「代理」页列表/新建/编辑/删除 + schema v40 `proxy_profiles` + 单主/连接管理器引用 + 删除清引用；ProxyCommand/密钥串身份/分组级代理/拖拽排序置灰并写明原因）。
+  - 进度（2026-11-04）：笔记阶段 A/B ✅；日志阶段 A/B ✅；代理库 ✅（Vault「代理」页列表/新建/编辑/删除 + schema v40 `proxy_profiles` + 单主/连接管理器引用 + 删除清引用）。2026-11-05 补齐四项（schema v45）：分组默认代理（`groups.proxy_profile_id`，主机优先/分组继承）、钥匙串身份（`proxy_profiles.identity_id`）、拖拽手动排序（`reorder_proxy_profiles`）、ProxyCommand（`proxy_profiles.command` + `%h/%p/%%`）；四项均有后端/前端实现与单测，无置灰项遗留。
   - 依据：netcatty `components/notes/`、会话日志与 `ProxyProfilesManager.tsx`；termX `VaultView.tsx` navItems 中 monitor 仍禁用，proxies 已启用。
 - [x] ✅ **39. SSH agent 转发（2026-11-02 范围修正纳入移植）**
   - 按 Netcatty 的代理/agent 转发界面与逻辑 1:1：agent 列表、转发开关、认证走 agent（以 Netcatty 实际行为为准）。

@@ -108,7 +108,8 @@ export interface Profile {
 export interface ProxyProfile {
   id: string;
   label: string;
-  proxy_type: string;
+  /** `http` / `socks5` / `command`（OpenSSH ProxyCommand）。 */
+  proxy_type: "http" | "socks5" | "command";
   host: string;
   port: number;
   username: string | null;
@@ -116,6 +117,10 @@ export interface ProxyProfile {
   created_at: number;
   updated_at: number;
   order: number | null;
+  /** 钥匙串身份（credentials.id）；存在时优先于手填用户名/密码。 */
+  identity_id?: string | null;
+  /** ProxyCommand 命令行（proxy_type === "command" 时必填）。 */
+  command?: string | null;
 }
 
 /** 本机发现的可用 shell（后端 `discover_shells`，对齐 Netcatty 形状）。 */
@@ -1909,6 +1914,8 @@ export interface Group {
   color: string;
   sort_order: number;
   terminal_waves_enabled?: boolean;
+  /** 分组默认代理（proxy_profiles.id）；主机未绑定代理时继承。 */
+  proxy_profile_id?: string | null;
 }
 
 export function listGroups(): Promise<Group[]> {
@@ -2192,6 +2199,11 @@ export function getProxyProfilePassword(id: string): Promise<string | null> {
 
 export function deleteProxyProfile(id: string): Promise<void> {
   return invoke("delete_proxy_profile", { id });
+}
+
+/** 手动排序：ids 按目标顺序写入 order_index。 */
+export function reorderProxyProfiles(ids: string[]): Promise<void> {
+  return invoke("reorder_proxy_profiles", { ids });
 }
 
 /** 写入 / 移除主机连接代理密码；secret 传 null 或空串 = 清除。 */

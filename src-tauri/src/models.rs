@@ -170,6 +170,13 @@ pub struct ProxyProfile {
     /// 手动排序位（None = 按 updated_at 排序）。
     #[serde(default)]
     pub order: Option<i64>,
+    /// 钥匙串身份（credentials.id）：存在时用户名/密码以该身份为准，
+    /// 优先于手填 username 与 SecretStore 里的代理密码（schema v45）。
+    #[serde(default)]
+    pub identity_id: Option<String>,
+    /// ProxyCommand（`proxy_type == "command"` 时必填），配合 `%h`/`%p`/`%%`。
+    #[serde(default)]
+    pub command: Option<String>,
 }
 
 /// `protocol` 的 serde 默认值：历史数据全是 SSH 主机。
@@ -682,6 +689,10 @@ pub struct Group {
     /// Enables terminal waves in the group's color.
     #[serde(default)]
     pub terminal_waves_enabled: bool,
+    /// 分组默认代理（`proxy_profiles.id`）。主机自身未绑定代理时继承；
+    /// None/空串 = 直连（schema v45）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_profile_id: Option<String>,
 }
 
 // --- Highlight ---

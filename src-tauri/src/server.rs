@@ -356,6 +356,10 @@ fn dispatch(
             &state,
             &arg::<String>(&args, "id")?,
         )),
+        "reorder_proxy_profiles" => ok(crate::commands::proxy::reorder_impl(
+            &state,
+            &arg::<Vec<String>>(&args, "ids")?,
+        )),
 
         // ---- plugins (JCEF hosts the UI but has no asset protocol, so iframe
         //      loading is unavailable there; registry + exec still work) ----

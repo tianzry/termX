@@ -44,6 +44,11 @@ pub fn delete_impl(state: &AppState, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 手动排序：ids 按目标顺序写入 order_index。
+pub fn reorder_impl(state: &AppState, ids: &[String]) -> Result<(), AppError> {
+    db::reorder(&state.db, ids)
+}
+
 #[tauri::command]
 pub fn list_proxy_profiles(state: State<AppState>) -> Result<Vec<ProxyProfile>, AppError> {
     list_impl(&state)
@@ -69,4 +74,12 @@ pub fn proxy_profile_password_get(
 #[tauri::command]
 pub fn delete_proxy_profile(state: State<AppState>, id: String) -> Result<(), AppError> {
     delete_impl(&state, &id)
+}
+
+#[tauri::command]
+pub fn reorder_proxy_profiles(
+    state: State<AppState>,
+    ids: Vec<String>,
+) -> Result<(), AppError> {
+    reorder_impl(&state, &ids)
 }

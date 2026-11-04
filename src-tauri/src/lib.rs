@@ -209,6 +209,7 @@ pub fn run() {
             commands::proxy::save_proxy_profile,
             commands::proxy::proxy_profile_password_get,
             commands::proxy::delete_proxy_profile,
+            commands::proxy::reorder_proxy_profiles,
             // forward active
             commands::forward::forward_start,
             commands::forward::forward_active_list,

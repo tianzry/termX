@@ -7,20 +7,25 @@
 //!
 //! 认证、超时、IPv6、no_proxy 都在这一层收敛；错误一律带 code 交给前端 i18n。
 
+use std::pin::Pin;
+use std::process::Stdio;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 
 use crate::error::{AppError, AppResult};
 
 /// 代理类型。`https://` 与 `socks5h://` 是常见别名，解析时一并接受。
+/// `Command` 不对应网络握手：它是 OpenSSH ProxyCommand 语义的本地子进程。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProxyKind {
     Http,
     Socks5,
+    Command,
 }
 
 impl ProxyKind {
@@ -36,6 +41,7 @@ impl ProxyKind {
         match self {
             Self::Http => "http",
             Self::Socks5 => "socks5",
+            Self::Command => "command",
         }
     }
 }
@@ -50,6 +56,8 @@ pub struct ProxyConfig {
     pub password: Option<String>,
     /// 逗号 / 空白分隔的绕过列表；空表示全部走代理。
     pub no_proxy: Vec<String>,
+    /// ProxyCommand 命令行（`kind == Command` 时生效），支持 `%h`/`%p`/`%%`。
+    pub command: Option<String>,
 }
 
 impl ProxyConfig {
@@ -77,6 +85,24 @@ impl ProxyConfig {
                 .map(str::to_string),
             password: password.filter(|s| !s.is_empty()).map(str::to_string),
             no_proxy: split_no_proxy(no_proxy),
+            command: None,
+        })
+    }
+
+    /// ProxyCommand 配置：命令为空/纯空白直接拒绝；host/port 不参与校验。
+    pub fn from_command(command: &str) -> AppResult<Self> {
+        let command = command.trim();
+        if command.is_empty() {
+            return Err(AppError::config("proxy_command_required", json!({})));
+        }
+        Ok(Self {
+            kind: ProxyKind::Command,
+            host: String::new(),
+            port: 0,
+            username: None,
+            password: None,
+            no_proxy: Vec::new(),
+            command: Some(command.to_string()),
         })
     }
 
@@ -134,6 +160,7 @@ impl ProxyConfig {
             username: None,
             password: None,
             no_proxy: split_no_proxy(no_proxy),
+            command: None,
         })
     }
 
@@ -164,6 +191,7 @@ fn default_port(kind: ProxyKind) -> u16 {
     match kind {
         ProxyKind::Http => 8080,
         ProxyKind::Socks5 => 1080,
+        ProxyKind::Command => 0,
     }
 }
 
@@ -266,15 +294,86 @@ fn cidr_contains(net: std::net::IpAddr, prefix: u8, ip: std::net::IpAddr) -> boo
     }
 }
 
-/// 连到代理并完成握手，返回一条已到达目标（由代理转发）的 TCP 流。
+/// 已建立的代理通道：HTTP / SOCKS5 是 TcpStream，ProxyCommand 是子进程
+/// stdin/stdout 的组合流。两者都能直接交给 `client::connect_stream`
+/// （`dyn AsyncRead + AsyncWrite` 不是合法 trait object，因此用枚举分发）。
+pub(crate) enum ProxyStream {
+    Tcp(TcpStream),
+    Command(PipeStream),
+}
+
+impl std::fmt::Debug for ProxyStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tcp(_) => f.write_str("ProxyStream::Tcp"),
+            Self::Command(_) => f.write_str("ProxyStream::Command"),
+        }
+    }
+}
+
+impl AsyncRead for ProxyStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Tcp(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Command(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for ProxyStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            Self::Tcp(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::Command(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Tcp(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Command(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            Self::Tcp(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Command(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
+/// 连到代理并完成握手，返回一条已到达目标的流（或 ProxyCommand 子进程）。
 /// `timeout` 覆盖 TCP 连接 + 代理握手全过程，避免代理挂死拖住 SSH 连接。
-pub async fn connect_via_proxy(
+pub(crate) async fn connect_via_proxy(
     proxy: &ProxyConfig,
     target_host: &str,
     target_port: u16,
     timeout: Duration,
-) -> AppResult<TcpStream> {
+) -> AppResult<ProxyStream> {
     let connect = async {
+        // ProxyCommand：本地起子进程，命令里的 %h/%p 先替换成目标地址。
+        if let Some(command) = &proxy.command {
+            let expanded = expand_proxy_command(command, target_host, target_port);
+            if expanded.trim().is_empty() {
+                return Err(AppError::config("proxy_command_required", json!({})));
+            }
+            return spawn_command(&expanded);
+        }
         let stream = TcpStream::connect((proxy.host.as_str(), proxy.port))
             .await
             .map_err(|e| {
@@ -289,8 +388,16 @@ pub async fn connect_via_proxy(
             })?;
         let _ = stream.set_nodelay(true);
         match proxy.kind {
-            ProxyKind::Http => http_connect(stream, proxy, target_host, target_port).await,
-            ProxyKind::Socks5 => socks5_connect(stream, proxy, target_host, target_port).await,
+            ProxyKind::Http => http_connect(stream, proxy, target_host, target_port)
+                .await
+                .map(ProxyStream::Tcp),
+            ProxyKind::Socks5 => socks5_connect(stream, proxy, target_host, target_port)
+                .await
+                .map(ProxyStream::Tcp),
+            ProxyKind::Command => Err(AppError::config(
+                "proxy_command_required",
+                json!({ "err": "command proxy without command" }),
+            )),
         }
     };
     match tokio::time::timeout(timeout, connect).await {
@@ -304,6 +411,134 @@ pub async fn connect_via_proxy(
             }),
         )),
     }
+}
+
+/// OpenSSH ProxyCommand 替换：`%h` 目标主机、`%p` 目标端口、`%%` 字面 `%`。
+/// 单次扫描，避免替换结果里的 `%` 被二次展开；未知 `%x` 原样保留。
+pub(crate) fn expand_proxy_command(command: &str, host: &str, port: u16) -> String {
+    let mut out = String::with_capacity(command.len());
+    let mut chars = command.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek().copied() {
+            Some('h') => {
+                chars.next();
+                out.push_str(host);
+            }
+            Some('p') => {
+                chars.next();
+                out.push_str(&port.to_string());
+            }
+            Some('%') => {
+                chars.next();
+                out.push('%');
+            }
+            _ => out.push('%'),
+        }
+    }
+    out
+}
+
+/// 子进程 stdin（写）+ stdout（读）+ Child。stdout EOF 即通道断开。
+pub(crate) struct PipeStream {
+    stdin: tokio::process::ChildStdin,
+    stdout: tokio::process::ChildStdout,
+    child: tokio::process::Child,
+}
+
+impl AsyncRead for PipeStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdout).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for PipeStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.stdin).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdin).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdin).poll_shutdown(cx)
+    }
+}
+
+impl Drop for PipeStream {
+    fn drop(&mut self) {
+        // SSH 会话结束时回收子进程，避免 ProxyCommand 残留。
+        let _ = self.child.start_kill();
+    }
+}
+
+fn spawn_command(command: &str) -> AppResult<ProxyStream> {
+    let mut cmd = command_shell(command);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::ssh(
+            "proxy_command_spawn_failed",
+            json!({ "command": command, "err": e.to_string() }),
+        )
+    })?;
+    let stdin = child.stdin.take().ok_or_else(|| {
+        AppError::ssh(
+            "proxy_command_spawn_failed",
+            json!({ "command": command, "err": "stdin unavailable" }),
+        )
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        AppError::ssh(
+            "proxy_command_spawn_failed",
+            json!({ "command": command, "err": "stdout unavailable" }),
+        )
+    })?;
+    Ok(ProxyStream::Command(PipeStream {
+        stdin,
+        stdout,
+        child,
+    }))
+}
+
+/// Windows 走 `cmd /C` 并隐藏窗口；其它平台走 `sh -c`。
+#[cfg(windows)]
+fn command_shell(command: &str) -> tokio::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut cmd = std::process::Command::new("cmd");
+    // cmd /C 对「以引号开头的整串命令」有剥引号规则：命令本身常以
+    // `"C:/.../node.exe" ...` 开头，再包一层引号才能保留内层引号。
+    // raw_arg 走原始命令行，避免 Rust 的 MSVC 引号转义再破坏一层引号。
+    cmd.arg("/C").raw_arg(format!("\"{command}\""));
+    // CREATE_NO_WINDOW：ProxyCommand 不应弹出控制台窗口。
+    cmd.creation_flags(0x0800_0000);
+    tokio::process::Command::from(cmd)
+}
+
+#[cfg(not(windows))]
+fn command_shell(command: &str) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c").arg(command);
+    cmd
 }
 
 /// CONNECT 的 authority：IPv6 必须加方括号，否则 `host:port` 会歧义。
@@ -522,6 +757,7 @@ mod tests {
             username: auth.then(|| "u".to_string()),
             password: auth.then(|| "p".to_string()),
             no_proxy: vec![],
+            command: None,
         }
     }
 
@@ -651,5 +887,51 @@ mod tests {
         assert!(ProxyConfig::from_url("http://u:p@1.2.3.4:8080", "").is_err());
         assert!(ProxyConfig::from_parts("wat", "1.2.3.4", 8080, None, None, "").is_err());
         assert!(ProxyConfig::from_parts("http", "", 8080, None, None, "").is_err());
+    }
+
+    #[test]
+    fn proxy_command_expands_host_port_and_percent() {
+        assert_eq!(
+            expand_proxy_command("ssh -W %h:%p jumphost", "db.example.com", 22),
+            "ssh -W db.example.com:22 jumphost"
+        );
+        assert_eq!(
+            expand_proxy_command("nc %h %p 100%%%h", "10.0.0.1", 2222),
+            "nc 10.0.0.1 2222 100%10.0.0.1"
+        );
+        // 未知占位符原样保留。
+        assert_eq!(expand_proxy_command("echo %q %h", "h", 1), "echo %q h");
+    }
+
+    #[test]
+    fn from_command_rejects_blank_command() {
+        assert_eq!(
+            ProxyConfig::from_command("   ").unwrap_err().code(),
+            "proxy_command_required"
+        );
+        let cfg = ProxyConfig::from_command("  ssh -W %h:%p jump  ").unwrap();
+        assert_eq!(cfg.kind, ProxyKind::Command);
+        assert_eq!(cfg.command.as_deref(), Some("ssh -W %h:%p jump"));
+        assert_eq!(cfg.host, "");
+        assert_eq!(cfg.port, 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pipe_stream_roundtrips_through_child_stdio() {
+        let stream = connect_via_proxy(
+            &ProxyConfig::from_command("cat").unwrap(),
+            "ignored",
+            0,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let mut stream = stream;
+        stream.write_all(b"hello\n").await.unwrap();
+        stream.flush().await.unwrap();
+        let mut buf = vec![0u8; 6];
+        stream.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"hello\n");
     }
 }

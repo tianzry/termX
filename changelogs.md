@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-11-05 — 代理库四项代理能力（分组默认 / 钥匙串身份 / 手动排序 / ProxyCommand）
+
+- **schema v45**（只新增迁移块，不改旧版本）：`groups.proxy_profile_id`、
+  `proxy_profiles.identity_id` / `command`，均带 `table_exists` / `column_exists` 守卫；
+  `SCHEMA_VERSION` 44 → 45，新增迁移与服务端 `db::schema` 单测。
+- **分组默认代理**：解析顺序 主机 `proxy_profile_id` → 分组默认 → 主机内联 → 直连
+  （对齐 Netcatty `applyGroupDefaults`：主机配置优先）。Vault 分组对话框新增「默认代理」下拉，
+  保存走 `createGroup/updateGroup`；删除代理条目时同时清空 `groups.proxy_profile_id`。
+  代理页引用计数把分组引用单独计入，删除确认文案写明主机回退内联 / 分组恢复直连。
+- **钥匙串身份**：代理条目 `identity_id` 指向 `credentials.id`；运行时用户名取凭证、
+  密码取 `SecretStore(cred:<id>:secret)`，身份优先于手填用户名/密码；凭证缺失报
+  `proxy_identity_missing`。表单新增「钥匙串身份」下拉，选中后隐藏用户名/密码并保存前校验存在。
+- **拖拽手动排序**：`db::proxy_profile::reorder` 事务内按下标写 `order_index`（不存在 id 忽略），
+  新增 `reorder_proxy_profiles` 命令并双注册；代理卡片在搜索框为空时启用 HTML5 拖拽，
+  乐观本地重排后调用命令，失败刷新回滚并提示；拖拽中半透明、落点描边。
+- **ProxyCommand**：`ProxyKind::Command` + `ProxyConfig::from_command`（空命令报
+  `proxy_command_required`）与 `%h/%p/%%` 单次扫描展开；Windows `cmd /C` + `CREATE_NO_WINDOW`、
+  其它平台 `sh -c`，`PipeStream` 组合 stdin/stdout/Child 并实现 AsyncRead/AsyncWrite，
+  Drop 时 `start_kill`，spawn 失败报 `proxy_command_spawn_failed`。
+  **踩坑**：任务原拟返回 `Box<dyn AsyncRead + AsyncWrite + Unpin + Send>`，Rust 不允许两个非 auto
+  trait 组成 trait object（E0225）；改为内部枚举 `ProxyStream::{Tcp,Command}` 实现两个 trait，
+  `client::connect_stream` 泛型调用无需改动。
+  **踩坑 2（Windows）**：`cmd /C` 会剥离「以引号开头的整串命令」的首尾引号，且 Rust 默认按 MSVC
+  规则转义参数会把内层 `"` 再破坏一层，导致 ProxyCommand 静默不执行；必须
+  `CommandExt::raw_arg` 传入原始命令行并再包一层引号。
+- 验证：`cargo check --no-default-features` ✓；`cargo test --no-default-features` 全绿；
+  `npm run test:run` / `npm run build` ✓；129 实机（debug + CDP）：
+  - 分组默认代理：主机不绑代理、分组绑定本地 HTTP CONNECT 代理，SSH 登录成功且代理侧记录
+    `CONNECT 192.168.126.129:22`（真实经代理）。
+  - ProxyCommand：主机绑定 `command` 代理库条目，SSH 登录成功，子进程日志记录
+    `proxycommand target=192.168.126.129:22`（stdio 承载真实握手）。
+  - 验证脚本 `evidence/proxy-remaining-live.mjs`（不提交）。
+
+---
+
+
 ## 2026-11-05 — P2 证书认证 + TOTP 自动填充
 
 - **证书认证：可行并已接入**。russh 0.62 原生提供 `authenticate_openssh_cert` 与 `ssh_key::Certificate`，无需换库。

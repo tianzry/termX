@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 44;
+const SCHEMA_VERSION: u32 = 45;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -931,6 +931,26 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if version < 45 {
+        // 分组默认代理（对齐 Netcatty GroupConfig.proxyProfileId）：主机未绑定
+        // 代理时继承分组配置；删除代理库条目由 db 层清引用。
+        if table_exists(conn, "groups")?
+            && !column_exists(conn, "groups", "proxy_profile_id")?
+        {
+            conn.execute_batch("ALTER TABLE groups ADD COLUMN proxy_profile_id TEXT;")?;
+        }
+        // 代理库条目新增钥匙串身份引用与 ProxyCommand 命令行。
+        if table_exists(conn, "proxy_profiles")? {
+            for (col, decl) in [("identity_id", "TEXT"), ("command", "TEXT")] {
+                if !column_exists(conn, "proxy_profiles", col)? {
+                    conn.execute_batch(&format!(
+                        "ALTER TABLE proxy_profiles ADD COLUMN {col} {decl};"
+                    ))?;
+                }
+            }
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1087,6 +1107,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(value, None);
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_45_adds_group_proxy_and_proxy_identity_command_columns() {
+        // v44 老库：分组默认代理与代理条目的身份/命令行列必须新增且可空。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+             CREATE TABLE proxy_profiles (id TEXT PRIMARY KEY, label TEXT NOT NULL);
+             PRAGMA user_version = 44;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        assert!(column_exists(&conn, "groups", "proxy_profile_id").unwrap());
+        for col in ["identity_id", "command"] {
+            assert!(
+                column_exists(&conn, "proxy_profiles", col).unwrap(),
+                "missing {col}"
+            );
+        }
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();

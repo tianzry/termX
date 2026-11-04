@@ -51,6 +51,7 @@ pub fn cmd_add_group(conn: &CliCtx) -> AppResult<()> {
         color,
         sort_order: parse_sort_order(&sort_order)?,
         terminal_waves_enabled,
+        proxy_profile_id: None,
     };
     rssh_lib::db::group::insert(conn, &group)?;
     println!("Group '{}' created.", group.name);

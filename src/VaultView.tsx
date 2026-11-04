@@ -136,7 +136,12 @@ const SIDEBAR_MAX = 320;
 const HOST_PANEL_MIN = 320;
 const HOST_PANEL_MAX = 520;
 
-type GroupTile = { id: string; name: string; count: number };
+type GroupTile = {
+  id: string;
+  name: string;
+  count: number;
+  proxy_profile_id?: string | null;
+};
 
 /** 登录方式（对齐 netcatty HostDetailsConnectionSections 的四个选项）。 */
 type AuthMethod = "auto" | "password" | "key" | "certificate";
@@ -628,6 +633,7 @@ export function VaultView({
   const [groupDialog, setGroupDialog] = useState<{
     id: string | null;
     name: string;
+    proxy_profile_id: string | null;
   } | null>(null);
   const [moveMenu, setMoveMenu] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -1092,6 +1098,7 @@ export function VaultView({
     id: g.id,
     name: g.name,
     count: visible.filter((p) => p.group_id === g.id).length,
+    proxy_profile_id: g.proxy_profile_id ?? null,
   }));
   const ungroupedCount = visible.filter(
     (p) => !p.group_id || !groupById.has(p.group_id),
@@ -1376,13 +1383,20 @@ export function VaultView({
     try {
       if (d.id) {
         const target = groups.find((g) => g.id === d.id);
-        if (target) await api.updateGroup({ ...target, name });
+        if (target) {
+          await api.updateGroup({
+            ...target,
+            name,
+            proxy_profile_id: d.proxy_profile_id || null,
+          });
+        }
       } else {
         await api.createGroup({
           id: newId(),
           name,
           color: "#6ea8fe",
           sort_order: groups.length,
+          proxy_profile_id: d.proxy_profile_id || null,
         });
       }
       setGroupDialog(null);
@@ -3390,7 +3404,11 @@ export function VaultView({
             title="重命名分组"
             onClick={(e) => {
               e.stopPropagation();
-              setGroupDialog({ id: g.id, name: g.name });
+              setGroupDialog({
+                id: g.id,
+                name: g.name,
+                proxy_profile_id: g.proxy_profile_id ?? null,
+              });
             }}
           >
             <Icon name="pencil" size={13} />
@@ -3744,7 +3762,11 @@ export function VaultView({
                           if (!item.enabled) return;
                           setNewMenu(false);
                           if (item.label === "新建分组") {
-                            setGroupDialog({ id: null, name: "" });
+                            setGroupDialog({
+                              id: null,
+                              name: "",
+                              proxy_profile_id: null,
+                            });
                           } else if (item.label === "本地终端 (CMD)") {
                             setLocalPanel("new");
                           } else if (item.label === "导入") {
@@ -4106,6 +4128,8 @@ export function VaultView({
           ) : activeNav === "proxies" ? (
             <ProxyProfilesView
               profiles={profiles}
+              groups={groups}
+              credentials={credentials}
               onDataChanged={() => {
                 api.listProxyProfiles().then(setProxyProfiles).catch(() => {});
                 onDataChanged();
@@ -5220,7 +5244,11 @@ export function VaultView({
             onClick={() => {
               const g = groupCtx.group;
               setGroupCtx(null);
-              setGroupDialog({ id: g.id, name: g.name });
+              setGroupDialog({
+                id: g.id,
+                name: g.name,
+                proxy_profile_id: g.proxy_profile_id ?? null,
+              });
             }}
           >
             <Icon name="pencil" size={14} />
@@ -5479,6 +5507,51 @@ export function VaultView({
                 if (e.key === "Escape") setGroupDialog(null);
               }}
             />
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                fontSize: 12,
+                color: "hsl(var(--muted-foreground))",
+                marginTop: 8,
+              }}
+            >
+              默认代理
+              <select
+                value={groupDialog.proxy_profile_id ?? ""}
+                onChange={(e) =>
+                  setGroupDialog({
+                    ...groupDialog,
+                    proxy_profile_id: e.target.value || null,
+                  })
+                }
+                style={{
+                  background: "hsl(var(--background))",
+                  color: "hsl(var(--foreground))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: 6,
+                  padding: "5px 8px",
+                  fontSize: 13,
+                }}
+              >
+                <option value="">直连（不继承代理）</option>
+                {proxyProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}（{p.proxy_type}）
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div
+              style={{
+                fontSize: 11,
+                color: "hsl(var(--muted-foreground))",
+                marginTop: 6,
+              }}
+            >
+              分组内主机未绑定代理时继承该默认代理；主机自身配置优先。
+            </div>
             <footer>
               <button
                 className="vault-secondary-btn"

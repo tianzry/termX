@@ -11,7 +11,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::ProxyProfile;
 
 const COLS: &str = "id, label, proxy_type, host, port, username, no_proxy, created_at, \
-     updated_at, order_index";
+     updated_at, order_index, identity_id, command";
 
 fn from_row(row: &rusqlite::Row) -> rusqlite::Result<ProxyProfile> {
     Ok(ProxyProfile {
@@ -25,6 +25,8 @@ fn from_row(row: &rusqlite::Row) -> rusqlite::Result<ProxyProfile> {
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
         order: row.get(9)?,
+        identity_id: row.get(10)?,
+        command: row.get(11)?,
     })
 }
 
@@ -41,14 +43,21 @@ fn validate(profile: &ProxyProfile) -> AppResult<()> {
             serde_json::json!({ "id": profile.id }),
         ));
     }
-    crate::ssh::proxy::ProxyConfig::from_parts(
-        &profile.proxy_type,
-        &profile.host,
-        profile.port,
-        profile.username.as_deref(),
-        None,
-        profile.no_proxy.as_deref().unwrap_or(""),
-    )?;
+    // command 类型走 OpenSSH ProxyCommand 语义：host/port 允许为空/0。
+    if profile.proxy_type.trim().eq_ignore_ascii_case("command") {
+        crate::ssh::proxy::ProxyConfig::from_command(
+            profile.command.as_deref().unwrap_or_default(),
+        )?;
+    } else {
+        crate::ssh::proxy::ProxyConfig::from_parts(
+            &profile.proxy_type,
+            &profile.host,
+            profile.port,
+            profile.username.as_deref(),
+            None,
+            profile.no_proxy.as_deref().unwrap_or(""),
+        )?;
+    }
     Ok(())
 }
 
@@ -78,28 +87,28 @@ pub fn get(db: &Db, id: &str) -> AppResult<ProxyProfile> {
     })
 }
 
-/// upsert；label/host 去首尾空白，username / no_proxy 空串归一成 NULL。
+/// upsert；label/host 去首尾空白，username / no_proxy / identity_id / command
+/// 空串归一成 NULL。
 pub fn save(db: &Db, profile: &ProxyProfile) -> AppResult<()> {
     validate(profile)?;
     let conn = db.lock()?;
-    let username = profile
-        .username
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let no_proxy = profile
-        .no_proxy
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    let normalize = |value: Option<&String>| -> Option<String> {
+        value.map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string)
+    };
+    let username = normalize(profile.username.as_ref());
+    let no_proxy = normalize(profile.no_proxy.as_ref());
+    let identity_id = normalize(profile.identity_id.as_ref());
+    let command = normalize(profile.command.as_ref());
     conn.execute(
         "INSERT INTO proxy_profiles \
-         (id, label, proxy_type, host, port, username, no_proxy, created_at, updated_at, order_index) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+         (id, label, proxy_type, host, port, username, no_proxy, created_at, updated_at, \
+          order_index, identity_id, command) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
          ON CONFLICT(id) DO UPDATE SET label=excluded.label, proxy_type=excluded.proxy_type, \
           host=excluded.host, port=excluded.port, username=excluded.username, \
           no_proxy=excluded.no_proxy, created_at=excluded.created_at, \
-          updated_at=excluded.updated_at, order_index=excluded.order_index",
+          updated_at=excluded.updated_at, order_index=excluded.order_index, \
+          identity_id=excluded.identity_id, command=excluded.command",
         params![
             profile.id,
             profile.label.trim(),
@@ -111,12 +120,28 @@ pub fn save(db: &Db, profile: &ProxyProfile) -> AppResult<()> {
             profile.created_at,
             profile.updated_at,
             profile.order,
+            identity_id,
+            command,
         ],
     )?;
     Ok(())
 }
 
-/// 删除条目并清空所有引用它的主机（保留主机内联 proxy_* 作为回退）。
+/// 手动排序：事务内按下标写 order_index（不存在的 id 忽略）。
+pub fn reorder(db: &Db, ids: &[String]) -> AppResult<()> {
+    db.with_transaction(|tx| {
+        for (index, id) in ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE proxy_profiles SET order_index = ?1 WHERE id = ?2",
+                params![index as i64, id],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+/// 删除条目并清空所有引用它的主机与分组（主机保留内联 proxy_* 作为回退，
+/// 分组则恢复为直连）。
 pub fn delete(db: &Db, id: &str) -> AppResult<()> {
     db.with_transaction(|tx| {
         let changed = tx.execute("DELETE FROM proxy_profiles WHERE id = ?1", params![id])?;
@@ -128,6 +153,10 @@ pub fn delete(db: &Db, id: &str) -> AppResult<()> {
         }
         tx.execute(
             "UPDATE profiles SET proxy_profile_id = NULL WHERE proxy_profile_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "UPDATE groups SET proxy_profile_id = NULL WHERE proxy_profile_id = ?1",
             params![id],
         )?;
         Ok(())
@@ -153,6 +182,8 @@ mod tests {
             created_at: 100,
             updated_at: 100,
             order: None,
+            identity_id: None,
+            command: None,
         }
     }
 
@@ -272,5 +303,75 @@ mod tests {
         save(&db, &c).unwrap();
         let ids: Vec<String> = list(&db).unwrap().into_iter().map(|p| p.id).collect();
         assert_eq!(ids, vec!["b", "a", "c"]);
+    }
+
+    #[test]
+    fn reorder_writes_index_by_array_position() {
+        let db = Db::open_in_memory().unwrap();
+        for id in ["a", "b", "c"] {
+            save(&db, &mk(id, id)).unwrap();
+        }
+        reorder(&db, &["c".into(), "ghost".into(), "a".into()]).unwrap();
+        let ids: Vec<String> = list(&db).unwrap().into_iter().map(|p| p.id).collect();
+        // c=0、a=2，不存在的 id 忽略；b 仍为 NULL 排在最后。
+        assert_eq!(ids, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn command_profile_validates_command_and_allows_zero_host_port() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = mk("cmd", "Jump");
+        p.proxy_type = "command".into();
+        p.command = Some("  ssh -W %h:%p jumphost  ".into());
+        p.host = String::new();
+        p.port = 0;
+        save(&db, &p).unwrap();
+        let got = get(&db, "cmd").unwrap();
+        assert_eq!(got.command.as_deref(), Some("ssh -W %h:%p jumphost"));
+        assert!(got.host.is_empty());
+        assert_eq!(got.port, 0);
+
+        p.command = Some("   ".into());
+        assert_eq!(
+            save(&db, &p).unwrap_err().code(),
+            "proxy_command_required"
+        );
+    }
+
+    #[test]
+    fn identity_and_command_normalize_empty_to_none() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = mk("p1", "X");
+        p.identity_id = Some("   ".into());
+        p.command = Some("  ".into());
+        save(&db, &p).unwrap();
+        let got = get(&db, "p1").unwrap();
+        assert_eq!(got.identity_id, None);
+        assert_eq!(got.command, None);
+    }
+
+    #[test]
+    fn delete_clears_group_default_proxy_references() {
+        let db = Db::open_in_memory().unwrap();
+        save(&db, &mk("p1", "Office")).unwrap();
+        crate::db::group::insert(
+            &db,
+            &crate::models::Group {
+                id: "g1".into(),
+                name: "prod".into(),
+                color: "#FF0000".into(),
+                sort_order: 0,
+                terminal_waves_enabled: false,
+                proxy_profile_id: Some("p1".into()),
+            },
+        )
+        .unwrap();
+        delete(&db, "p1").unwrap();
+        assert_eq!(
+            crate::db::group::get(&db, "g1")
+                .unwrap()
+                .proxy_profile_id,
+            None
+        );
     }
 }
