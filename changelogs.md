@@ -3768,3 +3768,25 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `npm run test:run` 31 文件 / **379✓**、`npm run build` ✓。
 - `cargo check --features server` ✓、`cargo test --lib` **874✓**。
 - 代理 WIP `d633866` / `60d8deb` 与端口转发未触碰。
+
+---
+
+## 2026-11-04 — 全应用逐功能比对第一轮（串口 + Telnet + 本地终端）
+
+对照基准：`Netcatty/components/SerialConnectModal.tsx`、`components/vault/VaultViewLayout.tsx`（terminal/serial 入口）、`components/LocalShellHostDetailsPanel.tsx`、`components/TelnetConnectModal`（实际走 `QuickConnectWizard` telnet://）。
+
+### 逐项结论
+
+| 项 | 功能逻辑 | UI | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 串口弹窗字段 | 端口（可输入/刷新/清除/命名管道提示）、波特率（自定义提示+校验）、高级（数据位/停止位/校验/流控/本地回显/行模式/退格/字节模式/字符集）、命名管道隐藏帧格式 | 448px、24px 头、18px 标题、图标与主按钮一致 | 无差异 | 复核通过（截图 `r3-serial.png`） |
+| 串口「保存配置」 | Netcatty 支持保存串口主机（SerialHostDetailsPanel） | — | 行为 | termX 无串口主机档案（DB 仅 SSH/local），未加假控件，登记 todo |
+| Telnet 入口与表单 | termX 有独立「Telnet」按钮 + 弹窗（主机/端口/高级术语）；Netcatty 通过快速连接 `telnet://` + 向导 | 弹窗 448px、默认端口 23、空主机禁用连接 | 交互差异（入口形态） | 保留自有入口（可达性更直观），不入假控件；快速连接向导体系差异登记 todo |
+| Telnet 保存主机 | Netcatty 向导可保存为 host | — | 行为 | 同串口，无 telnet 主机档案，登记 todo |
+| 本地终端新建/编辑面板 | 名称 / Shell（系统默认 + 发现列表 + 自定义）/ 分组 / 启动目录；保存并打开 + 保存；Esc（下拉优先收起） | overlay 宽度、页脚按钮层级、hint 文案一致 | 无差异 | 复核通过（截图 `r3-localshell.png`） |
+| 本地终端卡与快捷入口 | Vault 卡显示真实 shell 名；「终端」按钮直接开标签；「新建主机」下拉含 本地终端 (CMD)/新建分组/导入/导出 | 主机侧栏打开时 终端/串口 折叠隐藏 | 无差异 | 复核通过（截图 `r3-menu2.png`、`r3-local.png`） |
+| 串口主机列表/编辑 | Netcatty 有 SerialHostDetailsPanel 与串口主机卡 | — | 行为 | 未实现，登记 todo；无假按钮 |
+
+### 门禁
+
+本轮无源码改动（仅文档），沿用上一轮已通过的构建与测试结果：379 前端 ✓、build ✓、cargo check(server) ✓、874 后端 ✓。为满足流程，提交前再跑一次 `npm run test:run` + `npm run build` 确认文档改动不影响构建。
