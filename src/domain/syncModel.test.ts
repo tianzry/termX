@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  conflictBlocks,
+  detectSyncConflict,
   normalizeGitHubRepo,
   normalizeWebdavUrl,
   remoteIsNewer,
@@ -52,5 +54,35 @@ describe("remoteIsNewer / summarizeRemote", () => {
         2,
       ).tone,
     ).toBe("newer");
+  });
+});
+
+describe("detectSyncConflict / conflictBlocks", () => {
+  const local = { version: 4, config_digest: "sha256:a" };
+
+  it("远端更高只拦推送，本地更高只拦拉取", () => {
+    const remoteNewer = { version: 5, config_digest: "sha256:a" };
+    expect(detectSyncConflict(local, remoteNewer)).toBe("remote_newer");
+    expect(conflictBlocks("remote_newer", "push")).toBe(true);
+    expect(conflictBlocks("remote_newer", "pull")).toBe(false);
+
+    const localNewer = { version: 3, config_digest: "sha256:a" };
+    expect(detectSyncConflict(local, localNewer)).toBe("local_newer");
+    expect(conflictBlocks("local_newer", "push")).toBe(false);
+    expect(conflictBlocks("local_newer", "pull")).toBe(true);
+  });
+
+  it("同版本不同摘要视为分叉，两个方向都拦", () => {
+    expect(
+      detectSyncConflict(local, { version: 4, config_digest: "sha256:b" }),
+    ).toBe("diverged");
+    expect(conflictBlocks("diverged", "push")).toBe(true);
+    expect(conflictBlocks("diverged", "pull")).toBe(true);
+  });
+
+  it("缺失远端或完全一致时不算冲突", () => {
+    expect(detectSyncConflict(local, null)).toBe("none");
+    expect(detectSyncConflict(local, { ...local })).toBe("none");
+    expect(conflictBlocks("none", "push")).toBe(false);
   });
 });

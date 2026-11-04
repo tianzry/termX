@@ -408,6 +408,11 @@ pub fn run() {
             commands::sync::sync_check_remotes,
             commands::sync::get_sync_auto_pull_status,
             commands::sync::set_sync_auto_pull,
+            commands::sync::sync_backup_create,
+            commands::sync::sync_backup_list,
+            commands::sync::sync_backup_restore,
+            commands::sync::sync_backup_delete,
+            commands::sync::sync_backup_clear,
             // AI 排障
             ai::commands::ai_list_skills,
             ai::commands::ai_get_skill,

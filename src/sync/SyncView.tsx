@@ -17,10 +17,13 @@ import type {
 } from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import {
+  conflictBlocks,
+  detectSyncConflict,
   normalizeGitHubRepo,
   normalizeWebdavUrl,
   summarizeRemote,
   type RemoteSummary,
+  type SyncConflictKind,
 } from "../domain/syncModel";
 import { Icon } from "../ui/icons";
 
@@ -76,10 +79,20 @@ function describeError(error: unknown): string {
   if (text.includes("github_repo_missing")) return "GitHub 仓库未配置。";
   if (text.includes("webdav_url_missing")) return "WebDAV 地址未配置。";
   if (text.includes("webdav_password_missing")) return "WebDAV 密码未配置。";
+  if (text.includes("sync_backup_empty")) return "本地配置为空，没有可快照的内容。";
+  if (text.includes("sync_backup_missing")) return "快照已失效，请刷新列表。";
   if (text.includes("github_repo_invalid")) return "仓库格式应为 owner/repo。";
   if (text.includes("401") || text.includes("unauthorized")) return "远端认证失败（Token / 密码无效）。";
   if (text.includes("404")) return "远端不存在：请确认仓库、分支或 WebDAV 路径。";
   return userVisibleError(text);
+}
+
+function formatTime(ms: number): string {
+  try {
+    return new Date(ms).toLocaleString("zh-CN", { hour12: false });
+  } catch {
+    return "--";
+  }
 }
 
 function Field({
@@ -134,6 +147,13 @@ export function SyncView({ onAfterPull }: { onAfterPull?: () => void | Promise<v
   const [auto, setAuto] = useState<SyncAutoPullStatus>({ github: false, webdav: false });
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [backups, setBackups] = useState<api.SyncBackupEntry[]>([]);
+  const [snapBusy, setSnapBusy] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<{
+    provider: SyncProviderKey;
+    direction: "push" | "pull";
+    kind: SyncConflictKind;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,6 +169,7 @@ export function SyncView({ onAfterPull }: { onAfterPull?: () => void | Promise<v
           wUser,
           wPassword,
           autoStatus,
+          gSnapshot,
         ] = await Promise.all([
           api.getSetting("sync_github_enabled"),
           api.getSetting("github_repo"),
@@ -159,8 +180,10 @@ export function SyncView({ onAfterPull }: { onAfterPull?: () => void | Promise<v
           api.getSetting("webdav_username"),
           api.getSetting("webdav_password"),
           api.getSyncAutoPullStatus(),
+          api.listSyncBackups(),
         ]);
         if (cancelled) return;
+        setBackups(gSnapshot);
         setGithubEnabled(gEnabled !== "0");
         setGithubRepo(gRepo ?? "");
         setGithubBranch(gBranch ?? "main");
@@ -237,9 +260,35 @@ export function SyncView({ onAfterPull }: { onAfterPull?: () => void | Promise<v
     });
   }
 
-  async function push(provider: SyncProviderKey) {
+  async function refreshBackups() {
+    try {
+      setBackups(await api.listSyncBackups());
+    } catch {
+      /* 列表失败不阻塞主流程，下次操作会再拉一次 */
+    }
+  }
+
+  /** 推送/拉取前先探测远端；有破坏性冲突时弹窗，不直接执行。 */
+  async function conflictBlocksAction(
+    provider: SyncProviderKey,
+    direction: "push" | "pull",
+  ): Promise<boolean> {
+    const result = await api.syncCheckRemotes();
+    setCheck(result);
+    const local = result.local;
+    const remote = provider === "github" ? result.github.remote : result.webdav.remote;
+    const kind = detectSyncConflict(local, remote);
+    if (conflictBlocks(kind, direction)) {
+      setConflict({ provider, direction, kind });
+      return true;
+    }
+    return false;
+  }
+
+  async function push(provider: SyncProviderKey, confirmed = false) {
     await run(`push-${provider}`, async () => {
       if (!syncPassword) throw new Error("sync_password_empty");
+      if (!confirmed && (await conflictBlocksAction(provider, "push"))) return;
       if (provider === "github") await api.githubPush(syncPassword);
       else await api.webdavPush(syncPassword);
       setMessage({
@@ -247,21 +296,86 @@ export function SyncView({ onAfterPull }: { onAfterPull?: () => void | Promise<v
         text: `已推送到 ${provider === "github" ? "GitHub" : "WebDAV"}。`,
       });
       await refreshCheck();
+      await refreshBackups();
     });
   }
 
-  async function pull(provider: SyncProviderKey) {
+  async function pull(provider: SyncProviderKey, confirmed = false) {
     await run(`pull-${provider}`, async () => {
       if (!syncPassword) throw new Error("sync_password_empty");
+      if (!confirmed && (await conflictBlocksAction(provider, "pull"))) return;
       if (provider === "github") await api.githubPull(syncPassword);
       else await api.webdavPull(syncPassword);
       setMessage({
         tone: "ok",
-        text: `已从 ${provider === "github" ? "GitHub" : "WebDAV"} 拉取并导入配置。`,
+        text: `已从 ${provider === "github" ? "GitHub" : "WebDAV"} 拉取并导入配置（拉取前已自动创建本地快照）。`,
       });
       await refreshCheck();
+      await refreshBackups();
       await onAfterPull?.();
     });
+  }
+
+  async function resolveConflict(action: "push" | "pull" | "cancel") {
+    const current = conflict;
+    setConflict(null);
+    if (!current || action === "cancel") return;
+    if (action === "push") await push(current.provider, true);
+    else await pull(current.provider, true);
+  }
+
+  async function snapshot() {
+    await run("snapshot", async () => {
+      await api.createSyncBackup("manual");
+      await refreshBackups();
+      setMessage({ tone: "ok", text: "已创建本地快照（加密存入 SecretStore）。" });
+    });
+  }
+
+  async function restoreSnapshot(id: string) {
+    if (snapBusy) return;
+    setSnapBusy(id);
+    setMessage(null);
+    try {
+      await api.restoreSyncBackup(id);
+      await refreshCheck();
+      await refreshBackups();
+      await onAfterPull?.();
+      setMessage({ tone: "ok", text: "已从本地快照恢复配置（恢复前自动保留了当前状态）。" });
+    } catch (e) {
+      setMessage({ tone: "error", text: describeError(e) });
+    } finally {
+      setSnapBusy(null);
+    }
+  }
+
+  async function removeSnapshot(id: string) {
+    if (snapBusy) return;
+    if (!window.confirm("删除这份本地快照？此操作不可撤销。")) return;
+    setSnapBusy(id);
+    try {
+      await api.deleteSyncBackup(id);
+      await refreshBackups();
+    } catch (e) {
+      setMessage({ tone: "error", text: describeError(e) });
+    } finally {
+      setSnapBusy(null);
+    }
+  }
+
+  async function clearSnapshots() {
+    if (snapBusy || !backups.length) return;
+    if (!window.confirm(`清空全部 ${backups.length} 份本地快照？此操作不可撤销。`)) return;
+    setSnapBusy("*");
+    try {
+      await api.clearSyncBackups();
+      await refreshBackups();
+      setMessage({ tone: "ok", text: "已清空本地快照。" });
+    } catch (e) {
+      setMessage({ tone: "error", text: describeError(e) });
+    } finally {
+      setSnapBusy(null);
+    }
   }
 
   async function toggleAuto(provider: SyncProviderKey, next: boolean) {
@@ -445,15 +559,161 @@ export function SyncView({ onAfterPull }: { onAfterPull?: () => void | Promise<v
         </div>
       </div>
 
+      <div style={panel}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <Icon name="history" size={15} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>本地快照</span>
+          <span style={muted}>拉取 / 恢复前自动创建，最多保留 20 份</span>
+          <div style={{ flex: 1 }} />
+          <button style={btn} disabled={actionDisabled || snapBusy !== null} onClick={snapshot}>
+            立即创建快照
+          </button>
+          <button
+            style={btn}
+            disabled={actionDisabled || snapBusy !== null || backups.length === 0}
+            onClick={clearSnapshots}
+          >
+            清空
+          </button>
+        </div>
+        {backups.length === 0 ? (
+          <div style={{ ...muted, marginTop: 10 }}>暂无快照。推送/拉取出现冲突或恢复前会自动保存当前状态。</div>
+        ) : (
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+            {backups.map((b) => (
+              <div
+                key={b.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "6px 8px",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: 8,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12 }}>
+                    {b.reason === "manual" ? "手动快照" : "保护性快照"} · v{b.sync_version} ·{" "}
+                    {formatTime(b.created_at_ms)}
+                  </div>
+                  <div style={{ ...muted, marginTop: 2 }}>
+                    {b.host_count} 主机 · {b.credential_count} 凭据 · {b.forward_count} 转发 ·{" "}
+                    {b.snippet_count} 片段 · {(b.size_bytes / 1024).toFixed(1)} KB
+                  </div>
+                </div>
+                <button
+                  style={btn}
+                  disabled={snapBusy !== null}
+                  onClick={() => void restoreSnapshot(b.id)}
+                >
+                  {snapBusy === b.id ? "恢复中…" : "恢复"}
+                </button>
+                <button
+                  style={btn}
+                  disabled={snapBusy !== null}
+                  onClick={() => void removeSnapshot(b.id)}
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div style={{ ...panel, opacity: 0.75 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "hsl(var(--muted-foreground))" }}>未移植（Netcatty 有，termX 置灰）</div>
         <div style={{ ...muted, marginTop: 6, lineHeight: 1.8 }}>
           Google Drive / OneDrive / S3 等其他 provider（后端仅 GitHub + WebDAV）；
-          OAuth 设备码登录（当前用 PAT / 用户名密码）；逐类目同步开关与交互式冲突合并策略（当前按后端整体导入）。
+          OAuth 设备码登录（当前用 PAT / 用户名密码）；逐类目同步开关；「打开备份目录」（快照加密存放在
+          SecretStore 而非明文文件）。冲突已提供双方版本对比与二选一覆盖，逐条目的三向合并仍未实现。
           <br />
           自动拉取会把同步密码存入 SecretStore（与主机凭据同一套加密存储）；关闭即删除该密码。
         </div>
       </div>
+
+      {conflict && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 60,
+            background: "rgba(0, 0, 0, 0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            style={{
+              width: 440,
+              maxWidth: "92vw",
+              background: "hsl(var(--card))",
+              border: "1px solid hsl(var(--border))",
+              borderRadius: 12,
+              padding: "16px 18px",
+              boxShadow: "0 18px 48px rgba(0, 0, 0, 0.45)",
+            }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon name="shield" size={15} />
+              检测到同步冲突
+            </div>
+            <div style={{ ...muted, marginTop: 8, lineHeight: 1.7, fontSize: 12 }}>
+              {(() => {
+                const remote =
+                  conflict.provider === "github" ? check?.github.remote : check?.webdav.remote;
+                const local = check?.local;
+                if (conflict.kind === "diverged") {
+                  return `本地与远端都是 v${local?.version ?? "?"}，但内容摘要不同：两端在同一版本上各自修改过。`;
+                }
+                const newer =
+                  conflict.kind === "remote_newer"
+                    ? `远端 v${remote?.version} 高于本地 v${local?.version}`
+                    : `本地 v${local?.version} 高于远端 v${remote?.version}`;
+                return `${newer}。`;
+              })()}
+              <br />
+              {conflict.direction === "push"
+                ? "继续推送会用本地配置覆盖远端。"
+                : "继续拉取会用远端配置覆盖本地同名条目；拉取前会自动创建本地快照。"}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+              <button style={btn} onClick={() => void resolveConflict("cancel")}>
+                取消
+              </button>
+              {conflict.direction === "push" ? (
+                <>
+                  <button style={btn} onClick={() => void resolveConflict("pull")}>
+                    改用远端（拉取）
+                  </button>
+                  <button
+                    style={{ ...btn, borderColor: "hsl(var(--destructive))", color: "hsl(var(--destructive))" }}
+                    onClick={() => void resolveConflict("push")}
+                  >
+                    覆盖远端并推送
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button style={btn} onClick={() => void resolveConflict("push")}>
+                    改为推送本地
+                  </button>
+                  <button
+                    style={{ ...btn, borderColor: "hsl(var(--destructive))", color: "hsl(var(--destructive))" }}
+                    onClick={() => void resolveConflict("pull")}
+                  >
+                    继续拉取
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

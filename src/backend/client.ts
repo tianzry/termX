@@ -1067,6 +1067,40 @@ export function setSyncAutoPull(
   return invoke("set_sync_auto_pull", { provider, enabled, password });
 }
 
+/** 本地快照索引项（快照本体存 SecretStore，索引不含敏感内容）。 */
+export interface SyncBackupEntry {
+  id: string;
+  created_at_ms: number;
+  /** `manual` | `before_restore` */
+  reason: string;
+  sync_version: number;
+  host_count: number;
+  credential_count: number;
+  forward_count: number;
+  snippet_count: number;
+  size_bytes: number;
+}
+
+export function createSyncBackup(reason?: string): Promise<SyncBackupEntry> {
+  return invoke("sync_backup_create", { reason });
+}
+
+export function listSyncBackups(): Promise<SyncBackupEntry[]> {
+  return invoke("sync_backup_list");
+}
+
+export function restoreSyncBackup(id: string): Promise<SyncMetadata> {
+  return invoke("sync_backup_restore", { id });
+}
+
+export function deleteSyncBackup(id: string): Promise<boolean> {
+  return invoke("sync_backup_delete", { id });
+}
+
+export function clearSyncBackups(): Promise<number> {
+  return invoke("sync_backup_clear");
+}
+
 /** 修改远端文件权限位（`mode` 传十进制，如 0o755 → 493）。 */
 export function sftpChmod(
   sftpId: string,

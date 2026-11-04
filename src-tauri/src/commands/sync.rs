@@ -533,9 +533,235 @@ async fn pull_with_remote(
     let password = password.to_owned();
     let data_dir = state.data_dir.clone();
     run_db_blocking(state, move |db, secrets| {
+        // 拉取会按「前面覆盖」的方式导入远端配置；先落一份本地快照，
+        // 这样用户误拉或远端损坏时仍能回到拉取前状态（对齐 Netcatty
+        // 的 protective backup 语义）。
+        if let Err(err) = create_backup_core(&db, secrets.as_ref(), &data_dir, "before_restore") {
+            log::warn!("skipped protective sync backup before pull: {err}");
+        }
         apply_fetched_backup(&db, secrets.as_ref(), &data_dir, fetched, &password)
     })
     .await
+}
+
+// ---------------------------------------------------------------------------
+// Local snapshots (P1 #15 阶段 B)
+//
+// 快照 = 本地完整配置（含 secret）。为了不把明文凭据写进磁盘文件，快照整体
+// 存进 SecretStore（与主机凭据同一套主密钥加密），索引（不含敏感内容）
+// 放 settings 表。这样 GUI / headless / CLI 不依赖新目录或新加密格式。
+// ---------------------------------------------------------------------------
+
+const SYNC_BACKUP_INDEX: &str = "sync_backup_index";
+const SYNC_BACKUP_SECRET_PREFIX: &str = "sync_backup:";
+const SYNC_BACKUP_MAX: usize = 20;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncBackupEntry {
+    pub id: String,
+    pub created_at_ms: u64,
+    /// `manual` | `before_restore`
+    pub reason: String,
+    pub sync_version: u64,
+    pub host_count: usize,
+    pub credential_count: usize,
+    pub forward_count: usize,
+    pub snippet_count: usize,
+    pub size_bytes: usize,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn backup_secret_key(id: &str) -> String {
+    setting_key(&format!("{SYNC_BACKUP_SECRET_PREFIX}{id}"))
+}
+
+fn load_backup_index(db: &Db) -> AppResult<Vec<SyncBackupEntry>> {
+    let Some(raw) = crate::db::settings::get(db, SYNC_BACKUP_INDEX)? else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(&raw).or_else(|_| Ok(Vec::new()))
+}
+
+fn save_backup_index(db: &Db, entries: &[SyncBackupEntry]) -> AppResult<()> {
+    let json = serde_json::to_string(entries).map_err(|e| {
+        AppError::other("serde_failed", json!({ "err": e.to_string() }))
+    })?;
+    crate::db::settings::set(db, SYNC_BACKUP_INDEX, &json)
+}
+
+fn payload_len(payload: &serde_json::Value, key: &str) -> usize {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len)
+}
+
+fn create_backup_core(
+    db: &Db,
+    secrets: &dyn SecretStore,
+    data_dir: &std::path::Path,
+    reason: &str,
+) -> AppResult<SyncBackupEntry> {
+    let payload = build_payload(db, secrets, data_dir, &ExportMode::LocalBackup)?;
+    let host_count = payload_len(&payload, "profiles");
+    let credential_count = payload_len(&payload, "credentials");
+    let forward_count = payload_len(&payload, "forwards");
+    let snippet_count = payload_len(&payload, "snippets");
+    if host_count + credential_count + forward_count + snippet_count == 0 {
+        // 空配置没有可恢复内容，写下来只会污染列表（对齐 Netcatty 的
+        // hasMeaningfulSyncData 早退）。
+        return Err(AppError::config("sync_backup_empty", json!({})));
+    }
+    let json = serde_json::to_string(&payload).map_err(|e| {
+        AppError::other("serde_failed", json!({ "err": e.to_string() }))
+    })?;
+    let metadata = refresh_local_metadata(db, data_dir)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    secrets.set(&backup_secret_key(&id), &json)?;
+
+    let entry = SyncBackupEntry {
+        id: id.clone(),
+        created_at_ms: now_ms(),
+        reason: reason.to_string(),
+        sync_version: metadata.version,
+        host_count,
+        credential_count,
+        forward_count,
+        snippet_count,
+        size_bytes: json.len(),
+    };
+
+    let mut entries = load_backup_index(db)?;
+    entries.insert(0, entry.clone());
+    while entries.len() > SYNC_BACKUP_MAX {
+        if let Some(dropped) = entries.pop() {
+            if let Err(err) = secrets.delete(&backup_secret_key(&dropped.id)) {
+                log::warn!("failed to drop old sync backup secret: {err}");
+            }
+        }
+    }
+    save_backup_index(db, &entries)?;
+    Ok(entry)
+}
+
+/// 从快照合并恢复：按 id 覆盖同名条目、补齐缺失条目；本地在快照之后新增的
+/// 条目不会被删除（与 `sync::config::merge_import` 的既有语义一致）。
+fn restore_backup_core(
+    db: &Db,
+    secrets: &dyn SecretStore,
+    data_dir: &std::path::Path,
+    id: &str,
+) -> AppResult<SyncMetadata> {
+    let entries = load_backup_index(db)?;
+    if !entries.iter().any(|e| e.id == id) {
+        return Err(AppError::config("sync_backup_missing", json!({ "id": id })));
+    }
+    let raw = secrets
+        .get(&backup_secret_key(id))?
+        .ok_or_else(|| AppError::config("sync_backup_missing", json!({ "id": id })))?;
+    let payload: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
+        AppError::config("sync_backup_invalid", json!({ "err": e.to_string() }))
+    })?;
+    // 恢复同样是破坏性操作：先为「当前状态」再存一份快照。
+    if let Err(err) = create_backup_core(db, secrets, data_dir, "before_restore") {
+        log::warn!("skipped protective backup before restore: {err}");
+    }
+    crate::sync::config::merge_import(db, secrets, data_dir, &payload)?;
+    refresh_local_metadata(db, data_dir)
+}
+
+fn delete_backup_core(
+    db: &Db,
+    secrets: &dyn SecretStore,
+    id: &str,
+) -> AppResult<bool> {
+    let mut entries = load_backup_index(db)?;
+    let before = entries.len();
+    entries.retain(|e| e.id != id);
+    if entries.len() == before {
+        return Ok(false);
+    }
+    secrets.delete(&backup_secret_key(id))?;
+    save_backup_index(db, &entries)?;
+    Ok(true)
+}
+
+fn clear_backups_core(db: &Db, secrets: &dyn SecretStore) -> AppResult<usize> {
+    let entries = load_backup_index(db)?;
+    for entry in &entries {
+        if let Err(err) = secrets.delete(&backup_secret_key(&entry.id)) {
+            log::warn!("failed to clear sync backup secret: {err}");
+        }
+    }
+    crate::db::settings::delete(db, SYNC_BACKUP_INDEX)?;
+    Ok(entries.len())
+}
+
+#[tauri::command]
+pub fn sync_backup_create(
+    state: State<'_, AppState>,
+    reason: Option<String>,
+) -> AppResult<SyncBackupEntry> {
+    sync_backup_create_impl(&state, reason)
+}
+
+pub fn sync_backup_create_impl(
+    state: &AppState,
+    reason: Option<String>,
+) -> AppResult<SyncBackupEntry> {
+    create_backup_core(
+        &state.db,
+        state.secret_store.as_ref(),
+        &state.data_dir,
+        reason.as_deref().unwrap_or("manual"),
+    )
+}
+
+#[tauri::command]
+pub fn sync_backup_list(state: State<'_, AppState>) -> AppResult<Vec<SyncBackupEntry>> {
+    sync_backup_list_impl(&state)
+}
+
+pub fn sync_backup_list_impl(state: &AppState) -> AppResult<Vec<SyncBackupEntry>> {
+    load_backup_index(&state.db)
+}
+
+#[tauri::command]
+pub fn sync_backup_restore(state: State<'_, AppState>, id: String) -> AppResult<SyncMetadata> {
+    sync_backup_restore_impl(&state, id)
+}
+
+pub fn sync_backup_restore_impl(state: &AppState, id: String) -> AppResult<SyncMetadata> {
+    restore_backup_core(
+        &state.db,
+        state.secret_store.as_ref(),
+        &state.data_dir,
+        &id,
+    )
+}
+
+#[tauri::command]
+pub fn sync_backup_delete(state: State<'_, AppState>, id: String) -> AppResult<bool> {
+    sync_backup_delete_impl(&state, id)
+}
+
+pub fn sync_backup_delete_impl(state: &AppState, id: String) -> AppResult<bool> {
+    delete_backup_core(&state.db, state.secret_store.as_ref(), &id)
+}
+
+#[tauri::command]
+pub fn sync_backup_clear(state: State<'_, AppState>) -> AppResult<usize> {
+    sync_backup_clear_impl(&state)
+}
+
+pub fn sync_backup_clear_impl(state: &AppState) -> AppResult<usize> {
+    clear_backups_core(&state.db, state.secret_store.as_ref())
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,5 +1322,40 @@ mod tests {
 
         assert!(!status.github, "a flag without a password is OFF");
         assert!(status.webdav, "password presence is the only ON state");
+    }
+
+    #[test]
+    fn local_backup_roundtrip_restores_deleted_profile() {
+        let (db, ss, dir) = fixture();
+        profile::insert(&db, &prof("p1", None)).unwrap();
+
+        let entry = create_backup_core(&db, &ss, dir.path(), "manual").unwrap();
+        assert_eq!(entry.host_count, 1);
+        assert!(load_backup_index(&db).unwrap()[0].id == entry.id);
+
+        profile::delete(&db, "p1").unwrap();
+        assert!(profile::list(&db).unwrap().is_empty());
+
+        restore_backup_core(&db, &ss, dir.path(), &entry.id).unwrap();
+        assert_eq!(profile::list(&db).unwrap().len(), 1, "snapshot restored");
+        // 恢复前会尝试落一份保护性快照；本例当前状态已空，按「空配置不记快照」
+        // 的规则跳过，因此列表仍只有原始那一条。
+        assert_eq!(load_backup_index(&db).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn local_backup_delete_and_clear_drop_secrets() {
+        let (db, ss, dir) = fixture();
+        profile::insert(&db, &prof("p1", None)).unwrap();
+        let first = create_backup_core(&db, &ss, dir.path(), "manual").unwrap();
+        let second = create_backup_core(&db, &ss, dir.path(), "manual").unwrap();
+
+        assert!(delete_backup_core(&db, &ss, &first.id).unwrap());
+        assert!(ss.get(&backup_secret_key(&first.id)).unwrap().is_none());
+
+        let cleared = clear_backups_core(&db, &ss).unwrap();
+        assert_eq!(cleared, 1);
+        assert!(ss.get(&backup_secret_key(&second.id)).unwrap().is_none());
+        assert!(load_backup_index(&db).unwrap().is_empty());
     }
 }

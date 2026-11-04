@@ -4288,6 +4288,33 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 
 ---
 
+## 2026-11-04 — P1 #15 云端同步阶段 B（冲突提示 + 本地快照）
+
+### 修改点
+
+1. `src-tauri/src/commands/sync.rs`：新增 `SyncBackupEntry` 与 `create_backup_core` / `restore_backup_core` / `delete_backup_core` / `clear_backups_core`；快照 = 完整本地配置 JSON（含 secret）整体加密存 SecretStore（key `sync_backup:<id>`），索引 `sync_backup_index` 存 settings（不含敏感内容），最多保留 20 份；空配置不记快照。`pull_with_remote` 与恢复操作前自动落 `before_restore` 保护性快照。5 个 Tauri 命令 `sync_backup_create|list|restore|delete|clear` 在 `lib.rs` + `server.rs` 双注册。
+2. `src/domain/syncModel.ts`：新增 `detectSyncConflict`（版本高/低 + 同版本摘要不同=`diverged`）与 `conflictBlocks`（区分推送/拉取方向），补 3 例单测（共 8 例）。
+3. `src/sync/SyncView.tsx`：推送/拉取前先 `syncCheckRemotes` 并与最近一次 `check` 比对；有破坏性冲突时弹窗（版本对比 + 覆盖远端/改用远端/取消），确认后才执行。新增本地快照面板：立即创建、列表（原因/版本/时间/主机·凭据·转发·片段数/大小）、恢复、删除、清空；恢复后回调 `onAfterPull` 重载 Vault。
+4. `src/backend/client.ts`：补 `SyncBackupEntry` 类型与 5 个包装。
+
+### 验证
+
+- 本机 WebDAV 服务器（`evidence/webdav-server.py`，支持 PROPFIND/MKCOL/PUT/GET）真实闭环：
+  - 推送：`PUT` 成功，远端 `rssh_backup.enc` **19860 字节**、`rssh_backup.meta.json` `version=2`（`evidence/sync-phaseb-verify.json`）。
+  - 拉取还原：把主机名改为 `termX-sync-e2e-…` 推送 → 改回原名 → 拉取后名字回到推送值，断言通过；随后恢复原名并重推清理。
+  - 冲突：手动把远端 meta 版本从 3 改为 4，UI 点「推送」弹出「检测到同步冲突 / 远端 v4 高于本地 v3 / 继续推送会用本地配置覆盖远端」，`role=dialog` 存在并截图（`evidence/sync-phaseb-conflict.png`），取消后无副作用。
+  - 快照：拉取自动生成 `before_restore` 一条；手动创建后列表 2 条，字段（2 主机 / 6 凭据 / 5 片段 / 10089 B）正确。
+- 门禁：`npm run test:run` **425 ✓**（37 文件）、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` **883 ✓**（新增 2 例快照往返/删除清理）。
+- 未实测：真实 GitHub PAT 推拉（无凭据）；逐条目三向合并仍置灰。
+
+### 踩坑
+
+- 沙箱会在命令结束时回收子进程：`Start-Process` 启动的 debug 应用几秒后消失；必须用常驻后台命令直接运行 exe，CDP 才能稳定连上。
+- debug 构建会加载 `devUrl`（`localhost:1420`），需 Vite dev server 在跑；重编前必须停掉占用 `rssh.exe` 的旧实例，否则 `failed to remove file rssh.exe`。
+- 拉取前保护性快照在「当前配置为空」时按规则跳过，单测断言不能假设恢复后一定多一条快照。
+
+---
+
 ## 2026-11-04 — P1 #14 主机监控（Linux 真机采集 + 监控页）
 
 对照 Netcatty：`components/vault/MonitorPanels.tsx`、`domain/monitorRuntime.ts`、`types/global/netcatty-bridge-monitor.d.ts`（字段 / 状态 / 间隔）。Netcatty 实例本轮不可用，按源码逐字段对齐，不做像素级并排结论。

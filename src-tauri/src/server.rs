@@ -1717,6 +1717,20 @@ async fn dispatch_async(
             ok(crate::commands::sync::sync_refresh_local_metadata_impl(state).await)
         }
         "sync_check_remotes" => ok(crate::commands::sync::sync_check_remotes_impl(state).await),
+        "sync_backup_create" => ok(crate::commands::sync::sync_backup_create_impl(
+            state,
+            args.get("reason").and_then(Value::as_str).map(String::from),
+        )),
+        "sync_backup_list" => ok(crate::commands::sync::sync_backup_list_impl(state)),
+        "sync_backup_restore" => ok(crate::commands::sync::sync_backup_restore_impl(
+            state,
+            arg(&args, "id")?,
+        )),
+        "sync_backup_delete" => ok(crate::commands::sync::sync_backup_delete_impl(
+            state,
+            arg(&args, "id")?,
+        )),
+        "sync_backup_clear" => ok(crate::commands::sync::sync_backup_clear_impl(state)),
 
         // ---- port forwarding: start (stop is sync, in dispatch) ----
         "forward_start" => ok(crate::commands::forward::forward_start_impl(
