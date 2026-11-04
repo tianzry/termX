@@ -4285,3 +4285,29 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 
 - CDP 里把 connect+upload+copy+download+cleanup 全塞进一个 async IIFE 会得到无信息的 `Uncaught`（Tauri 调用链较长时异常被包装）；拆成多步 eval、按阶段 catch 才拿得到真实错误。
 - `PaneConnection` 是 local/remote 联合类型，`isRemote` 布尔不参与收窄；复制函数需显式 `if (connection.kind !== "remote") return;`，冲突态里另存 `sftpId` 供 JSX 使用。
+
+---
+
+## 2026-11-04 — P1 #14 主机监控（Linux 真机采集 + 监控页）
+
+对照 Netcatty：`components/vault/MonitorPanels.tsx`、`domain/monitorRuntime.ts`、`types/global/netcatty-bridge-monitor.d.ts`（字段 / 状态 / 间隔）。Netcatty 实例本轮不可用，按源码逐字段对齐，不做像素级并排结论。
+
+### 修改点
+
+1. **后端** `commands/monitor.rs`：新增 `monitor_sample(session_id, timeout_ms)`，复用已建立的 SSH 会话执行一次只读 shell 采样（`/proc/stat`、`/proc/meminfo`、`/proc/net/dev`、`/proc/uptime`、`df -P -k`、`nproc` / `loadavg`），逐项 `2>/dev/null` 容错；超时缺省 8s（clamp 2–30s）。CPU 与网络速率由前后两次采样差分，首次为 `null`；速率用本地完成时刻计算 Δt（远端 `date +%s` 只有秒级精度，否则 2.5s 间隔会被算成 2s）。非 Linux 返回 `supported=false` + 原因，前端置灰。
+2. **双注册** `lib.rs` + `server.rs`（`monitor_sample`，camelCase `sessionId` / `timeoutMs`）；前端 `api.monitorSample` 与 `MonitorSample` / `MonitorDisk` / `MonitorNetIf` 类型。
+3. **前端** `src/monitor/MonitorView.tsx` + `src/domain/monitorModel.ts`：Vault「监控」导航启用；主机多选、图表 / 列表视图（localStorage 持久化）、更新频率 2/5/10/30s、趋势范围 5/15/30min；卡片含 CPU、内存、根分区磁盘、网络速率 + 累计、各分区、运行时长 / 负载 / Swap，以及 CPU / 内存 SVG 曲线；连接状态（连接中 / 已更新 / 读数过期 / 采集失败 / 已断开）、退避自动重连、手动重试、打开终端；采样串行 + tick 防重入。
+4. **置灰并写明原因**：延迟（未实现 SSH 传输层 ping）、GPU（无 NVIDIA 采集）、磁盘 I/O（未做差分）、进程（未读 top）；Netcatty 多面板 CRUD 未移植（termX 为单内置面板）。
+
+### 验证
+
+- 129 真机（2026-11-04 **22:08:29 / 22:08:31** Asia/Shanghai）：首次 `cpu=null`；第二次 CPU **0.8%**（每核 0.4 / 1.2）、内存 **1188.9 / 3355.1 MiB（35.4%）**、根分区 **93.7%（17.3 / 19.5 GB）**、网络 **1130 B/s ↓ / 1115 B/s ↑**、内核 6.17.0-41-generic、负载 0 / 0.05 / 0.1。
+- debug 重编后监控页实测（`evidence/monitor-129-live-final.png`，**22:15:47**）：CPU 0.8%、内存 35.5%、磁盘 93.7%、网络 ↓/↑ 1.1 KB/s、累计 ↓ 237 MB、状态「已更新」，0 采集失败。
+- 门禁：`test:run` **417 ✓**（36 文件）、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` **881 ✓**。
+- 自审修复：tick 重入（多主机时 `setInterval` 会叠采样）、macOS 不支持主机无限重连；无高/中危遗留。手动重试 / 打开终端按钮未点测（与卡片共用同一 api 路径）。
+
+### 踩坑
+
+- 会话 ID 必须是 UUID；自定义 `mon-...` 会被后端拒绝为 `session_id_invalid`。
+- CDP 长 async 链异常会被包成无信息的 `Uncaught`；拆步 + catch 才能拿到真实错误。
+- `formatRate` 不能用于累计流量（会显示 "237 MB/s"）；累计改用 `formatBytes`，本轮截图复核已修正。

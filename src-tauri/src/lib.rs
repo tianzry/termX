@@ -255,6 +255,7 @@ pub fn run() {
             commands::session::ssh_host_key_respond,
             commands::session::ssh_host_key_cancel,
             commands::session::ssh_exec,
+            commands::monitor::monitor_sample,
             // session lifecycle
             commands::lifecycle::reconcile_sessions,
             // PTY (desktop only)

@@ -938,6 +938,68 @@ export function sshExec(
   return invoke("ssh_exec", { sessionId, command, timeoutMs });
 }
 
+/** 主机监控：一次采样的磁盘分区。 */
+export interface MonitorDisk {
+  mount_point: string;
+  filesystem: string;
+  used_gb: number;
+  total_gb: number;
+  percent: number;
+}
+
+/** 主机监控：一次采样的网卡统计。 */
+export interface MonitorNetIf {
+  name: string;
+  rx_bytes: number;
+  tx_bytes: number;
+  /** 首次采样无差分，为 null。 */
+  rx_speed: number | null;
+  tx_speed: number | null;
+}
+
+/** 后端 `monitor_sample` 的返回（字段与 Rust `MonitorSample` 对齐）。 */
+export interface MonitorSample {
+  sampled_at_ms: number;
+  supported: boolean;
+  unsupported_reason: string | null;
+  warnings: string[];
+  hostname: string;
+  os_name: string;
+  kernel_release: string;
+  uptime_seconds: number | null;
+  load_average: number[];
+  cpu: number | null;
+  cpu_cores: number;
+  cpu_per_core: number[];
+  mem_total_mb: number | null;
+  mem_used_mb: number | null;
+  mem_free_mb: number | null;
+  mem_buffers_mb: number | null;
+  mem_cached_mb: number | null;
+  swap_total_mb: number | null;
+  swap_used_mb: number | null;
+  disk_percent: number | null;
+  disk_used_gb: number | null;
+  disk_total_gb: number | null;
+  disks: MonitorDisk[];
+  net_rx_speed: number | null;
+  net_tx_speed: number | null;
+  net_rx_bytes: number | null;
+  net_tx_bytes: number | null;
+  net_interfaces: MonitorNetIf[];
+}
+
+/**
+ * 在已建立的 SSH 会话上采集一次主机指标。CPU / 网络速率来自前后两次采样的
+ * 差分，首次为 null（前端显示 `--`，不造数）。
+ */
+export function monitorSample(
+  sessionId: string,
+  timeoutMs?: number,
+): Promise<MonitorSample> {
+  return invoke("monitor_sample", { sessionId, timeoutMs });
+}
+
 /** 修改远端文件权限位（`mode` 传十进制，如 0o755 → 493）。 */
 export function sftpChmod(
   sftpId: string,

@@ -8,6 +8,7 @@ pub mod group;
 pub mod keychain;
 pub mod lifecycle;
 pub mod localfs;
+pub mod monitor;
 pub mod notes;
 pub mod plugin;
 pub mod profile;

@@ -1093,6 +1093,18 @@ async fn dispatch_async(
                 .map_err(err_value)?;
             Ok(json!(id))
         }
+        "monitor_sample" => {
+            let sid: String = arg(&args, "sessionId")?;
+            let timeout_ms = args.get("timeoutMs").and_then(Value::as_u64);
+            let session = ssh_session(state, &sid)?;
+            let ssh = session.ssh_handle().clone();
+            let sample = crate::ssh::client::run_blocking_ssh(move || async move {
+                crate::commands::monitor::collect_monitor_sample(ssh, sid, timeout_ms).await
+            })
+            .await
+            .map_err(err_value)?;
+            serde_json::to_value(sample).map_err(|e| json!(e.to_string()))
+        }
         "ssh_write" => {
             let sid: String = arg(&args, "sessionId")?;
             let data: Vec<u8> = arg(&args, "data")?;
