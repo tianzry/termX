@@ -1,6 +1,7 @@
-//! 串口自动登录 — 监视输出流中的 `login:` / `Password:` 提示符并注入配置的
-//! 凭据。状态机语义对齐 Netcatty `telnetAutoLogin.cjs`（重写而非复制）。
-//! 纯逻辑：无 I/O、无定时器 —— 串口读循环对每个输出块调 `feed`，对每次读
+//! 串口 / Telnet 自动登录 — 监视输出流中的 `login:` / `Password:` 提示符并
+//! 注入配置的凭据（两端共用同一状态机，差异只在行尾：串口 `\r`、Telnet
+//! CRLF）。状态机语义对齐 Netcatty `telnetAutoLogin.cjs`（重写而非复制）。
+//! 纯逻辑：无 I/O、无定时器 —— 读循环对每个输出块调 `feed`，对每次读
 //! 超时（100ms tick）调 `check_expiry`，因此静默设备也能按时过期。
 //!
 //! 与 Netcatty 的有意偏差（已记录）：
@@ -150,8 +151,8 @@ fn is_wake_input(data: &str) -> bool {
     !data.is_empty() && data.chars().all(|c| c == '\r' || c == '\n')
 }
 
-/// 检测器对调用方的动作。`SendLine` 只带内容，行尾 `\r` 由调用方追加
-/// （以便走字符集编码）。
+/// 检测器对调用方的动作。`SendLine` 只带内容，行尾由调用方追加
+/// （串口 `\r`；Telnet CRLF，以便走字符集编码）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutoLoginAction {
     SendLine(String),

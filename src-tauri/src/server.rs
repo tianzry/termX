@@ -1049,6 +1049,8 @@ async fn dispatch_async(
                 }
             };
             let requested_id = optional_string_arg(&args, "sessionId")?;
+            let username = optional_string_arg(&args, "username")?;
+            let password = optional_string_arg(&args, "password")?;
             let session_id =
                 crate::commands::lifecycle::resolve_session_id(requested_id).map_err(err_value)?;
             let reservation = crate::commands::lifecycle::reserve_resource(
@@ -1067,6 +1069,9 @@ async fn dispatch_async(
                     TelnetOut::RemoteEcho(enabled) => {
                         json!({ "type": "event", "event": format!("telnet:echo:{id}"), "payload": enabled })
                     }
+                    TelnetOut::AutoLogin(status) => {
+                        json!({ "type": "event", "event": format!("telnet:auto_login:{id}"), "payload": { "status": status } })
+                    }
                     TelnetOut::Close => {
                         json!({ "type": "event", "event": format!("telnet:close:{id}"), "payload": Value::Null })
                     }
@@ -1082,6 +1087,8 @@ async fn dispatch_async(
                     cols,
                     rows,
                     &input_newline,
+                    username,
+                    password,
                     sink,
                 )
             })

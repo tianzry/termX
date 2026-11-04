@@ -23,12 +23,16 @@ export interface SerialSessionConfig {
   byteOrientedBackspace: boolean;
 }
 
-/** Telnet 标签的连接参数（对齐 Netcatty host 的 protocol=telnet；不含凭据）。 */
+/** Telnet 标签的连接参数（对齐 Netcatty host 的 protocol=telnet；凭据可选）。 */
 export interface TelnetSessionConfig {
   host: string;
   port: number;
   /** 发送回车时使用的行结束符（NVT 默认 CRLF）。 */
   inputNewline: "crlf" | "lf" | "cr";
+  /** 自动登录用户名；与 password 都为空则不启用。 */
+  username?: string;
+  /** 自动登录密码；空串表示空密码设备（仍需填写用户名才启用）。 */
+  password?: string;
 }
 
 export type Connector =

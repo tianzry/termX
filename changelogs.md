@@ -4543,3 +4543,30 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - YMODEM 置灰原因：Netcatty `sendSerialYmodem` 只在 Electron 主进程串口桥内（直接持有 `serialPort` 双向流 + `node:fs` 文件读写）；termX 串口为 Rust 后端字节流、前端没有串口级流控/取消语义，且本轮无串口硬件可实测。
 - 已对齐/未对齐：下载目录固定 `~/Downloads`（无 Electron 目录选择框）；无传输队列 / 断点续传 / 拖出桌面；ZMODEM 之外的 X/YMODEM 不提供。
 
+---
+
+## 2026-11-05 — P1 #20 Telnet 自动登录
+
+### 修改点
+
+1. **后端复用状态机**：`src-tauri/src/terminal/telnet.rs` 接入既有 `serial_auto_login::SerialAutoLogin`（与 Netcatty `telnetAutoLogin.cjs` 对齐的纯逻辑检测器）。读线程对每个净数据块解码为文本后 `feed`，按 100ms 读超时 tick `check_expiry`；用户 `write` 先过 `user_input`，任意非裸 CR/LF 输入即取消。
+2. **凭据与行尾**：`telnet::open` 新增 `username` / `password`（空凭据返回 `None` 关闭自动登录；`Some("")` 视为空密码设备）。自动应答直接写线路，行尾用 CRLF（对齐 Netcatty `normalizeNvtNewlines`），且经 `Negotiator::encode_outbound`，避免未协商 BINARY 时 CR 被 NVT 映射成 CR NUL。
+3. **事件契约**：新增 `TelnetOut::AutoLogin(&'static str)`，命令层与 headless ws 层分别发 `telnet:auto_login:<id>`（载荷 `{ status: complete | cancelled | incomplete }`，与串口同名事件一致）。`commands/telnet.rs` 的 `telnet_open` 增加参数，`lib.rs` 与 `server.rs` 双注册路径同步。
+4. **前端**：`client.ts` 新增 `TelnetCredentials` 与 `onTelnetAutoLogin`；`workspaceModel` 的 `TelnetSessionConfig` 加可选 `username` / `password`；`telnetFormConfig` 与 `TelnetConnectModal` 补用户名 / 密码字段（对照 Netcatty host 凭据字段，不造假控件），两项都空则不携带凭据；`TerminalPane` 订阅事件并写入状态栏，凭据透传给 `telnet_open`。
+5. **单测**：新增 `loopback_auto_login_answers_prompts_and_completes`（检测提示 → admin/secret 写线路 → `mock#` → complete）与 `loopback_auto_login_cancelled_by_user_input`（抢先输入 → cancelled 且不再发凭据）；前端补凭据表单用例。
+
+### 验证
+
+- 本机 Python mock Telnet 服务端（`evidence/mock-telnet-login.py`，可配预提示延迟）经 CDP 实测两条路径：
+  - 完成：终端显示 `Welcome to mock-telnet` / `login: Password:` / `Login OK` / `mock#`，页面收到真实 `telnet:auto_login:<id>` `{status:"complete"}`；服务端日志记录收到 `admin`、`secret`。
+  - 取消：连接后立即键入 `x`，页面收到 `{status:"cancelled"}`；服务端日志显示只发出 `login:`，从未收到凭据。
+  - 证据：`evidence/telnet-auto-login.json`、`telnet-modal-2324.png`、`telnet-auto-login-complete.png`、`telnet-auto-login-cancelled.png`、`mock-telnet-server-2324.log`。
+- 门禁：前端 451✓ / `npm run build` ✓ / `cargo check --features server` ✓ / `cargo test --lib` 887✓。
+
+### 踩坑
+
+- mock 服务端若把 `\r` 单独当作行尾，会把 CRLF 的 `\n` 留到下一行，导致密码读成空串（首轮实测 `Login incorrect`）；必须等 `\n` 才算一行。
+- 自动登录写入不走前端 `onData`，因此不会触发本地回显；密码也不会被本地回显到屏幕（服务端是否回显由 WILL ECHO 决定）。
+- 真实 Telnet 设备未实测（本机无硬件）；Netcatty 完成后的启动命令回调在 termX 无对应延迟命令通道，未接。
+
+

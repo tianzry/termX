@@ -22,6 +22,8 @@ pub async fn telnet_open(
     cols: u16,
     rows: u16,
     input_newline: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
     session_id: Option<String>,
 ) -> AppResult<String> {
     // Turn transport-agnostic telnet output into Tauri events. The headless ws
@@ -45,6 +47,12 @@ pub async fn telnet_open(
             telnet::TelnetOut::RemoteEcho(enabled) => {
                 let _ = app.emit(&format!("telnet:echo:{id}"), enabled);
             }
+            telnet::TelnetOut::AutoLogin(status) => {
+                let _ = app.emit(
+                    &format!("telnet:auto_login:{id}"),
+                    serde_json::json!({ "status": status }),
+                );
+            }
             telnet::TelnetOut::Close => {
                 let _ = app.emit(&format!("telnet:close:{id}"), ());
             }
@@ -58,6 +66,8 @@ pub async fn telnet_open(
             cols,
             rows,
             &input_newline,
+            username,
+            password,
             sink,
         )
     })

@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::error::{locked, AppError, AppResult};
+use crate::terminal::serial_auto_login::{AutoLoginAction, SerialAutoLogin};
 
 /// Telnet output destined for the host. Mirrors `serial::SerialOut` — its own
 /// type for the same reason: unrelated transports shouldn't couple just to
@@ -31,6 +32,9 @@ pub enum TelnetOut {
     /// Whether the peer now owns echoing. The frontend uses this to switch
     /// automatic local echo without guessing from profile defaults.
     RemoteEcho(bool),
+    /// 自动登录状态（complete / cancelled / incomplete）。载荷与串口同名事件
+    /// 一致，命令层转为 `telnet:auto_login:<id>`。
+    AutoLogin(&'static str),
     Close,
 }
 
@@ -394,6 +398,10 @@ pub struct TelnetHandle {
     /// Profile-owned line ending used by command-oriented writers such as AI.
     /// Raw terminal writes still pass bytes through unchanged.
     input_newline: Arc<[u8]>,
+    /// 自动登录检测器；无凭据时为 None。用户键入会取消自动登录。
+    detector: Arc<Mutex<Option<SerialAutoLogin>>>,
+    session_id: Arc<str>,
+    sink: TelnetSink,
 }
 
 fn telnet_op_err(e: impl std::fmt::Display) -> AppError {
@@ -404,7 +412,18 @@ fn telnet_op_err(e: impl std::fmt::Display) -> AppError {
 }
 
 impl TelnetHandle {
+    /// 用户键入上行：先过自动登录检测器（裸 CR/LF 唤醒直通不取消；其余输入
+    /// 取消自动登录并报一次 cancelled），再编码写线路。
     pub fn write(&self, data: &[u8]) -> AppResult<()> {
+        let text = String::from_utf8_lossy(data);
+        let actions = match self.detector.lock() {
+            Ok(mut guard) => guard
+                .as_mut()
+                .map(|d| d.user_input(&text))
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        self.dispatch(actions);
         // Same neg -> writer lock order as resize and the reader thread. The
         // negotiated BINARY state and the bytes encoded from it are therefore
         // one observation: a concurrent DO/DONT cannot overtake this write.
@@ -413,6 +432,10 @@ impl TelnetHandle {
         locked(&self.writer)?
             .write_all(&encoded)
             .map_err(telnet_op_err)
+    }
+
+    fn dispatch(&self, actions: Vec<AutoLoginAction>) {
+        dispatch_actions(actions, &self.neg, &self.writer, &self.sink, &self.session_id);
     }
 
     /// Report a new window size via NAWS. A no-op until the server activates
@@ -476,6 +499,46 @@ fn connect(host: &str, port: u16) -> AppResult<TcpStream> {
     })
 }
 
+/// 检测器加锁执行；中毒（读线程 panic）时返回空动作。
+fn detector_check(
+    det: &Arc<Mutex<Option<SerialAutoLogin>>>,
+    f: impl FnOnce(&mut SerialAutoLogin) -> Vec<AutoLoginAction>,
+) -> Vec<AutoLoginAction> {
+    match det.lock() {
+        Ok(mut guard) => guard.as_mut().map(f).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// 读线程侧执行检测器动作：凭据直接写线路（不回调 handle，避免自我取消）；
+/// 状态推给 sink。行尾用 CRLF（对齐 Netcatty `normalizeNvtNewlines`），
+/// 未协商 BINARY 时也不会被 NVT 映射成 CR NUL。
+fn dispatch_actions(
+    actions: Vec<AutoLoginAction>,
+    neg: &Arc<Mutex<Negotiator>>,
+    writer: &Arc<Mutex<TcpStream>>,
+    sink: &TelnetSink,
+    sid: &str,
+) {
+    for action in actions {
+        match action {
+            AutoLoginAction::SendLine(line) => {
+                let text = format!("{line}\r\n");
+                let encoded = match neg.lock() {
+                    Ok(neg) => neg.encode_outbound(text.as_bytes()),
+                    Err(_) => return,
+                };
+                if let Ok(mut w) = writer.lock() {
+                    let _ = w.write_all(&encoded);
+                }
+            }
+            AutoLoginAction::Complete => sink(sid, TelnetOut::AutoLogin("complete")),
+            AutoLoginAction::Cancelled => sink(sid, TelnetOut::AutoLogin("cancelled")),
+            AutoLoginAction::Incomplete => sink(sid, TelnetOut::AutoLogin("incomplete")),
+        }
+    }
+}
+
 /// Connect to `host:port` and spawn a reader thread that negotiates telnet
 /// options and pushes terminal bytes to `sink`. Returns `(session_id, handle)`.
 ///
@@ -484,6 +547,9 @@ fn connect(host: &str, port: u16) -> AppResult<TcpStream> {
 /// the server's DO NAWS usually arrives before the frontend's first fit/resize
 /// round-trip, and without the seed that reply would report the 80x24 default.
 /// `input_newline` is retained by the handle for command-oriented `write_line`.
+/// `(username, password)` 启用自动登录：检测 `login:` / `Password:` 提示并
+/// 自动应答（凭据为空则不启用，见 `SerialAutoLogin::new`）。
+#[allow(clippy::too_many_arguments)] // Flat transport options; mirrors the invoke wire contract.
 pub fn open(
     session_id: String,
     host: &str,
@@ -491,6 +557,8 @@ pub fn open(
     cols: u16,
     rows: u16,
     input_newline: &str,
+    username: Option<String>,
+    password: Option<String>,
     sink: TelnetSink,
 ) -> AppResult<(String, TelnetHandle)> {
     let input_newline: Arc<[u8]> = match input_newline {
@@ -533,6 +601,9 @@ pub fn open(
     // the size is simply remembered for the activation reply.
     let _ = negotiator.set_size(cols, rows);
 
+    let detector = Arc::new(Mutex::new(SerialAutoLogin::new(username, password)));
+    let reader_detector = detector.clone();
+
     let id = session_id;
     let handle = TelnetHandle {
         writer: Arc::new(Mutex::new(stream)),
@@ -540,6 +611,9 @@ pub fn open(
         _guard: Arc::new(CloseGuard { closed }),
         peer: Arc::from(peer.as_str()),
         input_newline,
+        detector: detector.clone(),
+        session_id: Arc::from(id.as_str()),
+        sink: sink.clone(),
     };
 
     // Reader thread: socket RX → negotiator → (replies back down the socket,
@@ -586,14 +660,22 @@ pub fn open(
                         }
                     }
                     if !data.is_empty() {
+                        // 自动登录观察解码后的文本（登录提示均为 ASCII）；
+                        // 先喂检测器再推数据，便于凭据紧随提示发出。
+                        let decoded = String::from_utf8_lossy(&data);
+                        let actions = detector_check(&reader_detector, |d| d.feed(&decoded));
                         sink(&sid, TelnetOut::Data(data));
+                        dispatch_actions(actions, &neg, &writer, &sink, &sid);
                     }
                 }
                 Err(ref e)
                     if e.kind() == std::io::ErrorKind::TimedOut
                         || e.kind() == std::io::ErrorKind::WouldBlock =>
                 {
-                    continue
+                    // 静默设备也要按时驱动自动登录过期检查。
+                    let actions = detector_check(&reader_detector, SerialAutoLogin::check_expiry);
+                    dispatch_actions(actions, &neg, &writer, &sink, &sid);
+                    continue;
                 }
                 Err(_) => break, // connection reset / fatal IO error
             }
@@ -637,6 +719,8 @@ mod tests {
             cols,
             rows,
             "crlf",
+            None,
+            None,
             sink,
         )
     }
@@ -930,6 +1014,7 @@ mod tests {
             match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
                 TelnetOut::Data(b) => banner.extend(b),
                 TelnetOut::RemoteEcho(enabled) => saw_remote_echo = enabled,
+                TelnetOut::AutoLogin(_) => continue,
                 TelnetOut::Close => panic!("closed before banner complete"),
             }
         }
@@ -951,6 +1036,7 @@ mod tests {
                 TelnetOut::Close => break,
                 TelnetOut::Data(_) => continue,
                 TelnetOut::RemoteEcho(_) => continue,
+                TelnetOut::AutoLogin(_) => continue,
             }
         }
         drop(server_sock);
@@ -981,6 +1067,7 @@ mod tests {
                 }
                 TelnetOut::Close => break,
                 TelnetOut::RemoteEcho(_) => continue,
+                TelnetOut::AutoLogin(_) => continue,
             }
         }
         assert!(saw_data);
@@ -1017,6 +1104,8 @@ mod tests {
             80,
             24,
             "lf",
+            None,
+            None,
             sink,
         )
         .unwrap();
@@ -1036,6 +1125,8 @@ mod tests {
             80,
             24,
             "wat",
+            None,
+            None,
             sink,
         ) {
             Ok(_) => panic!("invalid newline unexpectedly opened a connection"),
@@ -1084,6 +1175,7 @@ mod tests {
                 TelnetOut::Data(b) if b == b"k" => break,
                 TelnetOut::Data(_) => continue,
                 TelnetOut::RemoteEcho(_) => continue,
+                TelnetOut::AutoLogin(_) => continue,
                 TelnetOut::Close => panic!("closed before negotiation marker"),
             }
         }
@@ -1096,7 +1188,116 @@ mod tests {
                 TelnetOut::Close => break,
                 TelnetOut::Data(_) => continue,
                 TelnetOut::RemoteEcho(_) => continue,
+                TelnetOut::AutoLogin(_) => continue,
             }
         }
+    }
+
+    /// 自动登录闭环：提示匹配 → 凭据写线路 → 命令提示符 → complete 事件。
+    #[test]
+    fn loopback_auto_login_answers_prompts_and_completes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            s.write_all(b"login: ").unwrap();
+            // 行尾是 CRLF（未协商 BINARY 时也不会变成 CR NUL）。
+            assert_eq!(read_exact_timeout(&mut s, 7), b"admin\r\n");
+            s.write_all(b"Password: ").unwrap();
+            assert_eq!(read_exact_timeout(&mut s, 8), b"secret\r\n");
+            s.write_all(b"\r\nrouter# ").unwrap();
+            s
+        });
+
+        let (tx, rx) = mpsc::channel::<TelnetOut>();
+        let sink: TelnetSink = Arc::new(move |_id, out| {
+            let _ = tx.send(out);
+        });
+        let (_id, handle) = super::open(
+            uuid::Uuid::new_v4().to_string(),
+            "127.0.0.1",
+            port,
+            80,
+            24,
+            "crlf",
+            Some("admin".into()),
+            Some("secret".into()),
+            sink,
+        )
+        .unwrap();
+
+        let mut status = None;
+        let mut output = String::new();
+        loop {
+            match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                TelnetOut::Data(b) => output.push_str(&String::from_utf8_lossy(&b)),
+                TelnetOut::AutoLogin("complete") => {
+                    status = Some("complete");
+                    break;
+                }
+                TelnetOut::AutoLogin(other) => panic!("unexpected auto-login status: {other}"),
+                TelnetOut::RemoteEcho(_) => continue,
+                TelnetOut::Close => panic!("closed before auto-login completed"),
+            }
+        }
+        assert_eq!(status, Some("complete"));
+        assert!(output.contains("login:"));
+        assert!(output.contains("Password:"));
+        assert!(output.contains("router#"));
+        drop(handle);
+        drop(server.join().unwrap());
+    }
+
+    /// 用户抢先输入 → 自动登录取消事件，检测器不再发凭据。
+    #[test]
+    fn loopback_auto_login_cancelled_by_user_input() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        // 服务端不在取消前发任何提示：用户输入发生在自动登录武装期。
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            // 用户键入的字节应原样到达；之后服务端才印出 login:。
+            assert_eq!(read_exact_timeout(&mut s, 1), b"x");
+            s.write_all(b"\r\nlogin: ").unwrap();
+            s
+        });
+
+        let (tx, rx) = mpsc::channel::<TelnetOut>();
+        let sink: TelnetSink = Arc::new(move |_id, out| {
+            let _ = tx.send(out);
+        });
+        let (_id, handle) = super::open(
+            uuid::Uuid::new_v4().to_string(),
+            "127.0.0.1",
+            port,
+            80,
+            24,
+            "crlf",
+            Some("admin".into()),
+            Some("secret".into()),
+            sink,
+        )
+        .unwrap();
+
+        handle.write(b"x").unwrap();
+        let mut cancelled = false;
+        loop {
+            match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+                TelnetOut::AutoLogin("cancelled") => {
+                    cancelled = true;
+                    break;
+                }
+                TelnetOut::AutoLogin(other) => panic!("unexpected auto-login status: {other}"),
+                TelnetOut::Data(_) | TelnetOut::RemoteEcho(_) => continue,
+                TelnetOut::Close => break,
+            }
+        }
+        assert!(cancelled);
+        drop(handle);
+        drop(server.join().unwrap());
     }
 }

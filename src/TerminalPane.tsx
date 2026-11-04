@@ -1340,6 +1340,25 @@ export function TerminalPane({
             onStatus(`${tab.title} Telnet 已断开`);
           }),
         );
+        unsubs.push(
+          await api.onTelnetAutoLogin(sid, (autoStatus) => {
+            if (!aliveRef.current || attempt !== attemptRef.current) return;
+            if (autoStatus === "complete") {
+              onStatus(`${tab.title} Telnet 自动登录完成`);
+            } else if (autoStatus === "cancelled") {
+              onStatus(`${tab.title} Telnet 自动登录已取消（检测到手动输入）`);
+            } else {
+              onStatus(`${tab.title} Telnet 自动登录未完成（等待人工输入）`);
+            }
+          }),
+        );
+        const credentials =
+          conn.session.username !== undefined || conn.session.password !== undefined
+            ? {
+                username: conn.session.username ?? "",
+                password: conn.session.password ?? "",
+              }
+            : null;
         const actual = await api.telnetOpen(
           conn.session.host,
           conn.session.port,
@@ -1347,6 +1366,7 @@ export function TerminalPane({
           rows,
           conn.session.inputNewline,
           sid,
+          credentials,
         );
         if (!aliveRef.current || attempt !== attemptRef.current) {
           void api.telnetClose(actual);

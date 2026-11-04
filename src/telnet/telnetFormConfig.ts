@@ -3,8 +3,8 @@
  *
  * Netcatty 没有独立的 Telnet 弹窗：Telnet 是 host 的协议之一，走
  * QuickConnectWizard（模态）的协议卡片 → 用户名 → 认证三步。termX 保留
- * 独立「Telnet」入口，单步弹窗的壳与串口弹窗一致；字段只保留后端
- * `telnet_open` 支持的 host / port / 换行风格（凭据走终端内交互登录）。
+ * 独立「Telnet」入口，单步弹窗的壳与串口弹窗一致；字段对齐 host 表单的
+ * 用户名 / 密码（可留空，留空则在终端内交互登录）。
  */
 
 import type { TelnetSessionConfig } from "../workspaceModel";
@@ -15,6 +15,8 @@ export interface TelnetFormValues {
   host: string;
   port: string;
   inputNewline: TelnetNewline;
+  username: string;
+  password: string;
 }
 
 export const TELNET_TEXT = {
@@ -24,6 +26,12 @@ export const TELNET_TEXT = {
   hostPlaceholder: "主机名或 IP 地址",
   port: "端口",
   portPlaceholder: "23",
+  username: "用户名",
+  usernamePlaceholder: "留空则不启用自动登录",
+  password: "密码",
+  passwordPlaceholder: "可为空（空密码设备）",
+  credentialsHint:
+    "自动应答 login: / Password: 提示；用户名与密码都留空则在终端内手动登录。",
   advanced: "高级",
   newline: "换行风格",
   newlineDesc: "发送回车时使用的行结束符（Telnet NVT 默认 CRLF）。",
@@ -47,7 +55,13 @@ export function resolveTelnetForm(
   host = "",
   port: number = TELNET_DEFAULT_PORT,
 ): TelnetFormValues {
-  return { host, port: String(port), inputNewline: "crlf" };
+  return {
+    host,
+    port: String(port),
+    inputNewline: "crlf",
+    username: "",
+    password: "",
+  };
 }
 
 export function telnetFormErrors(values: TelnetFormValues): {
@@ -73,10 +87,18 @@ export function isTelnetConnectDisabled(values: TelnetFormValues): boolean {
   return Boolean(errors.host || errors.port);
 }
 
+/** 表单 → 会话配置：凭据任一非空才携带（空密码是有效的设备凭据）。 */
 export function toTelnetSession(values: TelnetFormValues): TelnetSessionConfig {
-  return {
+  const username = values.username.trim();
+  const password = values.password;
+  const session: TelnetSessionConfig = {
     host: values.host.trim(),
     port: Number(values.port.trim()),
     inputNewline: values.inputNewline,
   };
+  if (username !== "" || password !== "") {
+    session.username = username;
+    session.password = password;
+  }
+  return session;
 }

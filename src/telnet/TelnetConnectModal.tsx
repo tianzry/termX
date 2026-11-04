@@ -5,7 +5,8 @@
  * QuickConnectWizard（模态三步：协议卡片 → 用户名 → 认证）连接。termX 保留
  * 独立「Telnet」入口，因此复用串口弹窗的壳（同一套 Netcatty 对话框骨架：
  * 标题 + 描述、字段、可折叠高级、底部取消 / 连接），单步完成 host / port。
- * 凭据不在此收集：后端 `telnet_open` 不含凭据，登录在终端内交互完成。
+ * 用户名 / 密码对齐 Netcatty host 表单的凭据字段（可留空；留空则在终端内
+ * 交互登录），非空时后端检测提示符并自动应答。
  */
 
 import { useEffect, useState } from "react";
@@ -132,6 +133,39 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
               />
             </div>
             {touched && errors.port && <p className="serial-error">{errors.port}</p>}
+          </div>
+
+          <div className="serial-field">
+            <label htmlFor="telnet-username">{TELNET_TEXT.username}</label>
+            <div className="serial-combo">
+              <Icon name="user" size={14} />
+              <input
+                id="telnet-username"
+                type="text"
+                placeholder={TELNET_TEXT.usernamePlaceholder}
+                value={form.username}
+                onChange={(e) => patch({ username: e.target.value })}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+          </div>
+
+          <div className="serial-field">
+            <label htmlFor="telnet-password">{TELNET_TEXT.password}</label>
+            <div className="serial-combo">
+              <Icon name="lock" size={14} />
+              <input
+                id="telnet-password"
+                type="password"
+                placeholder={TELNET_TEXT.passwordPlaceholder}
+                value={form.password}
+                onChange={(e) => patch({ password: e.target.value })}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <p className="serial-hint">{TELNET_TEXT.credentialsHint}</p>
           </div>
 
           <div className="serial-advanced">

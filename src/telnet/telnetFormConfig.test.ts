@@ -12,11 +12,15 @@ describe("telnetFormConfig", () => {
       host: "",
       port: "23",
       inputNewline: "crlf",
+      username: "",
+      password: "",
     });
     expect(resolveTelnetForm("example.test", 2323)).toEqual({
       host: "example.test",
       port: "2323",
       inputNewline: "crlf",
+      username: "",
+      password: "",
     });
   });
 
@@ -52,5 +56,28 @@ describe("telnetFormConfig", () => {
   it("换行风格原样进入会话配置", () => {
     const values = { ...resolveTelnetForm("h"), inputNewline: "lf" as const };
     expect(toTelnetSession(values).inputNewline).toBe("lf");
+  });
+
+  it("凭据任一非空才进入会话配置（空密码也保留）", () => {
+    const none = resolveTelnetForm("h");
+    expect(toTelnetSession(none)).not.toHaveProperty("username");
+
+    const userOnly = { ...none, username: " admin " };
+    expect(toTelnetSession(userOnly)).toMatchObject({
+      username: "admin",
+      password: "",
+    });
+
+    const both = { ...none, username: "admin", password: "secret" };
+    expect(toTelnetSession(both)).toMatchObject({
+      username: "admin",
+      password: "secret",
+    });
+
+    const passwordOnly = { ...none, password: "secret" };
+    expect(toTelnetSession(passwordOnly)).toMatchObject({
+      username: "",
+      password: "secret",
+    });
   });
 });

@@ -1291,6 +1291,12 @@ export function onSerialAutoLogin(
 
 // ── Telnet ────────────────────────────────────────────────
 
+/** Telnet 自动登录凭据（可选）；两项都空则不启用。 */
+export interface TelnetCredentials {
+  username: string;
+  password: string;
+}
+
 export function telnetOpen(
   host: string,
   port: number,
@@ -1298,6 +1304,7 @@ export function telnetOpen(
   rows: number,
   inputNewline: string | null,
   sessionId?: string,
+  credentials?: TelnetCredentials | null,
 ): Promise<string> {
   return invoke<string>("telnet_open", {
     host,
@@ -1306,6 +1313,8 @@ export function telnetOpen(
     rows,
     inputNewline,
     sessionId,
+    username: credentials?.username ?? null,
+    password: credentials?.password ?? null,
   });
 }
 
@@ -1367,6 +1376,16 @@ export function onTelnetClose(
   cb: () => void,
 ): Promise<UnlistenFn> {
   return listen<null>(`telnet:close:${sessionId}`, () => cb());
+}
+
+/** Telnet 自动登录状态：complete | cancelled | incomplete（对齐串口同名事件）。 */
+export function onTelnetAutoLogin(
+  sessionId: string,
+  cb: (status: string) => void,
+): Promise<UnlistenFn> {
+  return listen<{ status: string }>(`telnet:auto_login:${sessionId}`, (ev) =>
+    cb(ev.payload.status),
+  );
 }
 
 // ── 端口转发 ─────────────────────────────────────────────
