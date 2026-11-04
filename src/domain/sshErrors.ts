@@ -123,6 +123,14 @@ const ERROR_MESSAGES: Record<
   local_io_failed: (p) => `本地文件操作失败：${str(p, "err")}`,
   local_type_stale: (p) =>
     `“${str(p, "path")}”的类型已变化，请刷新列表后重试。`,
+  local_extract_unsupported: (p) =>
+    `不支持的压缩格式：${str(p, "path") || "未知文件"}。支持 .tar / .tar.gz / .tgz / .tar.bz2 / .tar.xz / .tar.zst / .zip / .gz / .bz2 / .xz。`,
+  local_extract_failed: (p) =>
+    str(p, "exitCode")
+      ? `解压失败（退出码 ${str(p, "exitCode")}）：${str(p, "stderr") || "解压器未返回错误信息"}`
+      : `解压失败：${str(p, "err") || str(p, "stderr") || "未知错误"}`,
+  local_extract_binary_missing: (p) =>
+    `系统缺少解压工具 ${str(p, "binary") || ""}，请安装后重试。`,
   // ── SFTP ──
   sftp_session_not_found: () => "SFTP 会话不存在或已关闭。",
   sftp_extract_no_ssh: () =>

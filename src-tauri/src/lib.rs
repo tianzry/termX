@@ -399,6 +399,7 @@ pub fn run() {
             commands::localfs::local_read_file,
             commands::localfs::local_write_file,
             commands::localfs::local_open_path,
+            commands::localfs::local_extract_archive,
             // CLI install
             #[cfg(desktop)]
             commands::cli::cli_status,

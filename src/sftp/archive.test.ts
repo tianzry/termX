@@ -1,7 +1,8 @@
 /** #24 归档解压：前端菜单显隐判定（纯逻辑）。 */
 
 import { describe, expect, it } from "vitest";
-import { canExtractArchive, isExtractableArchive } from "./sftpModel";
+import type { PaneConnection } from "./sftpModel";
+import { canExtractArchive, canExtractLocalArchive, isExtractableArchive } from "./sftpModel";
 
 describe("isExtractableArchive", () => {
   it("识别 tar 系与 zip", () => {
@@ -61,5 +62,33 @@ describe("canExtractArchive（菜单项可见性）", () => {
       ),
     ).toBe(false);
     expect(canExtractArchive(remote(true), "readme.txt")).toBe(false);
+  });
+});
+
+describe("canExtractLocalArchive（本地菜单项可见性）", () => {
+  const local: PaneConnection = { kind: "local", label: "本地", path: "C:\\", os: "windows" };
+  const remote = (canExec: boolean) => ({
+    kind: "remote" as const,
+    sftpId: "sftp-1",
+    canExec,
+    label: "129",
+    meta: "tianzry@192.168.126.129",
+    path: "/home/tianzry",
+    os: "linux" as const,
+  });
+
+  it("本地归档文件显示解压", () => {
+    expect(canExtractLocalArchive(local, "a.tar.gz")).toBe(true);
+    expect(canExtractLocalArchive(local, "log.txt.gz")).toBe(true);
+    expect(canExtractLocalArchive(local, "a.zip")).toBe(true);
+  });
+
+  it("本地非归档文件不显示解压", () => {
+    expect(canExtractLocalArchive(local, "readme.txt")).toBe(false);
+    expect(canExtractLocalArchive(local, ".zip")).toBe(false);
+  });
+
+  it("远端行仍走远端解压入口", () => {
+    expect(canExtractLocalArchive(remote(true), "a.tar.gz")).toBe(false);
   });
 });

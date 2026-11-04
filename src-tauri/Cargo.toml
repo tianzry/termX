@@ -47,6 +47,10 @@ include_dir = { version = "0.7", optional = true }
 # SFTP
 russh-sftp = "2"
 
+# 本地单文件 .gz 解压走内置 zlib（对齐 Netcatty 的 zlib.createGunzip），
+# 不依赖系统 gzip。版本与 Cargo.lock 中的传递依赖保持一致。
+flate2 = "1.1.9"
+
 # Plugin packages are user-supplied zips (manifest.json + index.html + assets).
 # Default features on: accept any standard compression a packager might emit.
 zip = "2"

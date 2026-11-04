@@ -37,6 +37,7 @@ import {
   formatEntryMtime,
   formatEntrySize,
   canExtractArchive,
+  canExtractLocalArchive,
   isPathRoot,
   joinLocalPath,
   joinRemotePath,
@@ -688,6 +689,18 @@ export function SftpPaneView({
     }
   };
 
+  /** #31 本地归档解压：原地解压到归档所在目录，完成后刷新。 */
+  const runExtractLocal = async (row: Row) => {
+    if (connection.kind !== "local") return;
+    try {
+      setError("");
+      await api.localExtractArchive(join(path, row.name));
+      void load(path);
+    } catch (e) {
+      setError(userVisibleError(String(e)));
+    }
+  };
+
   // ── 右键菜单 ───────────────────────────────────────────
 
   const openRowMenu = (e: ReactMouseEvent, row: Row) => {
@@ -696,6 +709,8 @@ export function SftpPaneView({
     setMenu({ x: e.clientX, y: e.clientY, row });
   };
   const openBlankMenu = (e: ReactMouseEvent) => {
+    // 行右键会冒泡到列表容器，这里必须放行，否则行菜单会被空白菜单覆盖。
+    if ((e.target as HTMLElement).closest("[data-sftp-row]")) return;
     e.preventDefault();
     setSelected(null);
     setMenu({ x: e.clientX, y: e.clientY, row: null });
@@ -713,6 +728,9 @@ export function SftpPaneView({
           label: "外部打开",
           onClick: () => void openExternal(row),
         });
+      }
+      if (canExtractLocalArchive(connection, row.name) && !row.isDir) {
+        menuItems.push({ label: "解压到当前目录", onClick: () => void runExtractLocal(row) });
       }
       if (isRemote && !row.isDir) {
         menuItems.push({ label: "下载", onClick: () => void runDownload(row) });

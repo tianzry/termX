@@ -1266,6 +1266,15 @@ export function localOpenPath(path: string): Promise<void> {
 }
 
 /**
+ * 本地归档原地解压（#31，Netcatty `extractLocalArchiveFile` 等价）：
+ * 解压到归档所在目录；tar 系 / zip 走系统 tar（非 Windows 的 zip 优先
+ * unzip），单文件 gz 内置 zlib、bz2/xz 走外部解码器。
+ */
+export function localExtractArchive(path: string): Promise<void> {
+  return invoke("local_extract_archive", { path });
+}
+
+/**
  * 用外部编辑器打开远端文件：下载到临时目录后以系统默认程序打开
  * （Netcatty downloadToTempAndOpen 等价）。返回临时文件路径，
  * 调用方记录供后续「保存后回传」或提示。

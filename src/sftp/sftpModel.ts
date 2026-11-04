@@ -725,3 +725,8 @@ export function isExtractableArchive(name: string): boolean {
 export function canExtractArchive(connection: PaneConnection, name: string): boolean {
   return connection.kind === "remote" && connection.canExec && isExtractableArchive(name);
 }
+
+/** 本地解压菜单项是否可见：本地侧用系统解压器（tar/unzip/zlib），无 exec 限制。 */
+export function canExtractLocalArchive(connection: PaneConnection, name: string): boolean {
+  return connection.kind === "local" && isExtractableArchive(name);
+}

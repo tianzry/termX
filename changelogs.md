@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-11-05 — P2 #31（子项：本地压缩包快捷解压）
+
+### 对照（Netcatty）
+
+- `electron/bridges/sftpBridge/archiveExtract.cjs` + `localFsBridge.cjs`：本地解压与远端解压共用
+  格式判定，tar 系 / zip 交给系统 `tar`，单文件 `.gz` 用 zlib inflate，bz2 / xz 走外部解码器；
+  产物落在归档所在目录（不是另建子目录）。
+
+### 修改点
+
+1. `src-tauri/src/sftp/archive.rs`：新增 `LocalExtractPlan` / `LocalSpawnPlan` /
+   `build_local_extract_plan(path, platform)`，按扩展名给出「系统命令参数」或「单文件解压」方案。
+2. `src-tauri/src/commands/localfs.rs`：新增 `local_extract_archive(path)`（校验普通文件 →
+   构建方案 → 执行）；`run_local_spawn` 用 `tokio::process::Command` 参数数组、120s 超时、
+   stderr 截断 16KiB、`kill_on_drop`；bz2/xz 走 staging 文件 + 成功改名，`.gz` 走 flate2。
+   错误码 `local_extract_unsupported` / `local_extract_failed` / `local_extract_binary_missing`。
+3. 双注册：`lib.rs` 的 `generate_handler!` 与 `server.rs` 的无头 dispatcher 均加
+   `local_extract_archive`（R4）。
+4. 前端：`client.ts` 增 `localExtractArchive`；`sftpModel.ts` 增 `canExtractLocalArchive`
+   （本地连接 + 可识别归档）；`SftpPaneView` 行右键加「解压到当前目录」（本地归档时显示，
+   不受 `isRemote` 限制），完成后刷新列表；`sshErrors.ts` 补三条中文文案。
+5. `Cargo.toml` 增 `flate2 = "1.1.9"`（Cargo.lock 已有同版本传递依赖）。
+
+### 验证
+
+- `npm run test:run`：45 文件 / 473 用例全绿（含新增 `SftpPaneView.test.tsx` 2 例）。
+- `npm run build`（tsc --noEmit + vite）通过；`cargo check --all-targets` 通过。
+- 端到端实测（debug 版 + CDP，夹具 `C:\Users\tianzry\termx-local-extract-fixture`）：
+  SFTP 页左栏「浏览本地文件」→ 进入夹具目录 → `sample.tar.gz` 行右键 →
+  菜单出现「解压到当前目录」→ 点击后列表刷新出现 `hello-local.txt`，
+  落盘内容 `local-extract-31-ok`，原归档仍在。取证：`evidence/local-extract-31.json`
+  （`passed: true`，`leftRowsAfter: ["..","hello-local.txt","sample.tar.gz"]`）与截图
+  `local-extract-31-menu.png` / `local-extract-31-after.png`。
+
+### 踩坑
+
+- **行右键菜单被空白菜单覆盖**：`openBlankMenu` 绑在列表容器上，行 `onContextMenu`
+  冒泡后父容器再 `setMenu({row:null})`，导致行菜单永远显示为「刷新/新建文件夹/新建文件」。
+  修复是在 `openBlankMenu` 里 `closest("[data-sftp-row]")` 放行；已补组件级回归测试
+  （真实 `fireEvent.contextMenu(row)` 走冒泡路径）。
+- e2e 首跑报 `Command local_extract_archive not found`：debug 二进制早于新 command 编译，
+  需先 `cargo build --no-default-features` 再启动（前端由 1420 dev server 提供，改前端无需重编）。
+
+---
+
 ## 2026-11-05 — P2 #38 会话快照迁移（核定 ⏸，无代码改动）
 
 ### 对照（Netcatty）

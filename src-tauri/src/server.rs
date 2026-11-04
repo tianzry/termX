@@ -1274,6 +1274,9 @@ async fn dispatch_async(
         "local_open_path" => {
             ok(crate::commands::localfs::local_open_path(arg::<String>(&args, "path")?).await)
         }
+        "local_extract_archive" => {
+            ok(crate::commands::localfs::local_extract_archive(arg::<String>(&args, "path")?).await)
+        }
         "sftp_download" => {
             let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
             ok(h.download(&arg::<String>(&args, "path")?).await)
