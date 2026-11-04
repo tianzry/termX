@@ -4,6 +4,136 @@
 
 ---
 
+## 2026-11-05 — 收尾比对审计（termX vs Netcatty，16 模块，只读）
+
+> 方式：Netcatty 运行实例 + 源码逐模块核对（清单 `evidence/audit-netcatty.md`）；termX debug 版
+> 经 CDP 逐页取证（`evidence/audit-termx-live.json`、`evidence/audit-termx-live2.json`，
+> 截图 `evidence/audit-termx-*.png`：Vault 10 个导航页、设置首页、SFTP、串口/Telnet 弹窗、终端工具栏）。
+> 本轮不改业务代码；应用锁用既有测试口令解锁，未改设置。表内「差异」均指「Netcatty 有、termX 无/弱」。
+
+### 1 连接管理
+- 一致：分组树（单层）、搜索、视图切换（列表/网格）、排序、多选、最近连接、快速切换器
+  （`evidence/audit-termx-live.json` 主机页）；新建/编辑主机、标签筛选（Vault 页可用）。
+- 有差异：**导入/导出置灰**（「导入（尚未实现）」「导出（尚未实现）」，`src/VaultView.tsx:4837,4984`）；
+  Netcatty 支持 PuTTY/MobaXterm/SecureCRT/FinalShell/CSV/JSON 导入 + CSV 导出
+  （`Netcatty/components/VaultView.tsx:77`、`components/vault/ImportVaultDialog.tsx:50-77`）。
+  **证书认证置灰**（`src/VaultView.tsx:152`）；**身份存储置灰**（`:2989`）；Netcatty 支持 certificate 凭据
+  （`Netcatty/domain/models/connection.ts:158-166`）。主机字段缺 hostChain/TOTP/keepalive/legacy 算法等（待逐字段复核）。
+- 未实现/置灰：分组仅单层，无嵌套与组级配置继承（`src/VaultView.tsx:5057`；Netcatty `domain/models/connection.ts:439-460`）。
+
+### 2 Vault 子页
+- 一致：主机/监控/钥匙串/代理/端口转发/脚本/笔记/已知主机/日志 九页齐全（`audit-termx-live.json` 逐页 text）。
+- 有差异：termX 多「同步」页（Netcatty 把同步放设置）；Netcatty 有插件页 `plugin-vault:*`
+  （`Netcatty/components/VaultView.tsx:173-183`），termX 无插件运行时不提供。
+- 未实现/置灰：无（导航入口均可达）。
+
+### 3 终端工具栏与「更多」菜单
+- 一致：命令历史、断开/重连、主机关键词高亮、打开 SFTP、打开端口转发、撰写栏、终端搜索、
+  运行脚本、关闭窗格（`audit-termx-live2.json` termButtons）。
+- 有差异：**开始录制会话日志禁用（「先选择保存路径」）**；**复制主机地址禁用**；**系统监控禁用**
+  （`src/TerminalPane.tsx:2109`，Netcatty 终端浮层有 `TerminalServerStats.tsx:51-286`）；
+  **主机浏览器禁用**（`src/TerminalPane.tsx:2235,2784`；Netcatty 工具栏有 browser 项）。
+- 未实现/置灰：广播模式（`src/TerminalPane.tsx:2151`）；终端侧栏「标签筛选（尚未实现）」「更多（尚未实现）」
+  （`src/HostSidebar.tsx:81,87`）；Ymodem 收发未找到（termX 仅 ZMODEM 拖拽，`src/TerminalPane.tsx:601`）。
+
+### 4 SFTP
+- 一致：双栏/多标签、传输队列与冲突、右键全集、远程+本地解压、跟随终端目录
+  （本轮 SFTP 页空态截图 `audit-termx-sftp.png`；明细见 changelogs #24/#31 与 `src/sftp/*`）。
+- 有差异：**文件名编码**仅 UTF-8，GBK 原始字节不可恢复（`russh-sftp` 协议层，见 #25 留档）。
+- 未实现/置灰：拖出到桌面（WebView2 无 `CF_HDROP` 桥）；归档「压缩/打包」Netcatty 同样没有，不算差异。
+
+### 5 串口
+- 一致：Vault「串口」按钮 → 弹窗；baud 115200/8/1/none/none、localEcho/lineMode/backspace、字符集、
+  自动登录（`src/serial/SerialConnectModal.tsx`）。
+- 有差异：termX 不保存为可复用主机配置、命名管道禁用（`src/serial/SerialConnectModal.tsx:2-11`）；
+  Netcatty 可存 serial 主机并支持自定义 COM/PIPE（`Netcatty/components/SerialConnectModal.tsx:45-73,162-169`）。
+
+### 6 Telnet
+- 一致：端口 23、用户名/密码可留空、非空自动应答、自动登录（`src/telnet/TelnetConnectModal.tsx`）。
+- 有差异：入口形态不同——termX 独立 Telnet 入口；Netcatty 走主机协议/详情区块（
+  `Netcatty/components/HostDetailsPanel.tsx:1254-1396`），termX 无「设为默认协议」与主机级 telnet 持久化。
+
+### 7 端口转发
+- 一致：local/remote/dynamic、bindAddress、autoStart、autoReconnect 有界重试（
+  `src/ForwardPanel.tsx`、`src/ForwardOverview.tsx`）。
+- 未实现/置灰：托盘快捷开关（未启用 tray-icon，页面底部写明原因，`src/ForwardOverview.tsx:640`）。
+
+### 8 代理
+- 一致：HTTP/SOCKS5 档、CRUD、主机级引用（`src/ProxyProfilesView.tsx`，运行页 screenshot 无）。
+- 未实现/置灰：ProxyCommand（后端无 command 类型）、代理凭据不接钥匙串身份、分组级默认代理
+  （Group 无 proxy 字段）、拖拽排序（`src/ProxyProfilesView.tsx:289-295`、`src/VaultView.tsx:4595`）。
+
+### 9 设置各 tab
+- 一致：应用/外观/终端/快捷键/SFTP/系统（`audit-termx-live2.json` settingsTabs 逐 tab text）。
+- 有差异：**「AI」「同步与云」tab 置灰（title=未移植）**，但 Vault「同步」页已可配置 GitHub/WebDAV
+  （`src/settings/SettingsTabs.tsx`、`src/sync/SyncView.tsx`）；Netcatty 有独立 AI/Sync tab
+  （`Netcatty/components/SettingsPage.tsx:467-528`）。
+- 未实现/置灰：插件 tab（无运行时）；终端 tab 9+ 项未移植（Option as Meta、Meta-b/f、Kitty 键盘协议、
+  clear 回滚、粘贴图片上传、提示符换行、标签标题跟踪、OSC 通知、SSH 打开链接等，均带「当前版本不支持」）；
+  系统 tab：自动更新安装（缺签名/endpoint/CI）、生物识别解锁（缺原生 helper）、全局热键、会话持久化、
+  录制目录自定义/批量清空（`src/settings/SettingsTabs.tsx`）。
+
+### 10 主机监控
+- 一致：CPU/内存/磁盘/网络采样 + 曲线/列表、间隔/范围、129 实测可用（Vault「监控」页可启动）。
+- 有差异：GPU、进程 Top10、swap、逐核 CPU 等 Netcatty 终端浮层指标 termX 没有
+  （`src/TerminalPane.tsx:2109` 监控按钮直接置灰；Netcatty `TerminalServerStats.tsx:51-286`）。
+- 未实现/置灰：「Netcatty 有而 termX 后端无数据的字段」在页面内按行置灰写明原因（页内文案）。
+
+### 11 会话日志
+- 一致：索引列表、主机/格式筛选、详情、三格式导出、ANSI 保留（`audit-termx-live.json` 日志页）。
+- 有差异：录制只能从工具栏入口开始且当前按钮禁用（「先选择保存路径」）。Netcatty 工具栏可直接开始
+  （`Netcatty/components/terminal/TerminalToolbar.tsx:745`）。
+- 未实现/置灰：回放不做（Netcatty 同样无 cast 回放，不算差异）。
+
+### 12 笔记
+- 一致：原文/预览、格式工具栏、大纲、分组/标签、导入导出、`ssh://` 主机链接、置顶（笔记页 text）。
+- 有差异/置灰：无富文本，Netcatty 也没有（不算差异）。
+
+### 13 脚本
+- 一致：片段/脚本、JS 标签、逐行/粘贴运行、onConnect/onOutput 触发、wait-prompt/text/regex、触发日志
+  （脚本页 text + changelogs #13）。
+- 未实现/置灰：`nct.*` JS 运行时、录制回放、`nct.dialog/progress/startLog`
+  （`src/snippets/SnippetsView.tsx:618-718`）。
+
+### 14 钥匙串 / 安全
+- 一致：系统密钥、已存密钥、SSH Agent 状态、Known Hosts、主机密钥校验、应用锁口令
+  （钥匙串页 text；`verifyHostKeys` 见 changelogs）。
+- 有差异：证书条目、TOTP、独立身份页未移植（`src/VaultView.tsx:2989`）。
+- 未实现/置灰：系统凭据（Touch ID/Windows Hello）解锁，缺原生 helper（系统 tab 置灰文案）。
+
+### 15 云同步
+- 一致：GitHub Gist/仓库 + WebDAV、推/拉/探测、启动时自动拉取、本地/保护性快照（同步页 text）。
+- 有差异：provider 仅 2 个（Netcatty 有 github/google/onedrive/webdav/s3，`Netcatty/components/CloudSyncSettings.tsx:141`）；
+  冲突处理为提示/覆盖，非字段级合并（`Netcatty/domain/convergentSync/conflicts.ts:40-56`）；无云端版本快照。
+- 未实现/置灰：其余 provider（`src/sync/SyncView.tsx:626` 页底列明）。
+
+### 16 CLI
+- 一致：profile/group/settings/sync/discovery/plugin/session/pty/sftp(ls,get,put,home,mkdir,rm,mv,stat,chmod)/
+  serial/telnet/forward/snippet（`src-tauri/src/bin/rssh/main.rs`、changelogs #26）。
+- 有差异：缺 `exec` / `job-start|poll|stop` / `cancel|resume`；会话级操作依赖运行中应用 RPC，
+  桌面端无等价桥（`Netcatty/electron/cli/netcatty-tool-cli.cjs:29-61` 全命令依赖 RPC）。
+- 未实现/置灰：`--json` 未提供（与会话级命令绑定）。
+
+### 差异严重度排序（下一轮从这里修）
+
+| 级别 | 差异 | 直接可修 |
+|---|---|---|
+| P1 | 顶栏 4 个快捷按钮文案/状态过期：「云端同步」「应用锁」「外观与窗口」已实现仍标「尚未实现」并禁用（`src/TopTabs.tsx:45-54`） | ✅ 改文案+启用/跳转 |
+| P1 | 主机导入/导出置灰，Netcatty 有全格式导入 + CSV 导出（`src/VaultView.tsx:4837,4984`） | ✅ 先做 JSON/CSV |
+| P1 | 设置「同步与云」tab 置灰，但 Vault 同步页可用（`src/settings/SettingsTabs.tsx`） | ✅ 去灰或指向 Vault 同步 |
+| P1 | 终端侧栏「标签筛选」「更多」禁用（`src/HostSidebar.tsx:81,87`）；工具栏「更多」title 陈旧 | ✅ 复用 Vault 已有能力 |
+| P1 | 录制按钮禁用「先选择保存路径」 | ✅ 默认 recordings 目录或接文件选择 |
+| P2 | 终端「系统监控」置灰（`src/TerminalPane.tsx:2109`） | 🟨 复用 Vault 采样或先隐藏 |
+| P2 | 证书认证 / TOTP / 身份页 / hostChain 等主机字段 | 🟨 需后端 schema |
+| P2 | 代理 command 类型、分组级默认代理、身份引用 | 🟨 需 schema/后端 |
+| P2 | 监控缺 GPU/进程/磁盘 IO/逐核 | 🟨 需采样后端 |
+| P2 | 云同步 provider 扩展与字段级冲突合并 | 🟨 大件 |
+| P2 | 串口保存为主机 + 命名管道；Telnet 主机级持久化 | 🟨 中件 |
+| P2 | CLI exec/job/cancel/resume（依赖 RPC 桥） | 🟨 需桌面桥 |
+| P3 | 插件运行时/沙箱、AI 侧栏、托盘、生物识别解锁、自动更新签名链路、#38 会话快照、GBK 文件名、拖出到桌面 | ❌ 已留档不做/受阻 |
+
+---
+
 ## 2026-11-05 — P2 #31（光标行高亮：对齐 Netcatty 语义 + 主题色派生）
 
 ### 对照（Netcatty）
