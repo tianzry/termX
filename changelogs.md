@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-11-05 — P2 监控扩项（逐核 CPU / 磁盘 I/O / Top 进程）
+
+- 后端 `commands/monitor.rs`：仍是一条只读 shell 脚本 + 一次 `exec_once`，新增三段真实来源采集：
+  `/proc/diskstats`（`DSTAT:<dev> <sectors_read> <sectors_written>`，跳过 loop/ram，Rust 侧按 512B/扇区
+  换算为字节）、`/proc/[0-9]*/stat`（`PSTAT:<pid>|<comm>|<utime+stime>`，用 `") "` 切分以兼容带空格的
+  comm）、`/proc/[0-9]*/status`（`PRSS:<pid>|<VmRSS kB>`）。
+  `MonitorSample` 新增 `disk_io`（按读写速率降序）与 `processes`（Top 5，按 CPU% 降序、同值按内存降序）；
+  进程 CPU% = 本进程 ticks 增量 / 全机 CPU total 增量（多核口径与 ps 一致）；逐核沿用既有 `cpu_per_core`。
+  首次采样（无上次计数）速率/进程 CPU% 为 `None`，前端 `--`；读不到 diskstats / 进程表时追加
+  `warnings`（「未读取到 /proc/diskstats（磁盘 I/O 不可用）」「未读取到 /proc 进程统计（Top 进程不可用）」）。
+  前端 `client.ts` 类型、`monitorModel` 纯函数（`topProcesses` / `limitCores` / `formatDiskIo` /
+  `diskIoTotal` / `isFirstSample`）+ 单测，Vault 监控页新增逐核条、磁盘 I/O 卡片、Top 进程表，
+  终端浮层新增逐核 mini 条（最多 4 核 + 超出计数）、磁盘 I/O 合计、Top 3 进程；延迟/GPU 仍置灰写原因。
+- 验证（129 + CDP，`evidence/p2-monitor-expand.json`、`p2-monitor-expand-ui.json` +
+  `p2-monitor-expand-ui-first/second.png`）：
+  - 逐核：`cpu_per_core = [0.7, 0.7]`，UI 浮层「CPU0 0.7% / CPU1 1.3%」（2 核；另一窗口首次 0.3%）。
+  - 磁盘：首次 `read/write_bytes_per_sec = null`（UI `--`）；4 秒后 sda `读 0 B/s / 写 7065.5 B/s`，
+    UI 另一次窗口显示 `↓ 0.0 B/s ↑ 45.3 KB/s`（均为两次采样差分实值）。
+  - 进程：`kworker/1:1-events 0.1% / 0 MB`、`kworker/0:2-events 0.1% / 0 MB`、
+    `gnome-shell 0% / 289.4 MB（8.6%）`、`update-manager 0% / 181.5 MB（5.4%）`、
+    `apport-gtk 0% / 81.4 MB（2.4%）`；UI Top 3 为 `rcu_preempt 0.2% / 0 MB`、
+    `kworker/0:2-events 0.2% / 0 MB`、`gnome-shell 0.0% / 289 MB`。
+- 说明：`/proc/diskstats` 同时包含整盘与分区（sda/sda2）及 fd0/sr0 这类无实际 I/O 的设备，数值均真实；
+  内核线程无 VmRSS 故内存显示 0 MB，不是伪造。macOS 采集仍未移植，保持 `supported=false` 写明原因。
+- 门禁：`npm run test:run` 49 文件 / 520 用例全绿；`npm run build` 通过；
+  `cargo test --lib commands::monitor` 4 通过；`cargo build --no-default-features` 重编后实机验证。
+
+---
+
 ## 2026-11-05 — 收尾审计 P2 两项（串口保存为主机 / 终端系统监控）
 
 ### 1 串口配置保存为主机（schema v44）

@@ -3,12 +3,17 @@ import type { MonitorSample } from "../backend/client";
 import {
   appendPoint,
   buildTrendGeometry,
+  diskIoTotal,
   formatCapacity,
   formatBytes,
+  formatDiskIo,
   formatPercent,
   formatRate,
   formatUptime,
+  isFirstSample,
+  limitCores,
   limitDisks,
+  topProcesses,
 } from "./monitorModel";
 
 function sample(overrides: Partial<MonitorSample>): MonitorSample {
@@ -41,6 +46,8 @@ function sample(overrides: Partial<MonitorSample>): MonitorSample {
     net_rx_bytes: 123,
     net_tx_bytes: 456,
     net_interfaces: [],
+    disk_io: [],
+    processes: [],
     ...overrides,
   };
 }
@@ -109,6 +116,84 @@ describe("limitDisks", () => {
     const preview = limitDisks([disk("/"), disk("/data")]);
     expect(preview.shown).toHaveLength(2);
     expect(preview.extra).toBe(0);
+  });
+});
+
+describe("topProcesses / limitCores", () => {
+  const process = (pid: number) => ({
+    pid,
+    name: `p${pid}`,
+    cpu_percent: 10,
+    mem_mb: 1,
+    mem_percent: 1,
+  });
+
+  it("Top 进程按给定上限截断并给出剩余计数", () => {
+    const preview = topProcesses(
+      [process(1), process(2), process(3), process(4)],
+      3,
+    );
+    expect(preview.shown.map((p) => p.pid)).toEqual([1, 2, 3]);
+    expect(preview.extra).toBe(1);
+  });
+
+  it("逐核只展示前 max 个并保留真实索引", () => {
+    const preview = limitCores([10, 20, 30, 40, 50, 60]);
+    expect(preview.shown).toHaveLength(4);
+    expect(preview.shown[3]).toEqual({ index: 3, value: 40 });
+    expect(preview.extra).toBe(2);
+  });
+});
+
+describe("磁盘 I/O", () => {
+  it("首次采样速率为 null 时显示 --，不补 0", () => {
+    expect(
+      formatDiskIo({
+        device: "sda",
+        read_bytes_per_sec: null,
+        write_bytes_per_sec: null,
+        read_bytes_total: 1,
+        write_bytes_total: 2,
+      }),
+    ).toBe("读 -- · 写 --");
+  });
+
+  it("汇总读写速率；全部缺失时返回 null", () => {
+    expect(
+      diskIoTotal([
+        {
+          device: "sda",
+          read_bytes_per_sec: 1024,
+          write_bytes_per_sec: 2048,
+          read_bytes_total: 1,
+          write_bytes_total: 2,
+        },
+        {
+          device: "nvme0n1",
+          read_bytes_per_sec: 1024,
+          write_bytes_per_sec: null,
+          read_bytes_total: 1,
+          write_bytes_total: 2,
+        },
+      ]),
+    ).toEqual({ read: 2048, write: 2048 });
+    expect(
+      diskIoTotal([
+        {
+          device: "sda",
+          read_bytes_per_sec: null,
+          write_bytes_per_sec: null,
+          read_bytes_total: 1,
+          write_bytes_total: 2,
+        },
+      ]),
+    ).toEqual({ read: null, write: null });
+  });
+
+  it("isFirstSample 只在 CPU / 网络 / 逐核都无差分时为真", () => {
+    expect(isFirstSample(sample({ cpu: null, net_rx_speed: null, cpu_per_core: [] }))).toBe(true);
+    expect(isFirstSample(sample({ cpu: 10 }))).toBe(false);
+    expect(isFirstSample(null)).toBe(false);
   });
 });
 

@@ -29,6 +29,8 @@ import {
   formatPercent,
   formatRate,
   formatUptime,
+  isFirstSample,
+  topProcesses,
   type MonitorPoint,
   type TrendField,
 } from "../domain/monitorModel";
@@ -127,9 +129,12 @@ function memoryPercent(sample: MonitorSample | null): number | null {
 const MISSING_FIELDS: Array<{ label: string; reason: string }> = [
   { label: "延迟", reason: "未实现 SSH 传输层 ping（Netcatty 有）" },
   { label: "GPU", reason: "未采集 NVIDIA 指标（Netcatty 有）" },
-  { label: "磁盘 I/O", reason: "未实现两次采样差分（Netcatty 有）" },
-  { label: "进程", reason: "未读取 top 进程（Netcatty 有）" },
 ];
+
+/** 从后端 warnings 里取某类采集失败的原始原因，前端不另编文案。 */
+function warningFor(sample: MonitorSample | null, keyword: string): string | null {
+  return sample?.warnings.find((warning) => warning.includes(keyword)) ?? null;
+}
 
 function StatusBadge({ status, stale }: { status: Status; stale: boolean }) {
   const key: Status = stale ? "live" : status;
@@ -539,6 +544,10 @@ export function MonitorView({
       !!state.lastAt &&
       now - state.lastAt > Math.max(5000, interval * 2500);
     const memPct = memoryPercent(sample);
+    const first = isFirstSample(sample);
+    const processes = topProcesses(sample?.processes ?? [], 5).shown;
+    const diskReason = warningFor(sample, "/proc/diskstats");
+    const processReason = warningFor(sample, "/proc 进程统计");
     return (
       <div key={profile.id} style={{ ...panelCard, opacity: state.status === "stopped" ? 0.65 : 1 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
@@ -644,6 +653,100 @@ export function MonitorView({
           </div>
         )}
 
+        <div style={{ ...panelCard, marginTop: 8 }}>
+          <div style={{ ...muted, display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span>逐核 CPU</span>
+            {sample && sample.cpu_cores > 0 && <span>{sample.cpu_cores} 核</span>}
+          </div>
+          {sample && sample.cpu_per_core.length > 0 ? (
+            <div className="monitor-core-list">
+              {sample.cpu_per_core.map((value, index) => (
+                <div className="monitor-core-row" key={index}>
+                  <span className="monitor-core-label">CPU{index}</span>
+                  <div className="monitor-core-track">
+                    <div
+                      className="monitor-core-fill"
+                      style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+                    />
+                  </div>
+                  <span className="monitor-core-value">{formatPercent(value)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ ...muted, marginTop: 4, opacity: 0.75 }}>
+              {!sample ? "等待采样" : first ? "等待第二次采样" : "无逐核数据"}
+            </div>
+          )}
+        </div>
+
+        <div style={{ ...panelCard, marginTop: 8 }}>
+          <div style={{ ...muted, display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span>磁盘 I/O</span>
+            {sample && sample.disk_io.length > 0 && <span>读/写速率</span>}
+          </div>
+          {sample && sample.disk_io.length > 0 ? (
+            <>
+              <div className="monitor-io-list">
+                {sample.disk_io.map((io) => (
+                  <div className="monitor-io-row" key={io.device}>
+                    <span className="monitor-io-name" title={io.device}>{io.device}</span>
+                    <span>↓ {formatRate(io.read_bytes_per_sec)}</span>
+                    <span>↑ {formatRate(io.write_bytes_per_sec)}</span>
+                  </div>
+                ))}
+              </div>
+              {first && (
+                <div style={{ ...muted, marginTop: 4, opacity: 0.75 }}>等待第二次采样</div>
+              )}
+            </>
+          ) : (
+            <div style={{ ...muted, marginTop: 4, opacity: 0.75 }}>
+              {diskReason ?? (sample ? "磁盘 I/O 不可用" : "等待采样")}
+            </div>
+          )}
+        </div>
+
+        <div style={{ ...panelCard, marginTop: 8 }}>
+          <div style={{ ...muted, display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span>Top 进程</span>
+            <span>CPU / 内存</span>
+          </div>
+          {processes.length > 0 ? (
+            <>
+              <div className="monitor-process-list">
+                <div className="monitor-process-row monitor-process-head">
+                  <span>进程</span>
+                  <span>PID</span>
+                  <span>CPU</span>
+                  <span>内存</span>
+                </div>
+                {processes.map((process) => (
+                  <div className="monitor-process-row" key={process.pid}>
+                    <span className="monitor-process-name" title={`${process.name} (${process.pid})`}>
+                      {process.name || `PID ${process.pid}`}
+                    </span>
+                    <span className="monitor-process-num">{process.pid}</span>
+                    <span className="monitor-process-num">{formatPercent(process.cpu_percent)}</span>
+                    <span className="monitor-process-num">
+                      {process.mem_mb.toFixed(1)} MB / {formatPercent(process.mem_percent)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {first && (
+                <div style={{ ...muted, marginTop: 4, opacity: 0.75 }}>
+                  首次采样无进程 CPU 增量，等待第二次采样
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ ...muted, marginTop: 4, opacity: 0.75 }}>
+              {processReason ?? (sample ? "Top 进程不可用" : "等待采样")}
+            </div>
+          )}
+        </div>
+
         {sample && sample.warnings.length > 0 && (
           <div style={{ ...muted, marginTop: 6, color: "#fbbf24" }}>{sample.warnings.join(" ")}</div>
         )}
@@ -664,7 +767,7 @@ export function MonitorView({
               {field.label}
             </span>
           ))}
-          <span>— 置灰项未采集：延迟（未实现 SSH 传输层 ping）· GPU（无 NVIDIA）· 磁盘 I/O（未做差分）· 进程（未读 top）</span>
+          <span>— 置灰项未采集：延迟（未实现 SSH 传输层 ping）· GPU（无 NVIDIA）</span>
         </div>
       </div>
     );
@@ -730,7 +833,7 @@ export function MonitorView({
         );
       })}
       <div style={{ ...muted, padding: "8px 14px" }}>
-        置灰项未采集：延迟（未实现 SSH 传输层 ping）· GPU（无 NVIDIA）· 磁盘 I/O（未做差分）· 进程（未读 top）
+        置灰项未采集：延迟（未实现 SSH 传输层 ping）· GPU（无 NVIDIA）
       </div>
     </div>
   );

@@ -154,7 +154,8 @@
   - 参考：`components/scripts/`、`netcatty-bridge-script.d.ts` L148-L168。
 - [x] ✅ **14. 主机监控面板**
   - CPU / 内存 / 磁盘 / 网络历史曲线，采样失败自动重试。
-  - 完成（2026-11-04）：后端 `monitor_sample(session_id, timeout_ms)` Linux 只读采样（CPU/内存/磁盘/网络，逐项容错、8s 超时、本地 Δt 差分），`lib.rs` + `server.rs` 双注册；前端 `src/monitor/MonitorView.tsx` + `src/domain/monitorModel.ts`，Vault「监控」页启用（多选、图表/列表、2s 默认重采样、5/15/30min 趋势、状态与退避重连、SVG 曲线）。129 真机实测 CPU 0.8% / 内存 1188.9–3355.1 MiB / 磁盘 93.7% / 网络 1.1 KB/s；门禁 417✓ / 881✓。置灰写明原因：延迟、GPU、磁盘 I/O、进程；多面板 CRUD、macOS 采集未移植。
+  - 完成（2026-11-04）：后端 `monitor_sample(session_id, timeout_ms)` Linux 只读采样（CPU/内存/磁盘/网络，逐项容错、8s 超时、本地 Δt 差分），`lib.rs` + `server.rs` 双注册；前端 `src/monitor/MonitorView.tsx` + `src/domain/monitorModel.ts`，Vault「监控」页启用（多选、图表/列表、2s 默认重采样、5/15/30min 趋势、状态与退避重连、SVG 曲线）。129 真机实测 CPU 0.8% / 内存 1188.9–3355.1 MiB / 磁盘 93.7% / 网络 1.1 KB/s；门禁 417✓ / 881✓。多面板 CRUD、macOS 采集未移植。
+  - 监控扩项（2026-11-05）：同一条采样脚本新增 `/proc/diskstats`（sectors×512B 差分）、`/proc/[0-9]*/stat`（utime+stime 增量 / 全机 total）与 `/proc/[0-9]*/status` VmRSS；`MonitorSample.disk_io`（按速率降序）+ `processes`（Top 5），逐核 CPU 接入监控页与终端浮层；首次采样速率/进程 CPU 为 null 显示 `--`，缺 diskstats / 进程表时 warnings + 置灰。129 实测逐核 0.7% / 1.3%，sda 写 7065.5 B/s（UI 窗口 ↑45.3 KB/s），Top 进程 `gnome-shell 289.4 MB / kworker 0.1%`。延迟、GPU 仍置灰写原因。证据 `evidence/p2-monitor-expand*.json`。
   - 审计修正（2026-11-02）：termX 后端并不存在 `getServerStats` 命令（全后端检索确认），需先补后端采集命令，再做前端采集循环与图表。
   - 参考：`components/systemManager/`、`netcatty-bridge-monitor.d.ts`。
 - [x] ✅ **15. 云端同步**

@@ -3,7 +3,12 @@
  * 所有"缺数据"一律返回 null / "--"，不补零、不臆造。
  */
 
-import type { MonitorDisk, MonitorSample } from "../backend/client";
+import type {
+  MonitorDisk,
+  MonitorDiskIo,
+  MonitorProcess,
+  MonitorSample,
+} from "../backend/client";
 
 export interface MonitorPoint {
   at: number;
@@ -115,6 +120,75 @@ export function limitDisks(disks: MonitorDisk[], max = 3): DiskPreview {
   if (max <= 0) return { shown: [], extra: disks.length };
   if (disks.length <= max) return { shown: disks, extra: 0 };
   return { shown: disks.slice(0, max), extra: disks.length - max };
+}
+
+export interface ProcessPreview {
+  shown: MonitorProcess[];
+  extra: number;
+}
+
+/** 按后端已排好的顺序截断 Top N，并保留剩余计数（不静默丢弃）。 */
+export function topProcesses(
+  processes: MonitorProcess[],
+  max = 5,
+): ProcessPreview {
+  if (max <= 0) return { shown: [], extra: processes.length };
+  if (processes.length <= max) return { shown: processes, extra: 0 };
+  return { shown: processes.slice(0, max), extra: processes.length - max };
+}
+
+export interface CorePreview {
+  shown: Array<{ index: number; value: number }>;
+  extra: number;
+}
+
+/** 浮层只展示前 max 个核心，其余给出计数。 */
+export function limitCores(cores: number[], max = 4): CorePreview {
+  const indexed = cores.map((value, index) => ({ index, value }));
+  if (max <= 0) return { shown: [], extra: indexed.length };
+  if (indexed.length <= max) return { shown: indexed, extra: 0 };
+  return { shown: indexed.slice(0, max), extra: indexed.length - max };
+}
+
+/** 磁盘 I/O 读写速率的单行展示（首次采样两项都是 `--`）。 */
+export function formatDiskIo(io: MonitorDiskIo): string {
+  return `读 ${formatRate(io.read_bytes_per_sec)} · 写 ${formatRate(io.write_bytes_per_sec)}`;
+}
+
+/**
+ * 汇总所有设备的读写速率。只要有一台设备有读数就返回合计；
+ * 全部为 null（首次采样）时返回 null，不把缺数据当 0。
+ */
+export function diskIoTotal(diskIo: MonitorDiskIo[]): {
+  read: number | null;
+  write: number | null;
+} {
+  let read: number | null = null;
+  let write: number | null = null;
+  for (const io of diskIo) {
+    if (io.read_bytes_per_sec != null && Number.isFinite(io.read_bytes_per_sec)) {
+      read = (read ?? 0) + io.read_bytes_per_sec;
+    }
+    if (
+      io.write_bytes_per_sec != null &&
+      Number.isFinite(io.write_bytes_per_sec)
+    ) {
+      write = (write ?? 0) + io.write_bytes_per_sec;
+    }
+  }
+  return { read, write };
+}
+
+/** 首次采样：CPU / 网络 / 逐核都还没有差分结果。 */
+export function isFirstSample(
+  sample: MonitorSample | null | undefined,
+): boolean {
+  if (!sample || !sample.supported) return false;
+  return (
+    sample.cpu == null &&
+    sample.net_rx_speed == null &&
+    sample.cpu_per_core.length === 0
+  );
 }
 
 export function formatPercent(value: number | null | undefined): string {

@@ -12,12 +12,18 @@ import * as api from "../backend/client";
 import type { MonitorSample } from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import {
+  diskIoTotal,
   formatCapacity,
   formatClock,
   formatPercent,
   formatRate,
+  isFirstSample,
+  limitCores,
   limitDisks,
+  topProcesses,
+  type CorePreview,
   type DiskPreview,
+  type ProcessPreview,
 } from "../domain/monitorModel";
 import { Icon } from "../ui/icons";
 
@@ -94,6 +100,18 @@ export function SessionMonitorPopover({ sessionId, onClose }: Props) {
   const disks: DiskPreview = sample
     ? limitDisks(sample.disks)
     : { shown: [], extra: 0 };
+  const cores: CorePreview = sample
+    ? limitCores(sample.cpu_per_core, 4)
+    : { shown: [], extra: 0 };
+  const diskIo = sample ? diskIoTotal(sample.disk_io) : { read: null, write: null };
+  const processes: ProcessPreview = sample
+    ? topProcesses(sample.processes, 3)
+    : { shown: [], extra: 0 };
+  const first = isFirstSample(sample);
+  const diskReason =
+    sample?.warnings.find((warning) => warning.includes("/proc/diskstats")) ?? null;
+  const processReason =
+    sample?.warnings.find((warning) => warning.includes("/proc 进程统计")) ?? null;
 
   return (
     <div className="term-monitor-popover" role="dialog" aria-label="系统监控">
@@ -185,6 +203,84 @@ export function SessionMonitorPopover({ sessionId, onClose }: Props) {
               <span>↓ {formatRate(sample.net_rx_speed)}</span>
               <span>↑ {formatRate(sample.net_tx_speed)}</span>
             </div>
+          </div>
+
+          <div className="term-monitor-section">
+            <div className="term-monitor-label">逐核 CPU</div>
+            {cores.shown.length > 0 ? (
+              <div className="term-monitor-core-list">
+                {cores.shown.map((core) => (
+                  <div className="term-monitor-core-row" key={core.index}>
+                    <span className="term-monitor-core-label">{core.index}</span>
+                    <div className="term-monitor-core-track">
+                      <div
+                        className="term-monitor-core-fill"
+                        style={{ width: `${Math.min(100, Math.max(0, core.value))}%` }}
+                      />
+                    </div>
+                    <span className="term-monitor-core-value">
+                      {formatPercent(core.value)}
+                    </span>
+                  </div>
+                ))}
+                {cores.extra > 0 && (
+                  <div className="term-monitor-muted">另有 {cores.extra} 核未显示</div>
+                )}
+              </div>
+            ) : (
+              <div className="term-monitor-muted term-monitor-disk-empty">
+                {first ? "等待第二次采样" : "无逐核数据"}
+              </div>
+            )}
+          </div>
+
+          <div className="term-monitor-section">
+            <div className="term-monitor-label">磁盘 I/O</div>
+            {sample.disk_io.length > 0 ? (
+              <>
+                <div className="term-monitor-net-row">
+                  <span>↓ {formatRate(diskIo.read)}</span>
+                  <span>↑ {formatRate(diskIo.write)}</span>
+                </div>
+                {first && (
+                  <div className="term-monitor-muted term-monitor-disk-empty">
+                    等待第二次采样
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="term-monitor-muted term-monitor-disk-empty">
+                {diskReason ?? "磁盘 I/O 不可用"}
+              </div>
+            )}
+          </div>
+
+          <div className="term-monitor-section">
+            <div className="term-monitor-label">Top 进程</div>
+            {processes.shown.length > 0 ? (
+              <div className="term-monitor-proc-list">
+                {processes.shown.map((process) => (
+                  <div className="term-monitor-proc-row" key={process.pid}>
+                    <span className="term-monitor-proc-name" title={`${process.name} (${process.pid})`}>
+                      {process.name || `PID ${process.pid}`}
+                    </span>
+                    <span className="term-monitor-proc-num">
+                      {formatPercent(process.cpu_percent)}
+                    </span>
+                    <span className="term-monitor-proc-num">
+                      {process.mem_mb.toFixed(0)} MB
+                    </span>
+                  </div>
+                ))}
+                {processes.extra > 0 && (
+                  <div className="term-monitor-muted">另有 {processes.extra} 个进程未显示</div>
+                )}
+              </div>
+            ) : (
+              <div className="term-monitor-muted term-monitor-disk-empty">
+                {processReason ?? "Top 进程不可用"}
+              </div>
+            )}
           </div>
         </>
       )}

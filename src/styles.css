@@ -4671,6 +4671,65 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+.term-monitor-core-list,
+.term-monitor-proc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+  font-size: 10px;
+}
+
+.term-monitor-core-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 40px;
+  gap: 6px;
+  align-items: center;
+}
+
+.term-monitor-core-label,
+.term-monitor-core-value {
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+
+.term-monitor-core-value {
+  text-align: right;
+}
+
+.term-monitor-core-track {
+  height: 4px;
+  border-radius: 999px;
+  background: hsl(var(--secondary));
+  overflow: hidden;
+}
+
+.term-monitor-core-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  transition: width 200ms ease;
+}
+
+.term-monitor-proc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px 56px;
+  gap: 6px;
+  align-items: center;
+}
+
+.term-monitor-proc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-monitor-proc-num {
+  text-align: right;
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+
 .term-monitor-warnings {
   display: flex;
   flex-direction: column;
@@ -4685,6 +4744,113 @@ button:disabled {
   color: hsl(var(--muted-foreground));
   opacity: 0.75;
   font-size: 10px;
+}
+
+/* 监控页新增卡片：逐核 CPU / 磁盘 I/O / Top 进程。 */
+.monitor-core-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.monitor-core-row {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 52px;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.monitor-core-label {
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-core-track {
+  height: 6px;
+  border-radius: 999px;
+  background: hsl(var(--secondary));
+  overflow: hidden;
+}
+
+.monitor-core-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  transition: width 200ms ease;
+}
+
+.monitor-core-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-io-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  max-height: 132px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+
+.monitor-io-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px 84px;
+  gap: 8px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-io-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-io-row > span:not(:first-child) {
+  text-align: right;
+}
+
+.monitor-process-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.monitor-process-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 56px 104px;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+}
+
+.monitor-process-row:last-child {
+  border-bottom: none;
+}
+
+.monitor-process-head {
+  padding-top: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+
+.monitor-process-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-process-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .term-record-dot {

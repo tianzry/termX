@@ -34,6 +34,13 @@ awk '/^cpu / {t=0; for(i=2;i<=NF;i++) t+=$i; printf "CPURAW:%d %d\n", t, $5}' /p
 awk '/^cpu[0-9]/ {t=0; for(i=2;i<=NF;i++) t+=$i; printf "PCORE:%d %d\n", t, $5}' /proc/stat 2>/dev/null
 awk '/^MemTotal:/{t=$2} /^MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2} /^SReclaimable:/{s=$2} /^SwapTotal:/{st=$2} /^SwapFree:/{sf=$2} END{printf "MEM:%d %d %d %d %d %d %d\n",t,f,b,c,s,st,sf}' /proc/meminfo 2>/dev/null
 awk 'NR>2 {gsub(/^[ \t]+/,""); split($0,a,":"); i=a[1]; if(i!="lo" && i !~ /^veth/ && i !~ /^docker/ && i !~ /^br-/){split(a[2],b); printf "NET:%s %s %s\n", i, b[1], b[9]}}' /proc/net/dev 2>/dev/null
+# diskstats 的 sectors_read / sectors_written 以 512B 为单位，换算留给 Rust（awk 的浮点在大数值上不精确）；
+# 跳过 loop / ram 这类虚拟设备，保留 sda / nvme / vda 等真实块设备。
+awk 'NF>=10 {if($3 ~ /^loop/ || $3 ~ /^ram/) next; printf "DSTAT:%s %s %s\n", $3, $6, $10}' /proc/diskstats 2>/dev/null
+# 进程 ticks：stat 的 comm 可能含空格，因此用 ") " 切出字段区，再按空格取 utime(第 12)/stime(第 13)；
+# FNR==1 从 FILENAME 取 pid，避免依赖 stat 首字段。
+awk 'FNR==1 {n=split(FILENAME,p,"/"); pid=p[n-1]} {split($0,a,") "); if(length(a[2])==0) next; nm=a[1]; sub(/^[^ ]+ \(/,"",nm); split(a[2],b," "); if(length(b[12])==0 || length(b[13])==0) next; printf "PSTAT:%s|%s|%d\n", pid, nm, b[12]+b[13]}' /proc/[0-9]*/stat 2>/dev/null
+awk 'FNR==1 {n=split(FILENAME,p,"/"); pid=p[n-1]} /^VmRSS:/ {printf "PRSS:%s|%d\n", pid, $2}' /proc/[0-9]*/status 2>/dev/null
 df -P -k / 2>/dev/null | awk 'NR==2{printf "ROOT:%s %s %s\n",$3,$2,$4}'
 df -P -k 2>/dev/null | awk 'NR>1 {if(NF<6) next; if($1 ~ /:/) next; if($1=="tmpfs" || $1=="devtmpfs" || $1=="proc" || $1=="sysfs" || $1=="devpts" || $1=="none") next; if($6 ~ /^\/proc/ || $6 ~ /^\/sys/ || $6 ~ /^\/dev/ || $6 ~ /^\/run/) next; gsub(/%/,"",$5); printf "DISK:%s|%s|%s|%s|%s\n",$6,$1,$3,$2,$5}' 2>/dev/null"#;
 
@@ -53,6 +60,27 @@ pub struct MonitorNetIf {
     pub tx_bytes: u64,
     pub rx_speed: Option<f64>,
     pub tx_speed: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct MonitorDiskIo {
+    pub device: String,
+    /// 首次采样 / 无上次计数时为 None，前端显示 `--`。
+    pub read_bytes_per_sec: Option<f64>,
+    pub write_bytes_per_sec: Option<f64>,
+    pub read_bytes_total: u64,
+    pub write_bytes_total: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct MonitorProcess {
+    pub pid: u32,
+    pub name: String,
+    /// 进程 ticks 增量 / 全机 CPU total 增量；首次采样或新进程为 None。
+    pub cpu_percent: Option<f64>,
+    /// 常驻内存（MiB），进程无 VmRSS 时为 0（内核线程确实没有常驻用户态内存）。
+    pub mem_mb: f64,
+    pub mem_percent: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -85,6 +113,10 @@ pub struct MonitorSample {
     pub net_rx_bytes: Option<u64>,
     pub net_tx_bytes: Option<u64>,
     pub net_interfaces: Vec<MonitorNetIf>,
+    /// 按读写速率之和降序；首次采样速率为 None。
+    pub disk_io: Vec<MonitorDiskIo>,
+    /// CPU / 内存 Top 5；首次采样 cpu_percent 为 None。
+    pub processes: Vec<MonitorProcess>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -94,6 +126,10 @@ struct PrevCounters {
     cpu_idle: u64,
     cores: Vec<(u64, u64)>,
     net: HashMap<String, (u64, u64)>,
+    /// (累计读字节, 累计写字节)，与 `RawSample::disk` 同口径。
+    disk: HashMap<String, (u64, u64)>,
+    /// pid -> utime + stime（clock ticks）。
+    proc_ticks: HashMap<u32, u64>,
 }
 
 #[derive(Debug, Default)]
@@ -103,6 +139,11 @@ struct RawSample {
     cpu_idle: u64,
     cores: Vec<(u64, u64)>,
     net: HashMap<String, (u64, u64)>,
+    /// 设备 -> (累计读字节, 累计写字节)；sectors 已在解析时乘 512。
+    disk: HashMap<String, (u64, u64)>,
+    proc_ticks: HashMap<u32, u64>,
+    proc_rss_kb: HashMap<u32, u64>,
+    proc_names: HashMap<u32, String>,
 }
 
 static PREV: Mutex<Option<HashMap<String, PrevCounters>>> = Mutex::new(None);
@@ -128,6 +169,45 @@ fn kb_to_gb(kb: f64) -> f64 {
 
 fn round1(n: f64) -> f64 {
     (n * 10.0).round() / 10.0
+}
+
+/// 用当前采样的原始计数构造进程列表；CPU% 由 `apply_delta` 补。
+fn build_processes(raw: &RawSample) -> Vec<MonitorProcess> {
+    let mem_total_kb = raw.sample.mem_total_mb.map(|mb| mb * 1024.0);
+    raw.proc_ticks
+        .keys()
+        .map(|pid| {
+            let mem_kb = raw.proc_rss_kb.get(pid).copied().unwrap_or(0) as f64;
+            let mem_percent = mem_total_kb
+                .filter(|total| *total > 0.0)
+                .map(|total| round1(mem_kb / total * 100.0));
+            MonitorProcess {
+                pid: *pid,
+                name: raw.proc_names.get(pid).cloned().unwrap_or_default(),
+                cpu_percent: None,
+                mem_mb: round1(kb_to_mb(mem_kb)),
+                mem_percent,
+            }
+        })
+        .collect()
+}
+
+/// CPU% 降序（首次全为 None 时按内存降序），再按内存降序，最后截断到 5 条。
+fn sort_processes(processes: &mut Vec<MonitorProcess>) {
+    processes.sort_by(|a, b| {
+        let a_cpu = a.cpu_percent.unwrap_or(0.0);
+        let b_cpu = b.cpu_percent.unwrap_or(0.0);
+        b_cpu
+            .partial_cmp(&a_cpu)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                b.mem_mb
+                    .partial_cmp(&a.mem_mb)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| a.pid.cmp(&b.pid))
+    });
+    processes.truncate(5);
 }
 
 /// 解析一次采集输出。不做差分的部分（如内存、磁盘）直接填好；
@@ -208,6 +288,45 @@ fn parse_raw(session_id: &str, stdout: &str) -> RawSample {
                         rx_speed: None,
                         tx_speed: None,
                     });
+                }
+            }
+            "DSTAT" => {
+                let parts: Vec<&str> = value.split_whitespace().collect();
+                if parts.len() >= 3 {
+                    // /proc/diskstats 的 sectors 以 512B 为单位，这里统一换算成字节，
+                    // 后续差分与前端展示都不必再关心单位。
+                    let read = num::<u64>(parts[1]).unwrap_or(0).saturating_mul(512);
+                    let write = num::<u64>(parts[2]).unwrap_or(0).saturating_mul(512);
+                    raw.disk.insert(parts[0].to_owned(), (read, write));
+                    raw.sample.disk_io.push(MonitorDiskIo {
+                        device: parts[0].to_owned(),
+                        read_bytes_per_sec: None,
+                        write_bytes_per_sec: None,
+                        read_bytes_total: read,
+                        write_bytes_total: write,
+                    });
+                }
+            }
+            "PSTAT" => {
+                // 用 splitn 限制成 3 段：进程名若含 `|` 也不会把 ticks 挤丢。
+                let parts: Vec<&str> = value.splitn(3, '|').collect();
+                if parts.len() >= 3 {
+                    if let (Some(pid), Some(ticks)) =
+                        (num::<u32>(parts[0]), num::<u64>(parts[2]))
+                    {
+                        raw.proc_ticks.insert(pid, ticks);
+                        raw.proc_names.insert(pid, parts[1].trim().to_owned());
+                    }
+                }
+            }
+            "PRSS" => {
+                let parts: Vec<&str> = value.splitn(2, '|').collect();
+                if parts.len() >= 2 {
+                    if let (Some(pid), Some(kb)) =
+                        (num::<u32>(parts[0]), num::<u64>(parts[1]))
+                    {
+                        raw.proc_rss_kb.insert(pid, kb);
+                    }
                 }
             }
             "ROOT" => {
@@ -297,6 +416,28 @@ fn parse_raw(session_id: &str, stdout: &str) -> RawSample {
         raw.sample.warnings.push("未发现可用的网络接口（仅跳过 lo / 容器网桥）。".into());
     }
 
+    if raw.disk.is_empty() {
+        raw.sample
+            .warnings
+            .push("未读取到 /proc/diskstats（磁盘 I/O 不可用）".into());
+    }
+    // 首次没有速率，按累计字节降序，保证顺序稳定。
+    raw.sample.disk_io.sort_by(|a, b| {
+        (b.read_bytes_total + b.write_bytes_total)
+            .cmp(&(a.read_bytes_total + a.write_bytes_total))
+            .then_with(|| a.device.cmp(&b.device))
+    });
+
+    if raw.proc_ticks.is_empty() {
+        raw.sample
+            .warnings
+            .push("未读取到 /proc 进程统计（Top 进程不可用）".into());
+    } else {
+        let mut processes = build_processes(&raw);
+        sort_processes(&mut processes);
+        raw.sample.processes = processes;
+    }
+
     raw
 }
 
@@ -348,7 +489,49 @@ fn apply_delta(raw: &RawSample, prev: Option<&PrevCounters>, elapsed_secs: Optio
             sample.net_rx_speed = Some(round1(rx_total));
             sample.net_tx_speed = Some(round1(tx_total));
         }
+
+        for io in sample.disk_io.iter_mut() {
+            if let Some((prev_read, prev_write)) = prev.disk.get(&io.device) {
+                io.read_bytes_per_sec = Some(round1(
+                    io.read_bytes_total.saturating_sub(*prev_read) as f64 / elapsed,
+                ));
+                io.write_bytes_per_sec = Some(round1(
+                    io.write_bytes_total.saturating_sub(*prev_write) as f64 / elapsed,
+                ));
+            }
+        }
+
+        // 进程 CPU% = 本进程 ticks 增量 / 全机 total 增量 * 100。
+        // 分母是全机（所有核）增量，因此单核跑满约等于 1/N，与 ps 的多核口径一致。
+        let mut processes = build_processes(raw);
+        if total_delta > 0 {
+            for process in processes.iter_mut() {
+                let Some(prev_ticks) = prev.proc_ticks.get(&process.pid) else {
+                    continue;
+                };
+                let current = raw.proc_ticks.get(&process.pid).copied().unwrap_or(0);
+                let delta = current.saturating_sub(*prev_ticks);
+                process.cpu_percent =
+                    Some(round1((delta as f64 / total_delta as f64 * 100.0).clamp(0.0, 100.0)));
+            }
+        }
+        sort_processes(&mut processes);
+        sample.processes = processes;
     }
+
+    if prev.is_none() {
+        // 首次采样：CPU% 全部为 None，保留按内存排序的 Top 5（不补 0）。
+        sample.processes = raw.sample.processes.clone();
+    }
+
+    sample.disk_io.sort_by(|a, b| {
+        let a_rate = a.read_bytes_per_sec.unwrap_or(0.0) + a.write_bytes_per_sec.unwrap_or(0.0);
+        let b_rate = b.read_bytes_per_sec.unwrap_or(0.0) + b.write_bytes_per_sec.unwrap_or(0.0);
+        b_rate
+            .partial_cmp(&a_rate)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.device.cmp(&b.device))
+    });
 
     sample
 }
@@ -375,6 +558,8 @@ fn store_prev(key: String, raw: &RawSample) {
             cpu_idle: raw.cpu_idle,
             cores: raw.cores.clone(),
             net: raw.net.clone(),
+            disk: raw.disk.clone(),
+            proc_ticks: raw.proc_ticks.clone(),
         },
     );
 }
@@ -429,7 +614,7 @@ pub async fn monitor_sample(
 mod tests {
     use super::*;
 
-    const SAMPLE: &str = "TS:1700000000\nOS:Linux\nHOST:box\nKERNEL:6.8.0\nUPTIME:3600\nLOAD:0.10 0.20 0.30\nCORES:4\nCPURAW:1000 800\nPCORE:250 200\nPCORE:250 200\nPCORE:250 200\nPCORE:250 200\nMEM:16000 4000 1000 2000 1000 2048 1024\nNET:eth0 123456 654321\nNET:ens33 1000 2000\nROOT:5000000 20000000 15000000\nDISK:/|overlay|5000000|20000000|25\nDISK:/home|ext4|1000000|4000000|25\n";
+    const SAMPLE: &str = "TS:1700000000\nOS:Linux\nHOST:box\nKERNEL:6.8.0\nUPTIME:3600\nLOAD:0.10 0.20 0.30\nCORES:4\nCPURAW:1000 800\nPCORE:250 200\nPCORE:250 200\nPCORE:250 200\nPCORE:250 200\nMEM:16000 4000 1000 2000 1000 2048 1024\nNET:eth0 123456 654321\nNET:ens33 1000 2000\nDSTAT:sda 1000 2000\nDSTAT:nvme0n1 500 800\nPSTAT:1|systemd|100\nPSTAT:2|kworker/0:1|50\nPSTAT:3|my app|30\nPSTAT:4|helper|20\nPRSS:1|1024\nPRSS:2|2048\nPRSS:3|512\nPRSS:4|3072\nROOT:5000000 20000000 15000000\nDISK:/|overlay|5000000|20000000|25\nDISK:/home|ext4|1000000|4000000|25\n";
 
     #[test]
     fn parses_linux_sample_without_delta() {
@@ -447,6 +632,26 @@ mod tests {
         assert_eq!(raw.sample.disk_percent, Some(25.0));
         assert_eq!(raw.sample.disks.len(), 2);
         assert_eq!(raw.sample.swap_used_mb, Some(1.0));
+
+        // 逐核 CPU 首次为空数组，不补 0。
+        assert!(raw.sample.cpu_per_core.is_empty());
+        // diskstats 的 sectors 以 512B 为单位。
+        assert_eq!(raw.sample.disk_io.len(), 2);
+        assert_eq!(raw.sample.disk_io[0].device, "sda");
+        assert_eq!(raw.sample.disk_io[0].read_bytes_total, 512_000);
+        assert_eq!(raw.sample.disk_io[0].write_bytes_total, 1_024_000);
+        assert!(raw.sample.disk_io[0].read_bytes_per_sec.is_none());
+        assert!(raw.sample.disk_io[0].write_bytes_per_sec.is_none());
+
+        // 首次按内存降序，CPU% 全部为 None。
+        assert_eq!(raw.sample.processes.len(), 4);
+        assert_eq!(raw.sample.processes[0].pid, 4);
+        assert_eq!(raw.sample.processes[0].mem_mb, 3.0);
+        assert!(raw
+            .sample
+            .processes
+            .iter()
+            .all(|process| process.cpu_percent.is_none()));
     }
 
     #[test]
@@ -460,15 +665,27 @@ mod tests {
                 ("eth0".to_owned(), (123_456, 652_321)),
                 ("ens33".to_owned(), (0, 0)),
             ]),
+            disk: HashMap::from([
+                ("sda".to_owned(), (512_000, 1_024_000)),
+                ("nvme0n1".to_owned(), (256_000, 409_600)),
+            ]),
+            proc_ticks: HashMap::from([(1, 100), (2, 50), (3, 30), (4, 20)]),
         };
         let raw = parse_raw("s1", SAMPLE);
         let sample = apply_delta(&raw, Some(&prev), None);
         // 总增量 0 时不算 CPU，避免除零/造数
         assert!(sample.cpu.is_none());
+        assert!(sample.disk_io[0].read_bytes_per_sec.is_none());
 
         let mut next = SAMPLE.replace("TS:1700000000", "TS:1700000002");
         next = next.replace("CPURAW:1000 800", "CPURAW:1500 1100");
         next = next.replace("NET:eth0 123456 654321", "NET:eth0 223456 754321");
+        next = next.replace("DSTAT:sda 1000 2000", "DSTAT:sda 1500 2500");
+        next = next.replace("PSTAT:1|systemd|100", "PSTAT:1|systemd|300");
+        next = next.replace("PSTAT:2|kworker/0:1|50", "PSTAT:2|kworker/0:1|100");
+        // 让 4 号进程消失：输出里不再包含它，不补 0。
+        next = next.replace("PSTAT:4|helper|20\n", "");
+        next = next.replace("PRSS:4|3072\n", "");
         let raw = parse_raw("s1", &next);
         let sample = apply_delta(&raw, Some(&prev), Some(2.0));
         // Δtotal=500 Δidle=300 → 40%
@@ -484,6 +701,45 @@ mod tests {
         // 汇总含 ens33 的小增量（rx +500、tx +1000）
         assert_eq!(sample.net_rx_speed, Some(50_500.0));
         assert_eq!(sample.net_tx_speed, Some(52_000.0));
+
+        // sda 增量 500 sectors * 512B = 256000B，2 秒 → 128000 B/s。
+        let sda = sample
+            .disk_io
+            .iter()
+            .find(|io| io.device == "sda")
+            .expect("sda");
+        assert_eq!(sda.read_bytes_per_sec, Some(128_000.0));
+        assert_eq!(sda.write_bytes_per_sec, Some(128_000.0));
+        // 速率降序：sda 在前，nvme0n1 无增量（0 B/s）在后。
+        assert_eq!(sample.disk_io[0].device, "sda");
+        assert_eq!(sample.disk_io[1].read_bytes_per_sec, Some(0.0));
+
+        // 进程 ticks 增量 / 全机 total 增量：pid1 200/500=40%，pid2 50/500=10%，pid3 0%。
+        assert_eq!(sample.processes.len(), 3);
+        assert_eq!(sample.processes[0].pid, 1);
+        assert_eq!(sample.processes[0].cpu_percent, Some(40.0));
+        assert_eq!(sample.processes[1].cpu_percent, Some(10.0));
+        assert_eq!(sample.processes[2].cpu_percent, Some(0.0));
+        // 消失的进程（pid 4）不再输出。
+        assert!(sample.processes.iter().all(|process| process.pid != 4));
+    }
+
+    #[test]
+    fn missing_diskstats_and_processes_emit_warnings() {
+        let stdout = "TS:1700000000\nOS:Linux\nHOST:box\nCPURAW:1000 800\nMEM:16000 4000 1000 2000 1000 2048 1024\n";
+        let raw = parse_raw("s1", stdout);
+        assert!(raw.sample.disk_io.is_empty());
+        assert!(raw.sample.processes.is_empty());
+        assert!(raw
+            .sample
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("/proc/diskstats")));
+        assert!(raw
+            .sample
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("/proc 进程统计")));
     }
 
     #[test]

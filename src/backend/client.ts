@@ -1138,6 +1138,32 @@ export interface MonitorNetIf {
   tx_speed: number | null;
 }
 
+/**
+ * 主机监控：一次采样的磁盘 I/O。
+ * `read_bytes_per_sec` / `write_bytes_per_sec` 首次采样为 null（后端要等两次
+ * /proc/diskstats 做差），前端显示 `--`，不造数。
+ */
+export interface MonitorDiskIo {
+  device: string;
+  read_bytes_per_sec: number | null;
+  write_bytes_per_sec: number | null;
+  read_bytes_total: number;
+  write_bytes_total: number;
+}
+
+/**
+ * 主机监控：一次采样的 Top 进程。
+ * `cpu_percent` 首次采样（或采样间隔内新出现的进程）为 null；`mem_mb` 是
+ * /proc/status 的 VmRSS（MiB），内核线程没有该字段时为 0。
+ */
+export interface MonitorProcess {
+  pid: number;
+  name: string;
+  cpu_percent: number | null;
+  mem_mb: number;
+  mem_percent: number | null;
+}
+
 /** 后端 `monitor_sample` 的返回（字段与 Rust `MonitorSample` 对齐）。 */
 export interface MonitorSample {
   sampled_at_ms: number;
@@ -1168,6 +1194,10 @@ export interface MonitorSample {
   net_rx_bytes: number | null;
   net_tx_bytes: number | null;
   net_interfaces: MonitorNetIf[];
+  /** 按读写速率之和降序；首次采样速率为 null。 */
+  disk_io: MonitorDiskIo[];
+  /** CPU / 内存 Top 5；首次采样 cpu_percent 为 null。 */
+  processes: MonitorProcess[];
 }
 
 /**
