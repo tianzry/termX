@@ -36,6 +36,7 @@ import {
   filterHiddenEntries,
   formatEntryMtime,
   formatEntrySize,
+  isExtractableArchive,
   isPathRoot,
   joinLocalPath,
   joinRemotePath,
@@ -675,6 +676,18 @@ export function SftpPaneView({
     }
   };
 
+  /** #24 归档解压：远端原地解压到归档所在目录，完成后刷新。 */
+  const runExtract = async (row: Row) => {
+    if (connection.kind !== "remote") return;
+    try {
+      setError("");
+      await api.sftpExtractArchive(connection.sftpId, join(path, row.name));
+      void load(path);
+    } catch (e) {
+      setError(userVisibleError(String(e)));
+    }
+  };
+
   // ── 右键菜单 ───────────────────────────────────────────
 
   const openRowMenu = (e: ReactMouseEvent, row: Row) => {
@@ -710,6 +723,9 @@ export function SftpPaneView({
             setDialog({ type: "copy", row });
           },
         });
+        if (isExtractableArchive(row.name)) {
+          menuItems.push({ label: "解压到当前目录", onClick: () => void runExtract(row) });
+        }
       }
       menuItems.push({
         label: "重命名",

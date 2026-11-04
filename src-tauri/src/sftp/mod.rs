@@ -7,4 +7,5 @@
 //! - `sftp:transfer_updated:<transfer_id>` —— 单项状态变化，payload = TransferItem；
 //! - `sftp:queue_changed` —— 结构性变化（入队 / 清理 / 重排），payload = 全量快照。
 
+pub mod archive;
 pub mod transfer_center;

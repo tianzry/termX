@@ -674,6 +674,51 @@ pub async fn sftp_rename(
     h.rename(&old_path, &new_path).await
 }
 
+/// 远端归档原地解压（#24）。命令构造见 [`crate::sftp::archive`]；
+/// 需要父 SSH 会话提供 exec 通道，独立 SFTP 连接（`parent_ssh_id=None`）拒绝。
+pub(crate) async fn extract_archive(
+    state: &AppState,
+    handle: &Arc<SftpHandle>,
+    path: &str,
+) -> AppResult<crate::models::PluginExecResult> {
+    let size = handle.stat(path).await.map(|s| s.size).unwrap_or(0);
+    let parent_id = handle
+        .parent_ssh_id()
+        .map(str::to_owned)
+        .ok_or_else(|| AppError::sftp("sftp_extract_no_ssh", json!({})))?;
+    let ssh = {
+        let sessions = locked(&state.sessions)?;
+        sessions.get(&parent_id).map(|s| s.ssh_handle().clone())
+    };
+    let Some(ssh) = ssh else {
+        return Err(AppError::sftp("sftp_extract_no_ssh", json!({})));
+    };
+    let command = crate::sftp::archive::build_extract_command(path)?;
+    let timeout = crate::sftp::archive::compute_timeout(size);
+    let result = crate::ssh::client::run_blocking_ssh(move || async move {
+        crate::ssh::client::exec_once(&ssh, &command, timeout).await
+    })
+    .await?;
+    if result.exit_code != Some(0) {
+        let stderr: String = result.stderr.chars().take(400).collect();
+        return Err(AppError::sftp(
+            "sftp_extract_failed",
+            json!({ "exitCode": result.exit_code, "stderr": stderr }),
+        ));
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn sftp_extract_archive(
+    state: State<'_, AppState>,
+    sftp_id: String,
+    path: String,
+) -> AppResult<crate::models::PluginExecResult> {
+    let handle = get_sftp(&state, &sftp_id)?;
+    extract_archive(&state, &handle, &path).await
+}
+
 /// 同主机复制单个文件（远端读 → 远端写），返回写入字节数。
 #[tauri::command]
 pub async fn sftp_copy(

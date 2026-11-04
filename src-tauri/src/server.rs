@@ -1377,6 +1377,15 @@ async fn dispatch_async(
             )
             .await)
         }
+        "sftp_extract_archive" => {
+            let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
+            ok(crate::commands::sftp::extract_archive(
+                state,
+                &h,
+                &arg::<String>(&args, "path")?,
+            )
+            .await)
+        }
         "sftp_copy" => {
             let h = sftp_handle(state, &arg::<String>(&args, "sftpId")?)?;
             ok(h.copy_file(

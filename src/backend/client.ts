@@ -952,6 +952,11 @@ export function sftpStat(sftpId: string, path: string): Promise<FileStat> {
   return invoke<FileStat>("sftp_stat", { sftpId, path });
 }
 
+/** 远端归档原地解压（#24）：tar 系 / zip / 单文件 gz·bz2·xz。 */
+export function sftpExtractArchive(sftpId: string, path: string): Promise<void> {
+  return invoke("sftp_extract_archive", { sftpId, path });
+}
+
 export function sftpClose(sftpId: string): Promise<void> {
   return invoke("sftp_close", { sftpId });
 }

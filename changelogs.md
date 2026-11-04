@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-11-05 — P1 #24 SFTP 归档解压
+
+### 对照（Netcatty）
+
+- `electron/bridges/sftpBridge/archiveExtract.cjs` + `useSftpViewFileOps`：文件右键「解压」，
+  在**远端原地**执行 `tar` / `unzip` 构造命令，超时按文件大小放大；单文件 gz/bz2/xz 解到
+  去后缀文件（先写临时文件再 `mv`）。
+- 依赖父 SSH 会话的 exec 通道；纯 SFTP（单通道）无法解压。
+
+### 修改点
+
+1. 新增 `src-tauri/src/sftp/archive.rs`：后缀识别（tar / tar.gz / tgz / tar.bz2 / tbz2 /
+   tar.xz / txz / tar.zst / tzst / zip / gz / bz2 / xz）、POSIX 父目录、单引号转义、
+   各格式命令构造、60s–600s 超时；5 个单测（含引号注入路径 `it's.tar.gz`）。
+2. `commands/sftp.rs` 新增 `extract_archive` 核心 + `sftp_extract_archive` 命令：
+   取 `parent_ssh_id` → 复用该 SSH 会话 exec；独立 SFTP 返回 `sftp_extract_no_ssh`；
+   非 0 退出码返回 `sftp_extract_failed`（带 stderr 截断）。
+3. `lib.rs` / `server.rs` 双注册（R4）。
+4. 前端：`client.ts` 增加 `sftpExtractArchive`；`sftpModel.ts` 增加 `isExtractableArchive`；
+   SFTP 文件右键菜单在归档上出现「解压到当前目录」，成功后刷新目录；`sshErrors.ts`
+   新增 4 个 code 的中文映射；新增 3 例纯逻辑单测。
+
+### 实测（129 真机）
+
+- `evidence/sftp-extract-live.json`：`ssh_connect(129)` → `sftp_connect_session` →
+   建 `/tmp/termx-extract-*` → 上传 `sample.tar.gz` → `sftp_extract_archive` 返回
+   `exit_code=0` → 目录出现 `hello-termx24.txt`（23B）→ 下载读回内容为
+   `termx-extract-ok-24`（首字节 BOM 为 PowerShell 夹具造成）。
+- 负例：对 `not-an-archive.txt` 调用返回 `sftp_extract_unsupported`。
+- 限制（如实记录）：独立 SFTP 连接（无父 SSH 会话）无 exec 通道，点击会给出
+  明确错误「独立 SFTP 连接没有 SSH 命令通道…」；UI 未按连接类型隐藏菜单项。
+
+### 门禁
+
+- vitest 461 ✓ / `npm run build` ✓ / `cargo check --features server` ✓ / `cargo test --lib`（archive 6 例）✓
+
+### 踩坑
+
+1. **JS 手写 ustar 头容易生成`tar: This does not look like a tar archive`**：实验夹具改用系统
+   `tar -czf` 生成，脚本通过 `ARCHIVE_PATH` 注入。
+2. **PowerShell `Set-Content` 会写 UTF-8 BOM**，读回内容比较时不要把 BOM 当功能缺陷。
+3. 单实例应用在 CDP 断开后偶发退出；自动化前必须重启并等待 7s。
+
+---
+
 ## 2026-11-05 — P1 #23 应用锁 + 凭据加密存储验收
 
 ### 语义对照（Netcatty）

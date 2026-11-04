@@ -686,3 +686,29 @@ export function buildDropTransferTasks(opts: {
     remote_path: joinRemotePath(targetDir, name),
   }));
 }
+
+// ── 归档解压（#24） ─────────────────────────────────────
+
+/** 与 Rust `sftp::archive::detect` 保持同一份后缀表（长后缀优先）。 */
+const ARCHIVE_SUFFIXES = [
+  ".tar.gz",
+  ".tgz",
+  ".tar.bz2",
+  ".tbz2",
+  ".tar.bzip2",
+  ".tar.xz",
+  ".txz",
+  ".tar.zst",
+  ".tzst",
+  ".tar",
+  ".zip",
+  ".gz",
+  ".bz2",
+  ".xz",
+] as const;
+
+/** 文件名是否可解压（仅按后缀判断，不影响是否显示菜单项以外的逻辑）。 */
+export function isExtractableArchive(name: string): boolean {
+  const base = name.toLowerCase();
+  return ARCHIVE_SUFFIXES.some((suffix) => base.endsWith(suffix) && base.length > suffix.length);
+}

@@ -125,6 +125,13 @@ const ERROR_MESSAGES: Record<
     `“${str(p, "path")}”的类型已变化，请刷新列表后重试。`,
   // ── SFTP ──
   sftp_session_not_found: () => "SFTP 会话不存在或已关闭。",
+  sftp_extract_no_ssh: () =>
+    "独立 SFTP 连接没有 SSH 命令通道，无法执行远程解压；请通过主机档案连接后再试。",
+  sftp_extract_unsupported: (p) =>
+    `不支持的压缩格式：${str(p, "path") || "未知文件"}。支持 .tar / .tar.gz / .tgz / .tar.bz2 / .tar.xz / .tar.zst / .zip / .gz / .bz2 / .xz。`,
+  sftp_extract_failed: (p) =>
+    `解压失败（退出码 ${str(p, "exitCode")}）：${str(p, "stderr") || "远端未返回错误信息"}`,
+  sftp_extract_invalid_path: () => "归档路径无效，无法确定解压目录。",
   sftp_transfer_not_found: (p) => `未找到传输任务：${str(p, "id")}`,
   sftp_transfer_state_invalid: () => "传输任务当前状态不允许该操作。",
   sftp_io_failed: (p) => `SFTP 操作失败（${str(p, "op")}）：${str(p, "err")}`,
