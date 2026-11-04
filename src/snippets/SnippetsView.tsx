@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../backend/client";
 import type { Snippet } from "../backend/client";
+import type { PaneHandle } from "../TerminalPane";
 import { userVisibleError } from "../domain/sshErrors";
 import {
   SNIPPETS_CHANGED_EVENT,
@@ -16,6 +17,8 @@ import {
   groupSnippets,
   parseShortkey,
   renameSnippetPackage,
+  resolveScriptTrigger,
+  scriptTriggerNote,
 } from "./snippetsModel";
 import {
   buildSnippetExportPayload,
@@ -39,6 +42,10 @@ type Draft = {
   noAutoRun: boolean;
   kind: SnippetKind;
   multiLineRunMode: RunMode;
+  language: string;
+  /** "" = 手动；onConnect / onOutput 仅保留数据，阶段 A 不自动执行。 */
+  trigger: "" | "onConnect" | "onOutput";
+  triggerPattern: string;
 };
 
 function toDraft(s: Snippet): Draft {
@@ -56,6 +63,9 @@ function toDraft(s: Snippet): Draft {
       s.multi_line_run_mode === "lineDelay" || s.multi_line_run_mode === "paste"
         ? s.multi_line_run_mode
         : "",
+    language: s.language || "shell",
+    trigger: s.trigger === "onConnect" || s.trigger === "onOutput" ? s.trigger : "",
+    triggerPattern: s.trigger_pattern || "",
   };
 }
 
@@ -71,10 +81,13 @@ function emptyDraft(): Draft {
     noAutoRun: false,
     kind: "",
     multiLineRunMode: "",
+    language: "shell",
+    trigger: "",
+    triggerPattern: "",
   };
 }
 
-export function SnippetsView() {
+export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | null }) {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -85,6 +98,8 @@ export function SnippetsView() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [pkgRename, setPkgRename] = useState<{ from: string; to: string } | null>(null);
+  /** 最近一次运行的脚本（横幅 + 停止 / 暂停 / 恢复）；切换活动终端时清空。 */
+  const [run, setRun] = useState<{ name: string; paneId: string } | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -99,6 +114,11 @@ export function SnippetsView() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 切换活动窗格 / 关闭终端后清空运行横幅，避免把控制键发给错误的会话。
+  useEffect(() => {
+    setRun(null);
+  }, [activeHandle]);
 
   /** 保存全量列表并通知终端侧刷新；成功后执行 onDone。 */
   const persist = useCallback(
@@ -147,6 +167,46 @@ export function SnippetsView() {
     setDraft(toDraft(s));
   };
 
+  /** 运行脚本：把内容发送到活动终端；未连接 / 无会话时只提示，不假装执行。 */
+  const runScript = (s: Snippet) => {
+    if (!activeHandle) {
+      setNotice("先在终端打开一个已连接的会话，再回来运行脚本。");
+      return;
+    }
+    if (!activeHandle.connected()) {
+      setNotice("活动终端当前未连接，无法运行脚本。");
+      return;
+    }
+    if (!activeHandle.runSnippet(s)) {
+      setNotice("脚本未能发送：终端未就绪。");
+      return;
+    }
+    setRun({ name: s.name, paneId: activeHandle.paneId });
+    setNotice(`已在活动终端运行「${s.name}」`);
+  };
+
+  /** 停止 = Ctrl-C（SIGINT）；暂停 / 恢复走 shell 的 SIGTSTP / fg。 */
+  const controlRun = (action: "stop" | "pause" | "resume") => {
+    if (!activeHandle) return;
+    const ok =
+      action === "stop"
+        ? activeHandle.interrupt()
+        : action === "pause"
+          ? activeHandle.suspend()
+          : activeHandle.resume();
+    if (!ok) {
+      setNotice("活动终端已断开，无法发送控制键。");
+      return;
+    }
+    setNotice(
+      action === "stop"
+        ? "已发送 Ctrl-C（SIGINT）"
+        : action === "pause"
+          ? "已发送 Ctrl-Z（SIGTSTP），仅挂起 shell 前台任务"
+          : "已发送 fg，恢复挂起的前台任务",
+    );
+  };
+
   const saveDraft = () => {
     if (!draft) return;
     const name = draft.name.trim();
@@ -181,6 +241,13 @@ export function SnippetsView() {
       no_auto_run: draft.noAutoRun,
       kind: draft.kind === "script" ? "script" : "",
       multi_line_run_mode: draft.multiLineRunMode,
+      // 语言 / 触发方式只对脚本有意义；trigger="" 即手动运行。
+      language: draft.kind === "script" ? draft.language || "shell" : "",
+      trigger: draft.kind === "script" ? draft.trigger : "",
+      trigger_pattern:
+        draft.kind === "script" && draft.trigger === "onOutput"
+          ? draft.triggerPattern.trim()
+          : "",
     };
     const list = isNew
       ? [...snippets, next]
@@ -315,6 +382,29 @@ export function SnippetsView() {
       {err && <div className="snippets-error">{err}</div>}
       {notice && <div className="snippets-notice">{notice}</div>}
 
+      <div className="snippets-runbar">
+        <span className="snippets-run-target">
+          活动终端：
+          {activeHandle
+            ? activeHandle.connected()
+              ? "已连接"
+              : "未连接"
+            : "未打开（先在终端打开会话）"}
+        </span>
+        {run && activeHandle && (
+          <>
+            <span className="snippets-run-name">正在运行「{run.name}」</span>
+            <button onClick={() => controlRun("stop")}>停止</button>
+            <button onClick={() => controlRun("pause")}>暂停</button>
+            <button onClick={() => controlRun("resume")}>恢复</button>
+          </>
+        )}
+        <span className="snippets-run-hint">
+          停止 = Ctrl-C（SIGINT）；暂停 = Ctrl-Z（SIGTSTP）；恢复 = fg。暂停 / 恢复只作用于
+          shell 前台任务，不改变逐行发送队列。
+        </span>
+      </div>
+
       <div className="snippets-body">
         {snippets.length === 0 ? (
           <div className="snippets-empty">
@@ -350,6 +440,14 @@ export function SnippetsView() {
                         {s.kind === "script" && (
                           <span className="snippets-flag-badge">脚本</span>
                         )}
+                        {s.trigger === "onConnect" || s.trigger === "onOutput" ? (
+                          <span
+                            className="snippets-flag-badge"
+                            title={scriptTriggerNote(s.trigger)}
+                          >
+                            自动触发未生效
+                          </span>
+                        ) : null}
                         {s.shortkey && (
                           <span className="snippets-shortkey-badge">{s.shortkey}</span>
                         )}
@@ -371,6 +469,21 @@ export function SnippetsView() {
                       )}
                     </div>
                     <div className="snippets-row-actions" onClick={(e) => e.stopPropagation()}>
+                      {s.kind === "script" && (
+                        <button
+                          onClick={() => runScript(s)}
+                          disabled={!activeHandle || !activeHandle.connected()}
+                          title={
+                            !activeHandle
+                              ? "先在终端打开一个会话"
+                              : !activeHandle.connected()
+                                ? "活动终端未连接"
+                                : "发送到活动终端执行"
+                          }
+                        >
+                          运行
+                        </button>
+                      )}
                       <button onClick={() => openEdit(s)}>编辑</button>
                       <button onClick={() => removeSnippet(s)}>删除</button>
                     </div>
@@ -442,6 +555,65 @@ export function SnippetsView() {
                   : "片段在终端右键菜单或按快捷键插入到当前会话。"}
               </em>
             </label>
+            {draft.kind === "script" && (
+              <>
+                <label>
+                  <span>脚本语言</span>
+                  <select
+                    value={draft.language || "shell"}
+                    onChange={(e) => setDraft({ ...draft, language: e.target.value })}
+                  >
+                    <option value="shell">shell（发送到活动会话执行）</option>
+                    <option value="javascript" disabled>
+                      javascript（nct.* JS 运行时未移植）
+                    </option>
+                    <option value="python" disabled>
+                      python（无 Python 运行时）
+                    </option>
+                  </select>
+                  <em>
+                    termX 脚本按 shell 命令发送到活动终端；Netcatty 的 nct.* JS API
+                    （屏幕等待 / 对话框 / 进度）未移植，javascript / python 仅为标签。
+                  </em>
+                </label>
+                <label>
+                  <span>触发方式</span>
+                  <select
+                    value={resolveScriptTrigger(draft.trigger)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setDraft({
+                        ...draft,
+                        trigger: v === "onConnect" || v === "onOutput" ? v : "",
+                      });
+                    }}
+                  >
+                    <option value="manual">手动运行（在脚本页点「运行」）</option>
+                    <option value="onConnect" disabled>
+                      连接后自动执行（未移植）
+                    </option>
+                    <option value="onOutput" disabled>
+                      输出匹配自动执行（未移植）
+                    </option>
+                  </select>
+                  <em>{scriptTriggerNote(draft.trigger)}</em>
+                </label>
+                {draft.trigger === "onOutput" && (
+                  <label>
+                    <span>触发模式（正则）</span>
+                    <input
+                      value={draft.triggerPattern}
+                      onChange={(e) =>
+                        setDraft({ ...draft, triggerPattern: e.target.value })
+                      }
+                      placeholder="sudo.*password"
+                      disabled
+                    />
+                    <em>仅保留数据：输出匹配引擎未移植，不会自动触发。</em>
+                  </label>
+                )}
+              </>
+            )}
             <label>
               <span>名称 *</span>
               <input

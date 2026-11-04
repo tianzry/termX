@@ -4437,3 +4437,26 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 
 - 主机编辑面板里 `document.querySelector('select')` 会命中登录方式等更早的下拉；脚本必须按「字符集 / 终端编码」section 作用域取 `select`。
 - 字符集偏好存 localStorage 而非 DB（既有终端编码设计），因此“保存主机”才会写；新建主机在没有 id 前的选择不落盘，统一在保存时写。
+
+---
+
+## 2026-11-04 — P1 #13 脚本系统 · 阶段 A（数据模型 + 列表/编辑 + 运行链路）
+
+### 修改点
+
+1. 后端 `Snippet` 增加 `language` / `trigger` / `trigger_pattern` 三个 `#[serde(default)]` 字段，继续沿用 `snippets.json` 文件存储（无 schema 变更、无需迁移）；同步 `src/backend/client.ts` 类型。
+2. 脚本编辑器：新增「脚本语言」（shell 可选；javascript / python 置灰）与「触发方式」（manual 可选；onConnect / onOutput 置灰）字段，行内写明原因（nct.* JS 运行时、连接生命周期钩子、输出匹配引擎均未移植）；onOutput 的 triggerPattern 仅保留数据、不可编辑。
+3. 运行链路：`PaneHandle` 增加 `connected/runSnippet/interrupt/suspend/resume`；`App → VaultView → SnippetsView` 传入活动 `PaneHandle`（Vault 态下终端常驻隐藏挂载）。脚本页新增活动终端运行条：运行 = 复用 `snippetWritePlan` 发送到活动窗格；停止 = Ctrl-C；暂停 = Ctrl-Z（SIGTSTP）；恢复 = fg。未连接 / 无活动窗格时运行按钮置灰并给出行内提示。
+4. 导入导出：`snippetsTransfer` 透传 language / trigger / triggerPattern（Netcatty 数据不丢）。
+
+### 验证
+
+- 门禁：`npm run test:run` 435 ✓、`npm run build` ✓、`cargo check --features server` ✓、`cargo test --lib` 885 ✓。
+- 129 真机（CDP）：脚本 3 行逐行发送后，独立 SSH exec 回读 `/tmp/termx-stagea-*` 得到 `TERMX-SCRIPT-RUN / 主机名 / 时间`；`sleep 60` 实测暂停后 `ps` 状态 `T`、恢复后 `S+`、停止后进程 `MISSING`；未连接时脚本页提示“活动终端：未打开”、运行按钮禁用、自动触发徽标显示。证据：`evidence/script-stagea-129.json`、`script-stagea-editor.png`、`script-stagea-run.png`。
+
+### 踩坑
+
+- xterm DOM 行尾带光标空格，检测提示符必须 `trimEnd()` 再判断 `$`/`#`，否则 `\s$` 永远匹配失败，导致“已连接”误判。
+- 页面重新加载后可能恢复上一个终端标签，连接检测应优先激活已有标签，而不是盲目点主机卡片。
+- `pgrep -f <标记>` 会匹配到 `ssh_exec` 自己的 `sh -c` 命令行（其中含标记串），验证暂停/停止需改用 `pgrep -x sleep` 等进程名精确匹配。
+

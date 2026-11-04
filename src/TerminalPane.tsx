@@ -118,6 +118,16 @@ export interface PaneHandle {
   /** 重新连接当前窗格（对齐 Netcatty 标签右键「重连」）。 */
   reconnect: () => void;
   focus: () => void;
+  /** 本窗格是否已连接（脚本页运行按钮据此置灰）。 */
+  connected: () => boolean;
+  /** 运行片段 / 脚本：复用终端右键插入同一发送链路；未连接返回 false。 */
+  runSnippet: (snippet: api.Snippet) => boolean;
+  /** 停止脚本：发送 Ctrl-C（SIGINT）并清空逐行待发送队列。 */
+  interrupt: () => boolean;
+  /** 暂停：发送 Ctrl-Z（SIGTSTP），仅对被 Ctrl-Z 挂起的前台任务有意义。 */
+  suspend: () => boolean;
+  /** 恢复：发送 fg + 回车。 */
+  resume: () => boolean;
 }
 
 interface Props {
@@ -326,6 +336,8 @@ export function TerminalPane({
 
   /** 逐行发送的待执行定时器（断开 / 卸载时必须清掉，避免写入错误会话）。 */
   const pendingWritesRef = useRef<number[]>([]);
+  /** 句柄注册时是稳定闭包；经 ref 调用最新的插入链路（连接状态随渲染变化）。 */
+  const runSnippetRef = useRef<(s: api.Snippet) => boolean>(() => false);
   function clearPendingWrites() {
     pendingWritesRef.current.forEach((id) => window.clearTimeout(id));
     pendingWritesRef.current = [];
@@ -392,13 +404,13 @@ export function TerminalPane({
    * 脚本（kind=script）走同一链路——把脚本文本发送到活动 shell，输出在本终端回显。
    * （Netcatty 的 nct.* JS 运行时未移植，见 todo/changelogs 留档。）
    */
-  const insertSnippet = (s: api.Snippet) => {
-    if (status !== "connected") return;
+  const insertSnippet = (s: api.Snippet): boolean => {
+    if (status !== "connected") return false;
     clearPendingWrites();
     const plan = snippetWritePlan(s.command, s.no_auto_run, s.multi_line_run_mode);
     if (plan.delayMs <= 0 || plan.chunks.length === 1) {
       writeToPane(plan.chunks[0] ?? "");
-      return;
+      return true;
     }
     plan.chunks.forEach((chunk, i) => {
       if (i === 0) {
@@ -412,7 +424,10 @@ export function TerminalPane({
         }, plan.delayMs * i),
       );
     });
+    return true;
   };
+  // 句柄在注册时是稳定闭包，需通过 ref 拿到最新的连接状态与发送链路。
+  runSnippetRef.current = insertSnippet;
 
   /** 输入缓冲：命令历史与脚本录制共用；开始录制时清空步数。 */
   const inputBufferRef = useRef<ScriptRecordingBuffer>(createScriptRecordingBuffer());
@@ -481,6 +496,10 @@ export function TerminalPane({
           no_auto_run: false,
           kind: "script",
           multi_line_run_mode: steps.length > 1 ? "lineDelay" : "paste",
+          // 录制生成的是发往 shell 的脚本；触发方式为手动。
+          language: "shell",
+          trigger: "",
+          trigger_pattern: "",
         };
         const next = [...snippets, snippet];
         await api.saveSnippets(next);
@@ -731,6 +750,24 @@ export function TerminalPane({
       },
       focus: () => {
         if (aliveRef.current) controllerRef.current?.term.focus();
+      },
+      connected: () => transportRef.current !== null,
+      runSnippet: (snippet) => runSnippetRef.current(snippet),
+      interrupt: () => {
+        if (!transportRef.current) return false;
+        clearPendingWrites();
+        transportRef.current.write("\u0003");
+        return true;
+      },
+      suspend: () => {
+        if (!transportRef.current) return false;
+        transportRef.current.write("\u001a");
+        return true;
+      },
+      resume: () => {
+        if (!transportRef.current) return false;
+        transportRef.current.write("fg\r");
+        return true;
       },
     };
     onRegister(paneId, handle);

@@ -373,6 +373,7 @@ export default function App() {
               onSerial={openSerial}
               onTelnet={openTelnet}
               onDataChanged={() => void loadData()}
+              activeHandle={activeHandle}
             />
           )}
 

@@ -417,6 +417,12 @@ export interface Snippet {
   kind: string;
   /** 多行发送方式："paste"（默认一次性）| "lineDelay"（逐行）。 */
   multi_line_run_mode: string;
+  /** 脚本语言标签：空 / "shell" = 发送到会话 shell；其余值仅为标签，无运行时。 */
+  language: string;
+  /** 触发方式："manual"（空）/ "onConnect" / "onOutput"；阶段 A 只执行 manual。 */
+  trigger: string;
+  /** onOutput 的正则模式；阶段 A 只存不执行。 */
+  trigger_pattern: string;
 }
 
 export function loadSnippets(): Promise<Snippet[]> {

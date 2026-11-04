@@ -22,6 +22,9 @@ function snip(over: Partial<Snippet> = {}): Snippet {
     no_auto_run: false,
     kind: "",
     multi_line_run_mode: "",
+    language: "",
+    trigger: "",
+    trigger_pattern: "",
     ...over,
   };
 }
@@ -238,6 +241,9 @@ describe("mergeSnippetImport", () => {
       no_auto_run: true,
       kind: "script",
       multi_line_run_mode: "lineDelay",
+      language: "",
+      trigger: "",
+      trigger_pattern: "",
     });
   });
 
@@ -252,6 +258,9 @@ describe("mergeSnippetImport", () => {
         description: "desc",
         kind: "script",
         multi_line_run_mode: "lineDelay",
+        language: "javascript",
+        trigger: "onOutput",
+        trigger_pattern: "sudo.*password",
       }),
     ];
     const p = parseSnippetImportPayload(JSON.stringify(buildSnippetExportPayload(original)));
@@ -270,6 +279,9 @@ describe("mergeSnippetImport", () => {
       description: "desc",
       kind: "script",
       multi_line_run_mode: "lineDelay",
+      language: "javascript",
+      trigger: "onOutput",
+      trigger_pattern: "sudo.*password",
     });
   });
 });

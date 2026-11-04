@@ -49,6 +49,7 @@ import {
 } from "./domain/proxyForm";
 import { KeychainView } from "./keychain/KeychainView";
 import { SnippetsView } from "./snippets/SnippetsView";
+import type { PaneHandle } from "./TerminalPane";
 import { NotesView } from "./notes/NotesView";
 import { SessionLogsView } from "./sessionLogs/SessionLogsView";
 import {
@@ -75,6 +76,8 @@ interface Props {
   onTelnet: () => void;
   /** 新建 / 删除后刷新 App 侧列表。 */
   onDataChanged: () => void;
+  /** 当前活动终端窗格（脚本页运行链路使用；Vault 态下终端仍常驻隐藏挂载）。 */
+  activeHandle?: PaneHandle | null;
 }
 
 type ViewMode = "grid" | "list" | "tree";
@@ -571,6 +574,7 @@ export function VaultView({
   onSerial,
   onTelnet,
   onDataChanged,
+  activeHandle,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(readWidth);
@@ -3958,7 +3962,7 @@ export function VaultView({
               }}
             />
           ) : activeNav === "snippets" ? (
-            <SnippetsView />
+            <SnippetsView activeHandle={activeHandle} />
           ) : activeNav === "notes" ? (
             <NotesView
               profiles={profiles}

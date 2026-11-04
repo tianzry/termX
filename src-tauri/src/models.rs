@@ -692,6 +692,16 @@ pub struct Snippet {
     /// 多行发送方式："paste"（默认一次性）| "lineDelay"（逐行）；空 = paste。
     #[serde(default)]
     pub multi_line_run_mode: String,
+    /// 脚本语言标签（对齐 Netcatty language）：空 / "shell" = 发送到会话 shell；
+    /// "javascript" / "python" 仅为标签，termX 无对应运行时（UI 置灰说明）。
+    #[serde(default)]
+    pub language: String,
+    /// 触发方式："manual"（空）/ "onConnect" / "onOutput"；阶段 A 只执行 manual。
+    #[serde(default)]
+    pub trigger: String,
+    /// onOutput 的正则模式；阶段 A 只存不执行（输出匹配引擎未移植）。
+    #[serde(default)]
+    pub trigger_pattern: String,
 }
 
 // --- Note ---

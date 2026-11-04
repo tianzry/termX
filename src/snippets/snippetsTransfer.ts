@@ -1,7 +1,8 @@
 // Snippets 导入导出（P0 #5 阶段 B）。
 // 格式对齐 Netcatty `domain/snippetTransfer.ts`：kind="netcatty.snippets"，
 // version 1/2/3 均可导入，导出写 3；条目用 label（termX 内部字段名 name）。
-// 仅迁移 termX 已支持的字段（targets / trigger / language 等留档不导入）。
+// 仅迁移 termX 已支持的字段：targets / targetGroups / order 等留档不导入；
+// language / trigger / triggerPattern 随数据保留（阶段 A 只执行 manual）。
 // 纯逻辑、无 IO；单测见 snippetsTransfer.test.ts。
 import type { Snippet } from "../backend/client";
 import { normalizeLineEndings } from "./snippetsModel";
@@ -21,6 +22,9 @@ export type SnippetExportItem = {
   multiLineRunMode?: "paste" | "lineDelay";
   kind?: "snippet" | "script";
   description?: string;
+  language?: string;
+  trigger?: "manual" | "onConnect" | "onOutput";
+  triggerPattern?: string;
 };
 
 export type SnippetExportPayload = {
@@ -74,6 +78,11 @@ const toExportItem = (s: Snippet): SnippetExportItem => ({
     : {}),
   ...(s.kind === "script" ? { kind: "script" as const } : {}),
   ...(s.description ? { description: s.description } : {}),
+  ...(s.language ? { language: s.language } : {}),
+  ...(s.trigger === "onConnect" || s.trigger === "onOutput"
+    ? { trigger: s.trigger }
+    : {}),
+  ...(s.trigger_pattern ? { triggerPattern: s.trigger_pattern } : {}),
 });
 
 export function buildSnippetExportPayload(
@@ -121,6 +130,11 @@ function sanitizeImportItem(value: unknown): SnippetExportItem | null {
   const shortkey = typeof value.shortkey === "string" ? value.shortkey.trim() : "";
   const description = typeof value.description === "string" ? value.description.trim() : "";
   const packagePath = typeof value.package === "string" ? value.package.trim() : "";
+  const language = typeof value.language === "string" ? value.language.trim() : "";
+  const trigger =
+    value.trigger === "onConnect" || value.trigger === "onOutput" ? value.trigger : "";
+  const triggerPattern =
+    typeof value.triggerPattern === "string" ? value.triggerPattern.trim() : "";
   return {
     label,
     command: value.command,
@@ -133,6 +147,9 @@ function sanitizeImportItem(value: unknown): SnippetExportItem | null {
       : {}),
     ...(value.kind === "script" ? { kind: "script" as const } : {}),
     ...(description ? { description } : {}),
+    ...(language ? { language } : {}),
+    ...(trigger ? { trigger } : {}),
+    ...(triggerPattern ? { triggerPattern } : {}),
   };
 }
 
@@ -224,6 +241,9 @@ function toImportedSnippet(item: SnippetExportItem, id: string): Snippet {
     no_auto_run: item.noAutoRun === true,
     kind: item.kind === "script" ? "script" : "",
     multi_line_run_mode: item.multiLineRunMode === "lineDelay" ? "lineDelay" : "",
+    language: item.language ?? "",
+    trigger: item.trigger ?? "",
+    trigger_pattern: item.triggerPattern ?? "",
   };
 }
 

@@ -11,6 +11,8 @@ import {
   parseShortkey,
   renameSnippetPackage,
   resolveMultiLineRunMode,
+  resolveScriptTrigger,
+  scriptTriggerNote,
   shortkeyMatches,
   SNIPPET_LINE_DELAY_MS,
   snippetWritePlan,
@@ -28,6 +30,9 @@ function snip(over: Partial<Snippet> = {}): Snippet {
     no_auto_run: false,
     kind: "",
     multi_line_run_mode: "",
+    language: "",
+    trigger: "",
+    trigger_pattern: "",
     ...over,
   };
 }
@@ -179,6 +184,22 @@ describe("isScriptSnippet", () => {
   it("kind=script 才算脚本", () => {
     expect(isScriptSnippet({ kind: "script" })).toBe(true);
     expect(isScriptSnippet({ kind: "" })).toBe(false);
+  });
+});
+
+describe("scriptTrigger", () => {
+  it("归一化：空 / 未知 = manual，其余保留", () => {
+    expect(resolveScriptTrigger(undefined)).toBe("manual");
+    expect(resolveScriptTrigger("")).toBe("manual");
+    expect(resolveScriptTrigger("bogus")).toBe("manual");
+    expect(resolveScriptTrigger("onConnect")).toBe("onConnect");
+    expect(resolveScriptTrigger("onOutput")).toBe("onOutput");
+  });
+
+  it("自动触发说明写明未移植原因", () => {
+    expect(scriptTriggerNote("onConnect")).toContain("连接生命周期钩子");
+    expect(scriptTriggerNote("onOutput")).toContain("输出匹配引擎");
+    expect(scriptTriggerNote("manual")).toContain("手动运行");
   });
 });
 
