@@ -3818,3 +3818,28 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `npm run test:run`：31 文件 / 382 用例 ✓（新增 3 例）
 - `npm run build` ✓
 - debug 重编：`npm run tauri build -- --debug` ✓；实例运行复核（工具栏过滤 / 新建文件 / 列序 / 状态栏）见本轮汇报。
+
+## 2026-11-04 — 全应用逐功能比对第五轮（设置各 tab）
+
+对照 `Netcatty/components/SettingsPage.tsx` 与 `settings/tabs/SettingsApplicationTab|SettingsAppearanceTab|SettingsShortcutsTab|SettingsSystemTab`，逐 tab 比对文案 key / 行结构 / 默认值。设置「终端」tab 前序已 1:1，本轮复核通过；file-associations（SFTP）/ ai / sync 保持占位，SFTP 设置留待第二步。
+
+| 项 | Netcatty | termX 本轮前 | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 会话日志「保存目录 / 打开文件夹 / 清空所有」 | 可自定义目录 + 打开 + 批量清空 | 仅开关/格式/时间戳 | 交互 | 补「保存目录」展示行（固定 recordings）与「清空所有」入口，按实际能力置灰并写原因 |
+| 启动与会话恢复（启动页 / 恢复上次会话 / 恢复终端 CWD） | 3 项可选 | 整节缺失 | 交互 | 补节 + 3 行，置灰并说明 termX 无会话持久化 |
+| SSH 深链 / JMS 深链 | 两个开关 | 整节缺失 | 交互 | 补两节，置灰说明未注册系统协议 |
+| 资源管理器右键菜单 | 开关 | 整节缺失 | 交互 | 补节，置灰说明安装器未注册 |
+| 全局热键与托盘（召唤 / 关闭到托盘 / 托盘图标） | 3 项 | 整节缺失 | 交互 | 补节 + 3 行，置灰说明 Tauri 未实现托盘与全局热键 |
+| 临时文件「打开临时目录」 | 有入口 | 仅一行 notPorted | 交互 | 补打开入口，置灰说明未暴露目录 |
+| 系统 tab 节顺序 | update → autoLaunch → proxy → credentials → crashLogs → tempDirectory → sessionRestore → sessionLogs → ssh/jms deep link → explorer → sshDebugLogs → globalHotkey | 缺 5 节 | 视觉 | 节顺序对齐 Netcatty，新增节插在 sessionLogs / sshDebugLogs 之间 |
+| 快捷键 scheme「禁用」 | disabled / mac / pc 三态，禁用时隐藏绑定列表 | 仅 mac / pc | 行为 | 本轮未改（需改 HotkeyScheme 类型与迁移），登记 todo |
+| 外观 notes 字体三行 / 自定义 CSS 帮助弹窗 | 有 | 无 | 视觉 | 登记 todo（随笔记模块落地） |
+| 软件更新 / 应用锁 | 完整更新器 / 应用锁 | 占位置灰 | — | 维持现状，理由已在行内展示 |
+
+### 门禁
+
+- `npm run test:run`：31 文件 / 382 用例 ✓
+- `npm run build` ✓
+- `cargo check --features server` ✓（4 个既有 warning）
+- `cargo test --lib`：874 ✓
+- debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测系统 tab 节顺序：软件更新 / 开机自启动 / 网络代理 / 凭据保护 / 崩溃日志 / 会话日志 / 启动与会话恢复 / SSH 深链 / JMS 深链 / 资源管理器右键菜单 / SSH 调试日志 / 全局热键与托盘 / 临时文件 / 应用锁 ✓

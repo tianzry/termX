@@ -1468,6 +1468,50 @@ export function SystemTab() {
           />
         </Row>
         <Row title={t("settings.sessionLogs.hint")} />
+        <Row title={t("settings.sessionLogs.directory")}>
+          <span className="nc-set-value">{t("settings.sessionLogs.directoryDesc")}</span>
+        </Row>
+        <Row title={t("settings.sessionLogs.clearAll")} desc={t("settings.sessionLogs.clearAllDesc")}>
+          <button className="nc-set-btn" disabled>
+            {t("settings.sessionLogs.clearAll")}
+          </button>
+        </Row>
+      </Section>
+
+      <Section title={t("settings.sessionRestore.title")}>
+        <Row title={t("settings.sessionRestore.startupLanding")}>
+          <span className="nc-set-value">{t("settings.sessionRestore.startupLandingDesc")}</span>
+        </Row>
+        <Row
+          title={t("settings.sessionRestore.restorePreviousSession")}
+          desc={t("settings.sessionRestore.restorePreviousSessionDesc")}
+        >
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
+        <Row
+          title={t("settings.sessionRestore.restoreTerminalCwd")}
+          desc={t("settings.sessionRestore.restoreTerminalCwdDesc")}
+        >
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.sshDeepLink.title")}>
+        <Row title={t("settings.sshDeepLink.enable")} desc={t("settings.sshDeepLink.enableDesc")}>
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.jmsDeepLink.title")}>
+        <Row title={t("settings.jmsDeepLink.enable")} desc={t("settings.jmsDeepLink.enableDesc")}>
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
+      </Section>
+
+      <Section title={t("settings.explorerContextMenu.title")}>
+        <Row title={t("settings.explorerContextMenu.enable")} desc={t("settings.explorerContextMenu.enableDesc")}>
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
       </Section>
 
       <Section title={t("settings.sshDebugLogs.title")}>
@@ -1476,8 +1520,25 @@ export function SystemTab() {
         </Row>
       </Section>
 
+      <Section title={t("settings.globalHotkey.title")}>
+        <Row title={t("settings.globalHotkey.enabled")} desc={t("settings.globalHotkey.enabledDesc")}>
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
+        <Row title={t("settings.globalHotkey.closeToTray")} desc={t("settings.globalHotkey.closeToTrayDesc")}>
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
+        <Row title={t("settings.globalHotkey.showTrayIcon")} desc={t("settings.globalHotkey.showTrayIconDesc")}>
+          <Toggle checked={false} disabled onChange={() => {}} />
+        </Row>
+      </Section>
+
       <Section title={t("settings.system.tempDir.title")}>
         <Row title={t("settings.system.tempDir.notPorted")} />
+        <Row title={t("settings.system.tempDir.openFolder")} desc={t("settings.system.tempDir.openFolderDesc")}>
+          <button className="nc-set-btn" disabled>
+            {t("settings.system.tempDir.openFolder")}
+          </button>
+        </Row>
       </Section>
 
       <Section title={t("settings.appLock.title")}>
