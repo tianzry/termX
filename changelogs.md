@@ -4124,6 +4124,7 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `cargo check --features server` ✓（沿用，Rust 未改）
 - `cargo test --lib`：874 ✓（沿用，Rust 未改）
 - debug 重编 ✓（`npm run build` → `cargo build`；若 `cargo build` 因 dist 未触发重编，touch `src-tauri/src/lib.rs` 后再编，否则二进制里仍是旧前端资源）
+- 提交 `2fc7432`，已推送（ssh.github.com:443），远端 main 核对为 `2fc7432` ✓
 
 ### 踩坑
 
