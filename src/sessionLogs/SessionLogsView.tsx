@@ -77,6 +77,8 @@ export function SessionLogsView() {
   const [deleting, setDeleting] = useState(false);
   /** 彩色（默认）/ 原文视图切换。 */
   const [rawView, setRawView] = useState(false);
+  /** 日志字号（对齐 Netcatty LogView 的字号定制，范围 9–22px）。 */
+  const [fontSize, setFontSize] = useState(13);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   /** 导出成功提示（错误走左侧 err 条）。 */
@@ -309,6 +311,23 @@ export function SessionLogsView() {
                   原文
                 </button>
               </div>
+              <div className="session-logs-zoom">
+                <button
+                  title="减小字号"
+                  disabled={fontSize <= 9}
+                  onClick={() => setFontSize((v) => Math.max(9, v - 1))}
+                >
+                  A−
+                </button>
+                <span>{fontSize}px</span>
+                <button
+                  title="增大字号"
+                  disabled={fontSize >= 22}
+                  onClick={() => setFontSize((v) => Math.min(22, v + 1))}
+                >
+                  A+
+                </button>
+              </div>
               <div className="session-logs-export">
                 <button
                   className="session-logs-action"
@@ -381,7 +400,7 @@ export function SessionLogsView() {
             </div>
 
             <div className="session-logs-content-wrap">
-              <pre className="session-logs-content">
+              <pre className="session-logs-content" style={{ fontSize }}>
                 {rawView
                   ? summary.text
                   : colored.map((span, index) => (

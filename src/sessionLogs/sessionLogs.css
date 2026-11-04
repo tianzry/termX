@@ -276,6 +276,37 @@
   color: inherit;
 }
 
+/* 字号调节（对齐 Netcatty LogView 主题/字号定制）。 */
+.session-logs-zoom {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: hsl(var(--nc-muted));
+}
+
+.session-logs-zoom button {
+  height: 24px;
+  min-width: 26px;
+  padding: 0 6px;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.session-logs-zoom button:hover:not(:disabled) {
+  background: hsl(var(--nc-hover));
+}
+
+.session-logs-zoom button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* 导出按钮 + 格式菜单（阶段 B）。 */
 .session-logs-export {
   position: relative;

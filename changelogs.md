@@ -3915,3 +3915,25 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 - `cargo check --features server` ✓（4 个既有 warning）
 - `cargo test --lib`：874 ✓
 - debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：进入笔记页 → 有编辑器与「大纲」按钮 → 注入 `# 标题A / ## 标题B` 后大纲出现两项（层级缩进）→ 点击首项后编辑器选区回到行首（line 0）✓
+
+## 2026-11-04 — 全应用逐功能比对第九轮（日志）
+
+对照 `Netcatty/components/ConnectionLogsManager.tsx`、`LogView.tsx`（连接日志表 + xterm 查看器）与本项目 `src/sessionLogs/SessionLogsView.tsx`、`sessionLogsModel.ts`、`ansi.ts` 比对。两侧数据源不同：Netcatty 读连接日志缓冲（日期/用户/主机/已保存表 + 未完成态 + 分页 + 收藏/取消收藏），termX 读 recordings 目录的 asciicast（列表 + 详情 + 彩色/原文 + 导出 cast/txt/html）。功能等价部分：浏览、筛选、查看、删除、导出、时间/时长/大小统计。
+
+| 项 | Netcatty | termX 本轮前 | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 查看器字号定制 | LogView 支持 theme/fontSize（按日志保存） | 固定 13px | 交互 | 新增 `A− / 15px / A+` 控件，范围 9–22px，实时作用于日志内容区 |
+| 收藏 / 取消收藏（saved 列） | 有 | 无（后端无收藏标记） | 行为 | 未实现，登记待人工 |
+| 进行中（ongoing）状态 | 有 | 录制结束才入索引 | 行为 | 未实现，登记待人工 |
+| 分页 / load more | 有 | 一次加载全部（数量小） | — | 数据源不同，无需对齐 |
+| 用户名列 / 本地终端标识 | 有 | 只有主机名 / 标题 | 视觉 | 登记待人工（asciicast 无用户名元数据） |
+| 按日志持久化主题与字号 | 有 | 字号仅会话内生效 | 交互 | 登记待人工（需后端 Note/SessionLog 元数据扩展） |
+| 彩色/原文切换、导出三种格式、删除确认、筛选、搜索 | 有（实现方式不同） | 有 | — | 复核通过 |
+
+### 门禁
+
+- `npm run test:run`：31 文件 / 391 用例 ✓
+- `npm run build` ✓
+- `cargo check --features server` ✓（4 个既有 warning）
+- `cargo test --lib`：874 ✓
+- debug 重编：`npm run tauri build -- --debug` ✓；CDP 实测：进入「日志」页 11 条记录 → 打开首条 → 点两次 `A+` 后内容区 `font-size` 13px → 15px，控件标签同步 15px ✓
