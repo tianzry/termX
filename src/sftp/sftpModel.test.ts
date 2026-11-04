@@ -6,6 +6,7 @@ import {
   buildPickerSections,
   connectBranch,
   dropTargetPath,
+  filterEntriesByName,
   filterHiddenEntries,
   flattenPickerItems,
   formatEntryMtime,
@@ -27,6 +28,7 @@ import {
   pickerItemToTarget,
   remoteParent,
   resolveBreadcrumbVisibleParts,
+  rowTypeLabel,
   SFTP_DRAG_MIME,
   sftpDragSideMime,
   sortSftpRows,
@@ -485,5 +487,32 @@ describe("跨栏拖放：载荷解析 / 落点目录 / 任务构建", () => {
     expect(
       buildDropTransferTasks({ payload: { side: "remote", fromPath: "/", names: ["a"] }, destKind: "local", targetDir: "C:\\" }),
     ).toBeNull();
+  });
+
+  it("名称过滤：大小写不敏感子串；空词返回原数组", () => {
+    const rows = [{ name: "README.md" }, { name: "src" }, { name: "a.txt" }];
+    expect(filterEntriesByName(rows, "read")).toEqual([{ name: "README.md" }]);
+    expect(filterEntriesByName(rows, "TXT")).toEqual([{ name: "a.txt" }]);
+    expect(filterEntriesByName(rows, "  ")).toBe(rows);
+  });
+
+  it("类型列文案：目录 folder / 扩展名小写 / 无扩展名 --", () => {
+    expect(rowTypeLabel({ name: "docs", isDir: true })).toBe("folder");
+    expect(rowTypeLabel({ name: "a.TXT", isDir: false })).toBe("txt");
+    expect(rowTypeLabel({ name: "Makefile", isDir: false })).toBe("--");
+    expect(rowTypeLabel({ name: ".bashrc", isDir: false })).toBe("--");
+  });
+
+  it("按类型排序：目录恒置顶，文件按扩展名", () => {
+    const rows = [
+      { name: "b.txt", isDir: false, size: 10, mtime: 1 },
+      { name: "a.md", isDir: false, size: 5, mtime: 2 },
+      { name: "dir", isDir: true },
+    ];
+    expect(sortSftpRows(rows, "type", "asc").map((r) => r.name)).toEqual([
+      "dir",
+      "a.md",
+      "b.txt",
+    ]);
   });
 });

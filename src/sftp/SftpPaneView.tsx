@@ -31,6 +31,7 @@ import {
   breadcrumbSegments,
   buildDropTransferTasks,
   dropTargetPath,
+  filterEntriesByName,
   filterHiddenEntries,
   formatEntryMtime,
   formatEntrySize,
@@ -42,6 +43,7 @@ import {
   pathRoot,
   remoteParent,
   resolveBreadcrumbVisibleParts,
+  rowTypeLabel,
   SFTP_DRAG_MIME,
   sftpDragSideMime,
   sortSftpRows,
@@ -75,6 +77,7 @@ type DialogState =
   | { type: "rename"; row: Row }
   | { type: "delete"; row: Row }
   | { type: "mkdir" }
+  | { type: "newFile" }
   | { type: "chmod"; row: Row; mode: number }
   | null;
 
@@ -114,6 +117,9 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   const externalTemps = useRef(new Map<string, string>());
   /** 显示隐藏文件（本地看 hidden 属性，远端按点前缀约定）。 */
   const [showHidden, setShowHidden] = useState(false);
+  /** 名称过滤（对齐 Netcatty 工具栏 filter）：不改变底层列表，仅影响渲染。 */
+  const [showFilter, setShowFilter] = useState(false);
+  const [filter, setFilter] = useState("");
   /** 列头排序状态（默认名称升序，目录恒置顶）。 */
   const [sortField, setSortField] = useState<SftpSortField>("name");
   const [sortOrder, setSortOrder] = useState<SftpSortOrder>("asc");
@@ -193,8 +199,12 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
   /** 过滤 + 排序后的可见行（隐藏开关 / 列头排序不触发重新加载）。 */
   const visibleRows = useMemo(
     () =>
-      sortSftpRows(filterHiddenEntries(rows, showHidden), sortField, sortOrder),
-    [rows, showHidden, sortField, sortOrder],
+      sortSftpRows(
+        filterEntriesByName(filterHiddenEntries(rows, showHidden), filter),
+        sortField,
+        sortOrder,
+      ),
+    [rows, showHidden, filter, sortField, sortOrder],
   );
 
   /** 双击 / 回车激活：目录进入，文件开内置编辑器（已知二进制不开）。 */
@@ -499,6 +509,39 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
     }
   };
 
+  /** 新建空文件（对齐 Netcatty newFile）：远端走 sftp_write_file，本地走 local_write_file。 */
+  const runNewFile = async (name: string) => {
+    setDialogBusy(true);
+    setDialogError("");
+    try {
+      const target = join(path, name);
+      // 先探测同名文件：写入是整体覆盖，已存在时必须拦下，避免静默清空既有内容。
+      const exists = await (
+        connection.kind === "remote"
+          ? api.sftpLstat(connection.sftpId, target)
+          : api.localStat(target, false)
+      ).then(
+        () => true,
+        () => false,
+      );
+      if (exists) {
+        setDialogError("同名文件已存在");
+        return;
+      }
+      if (connection.kind === "remote") {
+        await api.sftpWriteFile(connection.sftpId, target, new Uint8Array());
+      } else {
+        await api.localWriteFile(target, new Uint8Array());
+      }
+      setDialog(null);
+      void load(path);
+    } catch (e) {
+      setDialogError(userVisibleError(String(e)));
+    } finally {
+      setDialogBusy(false);
+    }
+  };
+
   const openChmod = async (row: Row) => {
     if (connection.kind !== "remote") return;
     try {
@@ -573,9 +616,8 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
         },
       });
     } else {
-      if (isRemote) {
-        menuItems.push({ label: "上传文件", onClick: () => void runUpload() });
-      }
+      // 对齐 Netcatty 空白区右键顺序：刷新 / 新建文件夹 / 新建文件 / 上传文件
+      menuItems.push({ label: "刷新", onClick: () => void load(path) });
       menuItems.push({
         label: "新建文件夹",
         onClick: () => {
@@ -583,6 +625,16 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
           setDialog({ type: "mkdir" });
         },
       });
+      menuItems.push({
+        label: "新建文件",
+        onClick: () => {
+          setDialogError("");
+          setDialog({ type: "newFile" });
+        },
+      });
+      if (isRemote) {
+        menuItems.push({ label: "上传文件", onClick: () => void runUpload() });
+      }
     }
   }
 
@@ -676,7 +728,7 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
         </div>
       </div>
 
-      {/* 动作行：复制路径 / 新建文件夹 / 显示隐藏文件 / 刷新 */}
+      {/* 动作行：复制路径 / 过滤 / 新建文件夹 / 新建文件 / 显示隐藏文件 / 刷新 */}
       <div className="nc-sftp-toolbar">
         <button
           className="nc-sftp-toolbar-btn"
@@ -684,6 +736,15 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
           onClick={() => void copyCurrentPath()}
         >
           <Icon name="copy" size={13} />
+        </button>
+        <button
+          className={
+            showFilter ? "nc-sftp-toolbar-btn active" : "nc-sftp-toolbar-btn"
+          }
+          title="按名称过滤"
+          onClick={() => setShowFilter((v) => !v)}
+        >
+          <Icon name="search" size={13} />
         </button>
         <button
           className="nc-sftp-toolbar-btn"
@@ -694,6 +755,16 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
           }}
         >
           <Icon name="folder" size={13} />
+        </button>
+        <button
+          className="nc-sftp-toolbar-btn"
+          title="新建文件"
+          onClick={() => {
+            setDialogError("");
+            setDialog({ type: "newFile" });
+          }}
+        >
+          <Icon name="file-text" size={13} />
         </button>
         <button
           className={
@@ -718,10 +789,41 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
         </button>
       </div>
 
-      {/* 列头：点选排序（目录恒置顶） */}
+      {showFilter && (
+        <div className="nc-sftp-filter">
+          <Icon name="search" size={12} />
+          <input
+            autoFocus
+            value={filter}
+            placeholder="按名称过滤"
+            aria-label="按名称过滤"
+            onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setFilter("");
+                setShowFilter(false);
+              }
+            }}
+          />
+          {filter && (
+            <button
+              className="nc-sftp-filter-clear"
+              title="清除过滤"
+              onClick={() => setFilter("")}
+            >
+              <Icon name="x" size={11} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 列头：点选排序（目录恒置顶）；列序对齐 Netcatty：名称 / 修改时间 / 大小 / 类型 */}
       <div className="nc-sftp-cols">
         <button className="nc-sftp-col" onClick={() => toggleSort("name")}>
           名称 {sortArrow("name")}
+        </button>
+        <button className="nc-sftp-col" onClick={() => toggleSort("modified")}>
+          修改时间 {sortArrow("modified")}
         </button>
         <button
           className="nc-sftp-col nc-sftp-col-num"
@@ -731,9 +833,9 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
         </button>
         <button
           className="nc-sftp-col nc-sftp-col-num"
-          onClick={() => toggleSort("modified")}
+          onClick={() => toggleSort("type")}
         >
-          修改时间 {sortArrow("modified")}
+          类型 {sortArrow("type")}
         </button>
       </div>
 
@@ -776,6 +878,7 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
             </span>
             <span className="nc-sftp-pane-row-cell-num" />
             <span className="nc-sftp-pane-row-cell-num" />
+            <span className="nc-sftp-pane-row-cell-num" />
           </div>
         )}
         {!error &&
@@ -799,13 +902,27 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
                 <span className="nc-sftp-pane-row-name">{row.name}</span>
               </span>
               <span className="nc-sftp-pane-row-cell-num">
+                {formatEntryMtime(row.mtime)}
+              </span>
+              <span className="nc-sftp-pane-row-cell-num">
                 {formatEntrySize(row.size)}
               </span>
               <span className="nc-sftp-pane-row-cell-num">
-                {formatEntryMtime(row.mtime)}
+                {rowTypeLabel(row)}
               </span>
             </div>
           ))}
+      </div>
+
+      {/* 底部状态栏（对齐 Netcatty SftpPaneFileList）：左侧项数/选中数，右侧当前路径 */}
+      <div className="nc-sftp-statusbar">
+        <span>
+          {visibleRows.length} 项
+          {selected && selected !== ".." ? " · 已选 1" : ""}
+        </span>
+        <span className="nc-sftp-statusbar-path" title={path}>
+          {path}
+        </span>
       </div>
 
       {crumbMenu && (
@@ -849,6 +966,17 @@ export function SftpPaneView({ connection, onPathChange }: Props) {
           error={dialogError}
           onClose={() => setDialog(null)}
           onSubmit={(v) => void runMkdir(v)}
+        />
+      )}
+      {dialog?.type === "newFile" && (
+        <SftpPromptDialog
+          title="新建文件"
+          initial=""
+          confirmLabel="创建"
+          busy={dialogBusy}
+          error={dialogError}
+          onClose={() => setDialog(null)}
+          onSubmit={(v) => void runNewFile(v)}
         />
       )}
       {dialog?.type === "delete" && (

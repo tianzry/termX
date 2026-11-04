@@ -3620,7 +3620,7 @@ button:disabled {
   height: 28px;
   flex-shrink: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 88px 128px;
+  grid-template-columns: minmax(0, 1fr) 128px 88px 64px;
   gap: 8px;
   align-items: center;
   padding: 0 12px;
@@ -3660,7 +3660,7 @@ button:disabled {
 
 .nc-sftp-pane-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 88px 128px;
+  grid-template-columns: minmax(0, 1fr) 128px 88px 64px;
   gap: 8px;
   align-items: center;
   padding: 5px 12px;
@@ -3697,6 +3697,73 @@ button:disabled {
 .nc-sftp-pane-row-filemark {
   width: 14px;
   flex-shrink: 0;
+}
+
+/* 过滤行（对齐 Netcatty 工具栏 filter 展开态） */
+.nc-sftp-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+}
+
+.nc-sftp-filter input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  font-size: 11px;
+  color: hsl(var(--foreground));
+  outline: none;
+}
+
+.nc-sftp-filter input:focus {
+  border-color: hsl(var(--primary) / 0.6);
+}
+
+.nc-sftp-filter-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.nc-sftp-filter-clear:hover {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+
+/* 底部状态栏（对齐 Netcatty SftpPaneFileList 底部条） */
+.nc-sftp-statusbar {
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  border-top: 1px solid hsl(var(--border) / 0.4);
+  background: hsl(var(--secondary) / 0.3);
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-statusbar-path {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nc-sftp-pane-hint,

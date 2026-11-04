@@ -3790,3 +3790,31 @@ altAsMeta（Windows 无 macOptionIsMeta 效果）、Option+←→ 按词、Kitty
 ### 门禁
 
 本轮无源码改动（仅文档），沿用上一轮已通过的构建与测试结果：379 前端 ✓、build ✓、cargo check(server) ✓、874 后端 ✓。为满足流程，提交前再跑一次 `npm run test:run` + `npm run build` 确认文档改动不影响构建。
+
+---
+
+## 2026-11-04 — 全应用逐功能比对第一轮（SFTP）
+
+对照基准：`Netcatty/components/SftpView.tsx`、`components/sftp/SftpPaneView.tsx`、`SftpPaneToolbar.tsx`、`SftpPaneFileList.tsx`、`SftpFileRow.tsx`、`SftpBreadcrumb.tsx`、`SftpTransferQueue.tsx`、`SftpConflictDialog.tsx`、`SftpPermissionsDialog.tsx`、`SftpPaneDialogs.tsx`、`components/sftp/utils.ts`。
+
+### 差异与处理
+
+| 项 | Netcatty | termX 本轮前 | 级别 | 处理 |
+| --- | --- | --- | --- | --- |
+| 名称过滤 | 工具栏 filter 按钮 + 输入行；大小写不敏感子串 | 无 | 交互 | 新增 filter 按钮 / 输入行 / Esc 清除；`filterEntriesByName` 纯函数 + 3 单测 |
+| 新建文件 | 工具栏 newFile + 空白右键 | 无 | 行为 | 补工具栏按钮、空白右键项与弹窗；远端 `sftp_write_file`、本地 `local_write_file` 建空文件；写入前 stat 探测同名文件并拦截（避免整体覆盖清空既有内容） |
+| 空白右键菜单 | 刷新 / 新建文件夹 / 新建文件 / 上传文件 | 仅新建文件夹 / 上传文件 | 交互 | 补齐刷新与新建文件，顺序对齐 Netcatty |
+| 列集合与顺序 | 名称 / 修改时间 / 大小 / 类型 / 所有者 | 名称 / 大小 / 修改时间 | 视觉 | 改为 名称 / 修改时间 / 大小 / 类型（目录 folder、文件扩展名、无扩展名 `--`），类型列可排序；所有者列需逐行 stat，暂缺（登记） |
+| 底部状态栏 | 左「N 项 - 已选 M」右当前路径 | 无 | 视觉 | 新增 28px 状态栏（11px、`secondary/30` 底、上边框、路径 200px 省略） |
+| 多选与批量操作 | Ctrl/Shift 多选、批量删除 / 下载 / 复制 | 单选 | 交互 | 本轮未改（涉及选择模型与队列批量语义），登记 todo |
+| 视图模式 / 列表密度 / 文件名编码 / 书签 / 跟随终端 CWD | 工具栏均有入口 | 部分缺 | 行为 | 后端与持久化未就绪，未加假按钮，登记 todo |
+| 传输队列 | 无任务时不渲染；活跃数 / 清理已完成 / 暂停恢复取消；并发 1–16 | 主体已实现；并发 1–8 | 交互 | 主体一致；并发上限与默认值统一在「设置 → SFTP」阶段落地 |
+| 冲突对话框 | 停止 / 跳过 / 保留两者 / 合并 / 替换 | 跳过 / 创建副本 / 替换 + 应用到全部 | 交互 | 本轮不扩大改动；完整按钮集合与文案在「设置 → SFTP」阶段复核 |
+| 权限对话框 | 3×3 复选 + 八进制 / 符号预览 | 已实现 | — | 复核通过 |
+| 面包屑 | Home / 根 / 段 / 省略号 / 尾部滚动 | Home / 根 / 段 / 省略号 | 视觉 | 结构一致；尾部滚动与 sub-pixel 差异留人工复核 |
+
+### 门禁
+
+- `npm run test:run`：31 文件 / 382 用例 ✓（新增 3 例）
+- `npm run build` ✓
+- debug 重编：`npm run tauri build -- --debug` ✓；实例运行复核（工具栏过滤 / 新建文件 / 列序 / 状态栏）见本轮汇报。

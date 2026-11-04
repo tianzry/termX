@@ -51,6 +51,7 @@
 | 设置中心（5 tab 1:1 + 3 占位 + 自启动命令 + 实机比对 + review 修复） | ✅ | `src/settings/`（model/store/i18n/keyBindings/Dialog/Tabs）、`src-tauri/src/commands/settings.rs` |
 | 全应用逐功能比对·第一轮（Vault 首页与分组、主机新建/编辑/连接） | ✅ | `src/VaultView.tsx`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
 | 全应用逐功能比对·第二轮（终端标签与分屏、工具栏与更多菜单） | ✅ | `src/TopTabs.tsx`、`src/Workspace.tsx`、`src/TerminalPane.tsx`、`src/Terminal.tsx`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
+| 全应用逐功能比对·第四轮（SFTP） | ✅ | `src/sftp/SftpPaneView.tsx`、`src/sftp/sftpModel.ts`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
 
 ---
 
@@ -301,3 +302,4 @@
 | 2026-11-04 | **后续任务登记（下一轮执行，本轮未动）**：进入「全应用逐功能比对第一轮」——termX debug 与 Netcatty 同场景并排，每轮 2~3 模块（≤40 工具），覆盖 Vault 首页与分组 / 主机新建编辑连接 / 终端（标签/分屏/工具栏/右键/更多菜单）/ SFTP / 串口 / Telnet / 本地终端 / 设置中心 / 钥匙串 / 脚本片段 / 笔记 / 日志 / 已知主机；每项分「功能点 + UI 点」，差异三级（逻辑必改/交互必改/视觉按像素标准），每轮门禁 + changelogs + todo + review + push。全部完成后再恢复代理与端口转发（WIP `d633866` / `60d8deb` 不得触碰）。 |
 | 2026-11-04 | 全应用逐功能比对·第二轮完成（终端标签与分屏 + 工具栏与更多菜单）：标签右键菜单补齐 9 项（复制标签页/重命名/重新连接/关闭/分隔线/关闭其他/关闭左侧/关闭右侧/关闭所有）+ 批量项按锚点置灰 + 关闭危险色；中键关闭；HTML5 拖拽排序；重命名模态（Enter/Esc/空值禁用）；`PaneHandle.reconnect` + `Workspace.reconnectTab`（最新 connect 闭包）；`closeLeft`/`closeAll`；分屏右窗格标题保留（`.term-toolbar-left min-width`）；浅色主题终端底部黑条修复（容器底色跟随主题 + `.xterm-viewport` 透明，设置变更实时同步）。工具栏项/顺序/24×24/12px 与 Netcatty 一致。129 CDP 逐项验证；门禁 379✓/build✓/cargo check(server)✓/874✓。缺口：YMODEM 发送/接收、工具栏「打开会话日志」、工具栏自定义布局（show/collapse/hide + 右键定制）未实现，未加假按钮；下一起点=SFTP 模块。 |
 | 2026-11-04 | 全应用逐功能比对·第三轮完成（串口 + Telnet + 本地终端）：串口弹窗字段/尺寸/提示与 Netcatty 1:1；本地终端面板四字段与双保存按钮 1:1；Vault「终端」快捷开标签、侧栏打开时入口折叠一致。缺口（无假控件，已登记）：串口/Telnet 主机档案与保存配置（termX 无对应协议档案）、Netcatty 快速连接向导体系。129 CDP 截图 r3-serial/r3-telnet/r3-localshell/r3-menu2。 |
+| 2026-11-04 | 全应用逐功能比对·第四轮完成（SFTP）：新增名称过滤（工具栏按钮 + 输入行 + Esc 清除，`filterEntriesByName` + 3 单测）、新建文件（工具栏/空白右键/弹窗，远端 `sftp_write_file`、本地 `local_write_file`）、空白右键补刷新与新建文件、列序改为 名称/修改时间/大小/类型 并支持类型排序、底部状态栏（项数/选中/当前路径）。缺口（无假按钮，已登记）：多选与批量操作、树视图/密度/编码/书签/跟随终端 CWD、所有者列、冲突对话框「停止/合并」完整对齐。门禁 382✓/build✓；debug 重编后 CDP 实测。 |

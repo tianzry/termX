@@ -467,7 +467,7 @@ export function resolveBreadcrumbVisibleParts(opts: {
 
 // ── 排序 / 隐藏过滤 / 格式化（对齐 Netcatty sortSftpEntries / filterHiddenFiles）──
 
-export type SftpSortField = "name" | "size" | "modified";
+export type SftpSortField = "name" | "size" | "modified" | "type";
 export type SftpSortOrder = "asc" | "desc";
 
 export interface SortableRow {
@@ -501,6 +501,9 @@ export function sortSftpRows<T extends SortableRow>(
       case "modified":
         cmp = (a.mtime ?? 0) - (b.mtime ?? 0);
         break;
+      case "type":
+        cmp = rowTypeLabel(a).localeCompare(rowTypeLabel(b));
+        break;
     }
     return order === "asc" ? cmp : -cmp;
   });
@@ -520,6 +523,26 @@ export function filterHiddenEntries<T extends { name: string; hidden?: boolean }
 ): T[] {
   if (showHidden) return entries;
   return entries.filter((e) => !isHiddenEntry(e));
+}
+
+/** 名称过滤（对齐 Netcatty filterSftpEntriesByName）：大小写不敏感子串；
+ *  空词返回原数组，避免每次输入产生无谓拷贝。 */
+export function filterEntriesByName<T extends { name: string }>(
+  entries: T[],
+  term: string,
+): T[] {
+  const needle = term.trim().toLowerCase();
+  if (!needle) return entries;
+  return entries.filter((e) => e.name.toLowerCase().includes(needle));
+}
+
+/** 类型列文案（对齐 Netcatty SftpFileRow）：目录 = folder，文件 = 扩展名；
+ *  无扩展名用 "--"，与大小列的空值约定一致。 */
+export function rowTypeLabel(row: { name: string; isDir: boolean }): string {
+  if (row.isDir) return "folder";
+  const dot = row.name.lastIndexOf(".");
+  if (dot <= 0 || dot === row.name.length - 1) return "--";
+  return row.name.slice(dot + 1).toLowerCase();
 }
 
 /** 文件大小格式化：0 / 缺省 → "--"；Bytes 无小数，其余保留两位。 */
