@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import * as api from "./backend/client";
 import { userVisibleError } from "./domain/sshErrors";
+import { Icon } from "./ui/icons";
 
 const cardStyle: CSSProperties = {
   border: "1px solid hsl(var(--border))",
@@ -25,12 +26,16 @@ const cardStyle: CSSProperties = {
 const sectionTitle: CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  margin: "4px 0 8px",
+  margin: 0,
 };
 
 const muted: CSSProperties = { color: "hsl(var(--muted-foreground))", fontSize: 12 };
 
 const buttonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
   border: "1px solid hsl(var(--border))",
   borderRadius: 6,
   background: "hsl(var(--secondary))",
@@ -326,7 +331,7 @@ export function ProxyProfilesView({
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
           <button style={buttonStyle} onClick={openCreate}>
-            + 新建代理
+            <Icon name="plus" size={13} /> 新建代理
           </button>
           <div style={{ flex: 1 }} />
           <input
@@ -337,11 +342,34 @@ export function ProxyProfilesView({
           />
         </div>
 
-        <div style={sectionTitle}>已保存的代理（{filtered.length}）</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+          <div style={sectionTitle}>代理</div>
+          <span style={muted}>{filtered.length} 项</span>
+        </div>
 
         {filtered.length === 0 ? (
-          <div style={{ ...muted, padding: "32px 0", textAlign: "center" }}>
-            暂无代理配置。新建一份后可在主机详情中复用。
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: "56px 16px", textAlign: "center" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 64,
+                height: 64,
+                borderRadius: 16,
+                background: "hsl(var(--secondary) / 0.8)",
+                color: "hsl(var(--primary))",
+              }}
+            >
+              <Icon name="globe" size={30} />
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>还没有代理配置</div>
+            <div style={{ ...muted, maxWidth: 380, lineHeight: 1.6 }}>
+              新建一份代理后，主机与分组都可以直接复用。
+            </div>
+            <button style={primaryBtn} onClick={openCreate}>
+              <Icon name="plus" size={14} /> 新建代理
+            </button>
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>

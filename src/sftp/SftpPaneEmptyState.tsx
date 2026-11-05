@@ -18,7 +18,7 @@ export function SftpPaneEmptyState({ side, busy, error, onSelectHost }: Props) {
   return (
     <div className="nc-sftp-empty">
       <div className="nc-sftp-empty-icon">
-        <Icon name={side === "left" ? "monitor" : "server"} size={24} />
+        <Icon name={side === "left" ? "monitor" : "hard-drive"} size={24} />
       </div>
       <div className="nc-sftp-empty-text">
         <div className="nc-sftp-empty-title">先选择一个主机</div>

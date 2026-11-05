@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-06 — #191 代理页按钮层级 + SFTP 空态图标（第七轮 P2 · P2 重启第 3/3）
+
+> 取证：Netcatty `components/ProxyProfilesManager.tsx` 页头「添加代理」是 `variant=secondary`（灰底），空态里同一动作是默认 primary（蓝底）；区块头为左「代理」+ 右「N 项」；空态是 64px Globe 图标块 + 标题 + 说明 + primary 按钮。SFTP `components/sftp/SftpPaneEmptyState.tsx`：左栏 Monitor、右栏 HardDrive（不是文件夹），56px rounded-xl 图标块。
+
+- `src/ProxyProfilesView.tsx`：
+  - 区块头由「已保存的代理（N）」改为 Netcatty 的「代理」（左）+「N 项」（右）。
+  - 页头「新建代理」保持 secondary（Netcatty 页头同款），补 Plus 图标；空态补 64px Globe 图标块 + 标题 + 说明 + **primary「新建代理」**，与 Netcatty 的 primary / secondary 层级一致。
+  - 按钮基样式补 `inline-flex`，图标与文字基线对齐；新建 / 保存 / 删除等现有行为不变。
+- `src/sftp/SftpPaneEmptyState.tsx`：右栏空态图标 `server` → `hard-drive`（Netcatty 同款 HardDrive）；左栏保持 Monitor。
+- 取证修正：todo 原记「Netcatty 文件夹图标」不准确 —— 源码为 HardDrive，实测截图一致，已更正。
+- 证据：`evidence/audit7-termx-proxy-empty-after.png`（「代理」+「0 项」、Globe 空态、primary 新建代理）、`audit7-termx-proxy-list-after.png`（默认列表「代理 / 1 项」、页头 secondary 新建代理）、`audit7-termx-sftp-empty-after.png`（左 Monitor / 右 HardDrive）、`audit7-termx-proxy-sftp-after.json`（空态按钮背景 `rgb(0,136,255)` = primary，页头 `rgb(225,228,234)` = secondary）。
+- 门禁：`npm run test:run` 65 文件 / 731 用例 ✓；`npm run build` ✓；`npm run tauri -- build --debug` ✓。
+
 ## 2026-11-06 — #190 日志页表格化（第七轮 P2 · P2 重启第 2/3）
 
 > 取证：Netcatty `components/ConnectionLogsManager.tsx` 是整页表格 —— 表头 32px、行 `px-4 py-3`（56px，含 36px 头像）、`hover:bg-secondary/60`、行底 1px 分隔、行操作 hover 出现；点击整行打开独立 LogView 页（`components/LogView.tsx`），不是左列表 + 右详情。

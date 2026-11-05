@@ -47,9 +47,9 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 笔记页信息架构 | Netcatty 简单列表 + 实时预览；termX 分组树 + 行号编辑器 + 分屏 | P2 | 保留 termX 超集，补「实时预览」提法 |
 | 终端侧栏 | Netcatty 200px（图标行 + 笔记面板）且本地会话隐藏侧栏；termX 170px 主机树常驻 | P2 | ✅ #186：实测 220px = Netcatty 默认 220（170 为缩放截图误差）；时间戳列已实现（gutter 81px，同公式）｜✅ #187：侧栏默认收起（可切换）+ 本地标签/标题显示 Shell 名 |
 | Vault 首页 | Netcatty 8 项导航 + 监控 + 底部设置，无独立 Telnet；termX 多「同步」导航、多「Telnet」入口 | P2 | ✅ #185：移除「同步」导航 + 补底部「设置」；Telnet 因 `Profile.protocol` 无 telnet 字段保留独立入口（需后端模型变更） |
-| 代理页按钮层级 | Netcatty「添加代理」主色；termX「新建代理」次色；区块计数文案不同 | P2/P3 | 小改可随下次 UI 轮次 |
+| 代理页按钮层级 | Netcatty 页头「添加代理」secondary、空态 primary；termX「新建代理」仅 secondary；区块计数文案不同 | P2/P3 | ✅ #191：区块头「代理」+「N 项」；补 64px Globe 空态 + primary 新建代理；页头保持 secondary（与 Netcatty 一致） |
 | 串口弹窗细节 | 弹窗 407 vs 360px、「保存配置」vs「保存为主机」、端口框多一个箭头 | P3 | 待有串口设备时一并调 |
-| SFTP 空态图标 | Netcatty 文件夹图标；termX 服务器图标 | P3 | 图标替换即可 |
+| SFTP 空态图标 | Netcatty 左 Monitor / 右 HardDrive；termX 左 Monitor / 右 Server | P3 | ✅ #191：右栏改 hard-drive（源码 + 截图证实是硬盘图标，非文件夹） |
 | 设置窗口形态 | Netcatty 独立窗口；termX 全屏 overlay | P3 | 保留（已记录） |
 | 主机新建/编辑弹窗 | 两边均未打开，未做像素对照 | P3 | 下一轮补对照 |
 
