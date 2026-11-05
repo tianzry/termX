@@ -720,6 +720,16 @@ export function VaultView({
   const [credMenu, setCredMenu] = useState(false);
   const [credPick, setCredPick] = useState<CredPick>(null);
   const [credSearch, setCredSearch] = useState("");
+  /** 证书选择器：`~/.ssh` 下带私钥的 `*-cert.pub` 条目（只读元数据）。 */
+  const [certFiles, setCertFiles] = useState<api.SshCertificateEntry[]>([]);
+  /** 从钥匙串即时导入的证书凭据（父级列表刷新前也能绑定 / 保存）。 */
+  const extraCredsRef = useRef<Credential[]>([]);
+  function findComposerCredential(id: string): Credential | undefined {
+    return (
+      credentials.find((c) => c.id === id) ??
+      extraCredsRef.current.find((c) => c.id === id)
+    );
+  }
   /** 当前 composer 主机是否已配置 TOTP（secret 在 SecretStore，不落库）。 */
   const [totpConfigured, setTotpConfigured] = useState(false);
   const [totpDialog, setTotpDialog] = useState<{
