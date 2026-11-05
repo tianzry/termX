@@ -199,7 +199,8 @@ export function createNoteSaveQueue(
   onError?: (error: unknown) => void,
 ): NoteSaveQueue {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let pending: Note | null = null;
+  /** 按 note.id 分槽：不同笔记的待存内容互不覆盖（重命名/移动不会丢）。 */
+  const pending = new Map<string, Note>();
   let flushing: Promise<void> | null = null;
 
   function clearTimer() {
@@ -211,20 +212,28 @@ export function createNoteSaveQueue(
 
   async function run() {
     clearTimer();
-    const note = pending;
-    pending = null;
-    if (!note) return;
-    flushing = save(note)
-      .catch((error) => onError?.(error))
-      .finally(() => {
-        flushing = null;
-      });
+    if (pending.size === 0) return;
+    const batch = [...pending.values()];
+    pending.clear();
+    flushing = (async () => {
+      for (const note of batch) {
+        try {
+          await save(note);
+        } catch (error) {
+          // 失败内容回填（已有更新内容则保留新的），下次 flush 可重试，避免只留在内存。
+          if (!pending.has(note.id)) pending.set(note.id, note);
+          onError?.(error);
+        }
+      }
+    })().finally(() => {
+      flushing = null;
+    });
     await flushing;
   }
 
   return {
     schedule(note) {
-      pending = note;
+      pending.set(note.id, note);
       clearTimer();
       timer = setTimeout(() => void run(), delay);
     },
@@ -234,12 +243,72 @@ export function createNoteSaveQueue(
     },
     cancel() {
       clearTimer();
-      pending = null;
+      pending.clear();
     },
     isDirty() {
-      return pending !== null || flushing !== null;
+      return pending.size > 0 || flushing !== null;
     },
   };
+}
+
+// ── 树的派生（对照 Netcatty NotesManager 的 noteGroups 树）──
+
+export interface NoteTreeRow {
+  type: "group" | "note";
+  depth: number;
+  /** 分组路径（type=group 时有效）。 */
+  path?: string;
+  /** 分组下的笔记总数（含子分组）。 */
+  count?: number;
+  note?: Note;
+}
+
+/** 父级分组路径；根返回 ""。 */
+export function parentNoteGroup(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx < 0 ? "" : path.slice(0, idx);
+}
+
+/**
+ * 派生树的扁平行列表。
+ * - 有搜索词：扁平返回命中笔记（对齐 Netcatty 搜索态隐藏分组）；
+ * - 无搜索词：分组优先、根笔记随后；仅展开集合中的分组输出子节点；
+ * - 分组 count 累加子树笔记（踩坑 163）。
+ */
+export function buildNoteTreeRows(
+  notes: Note[],
+  expanded: Set<string> | string[],
+  query = "",
+): NoteTreeRow[] {
+  const expandedSet = expanded instanceof Set ? expanded : new Set(expanded);
+  const needle = query.trim();
+  if (needle) {
+    return sortNotes(notes.filter((n) => matchesNoteSearch(n, needle))).map((note) => ({
+      type: "note" as const,
+      depth: 0,
+      note,
+    }));
+  }
+
+  const groups = collectNoteGroups(notes);
+  const groupOf = (n: Note) => (n.group ?? "").trim().replace(/^\/+|\/+$/g, "");
+  const subtreeCount = (path: string) =>
+    notes.filter((n) => {
+      const g = groupOf(n);
+      return g === path || g.startsWith(`${path}/`);
+    }).length;
+
+  const rows: NoteTreeRow[] = [];
+  const pushChildren = (parent: string, depth: number) => {
+    for (const path of groups.filter((g) => parentNoteGroup(g) === parent)) {
+      rows.push({ type: "group", depth, path, count: subtreeCount(path) });
+      if (expandedSet.has(path)) pushChildren(path, depth + 1);
+    }
+    const direct = sortNotes(notes.filter((n) => groupOf(n) === parent));
+    for (const note of direct) rows.push({ type: "note", depth, note });
+  };
+  pushChildren("", 0);
+  return rows;
 }
 
 export interface NoteOutlineItem {

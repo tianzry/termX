@@ -28,6 +28,32 @@ describe("markdownModel", () => {
     expect(blocks[4]).toEqual({ type: "code", lang: "ts", text: "const a = 1;" });
   });
 
+  it("块解析：表格 / 公式 / 四级标题", () => {
+    const blocks = parseMarkdown(
+      "#### 小标题\n\n| 名称 | 值 |\n| --- | --- |\n| a | 1 |\n\n$$\nx + y\n$$\n",
+    );
+    expect(blocks).toEqual([
+      { type: "heading", level: 4, text: "小标题" },
+      { type: "table", head: ["名称", "值"], rows: [["a", "1"]] },
+      { type: "math", text: "x + y" },
+    ]);
+  });
+
+  it("行内解析：删除线与下划线", () => {
+    expect(parseInline("~~旧~~ <u>重点</u>")).toEqual([
+      { type: "strikethrough", text: "旧" },
+      { type: "text", text: " " },
+      { type: "underline", text: "重点" },
+    ]);
+  });
+
+  it("工具栏：任务列表 / 表格 / 分隔线", () => {
+    expect(applyMarkdownAction("a", 0, 1, "task").text).toBe("- [ ] a");
+    const table = applyMarkdownAction("", 0, 0, "table").text;
+    expect(table).toContain("| 列 1 | 列 2 |");
+    expect(applyMarkdownAction("x", 0, 0, "divider").text.startsWith("---\n")).toBe(true);
+  });
+
   it("行内解析：加粗 / 斜体 / 代码 / 链接", () => {
     expect(parseInline("**粗** 和 *斜* 与 `code` 及 [文档](https://a.b)")).toEqual([
       { type: "bold", text: "粗" },

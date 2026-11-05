@@ -4,6 +4,73 @@
 
 ---
 
+## 2026-11-05 — 脚本 / 笔记模块按 Netcatty 一比一重做
+
+> 用户反馈当前移植「差异很大」，要求图标、UI 与功能逻辑全部对齐。先取证（`Netcatty/components/SnippetsManager.tsx`、`ScriptsSidePanel.tsx`、`SnippetsRightPanel.tsx`、`scripts/ScriptEditorPanel.tsx`、`scripts/ScriptMetaFields.tsx`、`snippets/SnippetTargetsSection.tsx`、`notes/NotesManager.tsx`、`NoteToolbar.tsx`、`NoteSourceEditor.tsx`、`NoteTitleInput.tsx`、`NoteOutline.tsx`、`NoteExportMenu.tsx`），再按差异清单重写组件层。后端 `snippets*` / `notes*` 命令与 schema 沿用，未新增裸 invoke（R1），未改事件（R3）。
+
+### 1. 脚本模块差异清单
+
+| 项 | Netcatty 实际行为 | termX 现状 | 差距 | 处理方式 |
+|---|---|---|---|---|
+| 页面结构 | VaultPageHeader：搜索（默认 256px）+「新建」下拉（片段 Zap 天蓝 / 脚本 Play 紫 / 分组 FolderPlus）+ 导入 + 历史 + 视图切换 + 排序 + 多选；面包屑「全部分组 / …」；Packages 节 + Snippets 节；右侧 `SnippetsRightPanel` 常驻 | 单行工具栏：搜索、两个原生 select、导入/导出/新建按钮；无面包屑、无视图/排序/多选；编辑器是覆盖式 `<aside>` | 结构完全不同 | 重写 `SnippetsView`：header 工具条 + 面包屑 + 两节列表 + 右侧常驻面板 |
+| 列表布局 | grid 卡片 68px（`rounded-xl px-3 py-2`）/ list 行 56px（`h-14 px-3`）；图标容器 `VaultEntityIcon` 18px（片段 Zap / 脚本 Play）；名称 14px 600；命令预览 11px mono 单行；快捷键 badge 10px mono | 分组头 + 行，行内多枚中文 badge（脚本/自动触发/逐行/仅插入）+ 描述 + 标签 | 信息密度与视觉层级不同 | 两种视图；徽标只保留快捷键；命令预览统一单行 |
+| 分组 | 卡片：Package 18 + 名称 14 + 「N 条片段」11；右键「打开 / 导出分组 / 重命名 / 删除」 | 分组头内联「重命名 / 删除」文字按钮；无导出分组 | 交互与菜单缺失 | 分组卡片 + 右键菜单 + 导出分组 |
+| 搜索 | 扁平匹配 label / command；有搜索时隐藏 Packages 节 | 匹配名称/命令/描述/分组/标签；分组筛选单独 select | 字段范围不同 | 保留 termX 字段（更宽），搜索时隐藏分组节并显示「无结果」空态 |
+| 排序 | manual / az / za / newest / oldest / group | 无 | 缺功能 | 新增排序下拉，manual 保留原数组顺序 |
+| 多选 | 顶栏 CheckSquare 切换；选择条：已选 N / 全选可见 / 取消全选 / 导出所选 / 删除所选 / X | 无 | 缺功能 | 新增多选条 |
+| 右键（条目） | 运行 / — / 编辑 / 复制 / 导出 / 删除；list 视图 hover 出现 Edit2 按钮 | 行内 运行/编辑/删除 文字按钮 | 菜单项与顺序不一致 | 自绘右键菜单按 Netcatty 顺序 |
+| 编辑字段 | 名称 + 描述 → 分组 combobox（可新建）→ 命令编辑器（可展开、变量检测 chips + 帮助）→ 目标主机（Select hosts / Select groups / 所有主机 + pills + 摘要）→ 不自动运行 checkbox → 多行模式 select → 快捷键（点击录制）→ 底部整宽 保存/运行 | 类型 select + 语言 + 触发方式 + 目标主机 checkbox 列表 + 名称/命令/多行/描述/分组/标签/快捷键文本 + 仅插入 | 顺序、控件、变量能力不同 | 重排字段；命令框补变量检测 chips；快捷键改录制式（保留 `parseShortkey` 做校验） |
+| 快捷键 | `keyEventToString` 录制，Mac ⌘ 显示；与系统快捷键冲突检测 | 手输字符串 + `parseShortkey` 校验 + 同列表冲突 | 交互不同 | 录制按钮（点击后监听 keydown），冲突提示保留 |
+| 导入导出 | 导入对话框：文件选择、示例 zip、覆盖/跳过（按命令判冲突）；导出单条 / 分组 / 所选 | `window.confirm` 询问覆盖，导出全部/单条 | 缺分组/所选导出与冲突统计展示 | 新增导入预览对话框（条数 + 冲突数 + 覆盖/跳过）；导出单条/分组/所选 |
+| 空状态 | 无数据：FileCode 32 + 64px 圆角底 + 标题 18 + 描述 14；无结果：Search 24 + 标题 16 | 纯文字标题/说明 | 图标与容器缺失 | 按 Netcatty 尺寸重做 |
+| 运行入口 | 页面右键「运行」选目标主机；终端侧栏/命令面板运行到当前会话 | 仅页面「运行」按钮发送到活动终端 | termX 无多会话广播 | 右键与面板底部按钮都发送到活动终端，未连接时禁用并说明 |
+
+### 2. 笔记模块差异清单
+
+| 项 | Netcatty 实际行为 | termX 现状 | 差距 | 处理方式 |
+|---|---|---|---|---|
+| 树工具栏 | Search / FileText / FolderPlus / Upload / Download / Expand / Minimize2，均为 14px ghost 图标按钮；搜索是可折叠 36px 行 | 一个「+」按钮 + 常驻搜索框 + 分组/标签横向 chip 条 | 工具项缺失、搜索占用常驻空间 | 重写为图标工具条 + 可折叠搜索行 |
+| 树结构 | 分组文件夹（Chevron + Folder/FolderOpen，可折叠、计数）+ 笔记行（FileText 12，标题 12px）；拖拽移动/排序 | 平铺列表 + 分组/标签 chip | 无层级、无折叠 | 派生「分组树」：`a/b` 路径嵌套、计数含子树、可折叠 |
+| 标题行 | `min-h-[54px] px-8 pt-6`；标题 18px 600 h-8；右侧模式下拉（编辑/源码/预览）+ ListTree 大纲 + 导出 + Trash2（h-8 w-8） | 标题 input 12px 级 + 文字「原文/预览/大纲」按钮 + 三个小图标 | 尺寸与控件不同 | 重写标题行与图标 |
+| 元数据 | 分组 pill（Folder 12 琥珀）、标签 pill（Hash 12 + X 移除）、`+ 添加标签`（就地输入，Enter 提交 / Esc 取消） | 分组与标签是两个输入框 | 交互不同 | 改为 pills + 就地输入（分组仍可就地编辑） |
+| 工具栏 | Undo2 / Redo2 / Type（代码字体搜索 + 正文字号 12–20 + 代码字号 11–18）/ Heading 下拉 H1–H4 / Bold / Italic / Strikethrough / Underline / Code / List / ListOrdered / CheckSquare / Quote / FileCode / Sigma / Table / Minus / Link / Image，分隔线 `h-4 w-px` | 8 个文字按钮（H1/H2/B/I/•/1./❝/</>） | 项目与图标缺失 | 用 lucide 重写工具栏，动作补 undo/redo/strikethrough/underline/task/table/divider/link/image/math |
+| 编辑器 | `InlineMarkdownEditor`（live 内联渲染）/ `NoteSourceEditor`（textarea + 行号 + 自研 undo 合并 750ms）/ preview | 单一 textarea + 自研预览 | 无行号、无源码历史、无三模式 | source 模式补行号 + 自研 undo/redo（移植 `getSourceEditDelta` / `shouldCoalesceSourceUndoStep`）；live 暂无内联渲染引擎，用编辑态替代并在 changelogs 标注差距 |
+| 大纲 | 右侧 256px，标题树点击跳转，可关闭 | 有简单大纲，无关闭、无宽度 | 细节不同 | 256px、ListTree 开关、点击跳转 |
+| 保存 | 标题 / 内容分通道，防抖 300ms，失焦 flush | 统一 600ms | 时序不同 | 改 300ms + 失焦 flush + 切换前 flush |
+| 导出 | 单条 Markdown / 全部（菜单） | 单条 .md + 全部 zip | 基本一致 | 菜单项与文案对齐 |
+| `ssh://` 链接 | 预览/内联编辑中识别主机链接并起连 | 预览中按 profile 匹配后 `onOpenHost` | 需保证 live/source 也一致 | 预览继续支持；源码/编辑态不误伤（排除代码块） |
+
+### 3. 踩坑
+
+- 163. **树形分组的计数必须含子树**：`package` 用 `a/b` 路径时，父节点计数若只统计精确匹配会与列表条数不一致；派生函数要把子路径条目累加进父节点，并对 `null`/`""` 统一归到根。
+- 164. **右键菜单不能留在 `overflow: auto` 容器内**：Netcatty 用 Radix ContextMenu 走 portal；termX 自绘菜单若直接嵌套会被列表裁切，必须 `position: fixed` + 视口边界翻转。
+- 165. **快捷键录制 ≠ 文本解析**：录制拿到的是 `KeyboardEvent`，需忽略纯修饰键、归一化主键与 `⌘/Ctrl/Option/Alt` 别名后再写回字符串；写回后仍走 `parseShortkey` + 冲突检测，两条路径不能各写一套规则。
+- 166. **笔记双通道防抖要 flush 在切换前**：标题与正文分通道保存时，切换/删除/导出前不 flush 会丢最后一次输入；树节点重命名要同步更新本地列表，否则标题与树显示分叉。
+- 167. **Markdown 链接解析要跳过代码块**：`ssh://` 自动识别若不做围栏代码块/行内代码排除，笔记里的示例 URL 会变成可点击主机链接。
+- 168. **老数据兼容**：历史笔记存在 `group: null`、空标签、无 `order`；派生与渲染一律按「根组 / 空数组 / 原顺序」处理，不新增迁移（R7 幂等优先）。
+
+### 4. 实测验证（debug + CDP，2026-11-05）
+
+- 逐屏对照（Netcatty 本机窗口 → `PrintWindow` 截图）：`evidence/nc-vault-now.png`（脚本页：多选/导入/导出/视图/排序 + 右侧编辑面板字段顺序、变量提示、目标主机、多行方式、快捷键录制）、`evidence/nc-notes-now.png`（笔记页：左侧树 300px、标题行 54px、模式下拉「实时预览」、格式工具栏图标序列）。termX debug 侧对照：`evidence/scripts-list.png`、`scripts-grid.png`、`scripts-context.png`、`scripts-editor.png`、`scripts-variables.png`、`notes-tree.png`、`notes-editor.png`、`notes-split.png`、`notes-preview.png`、`notes-preview-tasks.png`。
+- 已验证对齐项：脚本页顶栏工具顺序与图标（Zap / Play / FolderPlus / Upload / LayoutGrid / List / Search）、56px 列表行与 68px 卡片、右键菜单顺序（运行 / 编辑 / 复制 / 导出 / 删除）、右侧面板字段顺序；笔记页树工具图标（Search / FileText / FolderPlus / Upload / Download / Expand / Minimize2）、标题行 18px、模式下拉、工具栏 H1–H4 与 Table/Sigma/Link/Image、行号编辑器 + 分屏预览、256px 大纲。
+- 129 实机链路（tianzry@192.168.126.129 / admin）：
+  1. 脚本「发送到当前会话」：脚本页右键「磁盘用量」（`df -h`）→ 运行，活动 129 终端出现 `df` 表格输出，无「未连接」提示。证据 `evidence/run-snippet-129.json`、`run-snippet-result.png`、`after-run-129-terminal.png`。
+  2. 笔记 `ssh://` 链接起连：打开笔记「129 主机」→ 切「预览」→ 点击 `ssh://tianzry@192.168.126.129`，新标签「129」建立 SSH 会话并出现 shell 提示符。证据 `evidence/notes-hostlink-129.json`、`notes-hostlink-connect.png`。
+- 踩坑补充 169：**「连接后秒断、退出码 100」先查远端自动脚本**。排查中一度怀疑 transport/句柄丢失，最终定位为登录后在远端执行了 `set -e` + `apt-get update`（非 root 时 apt 返回 100，`set -e` 使 shell 立即退出）；清空该脚本后同机连接稳定。后续遇到同类现象先看会话输出与脚本触发条件，不要先改连接层。
+
+### 5. code review 处理（子 agent 只读审查）
+
+- 高危（已修）：笔记导出 `exportAll` 硬编码 `\` 且不建分组子目录 → 按目标目录实际分隔符拼接，写前 `localMkdir` 建父目录（`localfs.local_mkdir` 为 `create_dir_all`）。
+- 中危（已修）：
+  - 导入 `localReadFile(path, 2MB)` 实际是「超限读尾部」，大文件静默丢开头 → 去掉自设上限，读回长度达到 16 MiB 时在提示里标注「仅导入尾部内容」。
+  - 保存队列在发起写前清空 pending，失败即丢内容 → 按 `note.id` 分槽 + 失败回填，下一次 flush 自动重试；补充两条单测（跨笔记不覆盖、失败后重试）。
+  - 撤销历史 750ms 合并会覆盖打开笔记时的基线快照且不截断 redo → 只有「输入产生的尾部」可合并，新输入一律截断 redo 分支。
+  - 全局 Ctrl+Z/Y 不判断焦点 → 仅正文 textarea 接管，标题/搜索/标签框保留原生撤销。
+  - 脚本页 `persist` 使用渲染快照、并发两次整份覆盖可能让已删条目复活 → 写入串行化 + 以 `latestRef` 最新列表做增量更新（删除/分组重命名/多选删除/保存草稿统一改为 updater 形式）。
+- 低危（已记录未修，编号 170）：① 大纲 `jumpToLine` 在纯预览模式下 textarea 不存在，点击不跳转；② 「新建分组」用 `window.prompt` 且无独立分组数据（树由 note.group 派生，空分组不显示）；③ `findProfileForHostLink` 只匹配 ssh/22，预览里 telnet 深链必提示未找到；④ 导出文件名未清洗非法字符、`revokeObjectURL` 与 `click` 时序过紧；⑤ 保存成功回调无条件清 dirty，与进行中的 schedule 有竞争；⑥ 笔记树派生 O(分组数×笔记数)，每次按键全量重算；⑦ 导入逐条 `saveNote` 中途失败时界面与 DB 不同步；⑧ 保存队列 ref 在渲染期懒初始化；⑨ `saveDraft` 完成时无条件关闭面板，保存期间的新输入会丢；⑩ 缺 telnet / `javascript:` 链接的单测。
+
+---
+
 ## 2026-11-05 — 终端工具栏类型自适应 / 删除主机浏览器与广播 / 会话日志默认自动记录
 
 ### 1. 删除「主机浏览器」与「广播模式」

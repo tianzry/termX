@@ -11,6 +11,9 @@ import {
   parseTagInput,
   sortNotes,
   toNoteDraft,
+  buildNoteTreeRows,
+  collectNoteGroups,
+  parentNoteGroup,
 } from "./notesModel";
 
 function note(partial: Partial<Note>): Note {
@@ -31,6 +34,47 @@ function note(partial: Partial<Note>): Note {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("笔记树派生", () => {
+  const notes = [
+    note({ id: "root", title: "根笔记", group: null }),
+    note({ id: "db", title: "数据库", group: "ops/db" }),
+    note({ id: "web", title: "Web", group: "ops/web" }),
+    note({ id: "ops", title: "总览", group: "ops" }),
+  ];
+
+  it("父级路径与分组集合", () => {
+    expect(parentNoteGroup("ops/db")).toBe("ops");
+    expect(parentNoteGroup("ops")).toBe("");
+    expect(collectNoteGroups(notes)).toEqual(["ops", "ops/db", "ops/web"]);
+  });
+
+  it("折叠时只输出根分组与根笔记，且计数含子树", () => {
+    const rows = buildNoteTreeRows(notes, new Set());
+    expect(rows.map((r) => (r.type === "group" ? `g:${r.path}:${r.count}` : `n:${r.note!.id}`)).sort()).toEqual(
+      ["g:ops:3", "n:root"].sort(),
+    );
+  });
+
+  it("展开后按层级输出子分组与笔记", () => {
+    const rows = buildNoteTreeRows(notes, ["ops", "ops/db"]);
+    expect(rows.map((r) => (r.type === "group" ? `g:${r.path}` : `n:${r.note!.id}`))).toEqual([
+      "g:ops",
+      "g:ops/db",
+      "n:db",
+      "g:ops/web",
+      "n:ops",
+      "n:root",
+    ]);
+  });
+
+  it("搜索时扁平返回命中笔记", () => {
+    const rows = buildNoteTreeRows(notes, new Set(["ops"]), "数据库");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe("note");
+    expect(rows[0].note!.id).toBe("db");
+  });
 });
 
 describe("notesModel", () => {
@@ -137,6 +181,43 @@ describe("notesModel", () => {
     queue.cancel();
     await vi.advanceTimersByTimeAsync(600);
     expect(saved).toHaveLength(1);
+  });
+
+  it("保存队列：不同笔记分槽，互不覆盖", async () => {
+    vi.useFakeTimers();
+    const saved: string[] = [];
+    const queue = createNoteSaveQueue(async (n) => {
+      saved.push(`${n.id}:${n.title}`);
+    }, 600);
+    queue.schedule(note({ id: "n1", title: "rename" }));
+    queue.schedule(note({ id: "n2", title: "typing" }));
+    await vi.advanceTimersByTimeAsync(600);
+    expect(saved.sort()).toEqual(["n1:rename", "n2:typing"]);
+  });
+
+  it("保存队列：写失败保留待存，下一次 flush 重试", async () => {
+    vi.useFakeTimers();
+    let fail = true;
+    const saved: string[] = [];
+    const errors: unknown[] = [];
+    const queue = createNoteSaveQueue(
+      async (n) => {
+        if (fail) throw new Error("disk full");
+        saved.push(n.title);
+      },
+      600,
+      (e) => errors.push(e),
+    );
+    queue.schedule(note({ title: "must-not-lost" }));
+    await queue.flush();
+    expect(saved).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(queue.isDirty()).toBe(true);
+
+    fail = false;
+    await queue.flush();
+    expect(saved).toEqual(["must-not-lost"]);
+    expect(queue.isDirty()).toBe(false);
   });
 });
 

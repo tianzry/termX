@@ -12,22 +12,26 @@
  */
 
 export type MarkdownBlock =
-  | { type: "heading"; level: 1 | 2 | 3; text: string }
+  | { type: "heading"; level: number; text: string }
   | { type: "paragraph"; text: string }
   | { type: "list"; ordered: boolean; items: string[] }
   | { type: "quote"; text: string }
   | { type: "code"; lang: string; text: string }
+  | { type: "table"; head: string[]; rows: string[][] }
+  | { type: "math"; text: string }
   | { type: "hr" };
 
 export type InlineToken =
   | { type: "text"; text: string }
   | { type: "bold"; text: string }
   | { type: "italic"; text: string }
+  | { type: "strikethrough"; text: string }
+  | { type: "underline"; text: string }
   | { type: "code"; text: string }
   | { type: "link"; text: string; href: string };
 
-/** 行内语法：加粗 > 斜体 > 代码 > 链接（顺序决定匹配优先级）。 */
-const INLINE_RE = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
+/** 行内语法：加粗 > 删除线 > 下划线 > 斜体 > 代码 > 链接（顺序决定匹配优先级）。 */
+const INLINE_RE = /(\*\*[^*]+\*\*|~~[^~]+~~|<u>[^<]+<\/u>|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)\s]+\))/g;
 
 export function parseInline(text: string): InlineToken[] {
   const tokens: InlineToken[] = [];
@@ -41,6 +45,10 @@ export function parseInline(text: string): InlineToken[] {
     const raw = match[0];
     if (raw.startsWith("**")) {
       tokens.push({ type: "bold", text: raw.slice(2, -2) });
+    } else if (raw.startsWith("~~")) {
+      tokens.push({ type: "strikethrough", text: raw.slice(2, -2) });
+    } else if (raw.startsWith("<u>")) {
+      tokens.push({ type: "underline", text: raw.slice(3, -4) });
     } else if (raw.startsWith("`")) {
       tokens.push({ type: "code", text: raw.slice(1, -1) });
     } else if (raw.startsWith("[")) {
@@ -58,12 +66,14 @@ export function parseInline(text: string): InlineToken[] {
 
 function isBlockStart(line: string): boolean {
   return (
-    /^\s*(#{1,3})\s+/.test(line) ||
+    /^\s*(#{1,6})\s+/.test(line) ||
     /^\s*---+\s*$/.test(line) ||
     /^\s*>/.test(line) ||
     /^\s*[-*+]\s+/.test(line) ||
     /^\s*\d+[.)]\s+/.test(line) ||
-    /^\s*```/.test(line)
+    /^\s*```/.test(line) ||
+    /^\s*\$\$/.test(line) ||
+    /^\s*\|/.test(line)
   );
 }
 
@@ -91,14 +101,58 @@ export function parseMarkdown(source: string): MarkdownBlock[] {
       continue;
     }
 
-    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    // 数学块：$$ … $$（渲染为等宽块，不做 KaTeX 排版）。
+    if (line.trim().startsWith("$$")) {
+      const rest = line.trim().slice(2);
+      const body: string[] = [];
+      if (rest && !rest.endsWith("$$")) body.push(rest);
+      i += 1;
+      while (i < lines.length && !lines[i].trim().endsWith("$$")) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length) {
+        const tail = lines[i].trim();
+        if (tail !== "$$") body.push(tail.slice(0, -2));
+        i += 1;
+      }
+      blocks.push({ type: "math", text: body.join("\n").trim() });
+      continue;
+    }
+
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
       blocks.push({
         type: "heading",
-        level: heading[1].length as 1 | 2 | 3,
+        level: heading[1].length,
         text: heading[2].trim(),
       });
       i += 1;
+      continue;
+    }
+
+    // 表格：连续的 | 行；第二行为 --- 分隔线时首行为表头。
+    if (/^\s*\|/.test(line)) {
+      const tableLines: string[] = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) {
+        tableLines.push(lines[i]);
+        i += 1;
+      }
+      const cells = (raw: string) =>
+        raw
+          .trim()
+          .replace(/^\|/, "")
+          .replace(/\|$/, "")
+          .split("|")
+          .map((cell) => cell.trim());
+      const sepIndex = tableLines.findIndex((raw) =>
+        /^\s*\|?\s*:?-+:?\s*\|/.test(raw),
+      );
+      const head = cells(tableLines[0] ?? "");
+      const bodyRows = tableLines
+        .slice(sepIndex >= 0 ? sepIndex + 1 : 1)
+        .map(cells);
+      blocks.push({ type: "table", head, rows: bodyRows });
       continue;
     }
 
@@ -146,12 +200,21 @@ export type MarkdownAction =
   | "h1"
   | "h2"
   | "h3"
+  | "h4"
   | "bold"
   | "italic"
+  | "strikethrough"
+  | "underline"
   | "bullet"
   | "ordered"
+  | "task"
   | "quote"
-  | "code";
+  | "code"
+  | "table"
+  | "divider"
+  | "link"
+  | "image"
+  | "math";
 
 export interface MarkdownEditResult {
   text: string;
@@ -198,7 +261,7 @@ function setHeadingLevel(
   const next = text
     .slice(from, to)
     .split("\n")
-    .map((line) => `${prefix}${line.replace(/^#{1,3}\s+/, "")}`)
+    .map((line) => `${prefix}${line.replace(/^#{1,6}\s+/, "")}`)
     .join("\n");
   return {
     text: text.slice(0, from) + next + text.slice(to),
@@ -232,16 +295,48 @@ export function applyMarkdownAction(
       return wrap("**", "**", "加粗文本");
     case "italic":
       return wrap("*", "*", "斜体文本");
+    case "strikethrough":
+      return wrap("~~", "~~", "删除线文本");
+    case "underline":
+      return wrap("<u>", "</u>", "下划线文本");
     case "code":
       return selection.includes("\n")
         ? wrap("```\n", "\n```", "代码")
         : wrap("`", "`", "代码");
+    case "link":
+      return wrap("[", "](https://)", "链接文本");
+    case "image":
+      return wrap("![", "](https://)", "图片描述");
+    case "math":
+      return wrap("$$\n", "\n$$", "公式");
+    case "table": {
+      const table = "| 列 1 | 列 2 |\n| --- | --- |\n| 值 1 | 值 2 |\n";
+      const at = lineRange(text, start, end)[0];
+      return {
+        text: `${text.slice(0, at)}${table}${text.slice(at)}`,
+        selectionStart: at + table.length,
+        selectionEnd: at + table.length,
+      };
+    }
+    case "divider": {
+      const at = lineRange(text, start, end)[0];
+      const block = "---\n";
+      return {
+        text: `${text.slice(0, at)}${block}${text.slice(at)}`,
+        selectionStart: at + block.length,
+        selectionEnd: at + block.length,
+      };
+    }
     case "h1":
       return setHeadingLevel(text, start, end, "# ");
     case "h2":
       return setHeadingLevel(text, start, end, "## ");
     case "h3":
       return setHeadingLevel(text, start, end, "### ");
+    case "h4":
+      return setHeadingLevel(text, start, end, "#### ");
+    case "task":
+      return toggleLinePrefix(text, start, end, "- [ ] ", /^\s*- \[[ xX]\]\s+/);
     case "bullet":
       return toggleLinePrefix(text, start, end, "- ", /^\s*[-*+]\s+/);
     case "ordered":
