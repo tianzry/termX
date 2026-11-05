@@ -3,6 +3,7 @@ import {
   collectLeaves,
   defaultTitle,
   firstLeafId,
+  layoutPanePlacements,
   makeLeaf,
   removeLeaf,
   replaceLeaf,
@@ -97,6 +98,81 @@ describe("collectLeaves / firstLeafId / replaceLeaf", () => {
   it("replaceLeaf 替换指定窗格", () => {
     const next = replaceLeaf(root, "b", leaf("z"));
     expect(collectLeaves(next).map((l) => l.id)).toEqual(["a", "z", "c"]);
+  });
+});
+
+describe("layoutPanePlacements", () => {
+  it("单叶占满整个视图", () => {
+    const result = layoutPanePlacements(leaf("a"));
+    expect(result.panes).toEqual([
+      { paneId: "a", rect: { left: 0, top: 0, width: 1, height: 1 } },
+    ]);
+    expect(result.splitters).toEqual([]);
+  });
+
+  it("左右分屏按比例切分，分隔条落在边界", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      dir: "horizontal",
+      ratio: 0.4,
+      a: leaf("a"),
+      b: leaf("b"),
+    };
+    const result = layoutPanePlacements(root);
+    expect(result.panes.map((p) => p.paneId)).toEqual(["a", "b"]);
+    expect(result.panes[0].rect).toEqual({ left: 0, top: 0, width: 0.4, height: 1 });
+    expect(result.panes[1].rect.left).toBeCloseTo(0.4);
+    expect(result.panes[1].rect.width).toBeCloseTo(0.6);
+    expect(result.splitters[0]).toMatchObject({
+      splitId: "s1",
+      dir: "horizontal",
+      rect: { left: 0.4, top: 0, width: 1, height: 1 },
+    });
+  });
+
+  it("上下分屏与嵌套切分的矩形和分隔条位置正确", () => {
+    const root: PaneNode = {
+      type: "split",
+      id: "s1",
+      dir: "vertical",
+      ratio: 0.5,
+      a: leaf("a"),
+      b: {
+        type: "split",
+        id: "s2",
+        dir: "horizontal",
+        ratio: 0.5,
+        a: leaf("b"),
+        b: leaf("c"),
+      },
+    };
+    const result = layoutPanePlacements(root);
+    expect(result.panes.map((p) => p.paneId)).toEqual(["a", "b", "c"]);
+    expect(result.panes[0].rect).toEqual({ left: 0, top: 0, width: 1, height: 0.5 });
+    expect(result.panes[1].rect).toMatchObject({
+      left: 0,
+      top: 0.5,
+      width: 0.5,
+      height: 0.5,
+    });
+    expect(result.panes[2].rect.left).toBeCloseTo(0.5);
+    expect(result.splitters.map((s) => s.splitId)).toEqual(["s1", "s2"]);
+    expect(result.splitters[0].rect).toMatchObject({ left: 0, top: 0.5, width: 1 });
+    expect(result.splitters[1].rect.left).toBeCloseTo(0.5);
+    expect(result.splitters[1].rect.top).toBeCloseTo(0.5);
+  });
+
+  it("split/close 后既有 pane id 保持不变（实例可复用）", () => {
+    const original = leaf("a");
+    const split = splitLeaf(original, "a", "horizontal", leaf("b"));
+    expect(layoutPanePlacements(split).panes.map((p) => p.paneId)).toEqual([
+      "a",
+      "b",
+    ]);
+    const closed = removeLeaf(split, "b");
+    expect(closed).toBe(original);
+    expect(layoutPanePlacements(closed!).panes.map((p) => p.paneId)).toEqual(["a"]);
   });
 });
 

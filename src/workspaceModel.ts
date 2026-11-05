@@ -161,6 +161,85 @@ export function firstLeafId(node: PaneNode): string {
   return collectLeaves(node)[0].id;
 }
 
+/**
+ * 窗格矩形（相对标签视图的比例，0~1）。
+ *
+ * 分屏渲染不再把终端组件嵌在布局树里：布局只产出每格的位置/尺寸，
+ * 所有 TerminalPane 以 paneId 为 key 平铺在同一个容器中。这样 split /
+ * close 改变树形状时，既有窗格的 React 实例不会被卸载重建（不重连）。
+ */
+export interface PaneRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface PanePlacement {
+  paneId: string;
+  rect: PaneRect;
+}
+
+export interface SplitterPlacement {
+  splitId: string;
+  dir: SplitDir;
+  /** 分隔条所在边界（left/top 为比例坐标）。 */
+  rect: PaneRect;
+}
+
+/** 把分屏树展开为「窗格矩形 + 分隔条矩形」，深度优先先 a 后 b。 */
+export function layoutPanePlacements(
+  node: PaneNode,
+  rect: PaneRect = { left: 0, top: 0, width: 1, height: 1 },
+): { panes: PanePlacement[]; splitters: SplitterPlacement[] } {
+  if (node.type === "leaf") {
+    return { panes: [{ paneId: node.id, rect }], splitters: [] };
+  }
+  const horizontal = node.dir === "horizontal";
+  const ratio = Math.min(0.85, Math.max(0.15, node.ratio));
+  const aRect: PaneRect = horizontal
+    ? { ...rect, width: rect.width * ratio }
+    : { ...rect, height: rect.height * ratio };
+  const bRect: PaneRect = horizontal
+    ? {
+        left: rect.left + rect.width * ratio,
+        top: rect.top,
+        width: rect.width * (1 - ratio),
+        height: rect.height,
+      }
+    : {
+        left: rect.left,
+        top: rect.top + rect.height * ratio,
+        width: rect.width,
+        height: rect.height * (1 - ratio),
+      };
+  // 分隔条的 rect 覆盖整个切分区域（用于拖拽时换算比例），
+  // 渲染层只取边界坐标 + 主轴长度。
+  const splitterRect: PaneRect = horizontal
+    ? {
+        left: rect.left + rect.width * ratio,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      }
+    : {
+        left: rect.left,
+        top: rect.top + rect.height * ratio,
+        width: rect.width,
+        height: rect.height,
+      };
+  const a = layoutPanePlacements(node.a, aRect);
+  const b = layoutPanePlacements(node.b, bRect);
+  return {
+    panes: [...a.panes, ...b.panes],
+    splitters: [
+      { splitId: node.id, dir: node.dir, rect: splitterRect },
+      ...a.splitters,
+      ...b.splitters,
+    ],
+  };
+}
+
 export function defaultTitle(
   connector: Connector,
   ptySeq: number,

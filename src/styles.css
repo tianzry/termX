@@ -162,6 +162,16 @@ body {
   padding: 12px;
 }
 
+/* 工具栏打开 SFTP 后的自动连接提示（对齐 Netcatty 点击即连、有加载态）。 */
+.sftp-connecting {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+}
+
 /* 串口表单：对齐 Netcatty SerialConnectModal 的间距/标签/主按钮层级 */
 .sftp-connect.serial-form {
   gap: 12px;
@@ -1014,39 +1024,39 @@ body {
   color: #6f7782;
 }
 
-.split {
-  display: flex;
+/* 分屏容器：终端组件以 paneId 为 key 平铺，布局只决定每格的矩形。
+   这样 split / close 不会卸载既有终端实例（避免重建连接与丢 scrollback）。 */
+.pane-layer {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
 }
 
-.split-horizontal {
-  flex-direction: row;
-}
-
-.split-vertical {
-  flex-direction: column;
-}
-
-.split-cell {
-  flex-basis: 0;
+.pane-cell {
+  position: absolute;
+  display: flex;
   min-width: 0;
   min-height: 0;
-  display: flex;
+  overflow: hidden;
 }
 
 .splitter {
-  flex: 0 0 5px;
+  position: absolute;
+  z-index: 3;
   background: #eef1f5;
   transition: background 0.1s;
 }
 
 .splitter-horizontal {
+  width: 5px;
+  margin-left: -2.5px;
   cursor: col-resize;
 }
 
 .splitter-vertical {
+  height: 5px;
+  margin-top: -2.5px;
   cursor: row-resize;
 }
 
@@ -1067,7 +1077,40 @@ body {
   box-shadow: inset 0 0 0 1px #0a84ff;
 }
 
-.pane .terminal {
+/* 终端外壳：可选的时间戳 gutter + xterm 内容区（共用 padding 逻辑） */
+.terminal-shell {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 输出行时间戳：左侧独立列，右对齐、等宽数字（对照 Netcatty 56px gutter） */
+.terminal-timestamp-gutter {
+  position: relative;
+  flex-shrink: 0;
+  height: 100%;
+  padding-top: 4px;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+}
+
+.term-timestamp-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  padding-right: 8px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -3335,6 +3378,17 @@ button:disabled {
   text-align: center;
 }
 
+/* 有标签时连接失败的提示（空栏时走空态内的 error）。 */
+.nc-sftp-side-error {
+  margin: 8px 10px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: hsl(var(--destructive));
+  background: hsl(var(--destructive) / 0.12);
+  border: 1px solid hsl(var(--destructive) / 0.35);
+}
+
 .nc-sftp-empty-icon {
   width: 56px;
   height: 56px;
@@ -4267,8 +4321,17 @@ button:disabled {
 }
 
 .splitter {
-  flex: 0 0 2px;
   background: hsl(var(--border) / 0.7);
+}
+
+.splitter-horizontal {
+  width: 2px;
+  margin-left: -1px;
+}
+
+.splitter-vertical {
+  height: 2px;
+  margin-top: -1px;
 }
 
 .splitter:hover {
@@ -5091,6 +5154,483 @@ button:disabled {
 
 .term-compose-resizer:hover::after {
   opacity: 0.85;
+}
+
+/* 顶栏快捷片段条（对照 Netcatty：高 30px，左侧 chips 横向滚动，右侧 + 管理浮层） */
+.term-compose-snippet-strip {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 8px;
+  min-width: 0;
+}
+
+.term-compose-snippet-scroll {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+}
+
+.term-compose-chip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  height: 24px;
+  max-width: 168px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  transition: background-color 0.15s ease;
+}
+
+.term-compose-chip:hover {
+  background: hsl(var(--accent, var(--muted)));
+}
+
+.term-compose-chip-label {
+  flex: 1;
+  min-width: 0;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.term-compose-chip-unpin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.4;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.term-compose-chip-unpin:hover {
+  opacity: 1;
+}
+
+.term-compose-snippet-manage {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.term-compose-snippet-manage:hover,
+.term-compose-snippet-manage.active {
+  background: hsl(var(--accent, var(--muted)));
+  color: hsl(var(--foreground));
+}
+
+/* 管理浮层：对齐 Netcatty Popover（宽 288、贴右侧、浮在顶栏上方） */
+.term-compose-snippet-popover {
+  position: absolute;
+  right: 8px;
+  bottom: 34px;
+  z-index: 60;
+  width: 288px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--popover, var(--background)));
+  color: hsl(var(--popover-foreground, var(--foreground)));
+  box-shadow: 0 8px 24px hsl(var(--foreground) / 0.18);
+  overflow: hidden;
+}
+
+.term-compose-snippet-popover-head {
+  padding: 8px 10px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.term-compose-snippet-popover-title {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.term-compose-snippet-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.term-compose-snippet-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  outline: none;
+}
+
+.term-compose-snippet-search input::placeholder {
+  color: hsl(var(--muted-foreground) / 0.7);
+}
+
+.term-compose-snippet-list {
+  max-height: 208px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.term-compose-snippet-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.term-compose-snippet-row:hover {
+  background: hsl(var(--accent, var(--muted)));
+}
+
+.term-compose-snippet-row.pinned {
+  background: hsl(var(--accent, var(--muted)));
+}
+
+.term-compose-snippet-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-compose-snippet-pin {
+  flex-shrink: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-compose-snippet-row.pinned .term-compose-snippet-pin {
+  color: hsl(var(--foreground));
+}
+
+.term-compose-snippet-none {
+  padding: 12px 8px;
+  text-align: center;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-compose-snippet-foot {
+  padding: 6px 10px;
+  border-top: 1px solid hsl(var(--border));
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* ── 命令历史面板（对照 Netcatty HistorySidePanel 的全局范围）── */
+.term-history-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100% - 16px));
+  max-height: calc(100% - 16px);
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--popover, var(--background)));
+  color: hsl(var(--popover-foreground, var(--foreground)));
+  box-shadow: 0 12px 32px hsl(var(--foreground) / 0.2);
+  overflow: hidden;
+}
+
+.term-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.term-history-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.term-history-count {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.term-history-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.term-history-clear {
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.term-history-clear:hover:not(:disabled) {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.term-history-clear.armed {
+  border-color: hsl(var(--destructive) / 0.5);
+  color: hsl(var(--destructive));
+}
+
+.term-history-clear:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.term-history-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.term-history-close:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.term-history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.term-history-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.term-history-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 11px;
+  outline: none;
+}
+
+.term-history-scopes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 4px;
+  background: hsl(var(--muted));
+}
+
+.term-history-scopes button {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.term-history-scopes button.active {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+
+.term-history-scopes button span {
+  margin-left: 3px;
+  opacity: 0.7;
+}
+
+.term-history-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.term-history-item {
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+}
+
+.term-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.term-history-row:hover,
+.term-history-row.expanded {
+  background: hsl(var(--accent, var(--muted)) / 0.6);
+}
+
+.term-history-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.term-history-command {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.term-history-host {
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.term-history-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.term-history-row:hover .term-history-row-actions,
+.term-history-row.expanded .term-history-row-actions {
+  opacity: 1;
+}
+
+.term-history-row-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.term-history-row-actions button:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.term-history-detail {
+  padding: 6px 10px 10px;
+  background: hsl(var(--muted) / 0.35);
+}
+
+.term-history-detail-command {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.term-history-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-history-empty svg {
+  opacity: 0.4;
 }
 
 .term-compose-body {
@@ -9682,3 +10222,72 @@ html[data-theme="dark"] .nc-shell-icon.mono {
   filter: invert(1);
 }
 
+
+/* ── 自动补全（对照 Netcatty 候选下拉 / 内联 ghost text）── */
+
+.term-autocomplete-popup {
+  position: absolute;
+  z-index: 5;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+}
+
+.term-autocomplete-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: hsl(var(--popover-foreground));
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.term-autocomplete-row:hover {
+  background: hsl(var(--secondary));
+}
+
+.term-autocomplete-row.selected {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.term-autocomplete-command {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.term-autocomplete-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-autocomplete-row.selected .term-autocomplete-meta {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.term-autocomplete-ghost {
+  position: absolute;
+  z-index: 2;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.75;
+  pointer-events: none;
+  white-space: pre;
+}

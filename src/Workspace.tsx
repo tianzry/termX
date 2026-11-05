@@ -11,6 +11,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -20,14 +21,15 @@ import {
   collectLeaves,
   defaultTitle,
   firstLeafId,
+  layoutPanePlacements,
   makeLeaf,
   newId,
   removeLeaf,
   splitLeaf,
   updateRatio,
   type Connector,
-  type PaneNode,
   type SplitDir,
+  type SplitterPlacement,
   type Tab,
 } from "./workspaceModel";
 import {
@@ -79,7 +81,6 @@ function resolveActivePane(
 }
 
 interface LayoutProps {
-  node: PaneNode;
   tab: Tab;
   activePaneId: string | null;
   onActivate: (paneId: string) => void;
@@ -92,9 +93,15 @@ interface LayoutProps {
   onSplit: (dir: SplitDir) => void;
 }
 
-/** 递归渲染分屏树；split 节点带一条可拖拽分隔条。 */
-function LayoutView({
-  node,
+/**
+ * 渲染一个标签的分屏布局。
+ *
+ * 关键：终端组件不嵌在布局树里，而是以 paneId 为 key 平铺在同一个
+ * `.pane-layer` 中，布局树只负责算出每格的矩形与分隔条位置。
+ * split / close 只改变位置与数量，既有窗格的 React 实例保持挂载，
+ * 因此不会重新建立 SSH / PTY 连接，也不会丢 scrollback（分屏重连 bug 的根因）。
+ */
+function TabLayout({
   tab,
   activePaneId,
   onActivate,
@@ -106,40 +113,32 @@ function LayoutView({
   onClosePane,
   onSplit,
 }: LayoutProps) {
-  const boxRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const { panes, splitters } = useMemo(
+    () => layoutPanePlacements(tab.layout),
+    [tab.layout],
+  );
 
-  if (node.type === "leaf") {
-    return (
-      <TerminalPane
-        tab={tab}
-        paneId={node.id}
-        active={node.id === activePaneId}
-        onActivate={() => onActivate(node.id)}
-        onRegister={onRegister}
-        onStatus={(text) => onStatus(node.id, text)}
-        onOpenTool={onOpenTool}
-        onOpenSettings={onOpenSettings}
-        onClosePane={() => onClosePane(node.id)}
-        onSplit={onSplit}
-      />
-    );
-  }
-
-  const dir = node.dir;
-
-  function startDrag(e: ReactPointerEvent<HTMLDivElement>) {
+  function startDrag(
+    e: ReactPointerEvent<HTMLDivElement>,
+    splitter: SplitterPlacement,
+  ) {
     e.preventDefault();
-    const box = boxRef.current;
-    if (!box) return;
-    const rect = box.getBoundingClientRect();
-    const horizontal = dir === "horizontal";
-    const total = horizontal ? rect.width : rect.height;
+    const layer = layerRef.current;
+    if (!layer) return;
+    const box = layer.getBoundingClientRect();
+    const horizontal = splitter.dir === "horizontal";
+    const origin = horizontal
+      ? box.left + splitter.rect.left * box.width
+      : box.top + splitter.rect.top * box.height;
+    const total = horizontal
+      ? splitter.rect.width * box.width
+      : splitter.rect.height * box.height;
     if (total <= 0) return;
-    const origin = horizontal ? rect.left : rect.top;
 
     const move = (ev: PointerEvent) => {
       const pos = (horizontal ? ev.clientX : ev.clientY) - origin;
-      onRatio(node.id, pos / total);
+      onRatio(splitter.splitId, pos / total);
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -149,31 +148,55 @@ function LayoutView({
     window.addEventListener("pointerup", up);
   }
 
-  const common: Omit<LayoutProps, "node"> = {
-    tab,
-    activePaneId,
-    onActivate,
-    onRegister,
-    onStatus,
-    onRatio,
-    onOpenTool,
-    onOpenSettings,
-    onClosePane,
-    onSplit,
-  };
-
   return (
-    <div ref={boxRef} className={`split split-${node.dir}`}>
-      <div className="split-cell" style={{ flexGrow: node.ratio }}>
-        <LayoutView node={node.a} {...common} />
-      </div>
-      <div
-        className={`splitter splitter-${node.dir}`}
-        onPointerDown={startDrag}
-      />
-      <div className="split-cell" style={{ flexGrow: 1 - node.ratio }}>
-        <LayoutView node={node.b} {...common} />
-      </div>
+    <div ref={layerRef} className="pane-layer">
+      {panes.map(({ paneId, rect }) => (
+        <div
+          key={paneId}
+          className="pane-cell"
+          style={{
+            left: `${rect.left * 100}%`,
+            top: `${rect.top * 100}%`,
+            width: `${rect.width * 100}%`,
+            height: `${rect.height * 100}%`,
+          }}
+        >
+          <TerminalPane
+            tab={tab}
+            paneId={paneId}
+            active={paneId === activePaneId}
+            onActivate={() => onActivate(paneId)}
+            onRegister={onRegister}
+            onStatus={(text) => onStatus(paneId, text)}
+            onOpenTool={onOpenTool}
+            onOpenSettings={onOpenSettings}
+            onClosePane={() => onClosePane(paneId)}
+            onSplit={onSplit}
+          />
+        </div>
+      ))}
+      {splitters.map((splitter) => {
+        const horizontal = splitter.dir === "horizontal";
+        const style = horizontal
+          ? {
+              left: `${splitter.rect.left * 100}%`,
+              top: `${splitter.rect.top * 100}%`,
+              height: `${splitter.rect.height * 100}%`,
+            }
+          : {
+              left: `${splitter.rect.left * 100}%`,
+              top: `${splitter.rect.top * 100}%`,
+              width: `${splitter.rect.width * 100}%`,
+            };
+        return (
+          <div
+            key={splitter.splitId}
+            className={`splitter splitter-${splitter.dir}`}
+            style={style}
+            onPointerDown={(e) => startDrag(e, splitter)}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -491,8 +514,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
               key={tab.id}
               className={`tab-view${tab.id === activeTabId ? "" : " hidden"}`}
             >
-              <LayoutView
-                node={tab.layout}
+              <TabLayout
                 tab={tab}
                 activePaneId={tab.id === activeTabId ? activePaneId : null}
                 onActivate={(paneId) => activatePane(tab.id, paneId)}
