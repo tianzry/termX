@@ -366,6 +366,7 @@
 - 证书真实握手：代码路径已实现，但需真实 CA 签名服务器环境做人工验证。
 - Windows ssh-agent 启动与委托：需真实 agent 环境（ssh-agent 服务/页签）人工验证。
 - 安装包安装：MSI / NSIS 仅完成产出，需在干净 Windows 机器人工安装验证。
+
 - 文件对话框落盘：保存/导出/上传等原生对话框路径需人工在桌面环境确认。
 
 ### 验证方式与结果
@@ -5823,6 +5824,19 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `cargo add` 将 `tauri` 从 2.11 升到 2.12.5（single-instance 2.5.5 的最低要求），`Cargo.lock` 有大量升级；`cargo check --features server` 与 `cargo test --lib` 均通过。
 
 - 门禁：前端 452✓ / `npm run build` ✓ / `cargo check --features server` ✓ / `cargo test --lib` ✓。
+
+---
+
+## 2026-11-05 — 分屏重连 / 自动补全 / 命令历史 / SFTP 自动连接 / 撰写栏片段 / 时间戳与内边距
+
+- **#163 分屏重连（严重）**：根因是 `TerminalPane` 递归嵌在布局树里，`split`（leaf→`div.split`）与 `close`（`div.split`→leaf）改变同一位置的 React 元素类型，终端组件被卸载重建 → `onReady` 再次 `connect()`，重复 `ssh_connect` 且 scrollback 丢失。改为 `workspaceModel.layoutPanePlacements` 只算矩形，终端按 `paneId` 为 key 平铺在 `.pane-layer` 绝对定位：split/close 不改既有 pane 的 id 与实例，拖拽分隔条只改 ratio + fit。回归测试断言原 pane 挂载次数恒为 1。CDP 实测 5 次「水平分屏→关闭→再分屏」原 `.xterm` DOM 节点始终存在；垂直分屏两侧输出互不污染。证据 `evidence/r11-split-*.png|json`、`r11-vertical-*.png|json`。
+- **#164 自动补全（设置·终端）**：按 Netcatty 取证：默认启用、候选下拉默认开、内联 ghost 默认关、100ms 防抖、minChars 1、最多 50 条、历史范围 host/global；↑↓ 切换并实时预览、Tab 不拦截（交给 Shell 原生补全）、→ 只接受 ghost、Enter 执行、Esc 恢复；串口/Telnet 不做实时预览（Ctrl-U 可能终止会话）。实现 `terminal/autocompleteModel.ts` 纯函数 + `TerminalPane` 接线；方向键 / Shell 补全等无法追踪的改动会锁定当前行，Enter 前从 xterm buffer 校准待记录命令，密码提示行不写历史。单测 17 例。实测（本地 pty + 129）：候选出现、↓ 预览、Enter 记录完整命令而非前缀。
+- **#165 命令历史**：Netcatty 为 renderer localStorage（非 DB），仅 ssh/mosh/et；termX 落 `termx.commandHistory.v1`（上限 500、按主机分桶、去重计数），More 菜单入口对四类终端开放（有意偏离，用户要求本地/串口/Telnet 也可查）。面板支持搜索、按主机/全部筛选、插入（不回车）与直接执行、删除单条/清空。实测本地 pty：`echo R11-OK` 记录、前缀补全后 Enter 记完整命令、搜索命中。证据 `evidence/r11-final-*.png|json`。
+- **#166 SFTP 双入口自动连接**：主机卡片右键「打开 SFTP」（原先置灰 + tooltip「尚未实现」）与终端工具栏图标统一为「开标签 + 自动连接」；工具栏复用当前 SSH 会话走 `sftp_connect_session`，右键定位该主机；加载期有状态、失败走 `sshErrors`、重复点击聚焦/复用不新增标签。补连接代次守卫（切会话/卸载丢弃过期结果）与独立连接 `sftpIdRef` 同步。129 实测：工具栏进入即列 `/home/tianzry`；右键打开后左右栏（本地 / 129）定位 home；连续两次右键标签数不变。证据 `evidence/r11-sftp-*.png|json`。
+- **#167 撰写栏快捷片段**：按 Netcatty 补齐顶部片段按钮（顶栏左侧，复用脚本模块 `snippets*` 为数据源），图标 14px、hover/暗色主题；点击把片段正文追加到草稿末尾并保留换行，无片段时按钮不渲染；管理浮层可固定/取消固定。实测点击「磁盘用量」「巡检」多行片段插入且光标在末尾。证据 `evidence/r11-compose-*.png|json`。
+- **#168 终端内边距与时间戳**：视口统一留白（上 10 / 右 4 / 下 4 / 左 4，叠加 `.pane` 既有 4px 后左侧 6px），xterm fit 按扣除 padding 后的宽度重算，避免右侧裁切；四类终端共用同一容器。时间戳为行首 gutter（`[HH:mm:ss]`），工具栏时钟图标开关、localStorage 持久化，关闭立即恢复。纯函数单测覆盖 `terminalInsets` 与 `terminalTimestamps`。
+- **门禁**：`npm run test:run` 61 文件 / 643 用例 ✓；`npm run build` ✓；`cargo check` ✓；子 agent code review 高危 3 项（SFTP 独立连接未写 ref、补全 typed 脱同步、密码入历史）已全部修复，SFTP 连接守卫同批修复。
+- **剩余待办**：时间戳 gutter 在字号/尺寸变化后的行号重映射；多行 bracketed paste 历史只记最后一行；非 SSH 历史 hostId 依赖标签标题（重命名会换桶）；串口/Telnet 实机截图未做（COM1 占用）；SFTP 上传/下载未走自动化（原生文件对话框）。
 
 
 
