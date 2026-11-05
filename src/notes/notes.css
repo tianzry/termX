@@ -26,20 +26,13 @@
   align-items: center;
   gap: 6px;
   height: 40px;
-  padding: 0 8px 0 12px;
-}
-
-.np-tree-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: hsl(var(--nc-fg));
+  padding: 0 6px;
 }
 
 .np-tree-actions {
   display: flex;
   align-items: center;
   gap: 1px;
-  margin-left: auto;
 }
 
 .np-icon {
@@ -97,10 +90,13 @@
 }
 
 .np-tree-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 2px 4px 8px;
+  padding: 6px 6px 16px;
 }
 
 .np-tree-row {
@@ -173,29 +169,25 @@
   outline: none;
 }
 
-.np-tree-foot {
-  display: flex;
-  align-items: center;
-  height: 26px;
-  padding: 0 12px;
-  border-top: 1px solid hsl(var(--nc-border) / 0.5);
-  font-size: 11px;
-  color: hsl(var(--nc-faint));
-}
 
 .np-tree-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 36px 16px;
-  color: hsl(var(--nc-faint));
+  padding: 16px;
+  border: 1px dashed hsl(var(--nc-border) / 0.7);
+  border-radius: 8px;
+  color: hsl(var(--nc-muted));
   text-align: center;
+}
+.np-tree-empty svg {
+  opacity: 0.6;
 }
 .np-tree-empty p,
 .np-empty-line {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   color: hsl(var(--nc-muted));
 }
 .np-empty-line {
@@ -243,7 +235,7 @@
   align-items: center;
   gap: 8px;
   min-height: 54px;
-  padding: 12px 24px 2px;
+  padding: 24px 32px 4px;
 }
 
 .np-title {
@@ -534,21 +526,47 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 48px 16px;
+  max-width: 384px;
+  padding: 16px;
   text-align: center;
   color: hsl(var(--nc-muted));
 }
+.np-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+  border-radius: 16px;
+  background: hsl(var(--nc-bg-elev) / 0.8);
+  color: hsl(var(--nc-fg));
+}
+.np-empty-icon svg {
+  opacity: 0.6;
+}
 .np-empty-note h3 {
-  margin: 0;
+  margin: 0 0 8px;
   font-size: 18px;
+  font-weight: 600;
   color: hsl(var(--nc-fg));
 }
 .np-empty-note p {
-  margin: 0;
-  max-width: 380px;
-  font-size: 13px;
+  margin: 0 0 16px;
+  font-size: 14px;
   line-height: 1.6;
+}
+.np-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.np-empty-actions .np-btn {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
 }
 
 /* ── 大纲 ───────────────────────────────────────────── */

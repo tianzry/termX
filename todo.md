@@ -44,7 +44,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 钥匙串模型 | Netcatty 密钥/证书/身份单页；termX 系统密钥/已存密钥 tab + SSH Agent | P2 | ✅ #188：移除子 tab，改单页分区（已存密钥 + 系统密钥/Agent/证书）；数据层未动 |
 | 日志页布局 | Netcatty 日期/用户/主机/收藏整页表格；termX 左列表 + 右详情 | P2 | ✅ #190：改整页表格（会话/主机、时间、时长、大小、操作）+ 排序 + 行操作 + 整页详情；保留导出；格式筛选仍移除｜✅ #193：按用户偏好行内改单行（保留表格结构与列），**不得反向改回两行** |
 | 脚本页行样式 | Netcatty 透明 56px 行 + 40px 图标方块、Shell 历史；termX 卡片行、导出按钮 | P2 | ✅ #207：仅列表行对齐（56px/透明无边框/hover secondary60、图标盒 44×44 圆角12 实心底、标题14/副标题11、badge 4×8、hover 编辑 32×32）；卡片视图 68px 不动。CDP 实测见 `evidence/audit11-snippets-*`；Shell 历史仍未移植 |
-| 笔记页信息架构 | Netcatty 简单列表 + 实时预览；termX 分组树 + 行号编辑器 + 分屏 | P2 | 保留 termX 超集，补「实时预览」提法｜✅ #209：真实 129 原生验证 #205 五项全过（截图 `evidence/audit12-*`、断言 16/16），并修复面板开关按标签记忆（`notesOpenTabs`）｜#210 页面版 IA 对齐 Netcatty（结构/留白/空态，与面板共用数据层） |
+| 笔记页信息架构 | Netcatty 简单列表 + 实时预览；termX 分组树 + 行号编辑器 + 分屏 | P2 | 保留 termX 超集，补「实时预览」提法｜✅ #209：真实 129 原生验证 #205 五项全过（截图 `evidence/audit12-*`、断言 16/16），并修复面板开关按标签记忆（`notesOpenTabs`）｜✅ #210 页面版 IA 对齐 Netcatty（树头无标题/图标左对齐、树体 6/6/16 + 4px 行距、虚线空态、零笔记隐藏树、标题行 24/32/4、空态 64×64 双按钮；与面板共用 `notesModel` 保存队列） |
 | 终端侧栏 | Netcatty 200px（图标行 + 笔记面板）且本地会话隐藏侧栏；termX 170px 主机树常驻 | P2 | ✅ #186：实测 220px = Netcatty 默认 220（170 为缩放截图误差）；时间戳列已实现（gutter 81px，同公式）｜✅ #187：侧栏默认收起（可切换）+ 本地标签/标题显示 Shell 名 |
 | Vault 首页 | Netcatty 8 项导航 + 监控 + 底部设置，无独立 Telnet；termX 多「同步」导航、多「Telnet」入口 | P2 | ✅ #185：移除「同步」导航 + 补底部「设置」；✅ #204：Telnet 纳入主机协议（`Profile.protocol` 支持 telnet，卡片/右键/快速切换器均按 protocol 派生），独立 Telnet 入口按要求保留不删 |
 | 代理页按钮层级 | Netcatty 页头「添加代理」secondary、空态 primary；termX「新建代理」仅 secondary；区块计数文案不同 | P2/P3 | ✅ #191：区块头「代理」+「N 项」；补 64px Globe 空态 + primary 新建代理；页头保持 secondary（与 Netcatty 一致） |

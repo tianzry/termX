@@ -804,9 +804,9 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
 
   return (
     <div className="notes-page">
+      {(loading || notes.length > 0) && (
       <aside className="np-tree">
         <header className="np-tree-head">
-          <span className="np-tree-title">笔记</span>
           <div className="np-tree-actions">
             <button
               className={`np-icon${searchOpen ? " is-active" : ""}`}
@@ -859,13 +859,8 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
             <p className="np-empty-line">加载中…</p>
           ) : treeRows.length === 0 ? (
             <div className="np-tree-empty">
-              <FileText size={28} />
-              <p>{query.trim() ? "没有匹配的笔记" : "还没有笔记"}</p>
-              {!query.trim() && (
-                <button className="np-btn is-primary" onClick={() => void newNote()}>
-                  <FilePlus2 size={13} /> 新建笔记
-                </button>
-              )}
+              <Search size={20} />
+              <p>{query.trim() ? "没有找到笔记。" : "这个笔记本里还没有笔记。"}</p>
             </div>
           ) : (
             treeRows.map((row) => {
@@ -938,11 +933,8 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
             })
           )}
         </div>
-
-        <div className="np-tree-foot">
-          <span>{notes.length} 条笔记</span>
-        </div>
       </aside>
+      )}
 
       {draft && activeNoteRef.current ? (
         <section className={`np-editor is-${mode}${outlineOn ? " with-outline" : ""}`}>
@@ -951,7 +943,7 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
               ref={titleRef}
               className="np-title"
               value={draft.title}
-              placeholder="未命名笔记"
+              placeholder="笔记标题"
               onChange={(e) => patchDraft({ title: e.target.value })}
               onBlur={() => void queueRef.current?.flush()}
             />
@@ -1093,12 +1085,19 @@ export function NotesView({ profiles = [], credentials = [], onOpenHost }: Props
       ) : (
         <section className="np-editor is-empty">
           <div className="np-empty-note">
-            <FileText size={32} />
+            <div className="np-empty-icon">
+              <Pencil size={30} />
+            </div>
             <h3>{loading ? "加载中…" : "还没有笔记"}</h3>
-            <p>新建笔记记录命令、排查过程或主机信息；`ssh://` 链接可直接起连。</p>
-            <button className="np-btn is-primary" onClick={() => void newNote()}>
-              <FilePlus2 size={14} /> 新建笔记
-            </button>
+            <p>可以记录运维手册、临时备忘、服务器交接信息。</p>
+            <div className="np-empty-actions">
+              <button className="np-btn is-primary" onClick={() => void newNote()}>
+                <FilePlus2 size={14} /> 新建笔记
+              </button>
+              <button className="np-btn" onClick={() => void importNotes()} disabled={busy}>
+                <Upload size={14} /> 导入 Markdown
+              </button>
+            </div>
           </div>
         </section>
       )}

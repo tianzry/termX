@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-06 — #210 笔记页信息架构对齐 Netcatty
+
+- **同一套模型确认**：Netcatty `VaultView` 直接渲染 `NotesManager`（`displayMode` full/sidebar 分支），分组、大纲、编辑/预览模式都在同一个组件里；termX 页面版与 #205 终端面板也共用 `src/notes/notesModel.ts`（`createNoteSaveQueue` / `draftToNote` / `api.saveNote`），两处保存入口均只调用 `api.saveNote`，未出现第二套保存逻辑。
+- **页面版对齐（`NotesView.tsx` / `notes.css`）**：
+  - 树头去掉「笔记」标题，6 个图标左对齐（40px 高、左右 6px），与 Netcatty 的 `TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS` 图标行一致；去掉树底部「N 条笔记」计数条；
+  - 树体 padding `6px 6px 16px`、行间距 4px（对齐 `px-1.5 pt-1.5 pb-4 space-y-1`）；
+  - 树空态改为虚线卡片：`16px` padding、`8px` 圆角、20px Search 图标、14px 文案（「这个笔记本里还没有笔记。」/「没有找到笔记。」），移除卡内「新建笔记」按钮；
+  - 零笔记时隐藏整棵树（对齐 Netcatty `shouldShowNotesTree = isSidebarMode || sortedNotes.length > 0`），建笔记/导入改由右侧空态承担；
+  - 标题行 padding 改为 `24px 32px 4px`（`min-height` 54 不变），对齐 `px-8 pt-6 pb-1`；
+  - 编辑器空态对齐：64×64 / 16px 圆角 / 30px 铅笔图标（0.6 透明）、18px/600 标题、14px 描述「可以记录运维手册、临时备忘、服务器交接信息。」，并补「新建笔记」「导入 Markdown」双按钮（36px 高、14px 字号）；
+  - 标题 placeholder 改为「笔记标题」。
+- **保留差异**：Netcatty 的 live 是 MDXEditor 内联渲染，termX 仍用「编辑 / 分屏 / 预览」；公式按等宽文本渲染。
+- 验证：`evidence/audit13-01-notes-page.png`、`audit13-02-search-empty.png`、`audit13-03-notes-restored.png`，`audit13-assertions.json` 2/2（树宽 300/头高 40/padding/行距/标题行 padding、空态虚线卡片样式与文案）。
+- 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 947 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #209 #205 原生验证（真实 129 SSH）+ 面板开关按标签记忆
 
 - **面板开关按标签记忆**：`App.tsx` 原先 `tool` 是全局状态，切标签后面板开关不随标签变化，不满足 #205 的验收项。新增 `notesOpenTabs: Record<tabId, boolean>`；`toggleTool("notes")` 只切当前标签、`closeTool()` 记录关闭、`activeTabId` 变化时按 map 恢复（SFTP 仍保持既有全局行为）。
