@@ -287,11 +287,8 @@ export function MonitorView({
     [profiles],
   );
   const movableIds = useMemo(() => new Set(movable.map((p) => p.id)), [movable]);
-  const profileMap = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
-
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
+  const movableIdsRef = useRef(movableIds);
+  movableIdsRef.current = movableIds;
 
   const [hosts, setHosts] = useState<Record<string, HostState>>({});
   const hostsRef = useRef(hosts);
@@ -313,7 +310,7 @@ export function MonitorView({
       return "charts";
     }
   });
-  const [query, setQuery] = useState("");
+
 
   function patchHost(id: string, patch: Partial<HostState>) {
     const next = {
@@ -413,7 +410,7 @@ export function MonitorView({
     if (!runningRef.current || tickBusyRef.current) return;
     tickBusyRef.current = true;
     try {
-      for (const id of selectedRef.current) {
+      for (const id of movableIdsRef.current) {
         if (!runningRef.current) return;
         const state = hostsRef.current[id];
         if (!state || state.unsupported || pendingRef.current.has(id)) continue;
@@ -454,7 +451,7 @@ export function MonitorView({
   }, []);
 
   function start() {
-    const ids = [...selectedRef.current].filter((id) => movableIds.has(id));
+    const ids = [...movableIdsRef.current];
     if (!ids.length) return;
     for (const id of ids) {
       patchHost(id, {
@@ -508,15 +505,6 @@ export function MonitorView({
     void connectHost(id);
   }
 
-  function toggleSelected(id: string) {
-    if (running) return;
-    const next = new Set(selectedRef.current);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    selectedRef.current = next;
-    setSelected(next);
-  }
-
   function changeView(next: "charts" | "list") {
     setView(next);
     try {
@@ -527,14 +515,7 @@ export function MonitorView({
   }
 
   const now = Date.now();
-  const selectedProfiles = [...selected]
-    .map((id) => profileMap.get(id))
-    .filter((p): p is Profile => !!p);
-  const filteredProfiles = movable.filter((p) => {
-    const q = query.trim().toLowerCase();
-    return !q || p.name.toLowerCase().includes(q) || p.host.toLowerCase().includes(q);
-  });
-  const runningProfiles = selectedProfiles.filter((p) => hosts[p.id]);
+  const monitoredProfiles = running ? movable.filter((p) => hosts[p.id]) : [];
 
   const renderCard = (profile: Profile) => {
     const state = hosts[profile.id] ?? EMPTY_HOST;
@@ -794,7 +775,7 @@ export function MonitorView({
         <span>网络</span>
         <span>更新</span>
       </div>
-      {runningProfiles.map((profile) => {
+      {movable.map((profile) => {
         const state = hosts[profile.id] ?? EMPTY_HOST;
         const sample = state.sample;
         const stale =
@@ -852,35 +833,11 @@ export function MonitorView({
         }}
       >
         <div style={{ fontSize: 15, fontWeight: 600, marginRight: 4 }}>监控</div>
-        {!running && (
-          <>
-            <div style={{ position: "relative" }}>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索主机、分组或地址"
-                style={{
-                  width: 200,
-                  padding: "5px 8px 5px 26px",
-                  borderRadius: 6,
-                  border: "1px solid hsl(var(--border))",
-                  background: "hsl(var(--input, var(--background)))",
-                  color: "hsl(var(--foreground))",
-                  fontSize: 12,
-                }}
-              />
-              <span style={{ position: "absolute", left: 7, top: 5, opacity: 0.6 }}>
-                <Icon name="search" size={13} />
-              </span>
-            </div>
-            <span style={{ ...muted }}>已选 {selectedProfiles.length} 台主机</span>
-          </>
-        )}
-        {running && (
-          <span style={{ ...muted }}>
-            {runningProfiles.length} 台监控中 · 每 {interval} 秒采样
-          </span>
-        )}
+        <span style={{ ...muted }}>
+          {running
+            ? `${movable.length} 台监控中 · 每 ${interval} 秒采样`
+            : `${movable.length} 台 SSH 主机 · 未开始`}
+        </span>
         <div style={{ flex: 1 }} />
         <label style={{ display: "flex", alignItems: "center", gap: 5, ...muted }}>
           更新频率
@@ -924,7 +881,11 @@ export function MonitorView({
           </button>
         </div>
         {!running ? (
-          <button style={{ ...btn, borderColor: "hsl(var(--primary) / 0.6)", color: "hsl(var(--primary))" }} onClick={start} disabled={selectedProfiles.length === 0}>
+          <button
+            style={{ ...btn, borderColor: "hsl(var(--primary) / 0.6)", color: "hsl(var(--primary))" }}
+            onClick={start}
+            disabled={movable.length === 0}
+          >
             <Icon name="play" size={13} /> 开始监控
           </button>
         ) : (
@@ -935,65 +896,31 @@ export function MonitorView({
       </div>
 
       {movable.length === 0 ? (
-        <div style={{ ...panelCard, marginTop: 14, textAlign: "center", padding: "36px 16px" }}>
-          <Icon name="activity" size={26} />
-          <div style={{ marginTop: 8, fontWeight: 600 }}>还没有可监控的主机</div>
-          <div style={{ ...muted, marginTop: 4 }}>监控只对已保存的 SSH 主机生效；本地终端 / 串口 / Telnet 不支持采集。</div>
+        <div className="monitor-empty">
+          <div className="monitor-empty-icon">
+            <Icon name="activity" size={32} />
+          </div>
+          <h2>还没有可监控的主机</h2>
+          <p>监控只对已保存的 SSH 主机生效；本地终端 / 串口 / Telnet 不支持采集。</p>
         </div>
       ) : !running ? (
-        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 10 }}>
-          {filteredProfiles.map((profile) => {
-            const checked = selected.has(profile.id);
-            return (
-              <button
-                key={profile.id}
-                onClick={() => toggleSelected(profile.id)}
-                style={{
-                  ...panelCard,
-                  textAlign: "left",
-                  cursor: "pointer",
-                  borderColor: checked ? "hsl(var(--primary) / 0.55)" : "hsl(var(--border))",
-                  background: checked ? "hsl(var(--primary) / 0.06)" : "hsl(var(--card))",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: 4,
-                      border: "1px solid hsl(var(--border))",
-                      background: checked ? "hsl(var(--primary))" : "transparent",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flex: "none",
-                      color: "#fff",
-                      fontSize: 10,
-                    }}
-                  >
-                    {checked ? "✓" : ""}
-                  </span>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.name}</div>
-                    <div style={{ ...muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.host}:{profile.port}</div>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-          {filteredProfiles.length === 0 && (
-            <div style={{ ...muted, padding: 12 }}>没有符合条件的主机</div>
-          )}
-          <div style={{ gridColumn: "1 / -1", ...muted, marginTop: 4, lineHeight: 1.7 }}>
-            开始后会为每台主机建立独立 SSH 会话并每 {interval} 秒只读采样一次；连接失败会自动退避重试。
-            <br />
-            主机密钥确认仍需人工处理（监控页没有交互弹窗）；Netcatty 有而 termX 后端无数据的字段会置灰并写明原因。
+        // 对齐 Netcatty MonitorPanels 空态：居中图标 + 标题 + 说明 + 主按钮。
+        <div className="monitor-empty">
+          <div className="monitor-empty-icon">
+            <Icon name="activity" size={32} />
           </div>
+          <h2>一眼查看多台主机</h2>
+          <p>
+            开始后会为 {movable.length} 台 SSH 主机各建独立会话并每 {interval} 秒只读采样；
+            连接失败自动退避重试。Netcatty 有而 termX 后端无数据的字段会置灰并写明原因。
+          </p>
+          <button className="monitor-empty-btn" onClick={start}>
+            <Icon name="play" size={14} /> 开始监控
+          </button>
         </div>
       ) : view === "charts" ? (
         <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 12, overflowY: "auto", paddingBottom: 12 }}>
-          {runningProfiles.map(renderCard)}
+          {monitoredProfiles.map(renderCard)}
         </div>
       ) : (
         <div style={{ marginTop: 12, overflowY: "auto", paddingBottom: 12 }}>{renderTable()}</div>

@@ -4855,6 +4855,58 @@ button:disabled {
   font-size: 10px;
 }
 
+/* 监控页居中空态（对齐 Netcatty MonitorPanels 空态）。 */
+.monitor-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.monitor-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--secondary) / 0.8);
+  color: hsl(var(--primary));
+}
+
+.monitor-empty h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.monitor-empty p {
+  margin: 0;
+  max-width: 460px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: hsl(var(--muted-foreground));
+}
+
+.monitor-empty-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 7px 14px;
+  border: 1px solid hsl(var(--primary));
+  border-radius: 6px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 12px;
+  cursor: pointer;
+}
+
 /* 监控页新增卡片：逐核 CPU / 磁盘 I/O / Top 进程。 */
 .monitor-core-list {
   display: flex;

@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-06 — #189 监控页面板化（第七轮 P2 · P2 重启第 1/3）
+
+> 取证：Netcatty `components/vault/MonitorPanels.tsx` 是面板式页头 + 居中空态（图标 + 标题 + 说明 + 主按钮）；运行时每台主机一张指标卡（CPU/内存 + 趋势、磁盘、网络）。termX 原本是「主机勾选控制台 + 开始监控」两段式。
+
+- `src/monitor/MonitorView.tsx`：
+  - 删除主机勾选控制台（搜索框、`selected` 集合、勾选卡片、`toggleSelected`）；「开始监控 / 停止」直接作用于全部已保存 SSH 主机。
+  - 未开始时改为居中空态（图标 + 「一眼查看多台主机」+ 采样说明 + 主按钮「开始监控」）；没有 SSH 主机时居中空态提示本地 / 串口 / Telnet 不支持采集。
+  - 运行后直接渲染全部主机面板卡（图表视图）或整表（列表视图）；指标项、每台独立 SSH 会话、`interval` 定时采样、失败退避重试、断线重连逻辑保持不变。
+- `src/styles.css`：新增 `.monitor-empty` / `.monitor-empty-icon` / `.monitor-empty-btn`（对齐 Netcatty 空态：64px 图标块 + 15px 标题 + 12px 说明）。
+- 取舍：Netcatty 的「监控面板」是用户自建面板模型（命名、主机集合、拖拽排序、多面板切换）；termX 后端无 `monitor_panels` 表，本轮用「全部 SSH 主机 = 一个隐式面板」，不新增持久化模型，面板管理单独立项。
+- 证据：`evidence/audit7-termx-monitor-panel-before.png`（空态、无勾选控制台）、`audit7-termx-monitor-panel-running.png`（1 台主机指标卡：CPU 1.3% / 内存 36.9% / 磁盘 93.8% / ↓1.7 KB/s，2 条趋势曲线）、`audit7-termx-monitor-panel.json`。
+- 门禁：`npm run test:run` 65 文件 / 730 用例 ✓；`npm run build` ✓；`npm run tauri -- build --debug` ✓。
+
 ## 2026-11-06 — #188 钥匙串页单页分区（第七轮 P2 · 4/4）
 
 > 取证：Netcatty `components/KeychainManager.tsx` 是**单页分区**（不是 tab）：顶部动作「新建密钥 / 生成密钥 / 导入证书 / 新建身份」，下方「密钥」「身份」两个 section 同页展示。termX 原本是「系统密钥 / 已存密钥」子 tab。
