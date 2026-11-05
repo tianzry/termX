@@ -469,7 +469,18 @@ export default function App() {
     : [];
 
   return (
-    <div className="nc-shell">
+    <div
+      className="nc-shell"
+      // 全局屏蔽 WebView2 默认右键菜单（返回/刷新/另存为/打印/检查）。
+      // 捕获阶段只 preventDefault、不阻断冒泡：各页面已有的自定义菜单照常
+      // 由自己的 onContextMenu 打开（Netcatty 同样没有系统默认菜单）。
+      // 输入框保留系统「复制/粘贴/剪切」菜单（用户明确要求区分）。
+      onContextMenuCapture={(e) => {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest("input, textarea, [contenteditable='true']")) return;
+        e.preventDefault();
+      }}
+    >
       <TopTabs
         tabs={tabs}
         activeTabId={activeTabId}

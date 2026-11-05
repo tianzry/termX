@@ -179,7 +179,12 @@ export function SessionLogsView() {
   );
 
   return (
-    <div className="session-logs-page">
+    <div
+      className="session-logs-page"
+      // 日志页不提供右键菜单：显式吞掉默认菜单（全局根容器已兜底，这里再
+      // 收紧一次，避免列表项冒泡触发浏览器菜单）。
+      onContextMenu={(e) => e.preventDefault()}
+    >
       <aside className="session-logs-tree">
         <div className="session-logs-tree-head">
           <span>会话日志</span>

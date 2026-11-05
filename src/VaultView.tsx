@@ -97,6 +97,10 @@ import {
   VAULT_TAGS_KEY,
   readHostTags,
 } from "./vault/vaultTags";
+import {
+  deriveHostContextMenuItems,
+  HOST_CONTEXT_MENU_ICON,
+} from "./hosts/hostContextMenuModel";
 
 interface Props {
   profiles: Profile[];
@@ -5146,79 +5150,66 @@ export function VaultView({
           className="term-context-menu vault-context-menu vault-popmenu"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
         >
-          {/* 条目与顺序 1:1 对齐 Netcatty 主机卡片右键菜单：
-              连接 / 打开 SFTP / 编辑 / 复制 / 复制主机地址 /
-              复制账密信息 / 置顶·取消置顶 / 删除（无分隔线）。 */}
-          <button
-            onClick={() => {
-              const p = ctxMenu.profile;
-              setCtxMenu(null);
-              onConnect(p);
-            }}
-          >
-            <Icon name="plug" size={14} />
-            连接
-          </button>
-          <button disabled title="尚未实现">
-            <Icon name="columns" size={14} />
-            打开 SFTP
-          </button>
-          <button
-            onClick={() => {
-              const p = ctxMenu.profile;
-              setCtxMenu(null);
-              if (p.protocol === "local") setLocalPanel(p);
-              else if (p.protocol === "serial") setSerialPanel(p);
-              else openComposerForEdit(p);
-            }}
-          >
-            <Icon name="pencil" size={14} />
-            编辑
-          </button>
-          <button
-            onClick={() => {
-              const p = ctxMenu.profile;
-              setCtxMenu(null);
-              duplicateHost(p);
-            }}
-          >
-            <Icon name="copy" size={14} />
-            复制
-          </button>
-          <button
-            onClick={() => {
-              copyHostname(ctxMenu.profile);
-              setCtxMenu(null);
-            }}
-          >
-            <Icon name="copy" size={14} />
-            复制主机地址
-          </button>
-          <button
-            onClick={() => {
-              const p = ctxMenu.profile;
-              setCtxMenu(null);
-              void copyCredentials(p);
-            }}
-          >
-            <Icon name="clipboard-paste" size={14} />
-            复制账密信息
-          </button>
-          <button onClick={() => togglePin(ctxMenu.profile.id)}>
-            <Icon name="pin" size={14} />
-            {pinnedIds.includes(ctxMenu.profile.id) ? "取消置顶" : "置顶"}
-          </button>
-          <button
-            className="danger"
-            onClick={() => {
-              const p = ctxMenu.profile;
-              setCtxMenu(null);
-              setHostDelete(p);
-            }}
-          >
-            <Icon name="trash" size={14} />
-            删除
-          </button>
+          {/* 条目顺序对齐 Netcatty 主机卡片右键菜单；按协议派生：
+              本地终端无 SFTP/复制地址/复制账密，串口与 Telnet 无 SFTP。 */}
+          {deriveHostContextMenuItems({
+            protocol: ctxMenu.profile.protocol,
+            host: ctxMenu.profile.host,
+            pinned: pinnedIds.includes(ctxMenu.profile.id),
+          }).map((item) => {
+            const p = ctxMenu.profile;
+            const close = () => setCtxMenu(null);
+            if (item.id === "sftp") {
+              return (
+                <button key={item.id} disabled title="尚未实现">
+                  <Icon name={HOST_CONTEXT_MENU_ICON[item.id]} size={14} />
+                  {item.label}
+                </button>
+              );
+            }
+            return (
+              <button
+                key={item.id}
+                className={item.danger ? "danger" : undefined}
+                onClick={() => {
+                  switch (item.id) {
+                    case "connect":
+                      close();
+                      onConnect(p);
+                      break;
+                    case "edit":
+                      close();
+                      if (p.protocol === "local") setLocalPanel(p);
+                      else if (p.protocol === "serial") setSerialPanel(p);
+                      else openComposerForEdit(p);
+                      break;
+                    case "duplicate":
+                      close();
+                      duplicateHost(p);
+                      break;
+                    case "copy-hostname":
+                      close();
+                      copyHostname(p);
+                      break;
+                    case "copy-credentials":
+                      close();
+                      void copyCredentials(p);
+                      break;
+                    case "pin":
+                      togglePin(p.id);
+                      break;
+                    case "delete":
+                      close();
+                      setHostDelete(p);
+                      break;
+                  }
+                }}
+              >
+                <Icon name={HOST_CONTEXT_MENU_ICON[item.id]} size={14} />
+                {item.label}
+              </button>
+            );
+          })}
         </div>
       )}
 

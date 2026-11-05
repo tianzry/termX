@@ -1929,7 +1929,7 @@ export function TerminalPane({
   /** 读取系统剪贴板并粘贴（多行确认 / 粘贴后滚动与 Netcatty 行为区一致）。 */
   async function pasteFromClipboard() {
     try {
-      const text = await navigator.clipboard.readText();
+      const text = await api.clipboardRead();
       if (!text) return;
       const s = getSettings();
       if (s.terminal.confirmBeforeMultilinePaste) {

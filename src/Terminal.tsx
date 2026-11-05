@@ -546,8 +546,8 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       if (mode === "prompt" && !window.confirm("远程程序请求读取剪贴板，是否允许？")) {
         return true;
       }
-      void navigator.clipboard
-        .readText()
+      void api
+        .clipboardRead()
         .then((text) => {
           // 大段剪贴板不能用 String.fromCharCode(...bytes) 展开（参数上限约
           // 12 万，会抛 RangeError），逐字节拼接更稳。

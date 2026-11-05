@@ -237,7 +237,13 @@ fn with_clipboard<R>(
 /// same page in this session.
 #[tauri::command]
 pub fn clipboard_read() -> AppResult<String> {
-    with_clipboard("read", |cb| cb.get_text())
+    // 空剪贴板（或只有非文本内容）时 arboard 返回 ContentNotAvailable：
+    // 按“读到空串”返回，避免把正常情况当错误抛给前端（OSC 52 查询会一直等）。
+    with_clipboard("read", |cb| match cb.get_text() {
+        Ok(text) => Ok(text),
+        Err(arboard::Error::ContentNotAvailable) => Ok(String::new()),
+        Err(err) => Err(err),
+    })
 }
 
 /// Write text to the system clipboard.

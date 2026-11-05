@@ -14,6 +14,7 @@ import { listen } from "@tauri-apps/api/event";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   bytesToText,
+  clipboardRead,
   decodeBase64,
   localHome,
   localListDir,
@@ -100,6 +101,12 @@ describe("invoke 参数形状", () => {
       data: [65, 66, 228, 184, 173],
       encoding: "gb18030",
     });
+  });
+
+  it("clipboardRead 走 Rust 后端（不触发 WebView2 剪贴板授权框）", async () => {
+    mockedInvoke.mockResolvedValue("clip");
+    await expect(clipboardRead()).resolves.toBe("clip");
+    expect(mockedInvoke).toHaveBeenCalledWith("clipboard_read");
   });
 
   it("ptySpawn 显式传 sessionId: null（由后端分配）", async () => {

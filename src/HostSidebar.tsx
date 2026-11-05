@@ -14,6 +14,10 @@ import {
   matchesHostTags,
   readHostTags,
 } from "./vault/vaultTags";
+import {
+  deriveHostContextMenuItems,
+  HOST_CONTEXT_MENU_ICON,
+} from "./hosts/hostContextMenuModel";
 
 interface Props {
   profiles: Profile[];
@@ -51,16 +55,21 @@ export function HostSidebar({
   const [tagMenu, setTagMenu] = useState(false);
   const [moreMenu, setMoreMenu] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  /** 主机行右键菜单（按协议派生条目，对齐 Netcatty 主机树）。 */
+  const [ctx, setCtx] = useState<{ profile: Profile; x: number; y: number } | null>(
+    null,
+  );
 
   useEffect(() => {
-    if (!tagMenu && !moreMenu) return;
+    if (!tagMenu && !moreMenu && !ctx) return;
     const close = () => {
       setTagMenu(false);
       setMoreMenu(false);
+      setCtx(null);
     };
     window.addEventListener("mousedown", close);
     return () => window.removeEventListener("mousedown", close);
-  }, [tagMenu, moreMenu]);
+  }, [tagMenu, moreMenu, ctx]);
 
   // 与 Vault 主机页共用同一份 localStorage 标签表。
   const hostTags = readHostTags();
@@ -274,6 +283,15 @@ export function HostSidebar({
                         : `${p.host}:${p.port}`
                     }`}
                     onClick={() => onConnect(p)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setCtx({
+                        profile: p,
+                        x: Math.min(e.clientX, window.innerWidth - 216),
+                        y: Math.min(e.clientY, window.innerHeight - 200),
+                      });
+                    }}
                   >
                     {p.protocol === "local" ? (
                       <span className="nc-tree-avatar local">
@@ -308,6 +326,40 @@ export function HostSidebar({
           <div className="nc-sidebar-empty">没有匹配的主机</div>
         )}
       </div>
+
+      {ctx && (
+        <div
+          className="term-context-menu vault-context-menu vault-popmenu"
+          style={{ left: ctx.x, top: ctx.y }}
+          // 阻止冒泡到 window 的关闭监听，否则 mousedown 先卸载菜单，click 不触发。
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {/* 与主机页同一套按协议派生的条目；主机树只提供连接 / 编辑（进入
+              主机管理页）/ 复制地址，其余动作留给主机页卡片菜单。 */}
+          {deriveHostContextMenuItems({
+            protocol: ctx.profile.protocol,
+            host: ctx.profile.host,
+          })
+            .filter((item) =>
+              ["connect", "edit", "copy-hostname"].includes(item.id),
+            )
+            .map((item) => (
+              <button
+                key={item.id}
+                onClick={() => {
+                  const p = ctx.profile;
+                  setCtx(null);
+                  if (item.id === "connect") onConnect(p);
+                  else if (item.id === "edit") onOpenManager();
+                  else void navigator.clipboard.writeText(p.host).catch(() => {});
+                }}
+              >
+                <Icon name={HOST_CONTEXT_MENU_ICON[item.id]} size={14} />
+                {item.label}
+              </button>
+            ))}
+        </div>
+      )}
     </aside>
   );
 }

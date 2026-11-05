@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-11-05 — 剪贴板授权框 / 日志页右键 / 主机与终端右键菜单
+
+### 1. 三处根因
+
+| 问题 | 根因 | 处理 |
+|---|---|---|
+| 粘贴弹 `localhost:1420 想要 查看复制到剪贴板的文本和图像` | 前端直接调 `navigator.clipboard.readText()`（`TerminalPane.pasteFromClipboard` 右键/中键/工具栏路径，以及 `Terminal.tsx` 的 OSC 52 远端读剪贴板），WebView2 对受权限门控的读操作强制弹框 | 新增 [client.ts](src/backend/client.ts) `clipboardRead()` 走既有 Rust `clipboard_read`（arboard，已双注册），两处调用全部替换；写剪贴板继续用 `navigator.clipboard.writeText`（用户要求保留） |
+| 日志页右键弹浏览器默认菜单 | 页面没有接管 `contextmenu`，WebView2 显示原生「返回 / 刷新 / 另存为 / 打印 / 检查」 | `SessionLogsView` 根节点显式 `preventDefault`（该页按用户要求不提供自定义菜单）；`App` 根容器再全局兜底 |
+| 主机页 / 终端页右键菜单与 Netcatty 不一致 | ① 未被自定义菜单覆盖的区域（工具栏、侧栏、空白）走 WebView2 默认菜单；② 主机卡片菜单硬编码了 SSH 专属项（本地终端也显示「打开 SFTP / 复制主机地址 / 复制账密」）；③ 终端页左侧主机树完全没有右键菜单（Netcatty 主机树与主机卡片共用同一套菜单） | ① `App` 根容器捕获阶段 `preventDefault`（输入框放行，保留系统复制/粘贴菜单）；② 新增 [hostContextMenuModel.ts](src/hosts/hostContextMenuModel.ts) 按协议派生条目，主机卡片菜单改用它；③ `HostSidebar` 主机树右键打开同一模型派生的菜单（连接 / 编辑 / 复制地址） |
+
+### 2. 四类型右键菜单矩阵（对照 Netcatty `HostTreeContextMenus.tsx`）
+
+| 条目 | SSH 主机 | 本地终端 | 串口 | Telnet |
+|---|---|---|---|---|
+| 连接 | ✓ | ✓ | ✓ | ✓ |
+| 打开 SFTP | ✓（termX 仍为禁用占位） | — | — | — |
+| 编辑 | ✓ | ✓（本地面板） | ✓（串口面板） | ✓ |
+| 复制（克隆） | ✓ | ✓ | ✓ | ✓ |
+| 复制主机地址 | ✓ | — | ✓ | ✓ |
+| 复制账密信息 | ✓ | — | ✓ | ✓ |
+| 置顶 / 取消置顶 | ✓ | ✓ | ✓ | ✓ |
+| 删除 | ✓ | ✓ | ✓ | ✓ |
+
+> Telnet 在 termX 不是持久化主机档案（走连接弹窗的临时会话），矩阵中的 Telnet 列只用于模型单测；终端内右键菜单仍按能力（复制/粘贴/全选/片段/重连/分屏）提供，与主机类型无关。
+
+### 3. 实测验证（debug + CDP，2026-05-11）
+
+- 全局与主机页：`globalShellPrevented=true`，空白区域 `prevented=true` 且无菜单。
+- 卡片菜单：`ctx-vault-ssh.png`（含 SFTP）、`ctx-vault-serial.png`（无 SFTP、保留复制地址）、`ctx-vault-local.png`（仅连接/编辑/复制/置顶/删除）；断言见 `verify-context-clipboard2.json`。
+- 终端页主机树：`ctx-terminal-tree-ssh.png`，右键后点击「复制主机地址」菜单正常关闭、系统剪贴板变为 `192.168.126.129`（`verify-sidebar-menu.json`）。
+- 终端内右键：`ctx-terminal-pane-local.png`；点击「粘贴」后 `navigator.clipboard.readText` 调用计数为 0，`TERMX-CLIP-PROBE-2026` 原样出现在本地终端且未自动回车（`paste-local-no-permission.png`、`verify-context-clipboard2.json`）。
+- 日志页：`logs-contextmenu-prevented.png`，`prevented=true`、无自定义菜单、筛选仅剩「全部主机」。
+- 门禁：`npm run test:run` 55 文件 / 577 用例；`npm run build` 通过；`cargo check` 通过（仅既有 warning）。
+
+### 4. 踩坑
+
+- 176. **window 上的 mousedown 关闭监听会抢在 click 之前卸载菜单**：侧栏右键菜单必须 `onMouseDown={stopPropagation}`，否则「连接 / 编辑 / 复制地址」全部点不动。
+- 177. **空剪贴板不是错误**：arboard 在无文本时返回 `ContentNotAvailable`，直接抛给前端会让 OSC 52 查询一直等回复；后端按空串返回。
+- 178. **全局屏蔽默认菜单要放行输入框**：`input / textarea / contenteditable` 保留系统复制/粘贴/剪切菜单，其余区域一律 `preventDefault`；捕获阶段只吞默认行为、不阻断冒泡，已有自定义菜单不受影响。
+
+---
+
 ## 2026-11-05 — 终端「撰写栏」按 Netcatty 重做
 
 > 用户反馈撰写栏样式与逻辑和 Netcatty 不一致。先取证 `Netcatty/components/terminal/TerminalComposeBar.tsx`、`domain/composeBarHistory.ts`、`application/state/useComposeBarHeight.ts`、`TerminalToolbar.tsx`、`components/Terminal.tsx`（`executeSnippetCommand`），按差异清单重写组件与发送链路。

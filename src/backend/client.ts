@@ -461,6 +461,17 @@ export function openExternalUrl(url: string): Promise<void> {
   return invoke<void>("open_external_url", { url });
 }
 
+/**
+ * 读取系统剪贴板文本（只读，不写）。
+ *
+ * 必须走 Rust arboard：WebView2 对 `navigator.clipboard.readText()` 会弹
+ * 「查看复制到剪贴板的文本和图像」授权框，后端读取不触发系统权限提示。
+ * 所有粘贴入口（右键 / 中键 / 工具栏）与 OSC 52 远端读剪贴板都走这里。
+ */
+export function clipboardRead(): Promise<string> {
+  return invoke<string>("clipboard_read");
+}
+
 // ── 设置中心支撑命令 ─────────────────────────────────────
 
 /** 系统字体条目（后端 `list_fonts`，fontdb 枚举）。 */
