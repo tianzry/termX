@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-11-05 — 终端「撰写栏」按 Netcatty 重做
+
+> 用户反馈撰写栏样式与逻辑和 Netcatty 不一致。先取证 `Netcatty/components/terminal/TerminalComposeBar.tsx`、`domain/composeBarHistory.ts`、`application/state/useComposeBarHeight.ts`、`TerminalToolbar.tsx`、`components/Terminal.tsx`（`executeSnippetCommand`），按差异清单重写组件与发送链路。
+
+### 1. 差异清单
+
+| 项 | Netcatty 实际行为 | termX 现状（改前） | 差距 | 处理方式 |
+|---|---|---|---|---|
+| 触发 | 工具栏 `TextCursorInput` 图标按钮（`aria-pressed`）开合；再次点击收起（不清空） | 工具栏「撰写栏」文字/图标按钮，但 `disabled={status !== "connected"}` | 未连接时不可用 | 去掉 disabled，与 Netcatty 一致（未连接也能编辑草稿） |
+| 焦点 | 打开后 50ms 自动聚焦 textarea；关闭后 `term.focus()` | 无自动聚焦、关闭不回焦终端 | 缺 | `ComposeBar` 内 50ms 聚焦；`onClose` 里 `term.focus()` |
+| 位置 | 终端底部 `flex-shrink-0 flex-col`，`border-top: 1px` 用终端主题色 | 原本在终端**上方**（flex row），带「发送」按钮 | 位置/结构错误 | 移到 `<TerminalView/>` 之后、固定底部；删除发送按钮 |
+| 高度 | 默认 120，拖拽 72–360，顶边 6px 分隔条（hover 才显把手），结束后才持久化 | 固定高度 84px，`textarea` 自带 `resize: vertical` | 尺寸与交互不同 | 新增 `composeBarModel.clampComposeBarHeight` + localStorage `termx.composeBar.height`，6px `ns-resize` 顶条，mouseup 才写 |
+| 尺寸细节 | body `px-3 pt-1.5 pb-2`（12/6/12/8），textarea `text-xs font-mono leading-relaxed`、占满高度、内部 `overflow-y:auto`；关闭按钮 24×24、`X` 12px | padding 8px、textarea 自动撑高、发送按钮占位 | 内边距/字号/滚动语义不同 | CSS 对齐 12/6/12/8、12px mono 1.6 行高、`height:100%` + 内部滚动；关闭按钮 24×24 |
+| 输入 | Enter 发送；Shift+Enter 换行；Ctrl/Alt/Cmd+Enter 也发送；Escape 收起；输入法组合态（`isComposing` / keyCode 229）不触发任何快捷键 | Enter 发送、Shift+Enter 换行一致；无 Esc、无 IME 保护 | 缺 Esc/IME | 纯函数 `resolveComposeKeyAction` 统一映射并补单测 |
+| 历史 | ↑/↓ 无修饰键且光标在首/末行时翻阅本 session 历史（最多 100 条，跳过空白/连续重复），越过最新恢复草稿 | 无 | 缺 | 移植 `composeBarHistory`（`appendComposeHistory` / `navigateComposeHistory` / `canNavigateComposeHistory`） |
+| 发送 | 换行归一 LF；多行且 shell 开启 bracketed paste → `\x1b[200~…\x1b[201~` 包裹，`\r` 放在包裹外；整段一次写入 | 直接原样写入，未归一、未包裹 | 多行在 shell 里会被当成粘贴/逐行 | `buildComposePayload(text, bracketedPaste)`，`\r` 永远在包裹外 |
+| 写入通道 | 一次 `writeToSession`（automated） | 走 SSH 输入兼容模式逐字拆分 | 多字符命令可能乱序 | 新增 `TerminalTransport.writeBulk`：SSH/PTY 整段 `sshWrite`/`ptyWrite`，串口复用 `serialInput.feed` |
+| 成功后 | 清空草稿、保留焦点；仅当发送成功才记历史 | 无历史、失败也清空 | 行为不同 | 成功才 `onChange("")` + 追加历史；未连接/失败保留草稿 |
+| 关闭草稿 | textarea 非受控，卸载即丢草稿 | 无草稿态（旧实现同样丢） | 缺 | 草稿提升到 `TerminalPane` state，关闭/重开保留（用户明确要求） |
+| 分屏 | 每个 pane 独立撰写栏与独立历史 | 每 pane 独立 | 一致 | 保持 |
+| 窗口缩放 | 高度固定、textarea 内部滚动，不随内容增长 | 旧实现随内容增长挤压终端 | 不同 | 固定高度 + 内部滚动 |
+| 快捷片段条 / 广播 | 30px 片段条（pin/点击插入、Shift 直接发送）+ 广播 radio + 右键编辑菜单 | termX 无广播能力（前序任务已删「广播模式」） | 无对应后端 | 不实现；片段发送仍走既有「脚本」模块 |
+| 占位文案 | `terminal.composeBar.placeholder`（「在此输入命令，按回车发送...」） | 有 | 一致 | 保持 |
+| 字符计数 / 插入不执行开关 | 无 | 无 | 一致 | 不新增 |
+
+### 2. 改动文件
+
+- 新增 `src/terminal/composeBarModel.ts`（高度 clamp、按键映射、历史游走、payload 拼装）与 `src/terminal/composeBarModel.test.ts`。
+- 新增 `src/terminal/ComposeBar.tsx`（底部固定、6px 拖拽条、内部滚动、自动聚焦、关闭按钮）与 `src/terminal/ComposeBar.test.tsx`。
+- [TerminalPane.tsx](src/TerminalPane.tsx)：工具栏按钮去 disabled；`composeHistory` state；`sendCompose` 走 `writeBulk`；旧内联 bar 删除，新组件挂在终端之后；SSH 输入兼容模式改为 `reduce` 串行写入（修复并发乱序）。
+- [client.ts](src/backend/client.ts)：`TerminalTransport.writeBulk?`。
+- [styles.css](src/styles.css)：重写 `.term-compose-*`（删除旧的上方 bar 样式）。
+
+### 3. 实测验证（debug + CDP，2026-11-05）
+
+- Netcatty 基线：`evidence/nc-compose-tab.png`（底部撰写栏：6px 拖条、textarea、右侧关闭、占位「在此输入命令，按回车发送...」）。
+- 改前：`evidence/compose-before-ssh.png`、`compose-before-local.png`、`compose-before-serial.png`、`compose-before.json`。
+- 改后：`evidence/compose-after-ssh.png`、`compose-after-ssh-multiline.png`（多行 `scrollHeight 230 > client 105`，内部滚动）、`compose-after-ssh-resized.png`（拖拽到 240 并持久化）、`compose-after-ssh-enter.png`（Enter 实际执行 `TERMX-ENTER-FIXED`、多行 `MULTI-1/MULTI-2`）、`compose-after-local.png`、`compose-after-telnet.png`、`compose-after-serial.png`、`compose-after.json`。
+- 行为断言：默认高度 120、贴底 `y=644`、textarea `105.2px` + `overflow:auto`；Enter/Ctrl+Enter 发送、Shift+Enter 换行、IME 中文组合态不发送；关闭再开草稿 `draft-keep-me` 仍在。
+- 环境阻塞：串口 `COM1` 被占用（`拒绝访问`），只能截到未连接 pane 的撰写栏，串口写入链路靠单测覆盖。
+- 门禁：`npm run test:run` 54 文件 / 570 用例；`npm run build` 通过；无 Rust 写入改动，未跑 cargo。
+
+### 4. 踩坑
+
+- 172. **整段发送不能走逐字拆分的并发 invoke**：SSH 输入兼容模式原来用 `forEach` 并发 `sshWrite`，多字符命令会乱序（`echo …` 被拆成 `eMcXho …`）；必须改成 `reduce` 串行链，撰写栏这类整段内容再走 `writeBulk` 直接写，不经拆分。
+- 173. **bracketed paste 的回车必须在包裹外**：先 `\x1b[200~` 包裹内容、再追加 `\r`；把 `\r` 包进 paste 标记会被 shell 当成粘贴文本而非提交。
+- 174. **撰写栏高度只认 dragEnd 的持久值**：拖拽中每帧写入 localStorage 会放大 IO；结束才持久化，并在读取时 clamp 72–360，避免历史脏值撑破布局。
+- 175. **草稿态必须由宿主组件持有**：Netcatty textarea 非受控、关闭即丢；termX 把草稿提到 `TerminalPane`，发送失败/关闭都保留，只有成功才清空。
+
+---
+
 ## 2026-11-05 — 日志页精简：移除格式筛选 + 去重首行
 
 ### 1. 删除「全部格式」筛选

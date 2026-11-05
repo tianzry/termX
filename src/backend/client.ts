@@ -1394,6 +1394,8 @@ export type ConnKind = "pty" | "ssh" | "serial" | "telnet";
 export interface TerminalTransport {
   kind: ConnKind;
   write: (text: string) => void;
+  /** 整段写入（撰写栏 / 脚本）：绕过 SSH 输入兼容模式的逐字拆分，保证字节顺序。 */
+  writeBulk?: (text: string) => void;
   resize: (cols: number, rows: number) => void;
   close: () => void;
 }

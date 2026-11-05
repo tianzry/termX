@@ -17,6 +17,8 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
+import { ComposeBar } from "./terminal/ComposeBar";
+import { appendComposeHistory, buildComposePayload } from "./terminal/composeBarModel";
 import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import { SessionMonitorPopover } from "./monitor/SessionMonitorPopover";
@@ -268,6 +270,8 @@ export function TerminalPane({
   /** 撰写栏 / 终端搜索 / 主机关键词高亮。 */
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeText, setComposeText] = useState("");
+  /** 本窗格的撰写发送历史（↑↓ 翻阅；与终端命令历史分离）。 */
+  const [composeHistory, setComposeHistory] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchCount, setSearchCount] = useState(0);
@@ -767,13 +771,18 @@ export function TerminalPane({
     }
   }
 
-  /** 撰写栏发送：整段写入当前会话，末尾补回车。 */
-  function sendCompose() {
-    if (status !== "connected") return;
-    const text = composeText.replace(/\r\n/g, "\n");
-    if (!text.trim()) return;
-    writeToPane(`${text}\r`);
-    setComposeText("");
+  /**
+   * 撰写栏发送（对照 Netcatty `executeSnippetCommand`）：换行归一为 LF，
+   * 多行在 bracketed paste 模式下包裹后追加 `\r`；发送成功才记历史并清空草稿。
+   */
+  function sendCompose(text: string): boolean {
+    if (status !== "connected" || !transportRef.current) return false;
+    const bracketed = Boolean(controllerRef.current?.term.modes.bracketedPasteMode);
+    const payload = buildComposePayload(text, bracketed);
+    // 整段写入：绕过 SSH 输入兼容模式的逐字拆分，避免多字符命令乱序。
+    (transportRef.current.writeBulk ?? writeToPane)(payload);
+    setComposeHistory((prev) => appendComposeHistory(prev, text));
+    return true;
   }
 
   /** 终端搜索（SearchAddon，对照 Netcatty SEARCH_OPTIONS / SEARCH_DECORATIONS）。 */
@@ -890,6 +899,12 @@ export function TerminalPane({
   const paneRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<TerminalController | null>(null);
   const transportRef = useRef<TerminalTransport | null>(null);
+  /**
+   * 写入队列：输入兼容模式会把一次 onData 拆成多段 sshWrite，跨 onData 调用
+   * 也必须串行（每次新建一条链会让相邻按键/撰写栏整段写入互相插队）。
+   * 每段单独 catch，单段失败不影响后续输入。
+   */
+  const writeQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const unsubRef = useRef<UnlistenFn[]>([]);
   const promptUnsubRef = useRef<UnlistenFn[]>([]);
   const sidRef = useRef<string | null>(null);
@@ -1194,18 +1209,36 @@ export function TerminalPane({
     setProgressValue((prev) => advanceMonotonicConnectionProgress(prev, hopProgress));
   }
 
+  /** 追加到窗格级写入队列；链尾统一兜底，避免一次失败中断整串输入。 */
+  function enqueueWrite(task: () => Promise<unknown>) {
+    writeQueueRef.current = writeQueueRef.current.then(task).catch(() => {});
+  }
+
   async function wire(domain: TerminalDomain, sid: string) {
     const transport: TerminalTransport = {
       kind: domain,
-      write: (text) =>
-        void (domain === "pty"
-          ? api.ptyWrite(sid, text)
-          : inputCompatRef.current
-            // 输入兼容模式：一次 onData 拆成多次 sshWrite（控制序列仍成组）。
-            ? splitCompatibleWrites(text).forEach((chunk) =>
-                void api.sshWrite(sid, chunk, encodingRef.current),
-              )
-            : api.sshWrite(sid, text, encodingRef.current)),
+      write: (text) => {
+        if (domain === "pty") {
+          enqueueWrite(() => api.ptyWrite(sid, text));
+          return;
+        }
+        // 输入兼容模式：一次 onData 拆成多次 sshWrite（控制序列仍成组），
+        // 每段独立入队串行，避免并发 invoke 让远端收到的字符顺序错乱。
+        if (inputCompatRef.current) {
+          for (const chunk of splitCompatibleWrites(text)) {
+            enqueueWrite(() => api.sshWrite(sid, chunk, encodingRef.current));
+          }
+          return;
+        }
+        enqueueWrite(() => api.sshWrite(sid, text, encodingRef.current));
+      },
+      // 撰写栏/脚本整段写入：不拆分，但仍接在同一队列尾部，保证不插队。
+      writeBulk: (text) =>
+        enqueueWrite(() =>
+          domain === "pty"
+            ? api.ptyWrite(sid, text)
+            : api.sshWrite(sid, text, encodingRef.current),
+        ),
       resize: (c, r) =>
         void (domain === "pty"
           ? api.ptyResize(sid, c, r)
@@ -1347,6 +1380,13 @@ export function TerminalPane({
         transportRef.current = {
           kind: "serial",
           write: (text) => {
+            const chunk = input.feed(text);
+            if (chunk.echo) {
+              controllerRef.current?.term.write(new TextEncoder().encode(chunk.echo));
+            }
+            if (chunk.wire) void api.serialWrite(actual, chunk.wire);
+          },
+          writeBulk: (text) => {
             const chunk = input.feed(text);
             if (chunk.echo) {
               controllerRef.current?.term.write(new TextEncoder().encode(chunk.echo));
@@ -2047,6 +2087,10 @@ export function TerminalPane({
       onAuxClick={handleAuxClick}
       onContextMenu={openContextMenu}
       onKeyDownCapture={(e) => {
+        // 撰写栏是窗格内的真实输入控件：Enter/Escape 归它自己处理，不能被
+        // 断开重连提示或片段快捷键抢先拦截（对照 Netcatty capture 跳过 compose textarea）。
+        const target = e.target as HTMLElement | null;
+        if (target?.closest(".term-compose-bar")) return;
         // 终端内提示模式下按 Enter 重连（Netcatty disconnectedNoticeMode=terminal）。
         if (
           status === "disconnected" &&
@@ -2276,7 +2320,7 @@ export function TerminalPane({
           <button
             className={`term-tool-btn${composeOpen ? " active" : ""}`}
             title="撰写栏"
-            disabled={status !== "connected"}
+            aria-pressed={composeOpen}
             onClick={() => setComposeOpen((v) => !v)}
           >
             <Icon name="text-cursor" size={12} />
@@ -2551,39 +2595,6 @@ export function TerminalPane({
         </div>
       )}
 
-      {composeOpen && (
-        <div className="term-compose-bar">
-          <textarea
-            autoFocus
-            value={composeText}
-            placeholder="撰写多行内容，Ctrl+Enter 发送"
-            onChange={(e) => setComposeText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                sendCompose();
-              }
-              if (e.key === "Escape") setComposeOpen(false);
-            }}
-          />
-          <div className="term-compose-actions">
-            <button
-              className="term-search-btn"
-              disabled={status !== "connected" || !composeText.trim()}
-              onClick={sendCompose}
-            >
-              发送
-            </button>
-            <button
-              className="term-search-btn"
-              onClick={() => setComposeOpen(false)}
-            >
-              <Icon name="x" size={12} />
-            </button>
-          </div>
-        </div>
-      )}
-
       <TerminalView
         onFindShortcut={() => {
           setSearchOpen(true);
@@ -2608,6 +2619,20 @@ export function TerminalPane({
         onResize={(cols, rows) => transportRef.current?.resize(cols, rows)}
         onOsc7={handleOsc7}
       />
+
+      {composeOpen && (
+        <ComposeBar
+          value={composeText}
+          onChange={setComposeText}
+          onSend={sendCompose}
+          history={composeHistory}
+          connected={status === "connected"}
+          onClose={() => {
+            setComposeOpen(false);
+            controllerRef.current?.term.focus();
+          }}
+        />
+      )}
 
       {zmodemDragActive && (
         <div className="term-zmodem-drop-mask">松开以上传文件（ZMODEM rz）</div>

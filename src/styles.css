@@ -5057,40 +5057,95 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* 撰写栏（对照 netcatty compose bar） */
+/* 撰写栏（对照 Netcatty TerminalComposeBar：固定底部、可拖拽高度、内部滚动） */
 .term-compose-bar {
+  position: relative;
   flex-shrink: 0;
   display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  padding: 6px 8px;
+  flex-direction: column;
+  min-height: 72px;
+  max-height: 360px;
   border-top: 1px solid hsl(var(--border));
   background: hsl(var(--background));
-}
-
-.term-compose-bar textarea {
-  flex: 1;
-  min-height: 64px;
-  max-height: 140px;
-  resize: vertical;
-  padding: 6px 8px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 6px;
-  background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.5;
 }
 
-.term-compose-bar textarea:focus {
-  outline: none;
-  border-color: hsl(var(--ring));
-}
-
-.term-compose-actions {
+.term-compose-resizer {
+  flex-shrink: 0;
   display: flex;
-  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.term-compose-resizer::after {
+  content: "";
+  width: 28px;
+  height: 3px;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.35);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.term-compose-resizer:hover::after {
+  opacity: 0.85;
+}
+
+.term-compose-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  /* 对齐 Netcatty `px-3 pt-1.5 pb-2`：左 12 / 上 6 / 右 12 / 下 8。 */
+  padding: 6px 12px 8px;
+}
+
+.term-compose-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-y: auto;
+}
+
+.term-compose-input::placeholder {
+  color: hsl(var(--muted-foreground) / 0.7);
+}
+
+.term-compose-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.term-compose-close:hover {
+  background: hsl(var(--muted-foreground) / 0.12);
+  color: hsl(var(--foreground));
+}
+
+.term-compose-close-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* 终端右键菜单（对照 netcatty TerminalContextMenu） */
