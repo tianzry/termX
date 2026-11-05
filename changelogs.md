@@ -5838,5 +5838,16 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - **门禁**：`npm run test:run` 61 文件 / 643 用例 ✓；`npm run build` ✓；`cargo check` ✓；子 agent code review 高危 3 项（SFTP 独立连接未写 ref、补全 typed 脱同步、密码入历史）已全部修复，SFTP 连接守卫同批修复。
 - **剩余待办**：时间戳 gutter 在字号/尺寸变化后的行号重映射；多行 bracketed paste 历史只记最后一行；非 SSH 历史 hostId 依赖标签标题（重命名会换桶）；串口/Telnet 实机截图未做（COM1 占用）；SFTP 上传/下载未走自动化（原生文件对话框）。
 
+---
+
+## 2026-11-05 — 剩余待办收口（时间戳重映射 / 多行粘贴历史 / 历史分桶 / 串口 Telnet / SFTP 往返）
+
+- **#169 时间戳 gutter reflow 重映射**：根因是时间戳以绝对 buffer 行号为 key，字号 / 窗口缩放 / 分屏 resize 触发 xterm reflow 后行号被重排而 Map 不更新 → 时间戳错行。改为每条时间戳持有 xterm marker，绘制按 `marker.line` 实时映射（marker 随 reflow 与 scrollback 裁剪自动更新）；列数变化时丢弃无 marker 的不可信行号；开关关闭 / 组件卸载时 dispose marker 防泄漏。同批修 review 发现的两处：scrollback 写满后 `baseY` 封顶导致新输出不再打点（改 `onLineFeed` 计数补打底部新增行）；缩窄列数触发 `reflowSmaller` 使旧行被误补时间戳（reflow 时重置上次打点行）。单测 19 例覆盖字号切换 / 窗口缩放 / 分屏 resize / 饱和 scrollback。
+- **#170 bracketed paste 多行命令历史**：粘贴期间的换行被当成提交（多行被拆成多条），且 Enter 前只按当前可视行校准，最终历史只剩最后一行。现在识别 CSI `200~` / `201~`（含跨 chunk 未完成的 ESC 序列），粘贴内容整段累计到 Enter 作为一条完整多行命令；Enter 校准改用逻辑行（跨软换行拼接），保留多行前缀；修复上一 chunk 只有孤立 ESC 时下一 chunk 首字符被当 Alt 组合吞掉。单测 11 例。
+- **#171 非 SSH 历史 hostId**：原 `kind:title` 依赖标签标题，本地 shell / 串口 / Telnet 重命名后历史换桶。新增 `resolveCommandHistoryHostId`：SSH=`profileId`、pty=shell+args+startDir、serial=端口、telnet=host:port，标题只用于展示。单测覆盖四类终端与“改标签不变桶”。
+- **#172 串口 / Telnet 实机验证**：本机仅有 COM1 且被占用（`serial_open` 返回 `serial_open_failed: 拒绝访问`），无 com0com 虚拟串口对，串口读写链路无法实测（未伪造截图，下次步骤见 todo）。Telnet 用本地 Node telnet 服务（`127.0.0.1:2325`，IAC DO SGA / WILL ECHO）做握手验证：收到 `TERMX-TELNET-OK` 欢迎语，`telnet_write_line` 后收到 `echo:ping-termx` 回显。证据 `evidence/serial-telnet-verify.json`。
+- **#173 SFTP 上传/下载往返**：走真实后端 `sftp_connect` → `sftp_upload` → `sftp_stat` → `sftp_download` 到 129（tianzry），1300B / UTF-8 / 多行文件（远端 `/home/tianzry/termx-sftp-proof-1793877252262.txt`）：写入后 size 1300，下载内容 SHA256 与本地一致（`contentMatches: true`）。原生文件对话框（`sftp_pick_*` / `sftp_download_to` / `sftp_upload_from`）标注为待人工。证据 `evidence/sftp-upload-download-129.json`、`sftp-source-129.txt`、`sftp-downloaded-129.txt`。
+- **门禁**：`npm run test:run` 61 文件 / 661 用例 ✓；`npm run build` ✓；`cargo check` ✓（7 warnings）。子 agent code review 高危 2 项（scrollback 满后停止打点、孤立 ESC 吞字符）+ 中危 2 项（reflow 旧行误标、多行粘贴末行软换行覆盖）已全部修复。
+
 
 
