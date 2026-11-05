@@ -333,26 +333,39 @@
   align-items: center;
   gap: 10px;
   padding: 0 10px;
-  border: 1px solid hsl(var(--nc-border) / 0.55);
-  border-radius: 10px;
-  background: hsl(var(--nc-bg-elev) / 0.55);
   cursor: pointer;
   position: relative;
 }
+/* 列表行对齐 Netcatty：h-14 / px-3 / rounded-lg / 透明底 / hover bg-secondary/60 */
 .sn-row.is-list {
   height: 56px;
+  gap: 12px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: transparent;
+  transition: background-color 0.15s ease;
 }
+/* 卡片视图保持原样（68px + 边框 + 半透明底） */
 .sn-row.is-grid {
   height: 68px;
+  border: 1px solid hsl(var(--nc-border) / 0.55);
+  border-radius: 10px;
+  background: hsl(var(--nc-bg-elev) / 0.55);
 }
-.sn-row:hover {
+.sn-row.is-list:hover {
+  background: hsl(var(--nc-hover) / 0.6);
+}
+.sn-row.is-grid:hover {
   background: hsl(var(--nc-hover));
 }
 .sn-row.is-active {
   border-color: hsl(var(--nc-primary) / 0.65);
   background: hsl(var(--nc-primary) / 0.08);
 }
-.sn-row.is-selected {
+.sn-row.is-list.is-selected {
+  background: hsl(var(--nc-primary) / 0.05);
+}
+.sn-row.is-grid.is-selected {
   border-color: hsl(var(--nc-primary) / 0.5);
   background: hsl(var(--nc-primary) / 0.12);
 }
@@ -386,6 +399,28 @@
 .sn-icon.is-package {
   color: #fbbf24;
 }
+/* 列表行图标盒 44×44 / 圆角 12 / 实心底色（对齐 Netcatty VaultEntityIcon） */
+.sn-row.is-list .sn-icon {
+  flex-basis: 44px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: hsl(var(--nc-primary));
+  color: #fff;
+}
+.sn-row.is-list .sn-icon.is-snippet {
+  background: #0369a1;
+  color: #fff;
+}
+.sn-row.is-list .sn-icon.is-script {
+  background: #6d28d9;
+  color: #fff;
+}
+.sn-row.is-list .sn-icon.is-package {
+  background: hsl(var(--nc-primary));
+  color: #fff;
+}
 
 .sn-row-text {
   display: flex;
@@ -393,6 +428,9 @@
   gap: 3px;
   min-width: 0;
   flex: 1;
+}
+.sn-row.is-list .sn-row-text {
+  gap: 2px;
 }
 .sn-row-name {
   font-size: 14px;
@@ -410,6 +448,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.sn-row.is-list .sn-row-command {
+  line-height: 16px;
+}
 
 .sn-shortkey-badge {
   flex: 0 0 auto;
@@ -420,6 +461,10 @@
   font-size: 10px;
   color: hsl(var(--nc-muted));
   background: hsl(var(--nc-bg) / 0.6);
+}
+.sn-row.is-list .sn-shortkey-badge {
+  padding: 4px 8px;
+  background: hsl(var(--nc-bg-elev) / 0.5);
 }
 
 .sn-row-edit {
@@ -434,6 +479,11 @@
   color: hsl(var(--nc-muted));
   opacity: 0;
   cursor: pointer;
+}
+.sn-row.is-list .sn-row-edit {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
 }
 .sn-row:hover .sn-row-edit {
   opacity: 1;

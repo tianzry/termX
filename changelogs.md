@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-11-06 — #207 脚本页列表行样式对齐 Netcatty（卡片视图不动）
+
+- 仅改 `src/snippets/snippets.css` 的 `.sn-row` 体系，不动 `SnippetsView.tsx` 结构：
+  - 列表行（`.is-list`）：56px 高、左右 12px、圆角 8px、无边框、透明底，hover `bg-secondary/60`；选中 `primary/5`。
+  - 列表行图标盒：44×44、圆角 12px、实心底（片段 sky-700 / 脚本 violet-700 / 分组 primary），图标 18px。
+  - 主标题 14px/600，副标题 11px 等宽字体/16px 行高；快捷键 badge `4px 8px`、10px。
+  - hover 编辑按钮 32×32（默认 opacity 0，行 hover 显示，按钮自身 hover 有底色）。
+  - 卡片视图（`.is-grid`）保留 68px、0.8px 边框、半透明底、10px 圆角、32px 图标盒、24px 编辑按钮。
+- 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 947 通过（无后端改动）；`npm run tauri -- build --debug` 编译 + 生成 `rssh.exe` 成功，MSI 打包因取证时 app 正在运行占用 exe 而失败（os error 32），非代码问题。
+- 实机取证（CDP，1280×900，`evidence/`）：
+  - `audit11-snippets-list-light.png` / `-dark.png` / `-hover.png` / `-grid-light.png`；
+  - 量测：列表行 56px、图标 44×44/radius 12/`rgb(3,105,161)`、标题 14px、副标题 11px、badge 29×21.6、编辑 32×32（hover opacity 1）、行透明无边框；卡片行 68px/图标 32×32/边框 0.8px/圆角 10px（未受改动影响）。
+- 同时修正 #206 记录：面板 CRUD 已实机跑通并截图（见 `#206` 条目补充与 `audit11-monitor-*`）。
+
 ## 2026-11-06 — #206 监控多面板持久化（DB 表 + 面板 CRUD + 按面板监控）
 
 - 数据层：schema v49 新增 `monitor_panels`（`id / name / host_ids(JSON) / layout / columns / interval / sort_order`），`CREATE TABLE IF NOT EXISTS` + 索引，迁移块幂等，重复执行安全；`SCHEMA_VERSION` 48→49。
@@ -13,7 +27,10 @@
 - `MonitorView`：页头新增面板下拉（运行中禁用切换，保证开始/停止只作用于当前面板）、新建/编辑按钮；自定义面板可编辑名称、勾选 SSH 主机、默认布局、列数（自动 / 1-4）、刷新间隔、排序；删除需二次确认；默认面板不可编辑/删除。选面板即应用其布局 / 列数 / 间隔；页头改间隔或图表/列表会即时落库到自定义面板。图表网格 `columns=0` 沿用 `auto-fill minmax(340px,1fr)`，否则固定列数。
 - 交互口径：面板存主机 id，已删除主机的 id 自动忽略；自定义面板保存要求 ≥1 台 SSH 主机；面板读取失败在页头下方提示，不阻断「全部 SSH 主机」默认面板。
 - 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 947 通过、`cargo check --features server --bin rssh-server` 通过。
-- **未实测**：桌面端面板 CRUD 点击回归与截图（数据层/模型有单测，UI 仅静态检查）；多面板同时运行（按设计运行中不能切面板，需先停止）。
+- 实机取证（CDP，1280×900）：新建 → 勾选 1 台主机 → 列数 2 / 间隔 5 → 保存后下拉出现「审计临时面板」并自动选中；编辑弹窗可回读；删除需二次确认，删除后回落到「全部 SSH 主机」（`all`）。
+  - 截图：`evidence/audit11-monitor-empty.png`、`audit11-monitor-panel-dialog.png`、`audit11-monitor-panel-dialog-filled.png`、`audit11-monitor-panel-saved.png`、`audit11-monitor-panel-edit.png`、`audit11-monitor-panel-deleted.png`。
+  - 临时面板已删除，未留下测试数据。
+- **未实测**：多面板并行运行（按设计运行中禁止切面板，需先停止）；监控开始后的真实采样（沿用既有 `monitor_sample`，本项未改采集逻辑）。
 
 ## 2026-11-06 — #205 SSH 终端右侧笔记面板
 
