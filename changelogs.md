@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-11-06 — #200 主机弹窗默认宽度固定 420（忽略本地记忆值）
+
+对齐 #192 差异清单第 10 条：
+- `readPanelWidth()` 直接返回 420，不再从 `localStorage['termx.vault.hostpanel.v1']` 读取（旧记忆值 380 曾覆盖默认宽度）。
+- 移除 `panelWidth` 的持久化 effect 与 `HOST_PANEL_W_KEY` 常量；面板宽度每次打开回到 420。
+- 拖拽调宽仍可用（本次会话内生效），最小宽度核对：`HOST_PANEL_MIN = 320`，与 Netcatty `aside-panel.tsx` 的 `MIN_ASIDE_INLINE_WIDTH_PX = 320` 一致；320px 下 108px 标签 + 8px 圆角输入仍能排布，不会横向溢出。
+
 ## 2026-11-06 — #199 验证器改一行式并合入「端口与凭据」分区
 
 对齐 #192 差异清单第 9 条：

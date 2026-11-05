@@ -144,7 +144,6 @@ const PINNED_KEY = "termx.pinned.v1";
 const SIDEBAR_W_KEY = "termx.vault.sidebar.v1";
 const ORDER_KEY = "termx.vault.order.v1";
 const TAGS_KEY = VAULT_TAGS_KEY;
-const HOST_PANEL_W_KEY = "termx.vault.hostpanel.v1";
 const KH_VIEW_KEY = "termx.vault.khView.v1";
 const KC_VIEW_KEY = "termx.vault.kcView.v1";
 
@@ -480,14 +479,9 @@ function clampPanelWidth(n: number): number {
   return Math.min(HOST_PANEL_MAX, Math.max(HOST_PANEL_MIN, n));
 }
 
-/** 主机详情面板默认宽 420（对齐 Netcatty HostDetailsPanel w-[420px]）。 */
+/** 主机详情面板默认宽 420（对齐 Netcatty HostDetailsPanel w-[420px]），不读取本地记忆值。 */
 function readPanelWidth(): number {
-  try {
-    const n = Number(localStorage.getItem(HOST_PANEL_W_KEY));
-    return Number.isFinite(n) && n > 0 ? clampPanelWidth(n) : 420;
-  } catch {
-    return 420;
-  }
+  return 420;
 }
 
 function persist(key: string, value: string) {
@@ -833,10 +827,6 @@ export function VaultView({
   useEffect(() => {
     if (!collapsed) persist(SIDEBAR_W_KEY, String(sidebarWidth));
   }, [sidebarWidth, collapsed]);
-
-  useEffect(() => {
-    persist(HOST_PANEL_W_KEY, String(panelWidth));
-  }, [panelWidth]);
 
   // 新出现的主机自动补进手动顺序表尾，保证「手动顺序 / 从新到旧」可用。
   useEffect(() => {
