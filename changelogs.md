@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-11-06 — #194 主机弹窗底色 / 圆角 / 输入高度（对齐 Netcatty HostDetailsPanel）
+
+对齐 #192 差异清单第 2–4 条，只改 `src/styles.css`，数据层与保存逻辑未动：
+- 卡片底色方向反转：`.host-details-section` 由半透明灰 `hsl(var(--muted)/0.35)` 改为 `hsl(var(--card))`（浅色主题 = 白卡 + 浅灰页底；暗色主题 `--card` 比 `--background` 亮，自动反过来），补 1px `--border/0.8` 边框与 `shadow-sm` 级阴影。
+- 圆角：卡片 10 → 12；输入 / 下拉 6 → 8；文本域 6 → 8；保存按钮 `.host-save-full` 6 → 8。
+- 输入高度：`.vault-composer-body input/select` 36 → 40，左右内边距 10 → 12；本地终端 Shell 组合框 `.lsh-combo-input` 同步 36 → 40（内层 input 34 → 38）。
+- 输入底色由 `--secondary`（较深灰）改为 `--background`：在白色卡片上呈现为浅灰底，与 Netcatty `Input`（`bg-background`）一致。
+
 ## 2026-11-06 — #193 日志表格行改回单行（用户偏好优先）
 
 - 用户明确要求：日志表格保留 #190 的整页表格结构与列（会话/主机、时间、时长、大小、操作）、排序、行操作、导出，但行内合成一行显示。
