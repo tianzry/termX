@@ -607,6 +607,10 @@ export default function App() {
               onTelnet={openTelnet}
               onOpenSftp={openSftpForHost}
               onDataChanged={() => void loadData()}
+              onOpenSettings={() => {
+                setSettingsTab("application");
+                setSettingsOpen(true);
+              }}
               activeHandle={activeHandle}
               focusView={vaultFocus}
               focusNonce={vaultFocusNonce}

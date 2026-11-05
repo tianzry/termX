@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-11-06 — #185 Vault 导航结构对齐（第七轮 P2 · 1/4）
+
+> 目标：把 Vault 首页导航入口结构对齐 Netcatty，只改呈现，不动数据层。
+
+- 取证（Netcatty 源码 + 截图）：
+  - `VaultViewLayout.tsx` 侧栏导航 8 页：主机 / 钥匙串 / 代理 / 端口转发 / 脚本 / 笔记 / 已知主机 / 日志；`MonitorNavButton` 作为第 9 个按钮插入；`mt-auto pb-4` 区域放「设置」ghost 按钮（`onOpenSettings`）。
+  - `TopTabs.tsx` 顶栏齿轮同样保留设置入口 → Netcatty 两处入口都在，不是“只有侧栏底部”。
+  - `zh-CN/core.ts` 导航键无 `vault.nav.sync`：同步不是独立导航页，入口在设置中心「同步与云」。
+  - 最近连接列数无差异：`vaultHostGridLayout.ts` = gap 12 / min 220 / max 4 列，termX `.vault-grid` 公式一致；截图中的 3 vs 4 张是数据条数差异。
+  - Telnet：Netcatty 无顶层入口，是主机的协议向导（`telnetEnabled`）；termX `Profile.protocol` 只有 ssh/local/serial，没有 telnet 字段 → 合并需后端模型变更，超出“呈现对齐”，保留独立入口并记 todo。
+- 改动：
+  - `VaultView.tsx`：`navItems` 移除「同步」（`activeNav === "sync"` 渲染分支保留，设置中心「打开同步页」仍可用）；侧栏底部新增「设置」导航按钮（40px，展开显示图标+文字，折叠仅图标），移除与 Netcatty 源码矛盾的旧注释；`Settings` 图标替换 `Cloud`。
+  - `App.tsx`：给 `<VaultView>` 注入 `onOpenSettings`（打开设置中心「应用」tab）。
+- 证据：`evidence/audit7-termx-vault-nav-after.png`（9 项导航 + 底部设置）、`audit7-termx-vault-nav-settings-after.png`（点击打开设置）、`audit7-termx-nav-after.json`（navCount 9 / hasSyncNav false / 设置按钮 188×40 / 侧栏 208 / 视口 1200×800）。
+- 门禁：`npm run test:run`、`npm run build` 通过。
+
 ## 2026-11-06 — #184 全应用逐功能比对（第七轮：差异清单 + P1 修复）
 
 > 目标：摸清 termX 与 Netcatty 的可见差距，只修 P1（明显不一致或影响使用），其余记入 todo。未重构、未改动数据与持久化逻辑。

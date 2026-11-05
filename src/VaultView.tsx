@@ -4,7 +4,8 @@
  *
  * 结构：
  * - 左侧导航栏：Logo + 主机 / 监控 / 密钥串 / 代理 / 端口转发 / 脚本 /
- *   笔记 / 已知主机 / 日志；未实现项保留入口但禁用；导航可拖拽调宽。
+ *   笔记 / 已知主机 / 日志；底部为设置入口（对齐 Netcatty VaultViewLayout），
+ *   同步不占导航项，由设置中心「同步与云」进入；导航可拖拽调宽。
  * - 顶部 56px 工具栏：搜索（支持快速连接）/ 连接 / 视图 / 标签 / 排序 /
  *   多选 / 新建主机（分体按钮）/ 终端 / 串口。
  * - 内容区：「全部主机」面包屑（树视图隐藏）→ 已置顶 → 最近连接 →
@@ -64,7 +65,6 @@ import {
 import {
   Activity,
   BookMarked,
-  Cloud,
   FileCode,
   Gauge,
   Globe,
@@ -72,6 +72,7 @@ import {
   LayoutGrid,
   NotebookText,
   Plug,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 import { Icon, type IconName } from "./ui/icons";
@@ -116,6 +117,8 @@ interface Props {
   onOpenSftp: (profile: Profile) => void;
   /** 新建 / 删除后刷新 App 侧列表。 */
   onDataChanged: () => void;
+  /** 侧栏底部「设置」入口（对齐 Netcatty VaultViewLayout 的 onOpenSettings）。 */
+  onOpenSettings: () => void;
   /** 当前活动终端窗格（脚本页运行链路使用；Vault 态下终端仍常驻隐藏挂载）。 */
   activeHandle?: PaneHandle | null;
   /** 外部入口（顶栏「云端同步」/ 设置中心）请求定位到的 Vault 子页。 */
@@ -289,7 +292,6 @@ const navItems: Array<{
 }> = [
   { id: "hosts", label: "主机", icon: LayoutGrid, enabled: true },
   { id: "monitor", label: "监控", icon: Gauge, enabled: true },
-  { id: "sync", label: "同步", icon: Cloud, enabled: true },
   { id: "keys", label: "钥匙串", icon: Key, enabled: true },
   { id: "proxies", label: "代理", icon: Globe, enabled: true },
   { id: "port", label: "端口转发", icon: Plug, enabled: true },
@@ -593,6 +595,7 @@ export function VaultView({
   onTelnet,
   onOpenSftp,
   onDataChanged,
+  onOpenSettings,
   activeHandle,
   focusView,
   focusNonce,
@@ -3484,7 +3487,15 @@ export function VaultView({
         </nav>
 
         <div className="vault-sidebar-foot">
-          {/* 设置入口统一在顶栏齿轮（对齐 Netcatty：NC 侧栏底部无设置项）。 */}
+          {/* 对齐 Netcatty VaultViewLayout：设置入口固定在侧栏底部（顶栏齿轮保留）。 */}
+          <button
+            className={`vault-nav-item${collapsed ? " collapsed" : ""}`}
+            title="设置"
+            onClick={onOpenSettings}
+          >
+            <Settings size={16} />
+            {!collapsed && <span>设置</span>}
+          </button>
           {!collapsed && <span className="vault-version">termX 0.0.1</span>}
         </div>
       </aside>
