@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 47;
+const SCHEMA_VERSION: u32 = 48;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -969,6 +969,19 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if version < 48 && table_exists(conn, "profiles")? {
+        // Telnet 纳入主机协议：登录用户名 / 字符集（对齐 Netcatty Host 的
+        // telnetUsername / charset）。可空 = 不自动登录 / 默认 utf-8；
+        // 老库升级只加列、不写默认值，既有 SSH 主机行为不变。
+        for (col, decl) in [("telnet_username", "TEXT"), ("telnet_charset", "TEXT")] {
+            if !column_exists(conn, "profiles", col)? {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE profiles ADD COLUMN {col} {decl};"
+                ))?;
+            }
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1250,6 +1263,38 @@ mod tests {
         let value: Option<String> = conn
             .query_row(
                 "SELECT host_key_policy FROM profiles WHERE id = 'h'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, None);
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_48_adds_profile_telnet_columns() {
+        // v47 老库：telnet 字段必须新增且可空，旧行保持 NULL（= 不自动登录 /
+        // 默认 utf-8），既有 SSH 主机行为不变；重复执行幂等。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, host_key_policy TEXT);
+             INSERT INTO profiles VALUES ('h', 'legacy', NULL);
+             PRAGMA user_version = 47;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        for col in ["telnet_username", "telnet_charset"] {
+            assert!(column_exists(&conn, "profiles", col).unwrap(), "missing {col}");
+        }
+        let value: Option<String> = conn
+            .query_row(
+                "SELECT telnet_username FROM profiles WHERE id = 'h'",
                 [],
                 |row| row.get(0),
             )

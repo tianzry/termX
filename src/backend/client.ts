@@ -63,7 +63,7 @@ export interface Profile {
   totp_regex?: string | null;
   /** 连接时把本机 SSH Agent 转发给远端（serde 默认 false） */
   agent_forwarding: boolean;
-  /** 协议类型：`ssh`（默认）/ `local`（本地 shell 主机，走 PTY）/ `serial`（串口主机） */
+  /** 协议类型：`ssh`（默认）/ `local`（本地 shell 主机，走 PTY）/ `serial`（串口主机）/ `telnet` */
   protocol?: string;
   /** 本地主机：选中的 shell 命令；空 = 跟随 设置 → 终端 的默认本地 Shell */
   local_shell?: string | null;
@@ -112,6 +112,11 @@ export interface Profile {
    * Host.distro）。null / 缺省 = 未探测或无法识别，图标回落 Server。
    */
   distro?: string | null;
+  // ── Telnet 主机（protocol === "telnet"，schema v48）──
+  /** 自动登录用户名；null = 手动登录。端口复用 `port`（默认 23）。 */
+  telnet_username?: string | null;
+  /** 字符集：`utf-8` / `gb18030`；null = utf-8。 */
+  telnet_charset?: string | null;
 }
 
 /** 代理库条目（`list_proxy_profiles`），密码单独走 SecretStore。 */
@@ -2214,6 +2219,21 @@ export function getProfileProxyPassword(
   profileId: string,
 ): Promise<string | null> {
   return invoke<string | null>("profile_proxy_password_get", { profileId });
+}
+
+/** 读取 Telnet 主机自动登录密码（`telnet:<profile_id>:password`）；未设置 → null。 */
+export function getProfileTelnetPassword(
+  profileId: string,
+): Promise<string | null> {
+  return invoke<string | null>("profile_telnet_password_get", { profileId });
+}
+
+/** secret=null / 空串 = 清除 Telnet 密码（改为手动登录）。 */
+export function setProfileTelnetPassword(
+  profileId: string,
+  secret: string | null,
+): Promise<void> {
+  return invoke("profile_telnet_password_set", { profileId, secret });
 }
 
 // ── 代理库（Vault「代理」页；密码走 SecretStore `proxy_profile:<id>`）──

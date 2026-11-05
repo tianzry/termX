@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-06 — #204 Telnet 纳入主机协议（保留独立 Telnet 入口）
+
+- 数据层：`profiles.protocol` 白名单扩展为 `ssh` / `local` / `serial` / `telnet`（未知值报 `profile_protocol_invalid`，避免拼写错误静默按 SSH 连接）；新增可空列 `telnet_username` / `telnet_charset`（schema v48，`column_exists` 幂等，老库只加列不写默认值 → 原 SSH 主机行为不变）。
+  - 字段对齐 Netcatty Host：`telnetPort` 因 termX 协议互斥而复用 `profiles.port`（默认 23）；`telnetUsername` → `telnet_username`；`charset` → `telnet_charset`；`telnetIdentityId` 未引入（termX 无 Telnet 身份库，密码走 SecretStore）；`terminalTheme` 未引入（termX 无主机级主题）。
+  - 密码只存 SecretStore `telnet:<id>:password`，删除主机时同步清理；表 / 导入导出均不含密码。
+  - CRUD：SELECT / INSERT / UPSERT / UPDATE 参数补齐；Telnet 主机豁免「必须绑定 SSH 凭据」校验（`validate_for_write`）。
+  - 导入导出白名单：`protocol: "telnet"` 与 `telnet_username` / `telnet_charset` 保留，未知 protocol 回落 `ssh`；Telnet 导入不创建 SSH 凭据。
+- 主机弹窗：地址分区新增「协议」下拉（SSH / Telnet），切 Telnet 时端口 22↔23、清空凭据 / MFA；隐藏 SSH 专属分区（登录方式 / MFA / Agent 转发 / 输入兼容 / 密钥证书选择器 / TOTP / 主机密钥策略 / SFTP / 代理 / 环境变量 / 启动命令 / 高级字段），显示「登录用户名」「密码 + 保存密码」；字符集分区对两者共用（Telnet 写入库）。
+- 连接路径：新增 `src/domain/hostProtocol.ts` 纯函数 `hostProtocolOf` / `telnetSessionFromProfile`；`App.connect()` 对 Telnet 档案派生 `Connector.kind = "telnet"`，按需从 SecretStore 取密码后走现有 telnet 后端（卡片 / 右键 / 快速切换器共用同一入口）。会话字符集经 `TelnetSessionConfig.encoding` 注入 TerminalPane。
+- 标签 / 工具栏 / 右键：标签图标为 amber Terminal（对齐 Netcatty `protocolVisuals` 的 telnet 视觉）；既有 `toolbarCapabilities` 对 telnet 关闭 SFTP / 系统监控；右键菜单无「打开 SFTP」。主机卡片为 amber Terminal 头像 + 「Telnet · 用户名 · host:port」副标题。
+- 会话日志 / 录制 / 自动补全：均基于 `sid` 与前端缓冲，Telnet 会话同样生效（工具栏保留日志 / 录制入口）。
+- 测试：`hostProtocol` 6 例（老数据回落 / 端口 23 / 字符集 / 无用户名丢弃密码）、`vaultTransfer` Telnet 导入 2 例、DB roundtrip 与未知协议拒绝、schema v48 迁移幂等；`npm run test:run` 743 用例、`cargo test --lib` 943 用例、`npm run build`、`tauri build --debug` 通过。
+- 实机验证：本地 `evidence/telnet-echo-server.mjs`（127.0.0.1:2324，含 IAC 协商）→ 新建 Telnet 主机（admin/termx）→ 卡片连接成功，服务端 banner / 自动登录 / `hello telnet` 回显均正常。
+- **未实测**：快速切换器 / 右键「连接」的端到端点击（与卡片共用 `onConnect`，静态确认）；Telnet 主机「测试连接」按设计禁用（后端仅有 SSH 测试命令）；导入 Telnet 主机不含密码，导入后需手动登录或重新填写。
+
 ## 2026-11-06 — #203 设置行改为 48px 条状底色 + 边框（对齐 Netcatty 设置页）
 
 - 对齐 Netcatty `HostDetailsSection` 的 `host-input-row`（`h-12 rounded-lg border bg-secondary/40 px-3`）：

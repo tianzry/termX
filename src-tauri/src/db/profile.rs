@@ -50,6 +50,8 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         serial_charset: row.get(40)?,
         distro: row.get(41)?,
         host_key_policy: row.get(42)?,
+        telnet_username: row.get(43)?,
+        telnet_charset: row.get(44)?,
     })
 }
 
@@ -98,7 +100,7 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, telnet_username, telnet_charset";
 
 
 
@@ -129,9 +131,17 @@ pub fn get(db: &Db, id: &str) -> AppResult<Profile> {
 /// 旧前端、未来新增的写入入口）最终都得过这道关。
 fn validate_for_write(p: &Profile) -> AppResult<()> {
     validate_name(&p.name)?;
-    // 本地 shell 主机（protocol == "local"）没有 SSH 凭证概念，豁免空
-    // credential_id；SSH 主机维持"必须引用真实凭证"的既有不变量。
-    if p.protocol != "local" && p.credential_id.is_empty() {
+    // 协议白名单（schema v48 起含 telnet）：拒绝未知值，避免前端/同步
+    // 写入拼写错误的 protocol 后连接层静默按 SSH 处理。
+    if !matches!(p.protocol.as_str(), "ssh" | "local" | "serial" | "telnet") {
+        return Err(AppError::config(
+            "profile_protocol_invalid",
+            serde_json::json!({ "id": p.id, "protocol": p.protocol }),
+        ));
+    }
+    // 本地 shell / Telnet 主机没有 SSH 凭证概念，豁免空 credential_id；
+    // SSH 主机维持"必须引用真实凭证"的既有不变量。
+    if p.protocol != "local" && p.protocol != "telnet" && p.credential_id.is_empty() {
         return Err(AppError::config(
             "profile_credential_id_required",
             serde_json::json!({ "id": p.id, "name": p.name }),
@@ -173,8 +183,9 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, \
          protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, \
          proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, \
-         ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43) \
+         ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, \
+         telnet_username, telnet_charset) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -195,7 +206,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          serial_backspace=excluded.serial_backspace, serial_byte_backspace=excluded.serial_byte_backspace, \
          serial_charset=excluded.serial_charset, \
          distro=COALESCE(excluded.distro, distro), \
-         host_key_policy=excluded.host_key_policy",
+         host_key_policy=excluded.host_key_policy, \
+         telnet_username=excluded.telnet_username, telnet_charset=excluded.telnet_charset",
         params![
             p.id,
             p.name,
@@ -239,7 +251,9 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.serial_byte_backspace,
             p.serial_charset,
             p.distro,
-            p.host_key_policy
+            p.host_key_policy,
+            p.telnet_username,
+            p.telnet_charset
         ],
     )?;
     Ok(())
@@ -263,7 +277,8 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
          proxy_profile_id=?28, ssh_input_compatibility=?29, serial_port=?30, serial_baud=?31, serial_data_bits=?32, \
          serial_parity=?33, serial_stop_bits=?34, serial_flow=?35, serial_local_echo=?36, serial_line_mode=?37, \
          serial_backspace=?38, serial_byte_backspace=?39, serial_charset=?40, \
-         distro=COALESCE(?41, distro), host_key_policy=?42 WHERE id=?43",
+         distro=COALESCE(?41, distro), host_key_policy=?42, \
+         telnet_username=?43, telnet_charset=?44 WHERE id=?45",
         params![
             p.name,
             p.host,
@@ -307,6 +322,8 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.serial_charset,
             p.distro,
             p.host_key_policy,
+            p.telnet_username,
+            p.telnet_charset,
             p.id
         ],
     )?;
@@ -403,6 +420,8 @@ mod tests {
             serial_charset: None,
             distro: None,
             host_key_policy: None,
+            telnet_username: None,
+            telnet_charset: None,
         }
     }
 
@@ -503,6 +522,45 @@ mod tests {
         p.host_key_policy = None;
         update(&db, &p).unwrap();
         assert_eq!(get(&db, "p1").unwrap().host_key_policy, None);
+    }
+
+    #[test]
+    fn telnet_profile_roundtrip_and_allows_empty_credential() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = mk("t1", "交换机 A · Telnet");
+        p.protocol = "telnet".into();
+        p.host = "10.0.0.9".into();
+        p.port = 23;
+        p.credential_id = String::new();
+        p.telnet_username = Some("admin".into());
+        p.telnet_charset = Some("gb18030".into());
+
+        insert(&db, &p).unwrap();
+        let got = get(&db, "t1").unwrap();
+        assert_eq!(got.protocol, "telnet");
+        assert_eq!(got.port, 23);
+        assert!(got.credential_id.is_empty());
+        assert_eq!(got.telnet_username.as_deref(), Some("admin"));
+        assert_eq!(got.telnet_charset.as_deref(), Some("gb18030"));
+
+        // update 路径可把字段清回 NULL（跟随默认 utf-8 / 不自动登录）。
+        p.telnet_username = None;
+        p.telnet_charset = None;
+        update(&db, &p).unwrap();
+        let got = get(&db, "t1").unwrap();
+        assert_eq!(got.telnet_username, None);
+        assert_eq!(got.telnet_charset, None);
+    }
+
+    #[test]
+    fn unknown_protocol_rejected() {
+        let db = Db::open_in_memory().unwrap();
+        let mut bad = mk("p1", "alpha");
+        bad.protocol = "carrier-pigeon".into();
+        assert_eq!(
+            insert(&db, &bad).unwrap_err().code(),
+            "profile_protocol_invalid"
+        );
     }
 
     #[test]

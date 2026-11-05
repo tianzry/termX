@@ -247,6 +247,12 @@ pub fn telnet_login_script_key(profile_id: &str, version: &str) -> String {
     format!("telnet:{profile_id}:login_script:{version}")
 }
 
+/// Telnet 主机自动登录密码：`telnet:<profile_id>:password`。
+/// 密码不进 profiles 表；档案删除时清掉，避免孤儿密文。
+pub fn telnet_password_key(profile_id: &str) -> String {
+    format!("telnet:{profile_id}:password")
+}
+
 /// TOTP 密钥约定（AGENTS.md R6）：`totp:<profile_id>`。
 /// TOTP secret 不入 profiles 表，只走 SecretStore。
 pub fn totp_secret_key(profile_id: &str) -> String {
@@ -336,6 +342,14 @@ mod tests {
         assert_eq!(
             telnet_login_script_key("550e8400-e29b-41d4-a716-446655440000", "v1"),
             "telnet:550e8400-e29b-41d4-a716-446655440000:login_script:v1"
+        );
+    }
+
+    #[test]
+    fn telnet_password_key_is_stable() {
+        assert_eq!(
+            telnet_password_key("abc"),
+            "telnet:abc:password"
         );
     }
 

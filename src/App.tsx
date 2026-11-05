@@ -52,7 +52,10 @@ import {
 } from "./domain/serialFormConfig";
 import type { SerialProfileSnapshot } from "./domain/serialFormConfig";
 import { userVisibleError } from "./domain/sshErrors";
-
+import {
+  isTelnetProfile,
+  telnetSessionFromProfile,
+} from "./domain/hostProtocol";
 type Tool = "sftp" | null;
 
 const TOOL_TITLE: Record<Exclude<Tool, null>, string> = {
@@ -374,6 +377,24 @@ export default function App() {
           shell: resolved.local_shell || undefined,
           args: resolved.local_shell_args ?? undefined,
           startDir: resolved.local_start_dir ?? undefined,
+        });
+      })();
+      return;
+    }
+    if (isTelnetProfile(profile)) {
+      // 密码只存在于后端 SecretStore（`telnet:<id>:password`），
+      // 按需取一次放进本次会话内存；不落入工作区持久化数据。
+      void (async () => {
+        let password: string | null = null;
+        try {
+          password = await api.getProfileTelnetPassword(profile.id);
+        } catch {
+          /* 取不到 = 手动登录 */
+        }
+        workspaceRef.current?.newTab({
+          kind: "telnet",
+          name: profile.name,
+          session: telnetSessionFromProfile(profile, password),
         });
       })();
       return;

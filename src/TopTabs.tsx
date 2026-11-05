@@ -106,6 +106,13 @@ function TabGlyph({ tab, profiles }: { tab: Tab; profiles: Profile[] }) {
       </div>
     );
   }
+  if (connector.kind === "telnet") {
+    return (
+      <div style={TAB_GLYPH_SERIAL}>
+        <Terminal size={10} />
+      </div>
+    );
+  }
   if (connector.kind === "pty") {
     // termX 的 pty 连接器暂未携带 shell 图标快照，缺失时回退终端图标。
     const icon = (connector as { icon?: string }).icon;

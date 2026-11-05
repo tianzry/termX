@@ -297,6 +297,41 @@ describe("导入构造", () => {
     });
   });
 
+  it("Telnet 导入保留 protocol / username / charset，且不挂 SSH 凭据", () => {
+    const telnet = parseVaultImport(
+      JSON.stringify({
+        version: 1,
+        hosts: [
+          {
+            name: "交换机 Telnet",
+            host: "10.0.0.9",
+            port: 23,
+            protocol: "telnet",
+            telnet_username: "admin",
+            telnet_charset: "gb18030",
+          },
+        ],
+      }),
+    ).hosts[0];
+    const p = importedHostToProfile(telnet, "", null, "new-id");
+    expect(p).toMatchObject({
+      protocol: "telnet",
+      credential_id: "",
+      telnet_username: "admin",
+      telnet_charset: "gb18030",
+    });
+  });
+
+  it("未知 protocol 回落 ssh（老数据 / 拼写错误兼容）", () => {
+    const unknown = parseVaultImport(
+      JSON.stringify({
+        version: 1,
+        hosts: [{ name: "x", host: "1.2.3.4", port: 22, protocol: "telnet2" }],
+      }),
+    ).hosts[0];
+    expect(unknown.protocol).toBe("ssh");
+  });
+
   it("覆盖沿用本地 id / 凭据，只刷新可迁移字段", () => {
     const existing = profile({
       id: "local",

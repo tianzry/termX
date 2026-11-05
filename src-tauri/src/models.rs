@@ -155,6 +155,15 @@ pub struct Profile {
     /// `verifyHostKeys`（老数据保持原行为）。
     #[serde(default)]
     pub host_key_policy: Option<String>,
+    // ── Telnet 主机字段（schema v48，对齐 Netcatty Host 的 telnet* / charset）──
+    /// protocol == "telnet" 时的登录用户名；None = 不自动登录（手动输入）。
+    /// 端口复用 `profiles.port`（协议互斥，默认 23），密码走 SecretStore
+    /// `telnet:<profile_id>:password`，不入表。
+    #[serde(default)]
+    pub telnet_username: Option<String>,
+    /// Telnet 主机字符集：`utf-8` / `gb18030`；None = utf-8。
+    #[serde(default)]
+    pub telnet_charset: Option<String>,
 }
 
 /// 代理库条目（对齐 Netcatty `ProxyProfile` 的 label + config 扁平化）：

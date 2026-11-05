@@ -348,7 +348,9 @@ export function TerminalPane({
    * 解码、输入交给后端重编码。与日志/录制无关，独立于会话生命周期。
    */
   const [encoding, setEncoding] = useState<TerminalEncoding>(() =>
-    loadTerminalEncoding(sshProfileId),
+    tab.connector.kind === "telnet" && tab.connector.session.encoding
+      ? tab.connector.session.encoding
+      : loadTerminalEncoding(sshProfileId),
   );
   const encodingRef = useRef<TerminalEncoding>(encoding);
   /**

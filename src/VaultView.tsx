@@ -258,6 +258,10 @@ type ComposerDraft = {
   ssh_input_compatibility: boolean | null;
   /** 主机级 known-host 校验策略；default = 跟随全局 verifyHostKeys。 */
   host_key_policy: HostKeyPolicy;
+  /** 主机协议：`ssh` / `telnet`（本地 shell / 串口主机走独立面板，不进此编辑器）。 */
+  protocol: "ssh" | "telnet";
+  /** Telnet 自动登录用户名；空 = 手动登录。 */
+  telnet_username: string;
   // ── Netcatty 1:1 对齐新增（schema v33）──
   sftp_protocol: "auto" | "sftp" | "scp";
   sftp_sudo: boolean;
@@ -725,6 +729,8 @@ export function VaultView({
   /** 绑定凭据的原始 secret（getCredential 取回）；密码框留空时原样回填，避免误删。 */
   const composerSecretRef = useRef<string | null>(null);
   const composerProxySecretRef = useRef(false);
+  /** Telnet 主机是否已有自动登录密码（密码本体只来自 SecretStore，不在草稿里缓存）。 */
+  const composerTelnetSecretRef = useRef(false);
   /** 「+ 密钥 / 证书 / 本地密钥」菜单与当前选择器类型。 */
   const [credMenu, setCredMenu] = useState(false);
   const [credPick, setCredPick] = useState<CredPick>(null);
@@ -1629,6 +1635,7 @@ export function VaultView({
     setPassMasked(false);
     composerSecretRef.current = null;
     composerProxySecretRef.current = false;
+    composerTelnetSecretRef.current = false;
     setCredMenu(false);
     setCredPick(null);
     setCredSearch("");
@@ -1654,6 +1661,8 @@ export function VaultView({
       agent_forwarding: false,
       ssh_input_compatibility: false,
       host_key_policy: "default",
+      protocol: "ssh",
+      telnet_username: "",
       sftp_protocol: "auto",
       sftp_sudo: false,
       sftp_encoding: "auto",
@@ -1673,6 +1682,7 @@ export function VaultView({
     setPassMasked(false);
     composerSecretRef.current = null;
     composerProxySecretRef.current = false;
+    composerTelnetSecretRef.current = false;
     setCredMenu(false);
     setCredSearch("");
     extraCredsRef.current = [];
@@ -1703,11 +1713,18 @@ export function VaultView({
       mfa,
       key_file: "",
       env_vars: [],
-      terminal_encoding: loadTerminalEncoding(p.id),
+      terminal_encoding:
+        p.protocol === "telnet"
+          ? p.telnet_charset === "gb18030"
+            ? "gb18030"
+            : "utf-8"
+          : loadTerminalEncoding(p.id),
       init_command: p.init_command ?? "",
       agent_forwarding: p.agent_forwarding ?? false,
       ssh_input_compatibility: p.ssh_input_compatibility ?? null,
       host_key_policy: hostKeyPolicyFromProfile(p.host_key_policy),
+      protocol: p.protocol === "telnet" ? "telnet" : "ssh",
+      telnet_username: p.telnet_username ?? "",
       sftp_protocol:
         p.sftp_protocol === "sftp" || p.sftp_protocol === "scp"
           ? p.sftp_protocol
@@ -1762,6 +1779,17 @@ export function VaultView({
       .catch(() => {
         composerProxySecretRef.current = false;
       });
+    if (p.protocol === "telnet") {
+      void api
+        .getProfileTelnetPassword(p.id)
+        .then((s) => {
+          composerTelnetSecretRef.current = Boolean(s);
+          if (s) setPassMasked(true);
+        })
+        .catch(() => {
+          composerTelnetSecretRef.current = false;
+        });
+    }
     setCtxMenu(null);
   }
 
@@ -1843,6 +1871,82 @@ export function VaultView({
   }
 
   /**
+   * Telnet 主机落库：protocol=telnet + 用户名 / 字符集，密码进
+   * SecretStore（`telnet:<id>:password`）；不创建 SSH 凭据。
+   */
+  async function persistTelnetHost(
+    d: ComposerDraft,
+    port: number,
+  ): Promise<Profile | null> {
+    setComposerBusy(true);
+    setComposerErr("");
+    try {
+      const username = d.telnet_username.trim();
+      const base: Profile = {
+        id: d.id,
+        name: d.name.trim(),
+        host: d.host.trim(),
+        port,
+        // Telnet 主机不挂 SSH 凭据（后端 validate_for_write 已豁免）。
+        credential_id: "",
+        bastion_profile_id: null,
+        init_command: null,
+        group_id: d.group_id || null,
+        sftp_protocol: "auto",
+        sftp_sudo: false,
+        sftp_encoding: "auto",
+        icon_source: d.icon_source,
+        icon_color: d.icon_color || null,
+        totp_auto_submit: false,
+        totp_regex: null,
+        agent_forwarding: false,
+        ssh_input_compatibility: null,
+        host_key_policy: null,
+        ...proxyProfileFields(EMPTY_PROXY_DRAFT),
+        proxy_profile_id: null,
+        protocol: "telnet",
+        telnet_username: username || null,
+        telnet_charset: d.terminal_encoding,
+      };
+      const isEdit = profiles.some((p) => p.id === d.id);
+      if (isEdit) {
+        const existing = profiles.find((p) => p.id === d.id);
+        await api.updateProfile({
+          ...base,
+          bastion_profile_id: null,
+          algorithms: existing?.algorithms,
+        });
+      } else {
+        await api.createProfile(base);
+        setOrder((prev) => [...prev, base.id]);
+      }
+      // 密码：只在用户名非空时保留（无用户名无法自动登录，密码随之清除）。
+      if (!username) {
+        await api.setProfileTelnetPassword(base.id, null);
+        composerTelnetSecretRef.current = false;
+      } else {
+        let secret: string | null | undefined;
+        if (d.password) secret = d.save_password ? d.password : null;
+        else if (!d.save_password) secret = null;
+        else secret = composerTelnetSecretRef.current ? undefined : null;
+        if (secret !== undefined) {
+          await api.setProfileTelnetPassword(base.id, secret);
+          composerTelnetSecretRef.current = secret !== null;
+        }
+      }
+      // 终端「更多 → 编码」与主机偏好共用一份（Netcatty Host.charset）。
+      saveTerminalEncoding(base.id, d.terminal_encoding);
+      setHostTags(base.id, parseTags(d.tags));
+      return base;
+    } catch (e) {
+      setComposerErr(userVisibleError(String(e)));
+      return null;
+    } finally {
+      setComposerBusy(false);
+    }
+  }
+
+  /**
    * 校验并落库当前草稿，返回保存后的 Profile；失败返回 null（错误写 composerErr）。
    * 「保存」与「测试连接」共用，保证两条路径的校验 / 凭据 upsert 完全一致。
    */
@@ -1857,6 +1961,11 @@ export function VaultView({
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       setComposerErr("端口需在 1–65535 之间");
       return null;
+    }
+    // ── Telnet 主机：不建 SSH 凭据，密码进 SecretStore，表里只存
+    //    username / charset（对齐 Netcatty Host.telnet* / charset）。
+    if (d.protocol === "telnet") {
+      return persistTelnetHost(d, port);
     }
     const proxyErr = d.proxy_profile_id ? null : proxyDraftError(d.proxy);
     if (proxyErr) {
@@ -2357,7 +2466,7 @@ export function VaultView({
         }
         try {
           let credentialId = "";
-          if (host.protocol !== "local") {
+          if (host.protocol !== "local" && host.protocol !== "telnet") {
             credentialId = newId();
             await api.createCredential(
               credentialFromImportedHost(host, credentialId),
@@ -4267,9 +4376,14 @@ export function VaultView({
               <div className="vault-composer-head-actions">
                 <button
                   className="nc-icon-btn"
-                  title="测试连接"
+                  title={
+                    composer.protocol === "telnet"
+                      ? "Telnet 主机暂不支持测试连接（保存后直接连接）"
+                      : "测试连接"
+                  }
                   disabled={
                     composerBusy ||
+                    composer.protocol === "telnet" ||
                     !composer.name.trim() ||
                     !composer.host.trim()
                   }
@@ -4374,6 +4488,47 @@ export function VaultView({
                   <Icon name="server" size={13} />
                   <span>地址</span>
                 </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">
+                    协议
+                    <HostHint text="Telnet 主机走独立 telnet 后端（无 SSH 密钥 / 证书 / 代理转发 / SFTP）；老主机默认 SSH，行为不变。" />
+                  </span>
+                  <select
+                    value={composer.protocol}
+                    onChange={(e) => {
+                      const protocol = e.target.value as "ssh" | "telnet";
+                      setComposer({
+                        ...composer,
+                        protocol,
+                        port:
+                          protocol === "telnet"
+                            ? composer.port === "22"
+                              ? "23"
+                              : composer.port
+                            : composer.port === "23"
+                              ? "22"
+                              : composer.port,
+                        // 协议切换后凭据 / MFA / 密码语义不同，清掉 SSH 专属选择。
+                        credential_id: protocol === "telnet" ? "" : composer.credential_id,
+                        mfa: protocol === "telnet" ? false : composer.mfa,
+                        password: protocol === "telnet" ? "" : composer.password,
+                        save_password:
+                          protocol === "telnet" ? true : composer.save_password,
+                      });
+                      setPassMasked(
+                        protocol === "ssh" ? false : composerTelnetSecretRef.current,
+                      );
+                      if (protocol === "telnet") {
+                        setCredPick(null);
+                        setCredMenu(false);
+                        setHostKeyPolicyOpen(false);
+                      }
+                    }}
+                  >
+                    <option value="ssh">SSH</option>
+                    <option value="telnet">Telnet</option>
+                  </select>
+                </div>
                 <input
                   value={composer.host}
                   placeholder="IP 或 主机名"
@@ -4389,7 +4544,9 @@ export function VaultView({
                   <span>端口与凭据</span>
                 </div>
                 <div className="host-port-line">
-                  <span className="host-port-line-prefix">SSH on</span>
+                  <span className="host-port-line-prefix">
+                    {composer.protocol === "telnet" ? "Telnet on" : "SSH on"}
+                  </span>
                   <input
                     className="host-port-line-input"
                     type="number"
@@ -4405,6 +4562,9 @@ export function VaultView({
                   <span className="host-port-line-suffix">端口</span>
                 </div>
 
+                {/* SSH 专属：登录方式 / MFA / Agent 转发 / 逐字输入兼容。 */}
+                {composer.protocol === "ssh" && (
+                  <>
                 <div className="host-setting-row">
                   <span className="host-setting-label">
                     登录方式
@@ -4531,16 +4691,38 @@ export function VaultView({
                   </button>
                 </div>
 
-                <div className="host-setting-row">
-                  <span className="host-setting-label">用户名</span>
-                  <input
-                    value={composer.username}
-                    placeholder="用户名"
-                    onChange={(e) =>
-                      setComposer({ ...composer, username: e.target.value })
-                    }
-                  />
-                </div>
+                  </>
+                )}
+
+                {composer.protocol === "telnet" ? (
+                  <div className="host-setting-row">
+                    <span className="host-setting-label">
+                      登录用户名
+                      <HostHint text="留空 = 连接后手动输入；填写后连接成功自动发送用户名与密码。" />
+                    </span>
+                    <input
+                      value={composer.telnet_username}
+                      placeholder="可选，例如 root 或 admin"
+                      onChange={(e) =>
+                        setComposer({
+                          ...composer,
+                          telnet_username: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                ) : (
+                  <div className="host-setting-row">
+                    <span className="host-setting-label">用户名</span>
+                    <input
+                      value={composer.username}
+                      placeholder="用户名"
+                      onChange={(e) =>
+                        setComposer({ ...composer, username: e.target.value })
+                      }
+                    />
+                  </div>
+                )}
 
                 {composerPasswordVisible && (
                   <>
@@ -4610,6 +4792,9 @@ export function VaultView({
                   </>
                 )}
 
+                {/* SSH 专属：密钥 / 证书 / 本地密钥选择器。 */}
+                {composer.protocol === "ssh" && (
+                  <>
                 {composer.credential_id && !isEditComposer ? (
                   <div className="host-identity-row">
                     <Icon name="user" size={13} />
@@ -4843,7 +5028,12 @@ export function VaultView({
                   })()
                 )}
 
+                  </>
+                )}
+
                 {/* 验证器：Netcatty 放在「端口与凭据」末行，一行式 + 设置… 入口。 */}
+                {composer.protocol === "ssh" && (
+                  <>
                 <div className="host-setting-row">
                   <span className="host-setting-label">
                     验证器 (TOTP)
@@ -4928,7 +5118,14 @@ export function VaultView({
                     ))}
                   </div>
                 )}
+                  </>
+                )}
               </section>
+
+              {/* SSH 专属分区：Telnet 主机不渲染（Netcatty 的 Telnet 主机只保留
+                  地址 / 端口 / 用户名 / 密码 / 字符集）。 */}
+              {composer.protocol === "ssh" && (
+                <>
               <section className="host-details-section">
                 <div className="host-details-section-head">
                   <Icon name="folder" size={13} />
@@ -4995,6 +5192,8 @@ export function VaultView({
                   </select>
                 </div>
               </section>
+                </>
+              )}
 
               <section className="host-details-section">
                 <div className="host-details-section-head">
@@ -5019,6 +5218,9 @@ export function VaultView({
                 </div>
               </section>
 
+              {/* SSH 专属：代理 / 环境变量 / 启动命令 / 高级字段。 */}
+              {composer.protocol === "ssh" && (
+                <>
               <section className="host-details-section">
                 <div className="host-details-section-head">
                   <Icon name="network" size={13} />
@@ -5253,6 +5455,8 @@ export function VaultView({
                   这些字段 termX 后端暂不支持，编辑器中不提供入口；悬停标题中的 ⓘ 查看逐项原因。
                 </p>
               </section>
+                </>
+              )}
             </div>
 
             <footer className="vault-composer-foot">

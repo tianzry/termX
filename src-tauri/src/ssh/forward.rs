@@ -1405,6 +1405,8 @@ mod tests {
                 serial_charset: None,
                 distro: None,
                 host_key_policy: None,
+                telnet_username: None,
+                telnet_charset: None,
             },
             credential: crate::models::Credential {
                 id: "smoke-credential".into(),

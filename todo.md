@@ -46,12 +46,12 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 脚本页行样式 | Netcatty 透明 56px 行 + 40px 图标方块、Shell 历史；termX 卡片行、导出按钮 | P2 | 与脚本模块一起排期 |
 | 笔记页信息架构 | Netcatty 简单列表 + 实时预览；termX 分组树 + 行号编辑器 + 分屏 | P2 | 保留 termX 超集，补「实时预览」提法 |
 | 终端侧栏 | Netcatty 200px（图标行 + 笔记面板）且本地会话隐藏侧栏；termX 170px 主机树常驻 | P2 | ✅ #186：实测 220px = Netcatty 默认 220（170 为缩放截图误差）；时间戳列已实现（gutter 81px，同公式）｜✅ #187：侧栏默认收起（可切换）+ 本地标签/标题显示 Shell 名 |
-| Vault 首页 | Netcatty 8 项导航 + 监控 + 底部设置，无独立 Telnet；termX 多「同步」导航、多「Telnet」入口 | P2 | ✅ #185：移除「同步」导航 + 补底部「设置」；Telnet 因 `Profile.protocol` 无 telnet 字段保留独立入口（需后端模型变更） |
+| Vault 首页 | Netcatty 8 项导航 + 监控 + 底部设置，无独立 Telnet；termX 多「同步」导航、多「Telnet」入口 | P2 | ✅ #185：移除「同步」导航 + 补底部「设置」；✅ #204：Telnet 纳入主机协议（`Profile.protocol` 支持 telnet，卡片/右键/快速切换器均按 protocol 派生），独立 Telnet 入口按要求保留不删 |
 | 代理页按钮层级 | Netcatty 页头「添加代理」secondary、空态 primary；termX「新建代理」仅 secondary；区块计数文案不同 | P2/P3 | ✅ #191：区块头「代理」+「N 项」；补 64px Globe 空态 + primary 新建代理；页头保持 secondary（与 Netcatty 一致） |
 | 串口弹窗细节 | 弹窗 407 vs 360px、「保存配置」vs「保存为主机」、端口框多一个箭头 | P3 | 待有串口设备时一并调 |
 | SFTP 空态图标 | Netcatty 左 Monitor / 右 HardDrive；termX 左 Monitor / 右 Server | P3 | ✅ #191：右栏改 hard-drive（源码 + 截图证实是硬盘图标，非文件夹） |
 | 设置窗口形态 | Netcatty 独立 Electron 窗口 980×720（min 820×600，非 modal，隐藏预热）；termX 全屏 overlay | P3 | 调研完成 #192（不改代码）：单窗口模型下改独立 Tauri 窗口需新增路由/跨窗口同步/生命周期，建议单独立项 |
-| 主机新建/编辑弹窗 | Netcatty HostDetailsPanel（w420、白卡、分区顺序、SFTP 分区等 10 条差异） | P3 | ✅ #194–#203 已对齐：白卡+浅灰页底 / 卡片12·输入8·按钮8 圆角 / 输入40px / 补 SFTP 设置分区 + 代理归位 / 分组·标签图标与 X / 保存密码 + 密钥入口 / 说明改 ⓘ tooltip / 验证器一行式 / 默认宽固定 420 / **#201 证书认证保存链路放开**（`CredentialType::Certificate` + 路径逃逸校验复用 + 迁移 v47；SecretStore 只存指纹/路径，真机 CA 未实测）/ **#202 主机级 known-host 策略**（`profiles.host_key_policy` verify·skip·NULL=跟随全局，连接前覆盖全局；端到端 host key 变化场景未实测）｜设置页：**#203 每行 48px 条状底色 + 边框 + 12px 左右内边距**，8 tab 覆盖、720 窄窗无横向溢出 |
+| 主机新建/编辑弹窗 | Netcatty HostDetailsPanel（w420、白卡、分区顺序、SFTP 分区等 10 条差异） | P3 | ✅ #194–#204 已对齐：白卡+浅灰页底 / 卡片12·输入8·按钮8 圆角 / 输入40px / 补 SFTP 设置分区 + 代理归位 / 分组·标签图标与 X / 保存密码 + 密钥入口 / 说明改 ⓘ tooltip / 验证器一行式 / 默认宽固定 420 / **#201 证书认证保存链路放开**（`CredentialType::Certificate` + 路径逃逸校验复用 + 迁移 v47；SecretStore 只存指纹/路径，真机 CA 未实测）/ **#202 主机级 known-host 策略**（`profiles.host_key_policy` verify·skip·NULL=跟随全局，连接前覆盖全局；端到端 host key 变化场景未实测）/ **#204 协议选择补 Telnet**（`telnet_username`·`telnet_charset`，迁移 v48，Telnet 隐藏 SSH 专属分区，密码进 SecretStore；实机 echo 已验证）｜设置页：**#203 每行 48px 条状底色 + 边框 + 12px 左右内边距**，8 tab 覆盖、720 窄窗无横向溢出 |
 
 ---
 

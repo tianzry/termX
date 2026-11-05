@@ -71,13 +71,23 @@ export const getSerialHostSubtitle = (
 /** Vault 卡 / 行共用的副标题。 */
 export const getVaultHostRowSubtitle = (
   profile: Pick<Profile, "protocol" | "local_shell_name"> &
-    Partial<Pick<Profile, "host" | "serial_port" | "serial_baud">>,
+    Partial<
+      Pick<
+        Profile,
+        "host" | "port" | "serial_port" | "serial_baud" | "telnet_username"
+      >
+    >,
   options?: VaultHostRowSubtitleOptions,
 ): string => {
   if (profile.protocol === "local") {
     return getLocalShellHostSubtitle(profile, options?.localFallback);
   }
   if (profile.protocol === "serial") return getSerialHostSubtitle(profile);
+  if (profile.protocol === "telnet") {
+    const target = [profile.host, profile.port].filter(Boolean).join(":");
+    const user = profile.telnet_username?.trim();
+    return ["Telnet", user, target].filter(Boolean).join(" · ");
+  }
   return options?.sshSubtitle ?? "";
 };
 

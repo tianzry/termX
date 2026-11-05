@@ -51,6 +51,9 @@ pub fn delete_profile(state: State<AppState>, id: String) -> Result<(), AppError
     // 档案级 secret 与 metadata 同生命周期：档案没了就清掉，避免孤儿密文。
     state.secret_store.delete(&crate::secret::totp_secret_key(&id))?;
     state.secret_store.delete(&crate::secret::proxy_secret_key(&id))?;
+    state
+        .secret_store
+        .delete(&crate::secret::telnet_password_key(&id))?;
     Ok(())
 }
 
@@ -351,6 +354,50 @@ pub fn profile_proxy_password_set(
     secret: Option<String>,
 ) -> Result<(), AppError> {
     profile_proxy_password_set_impl(&state, &profile_id, secret.as_deref())
+}
+
+// ---------------------------------------------------------------------------
+// Telnet 主机自动登录密码 — SecretStore（key `telnet:<profile_id>:password`），
+// profiles 表只存 username / charset（schema v48）。密钥材料不出后端。
+// ---------------------------------------------------------------------------
+
+pub fn profile_telnet_password_get_impl(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<Option<String>, AppError> {
+    state
+        .secret_store
+        .get(&crate::secret::telnet_password_key(profile_id))
+}
+
+#[tauri::command]
+pub fn profile_telnet_password_get(
+    state: State<AppState>,
+    profile_id: String,
+) -> Result<Option<String>, AppError> {
+    profile_telnet_password_get_impl(&state, &profile_id)
+}
+
+/// secret 为 None / 空串 = 清除密码（改为手动登录）。
+pub fn profile_telnet_password_set_impl(
+    state: &AppState,
+    profile_id: &str,
+    secret: Option<&str>,
+) -> Result<(), AppError> {
+    let key = crate::secret::telnet_password_key(profile_id);
+    match secret.filter(|s| !s.is_empty()) {
+        Some(s) => state.secret_store.set(&key, s),
+        None => state.secret_store.delete(&key),
+    }
+}
+
+#[tauri::command]
+pub fn profile_telnet_password_set(
+    state: State<AppState>,
+    profile_id: String,
+    secret: Option<String>,
+) -> Result<(), AppError> {
+    profile_telnet_password_set_impl(&state, &profile_id, secret.as_deref())
 }
 
 /// Read a key file's text. Split out from the command so the cap / not-found

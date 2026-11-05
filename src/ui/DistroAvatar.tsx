@@ -8,7 +8,7 @@
  */
 
 import { useState } from "react";
-import { Server, Usb } from "lucide-react";
+import { Terminal, Server, Usb } from "lucide-react";
 import type { Profile } from "../backend/client";
 
 export const DISTRO_LOGOS: Record<string, string> = {
@@ -201,6 +201,15 @@ export function DistroAvatar({ profile, size = "md", className }: Props) {
             onError={() => setImageFailed(true)}
           />
         )}
+      </div>
+    );
+  }
+
+  // Telnet 主机：对齐 Netcatty protocolVisuals（Terminal + amber-600）。
+  if (profile.protocol === "telnet") {
+    return (
+      <div className={boxClass} style={{ ...boxStyle, backgroundColor: AMBER, color: "#fff" }}>
+        <Terminal size={dims.icon} />
       </div>
     );
   }

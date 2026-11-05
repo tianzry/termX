@@ -58,6 +58,9 @@ export type VaultExportHost = {
   serial_backspace?: string | null;
   serial_byte_backspace?: boolean | null;
   serial_charset?: string | null;
+  /** Telnet 主机（protocol === "telnet"）的自动登录用户名 / 字符集（不含密码）。 */
+  telnet_username?: string | null;
+  telnet_charset?: string | null;
   tags?: string[];
 };
 
@@ -134,6 +137,12 @@ const toExportHost = (
         serial_charset: p.serial_charset ?? null,
       }
     : {}),
+  ...(p.protocol === "telnet"
+    ? {
+        telnet_username: p.telnet_username ?? null,
+        telnet_charset: p.telnet_charset ?? null,
+      }
+    : {}),
   ...(tags.length ? { tags } : {}),
 });
 
@@ -208,6 +217,8 @@ export type VaultImportHost = {
   serial_backspace: string | null;
   serial_byte_backspace: boolean | null;
   serial_charset: string | null;
+  telnet_username: string | null;
+  telnet_charset: string | null;
   tags: string[];
 };
 
@@ -287,7 +298,9 @@ function sanitizeHost(value: unknown): VaultImportHost | null {
   const host = trimmed(value.host);
   const rawProtocol = trimmed(value.protocol);
   const protocol =
-    rawProtocol === "local" || rawProtocol === "serial" ? rawProtocol : "ssh";
+    rawProtocol === "local" || rawProtocol === "serial" || rawProtocol === "telnet"
+      ? rawProtocol
+      : "ssh";
   const port =
     protocol === "serial" ? parseSerialPort(value.port) : parsePort(value.port);
   if (!name || !host || port === null) return null;
@@ -337,6 +350,8 @@ function sanitizeHost(value: unknown): VaultImportHost | null {
     serial_backspace: optionalString(value.serial_backspace),
     serial_byte_backspace: optionalBool(value.serial_byte_backspace),
     serial_charset: optionalString(value.serial_charset),
+    telnet_username: optionalString(value.telnet_username),
+    telnet_charset: optionalString(value.telnet_charset),
     tags: stringArray(value.tags),
   };
 }
@@ -480,7 +495,9 @@ export function importedHostToProfile(
     bastion_profile_id: null,
     init_command: host.init_command,
     group_id: groupId,
-    ...(host.protocol === "local" || host.protocol === "serial"
+    ...(host.protocol === "local" ||
+    host.protocol === "serial" ||
+    host.protocol === "telnet"
       ? { protocol: host.protocol }
       : {}),
     ...(host.icon_source ? { icon_source: host.icon_source } : {}),
@@ -516,6 +533,12 @@ export function importedHostToProfile(
           serial_charset: host.serial_charset,
         }
       : {}),
+    ...(host.protocol === "telnet"
+      ? {
+          telnet_username: host.telnet_username,
+          telnet_charset: host.telnet_charset,
+        }
+      : {}),
   };
 }
 
@@ -540,6 +563,15 @@ export function applyImportedHost(
           local_shell_name: host.local_shell_name,
           local_shell_icon: host.local_shell_icon,
           local_start_dir: host.local_start_dir,
+        }
+      : {}),
+    ...(host.protocol === "telnet"
+      ? {
+          protocol: "telnet" as const,
+          // Telnet 主机不挂 SSH 凭据；导入覆盖时一并清掉旧 credential_id。
+          credential_id: "",
+          telnet_username: host.telnet_username,
+          telnet_charset: host.telnet_charset,
         }
       : {}),
     ...(host.icon_source ? { icon_source: host.icon_source } : {}),

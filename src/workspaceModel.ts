@@ -10,6 +10,7 @@
 
 import type { SerialConfig } from "./backend/client";
 import type { SerialBackspaceBehavior } from "./domain/serialFormConfig";
+import type { TerminalEncoding } from "./terminal/terminalEncoding";
 
 export type SplitDir = "horizontal" | "vertical";
 
@@ -33,6 +34,8 @@ export interface TelnetSessionConfig {
   username?: string;
   /** 自动登录密码；空串表示空密码设备（仍需填写用户名才启用）。 */
   password?: string;
+  /** 主机级字符集（profiles.telnet_charset）；缺省 = utf-8。 */
+  encoding?: TerminalEncoding;
 }
 
 export type Connector =
