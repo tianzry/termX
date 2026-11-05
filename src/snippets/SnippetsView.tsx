@@ -1,40 +1,81 @@
-// Snippets 管理页（P0 #5 阶段 A）。
-// 对照 Netcatty `components/SnippetsManager.tsx`：列表 / 搜索 / 分组（package）/
-// 新建 / 编辑 / 删除 + 快捷键 + 自动执行开关。
-// 「插入到终端」在终端侧完成（TerminalPane 右键菜单与逐片段快捷键），
-// 仅写入当前活动窗格的会话，不做跨会话发送。
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// 脚本 / 片段管理页（按 Netcatty `SnippetsManager` + `ScriptsSidePanel` 重做）。
+//
+// 对齐点：
+// - 顶栏：搜索、新建下拉（片段 / 脚本 / 分组）、导入、导出、视图切换、排序、多选；
+// - 面包屑「全部分组 / …」；「分组」卡片节 +「片段」卡片节；
+// - 列表两种视图：grid 68px 卡片 / list 56px 行；图标 Zap（片段）/ Play（脚本）；
+// - 右键菜单：片段 = 运行 / 编辑 / 复制 / 导出 / 删除；分组 = 打开 / 导出 / 重命名 / 删除；
+// - 右侧常驻编辑面板（SnippetsRightPanel）：描述 → 分组 → 命令（变量 chips）/ 脚本参数 →
+//   目标主机 → 不自动运行 / 多行发送 → 快捷键（点击录制）→ 底部整宽 保存 / 运行。
+//
+// 与 Netcatty 的差异（已记录在 changelogs）：
+// - termX 无多会话广播，运行目标固定为当前活动终端；
+// - Snippet 无时间戳字段，newest / oldest 用数组顺序近似；
+// - 脚本语言仅 shell（nct.* JS 运行时未移植）。
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
+import {
+  Check,
+  CheckSquare,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Download,
+  Edit2,
+  FileCode,
+  FolderPlus,
+  FolderTree,
+  Keyboard,
+  LayoutGrid,
+  List as ListIcon,
+  Maximize2,
+  Package,
+  Play,
+  Plus,
+  RotateCcw,
+  Search,
+  Server,
+  Square,
+  Trash2,
+  Upload,
+  X,
+  Zap,
+} from "lucide-react";
 import * as api from "../backend/client";
 import type { Snippet } from "../backend/client";
 import type { PaneHandle } from "../TerminalPane";
 import { userVisibleError } from "../domain/sshErrors";
 import {
   SNIPPETS_CHANGED_EVENT,
+  SNIPPET_SORT_LABELS,
+  buildSnippetPackageTree,
   deleteSnippetPackage,
   ensureSnippetIds,
   filterSnippets,
   findShortkeyConflict,
-  groupSnippets,
+  flattenSnippetCommandPreview,
+  formatShortkeyEvent,
   parseShortkey,
+  parseSnippetVariables,
   renameSnippetPackage,
   resolveScriptTrigger,
   scriptTriggerNote,
+  snippetBreadcrumb,
+  sortSnippets,
+  type SnippetSortMode,
 } from "./snippetsModel";
-import {
-  clearScriptTriggers,
-  subscribeScriptTriggers,
-  type ScriptTriggerEntry,
-} from "./scriptTriggerLog";
 import {
   buildSnippetExportPayload,
   describeImportStats,
   mergeSnippetImport,
   parseSnippetImportPayload,
+  type SnippetExportPayload,
 } from "./snippetsTransfer";
 import "./snippets.css";
 
 type SnippetKind = "" | "script";
 type RunMode = "" | "paste" | "lineDelay";
+type ViewMode = "list" | "grid";
 
 type Draft = {
   id: string;
@@ -48,12 +89,17 @@ type Draft = {
   kind: SnippetKind;
   multiLineRunMode: RunMode;
   language: string;
-  /** "" = 手动；onConnect / onOutput 由终端窗格在渲染层自动执行（阶段 B）。 */
   trigger: "" | "onConnect" | "onOutput";
   triggerPattern: string;
   targets: string[];
   targetsAllHosts: boolean;
 };
+
+type CtxTarget =
+  | { type: "snippet"; id: string }
+  | { type: "package"; path: string };
+
+type HostBrief = { id: string; name: string; host: string; port: number };
 
 function toDraft(s: Snippet): Draft {
   return {
@@ -78,17 +124,17 @@ function toDraft(s: Snippet): Draft {
   };
 }
 
-function emptyDraft(): Draft {
+function emptyDraft(kind: SnippetKind = "", pkg = ""): Draft {
   return {
     id: "",
     name: "",
     command: "",
     description: "",
-    package: "",
+    package: pkg,
     tagsText: "",
     shortkey: "",
     noAutoRun: false,
-    kind: "",
+    kind,
     multiLineRunMode: "",
     language: "shell",
     trigger: "",
@@ -98,109 +144,193 @@ function emptyDraft(): Draft {
   };
 }
 
+/** 导出：浏览器下载 JSON（Netcatty snippet 传输格式）。 */
+function downloadExport(snippets: Snippet[], fileName: string) {
+  const payload = buildSnippetExportPayload(snippets);
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${fileName}-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | null }) {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [query, setQuery] = useState("");
-  const [pkgFilter, setPkgFilter] = useState(""); // "" = 全部分组
-  const [kindFilter, setKindFilter] = useState<"" | "snippet" | "script">("");
   const [notice, setNotice] = useState("");
+  const [query, setQuery] = useState("");
+  const [pkgFilter, setPkgFilter] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [sortMode, setSortMode] = useState<SnippetSortMode>("manual");
+  const [openMenu, setOpenMenu] = useState<"new" | "view" | "sort" | null>(null);
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; target: CtxTarget } | null>(
+    null,
+  );
   const [draft, setDraft] = useState<Draft | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [pkgRename, setPkgRename] = useState<{ from: string; to: string } | null>(null);
-  /** 最近一次运行的脚本（横幅 + 停止 / 暂停 / 恢复）；切换活动终端时清空。 */
+  const [pkgNew, setPkgNew] = useState<string | null>(null);
+  const [importPending, setImportPending] = useState<{
+    payload: SnippetExportPayload;
+    conflicts: number;
+  } | null>(null);
+  const [hosts, setHosts] = useState<HostBrief[]>([]);
+  const [targetPicker, setTargetPicker] = useState(false);
+  const [scriptExpanded, setScriptExpanded] = useState(false);
+  const [recording, setRecording] = useState(false);
   const [run, setRun] = useState<{ name: string; paneId: string } | null>(null);
-  /** onConnect 目标主机选择用的主机列表。 */
-  const [hosts, setHosts] = useState<{ id: string; name: string; host: string }[]>([]);
-  /** 自动触发日志（内存，跨终端窗格共享）。 */
-  const [triggerLog, setTriggerLog] = useState<ScriptTriggerEntry[]>([]);
   const importRef = useRef<HTMLInputElement>(null);
+  /** 最新待提交/已提交列表：并发操作按它做增量，避免用过期快照覆盖。 */
+  const latestRef = useRef<Snippet[]>([]);
+  /** 串行化整份覆盖写入，防止两次 save 交叉。 */
+  const writeRef = useRef<Promise<void>>(Promise.resolve());
 
-  const refresh = useCallback(async () => {
+  useEffect(() => {
+    latestRef.current = snippets;
+  }, [snippets]);
+
+  const refresh = async () => {
     try {
       setErr("");
       setSnippets(ensureSnippetIds(await api.loadSnippets()));
     } catch (e) {
       setErr(userVisibleError(String(e)));
     }
-  }, []);
+  };
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    api
+      .listProfiles()
+      .then((list) =>
+        setHosts(
+          list.map((p) => ({ id: p.id, name: p.name, host: p.host, port: p.port })),
+        ),
+      )
+      .catch(() => {});
+  }, []);
 
   // 切换活动窗格 / 关闭终端后清空运行横幅，避免把控制键发给错误的会话。
   useEffect(() => {
     setRun(null);
   }, [activeHandle]);
 
+  // 点击空白处关闭下拉与右键菜单。
   useEffect(() => {
-    let alive = true;
-    api
-      .listProfiles()
-      .then((list) => {
-        if (alive) {
-          setHosts(list.map((p) => ({ id: p.id, name: p.name, host: p.host })));
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
+    if (!openMenu && !ctxMenu) return;
+    const onDown = () => {
+      setOpenMenu(null);
+      setCtxMenu(null);
     };
-  }, []);
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [openMenu, ctxMenu]);
 
-  useEffect(() => subscribeScriptTriggers(setTriggerLog), []);
+  // 快捷键录制：监听 window keydown（对齐 Netcatty keyEventToString 交互）。
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setRecording(false);
+        return;
+      }
+      if (e.key === "Backspace" || e.key === "Delete") {
+        setDraft((d) => (d ? { ...d, shortkey: "" } : d));
+        setRecording(false);
+        return;
+      }
+      const key = formatShortkeyEvent(e);
+      if (!key) return; // 纯修饰键：继续录制
+      if (!parseShortkey(key)) return;
+      setDraft((d) => (d ? { ...d, shortkey: key } : d));
+      setRecording(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recording]);
 
-  /** 保存全量列表并通知终端侧刷新；成功后执行 onDone。 */
-  const persist = useCallback(
-    async (next: Snippet[], onDone?: () => void) => {
+  const persist = (
+    update: Snippet[] | ((prev: Snippet[]) => Snippet[]),
+    onDone?: () => void,
+  ) => {
+    const run = async () => {
+      const prev = latestRef.current;
+      const next = typeof update === "function" ? update(prev) : update;
       setBusy(true);
       setErr("");
       try {
         await api.saveSnippets(next);
+        latestRef.current = next;
         setSnippets(next);
         window.dispatchEvent(new Event(SNIPPETS_CHANGED_EVENT));
         onDone?.();
       } catch (e) {
+        // 写失败：回退到上一次已提交的列表，避免后续增量基于未落库状态。
+        latestRef.current = prev;
         setErr(userVisibleError(String(e)));
       } finally {
         setBusy(false);
       }
-    },
-    [],
+    };
+    const chained = writeRef.current.then(run, run);
+    writeRef.current = chained.catch(() => {});
+    return chained;
+  };
+
+  const packageTree = useMemo(() => buildSnippetPackageTree(snippets), [snippets]);
+  const breadcrumb = useMemo(() => snippetBreadcrumb(pkgFilter), [pkgFilter]);
+
+  const filtered = useMemo(() => filterSnippets(snippets, query), [snippets, query]);
+  const scoped = useMemo(() => {
+    if (!pkgFilter) return filtered;
+    return filtered.filter((s) => {
+      const p = (s.package || "").trim();
+      return p === pkgFilter || p.startsWith(`${pkgFilter}/`);
+    });
+  }, [filtered, pkgFilter]);
+
+  const displayedSnippets = useMemo(
+    () => sortSnippets(scoped, sortMode),
+    [scoped, sortMode],
   );
 
-  const packages = useMemo(
-    () =>
-      [...new Set(snippets.map((s) => (s.package || "").trim()).filter(Boolean))].sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [snippets],
-  );
+  /** 当前层级直接包含的子分组（选中分组时只显示直属子级）。 */
+  const childPackages = useMemo(() => {
+    if (query.trim()) return [];
+    if (!pkgFilter) return packageTree.filter((p) => p.depth === 0);
+    const prefix = `${pkgFilter}/`;
+    return packageTree.filter(
+      (p) => p.path.startsWith(prefix) && p.depth === pkgFilter.split("/").length,
+    );
+  }, [packageTree, pkgFilter, query]);
 
-  const groups = useMemo(() => {
-    let list = filterSnippets(snippets, query);
-    if (pkgFilter) list = list.filter((s) => (s.package || "").trim() === pkgFilter);
-    if (kindFilter === "script") list = list.filter((s) => s.kind === "script");
-    else if (kindFilter === "snippet") list = list.filter((s) => s.kind !== "script");
-    return groupSnippets(list);
-  }, [snippets, query, pkgFilter, kindFilter]);
-
-  const openNew = () => {
+  const openNew = (kind: SnippetKind) => {
     setIsNew(true);
     setErr("");
-    setDraft({ ...emptyDraft(), package: pkgFilter });
+    setNotice("");
+    setTargetPicker(false);
+    setDraft(emptyDraft(kind, pkgFilter));
+    setOpenMenu(null);
   };
 
   const openEdit = (s: Snippet) => {
     setIsNew(false);
     setErr("");
+    setNotice("");
+    setTargetPicker(false);
     setDraft(toDraft(s));
   };
 
-  /** 运行脚本：把内容发送到活动终端；未连接 / 无会话时只提示，不假装执行。 */
-  const runScript = (s: Snippet) => {
+  const runScript = (s: Snippet, fromPanel = false) => {
     if (!activeHandle) {
       setNotice("先在终端打开一个已连接的会话，再回来运行脚本。");
       return;
@@ -215,9 +345,9 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
     }
     setRun({ name: s.name, paneId: activeHandle.paneId });
     setNotice(`已在活动终端运行「${s.name}」`);
+    if (fromPanel) setIsNew(false);
   };
 
-  /** 停止 = Ctrl-C（SIGINT）；暂停 / 恢复走 shell 的 SIGTSTP / fg。 */
   const controlRun = (action: "stop" | "pause" | "resume") => {
     if (!activeHandle) return;
     const ok =
@@ -226,38 +356,36 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
         : action === "pause"
           ? activeHandle.suspend()
           : activeHandle.resume();
-    if (!ok) {
-      setNotice("活动终端已断开，无法发送控制键。");
-      return;
-    }
     setNotice(
-      action === "stop"
-        ? "已发送 Ctrl-C（SIGINT）"
-        : action === "pause"
-          ? "已发送 Ctrl-Z（SIGTSTP），仅挂起 shell 前台任务"
-          : "已发送 fg，恢复挂起的前台任务",
+      ok
+        ? action === "stop"
+          ? "已发送 Ctrl-C（SIGINT）"
+          : action === "pause"
+            ? "已发送 Ctrl-Z（SIGTSTP）"
+            : "已发送 fg"
+        : "活动终端已断开，无法发送控制键。",
     );
   };
 
-  const saveDraft = () => {
-    if (!draft) return;
+  const saveDraft = (): Snippet | null => {
+    if (!draft) return null;
     const name = draft.name.trim();
     if (!name) {
       setErr("名称不能为空");
-      return;
+      return null;
     }
     if (!draft.command.trim()) {
       setErr("命令内容不能为空");
-      return;
+      return null;
     }
     if (draft.shortkey.trim() && !parseShortkey(draft.shortkey)) {
-      setErr(`快捷键格式无效：${draft.shortkey}（示例：F1 或 Ctrl + Shift + F1）`);
-      return;
+      setErr(`快捷键格式无效：${draft.shortkey}`);
+      return null;
     }
     const conflict = findShortkeyConflict(snippets, draft.shortkey, draft.id || undefined);
     if (conflict) {
-      setErr(`快捷键 ${draft.shortkey.trim()} 已被片段「${conflict.name}」占用`);
-      return;
+      setErr(`快捷键 ${draft.shortkey.trim()} 已被「${conflict.name}」占用`);
+      return null;
     }
     const next: Snippet = {
       id: draft.id || crypto.randomUUID(),
@@ -273,7 +401,6 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
       no_auto_run: draft.noAutoRun,
       kind: draft.kind === "script" ? "script" : "",
       multi_line_run_mode: draft.multiLineRunMode,
-      // 语言 / 触发方式只对脚本有意义；trigger="" 即手动运行。
       language: draft.kind === "script" ? draft.language || "shell" : "",
       trigger: draft.kind === "script" ? draft.trigger : "",
       trigger_pattern:
@@ -283,75 +410,108 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
       targets: draft.kind === "script" ? draft.targets : [],
       targets_all_hosts: draft.kind === "script" ? draft.targetsAllHosts : false,
     };
-    const list = isNew
-      ? [...snippets, next]
-      : snippets.map((s) => (s.id === next.id ? next : s));
-    void persist(list, () => setDraft(null));
+    void persist(
+      (prev) =>
+        isNew ? [...prev, next] : prev.map((s) => (s.id === next.id ? next : s)),
+      () => setDraft(null),
+    );
+    return next;
   };
 
   const removeSnippet = (s: Snippet) => {
-    if (!window.confirm(`删除片段「${s.name}」？不可恢复。`)) return;
-    void persist(snippets.filter((x) => x.id !== s.id));
+    if (!window.confirm(`删除「${s.name}」？不可恢复。`)) return;
+    if (draft && draft.id === s.id) setDraft(null);
+    void persist((prev) => prev.filter((x) => x.id !== s.id));
   };
 
   const removePackage = (pkg: string) => {
-    const count = snippets.filter(
-      (s) => s.package === pkg || s.package.startsWith(`${pkg}/`),
-    ).length;
-    if (!window.confirm(`删除分组「${pkg}」及其下 ${count} 条片段？不可恢复。`)) return;
-    void persist(deleteSnippetPackage(snippets, pkg));
+    const count = snippets.filter((s) => {
+      const p = (s.package || "").trim();
+      return p === pkg || p.startsWith(`${pkg}/`);
+    }).length;
+    if (!window.confirm(`删除分组「${pkg}」及其下 ${count} 条？不可恢复。`)) return;
+    void persist((prev) => deleteSnippetPackage(prev, pkg));
+    if (pkgFilter === pkg) setPkgFilter("");
   };
 
   const applyPkgRename = () => {
     if (!pkgRename) return;
     const to = pkgRename.to.trim();
     if (!to || to === pkgRename.from) return;
-    void persist(renameSnippetPackage(snippets, pkgRename.from, to), () =>
+    void persist((prev) => renameSnippetPackage(prev, pkgRename.from, to), () =>
       setPkgRename(null),
     );
     if (pkgFilter === pkgRename.from) setPkgFilter(to);
   };
 
-  /** 导出为 Netcatty snippet 传输格式（kind=netcatty.snippets / version 3）。 */
-  const exportSnippets = () => {
+  const applyPkgNew = () => {
+    const path = (pkgNew ?? "").trim();
+    if (!path) return;
+    // 分组是隐式的（由条目的 package 字段派生）；新建后直接进入该分组。
+    setPkgFilter(path);
+    setPkgNew(null);
+  };
+
+  const exportSelected = () => {
+    const list = snippets.filter((s) => selectedIds.has(s.id));
+    if (!list.length) return;
+    downloadExport(list, `termx-snippets-selected-${list.length}`);
+    setNotice(`已导出所选 ${list.length} 条`);
+  };
+
+  const exportPackage = (path: string) => {
+    const list = snippets.filter((s) => {
+      const p = (s.package || "").trim();
+      return p === path || p.startsWith(`${path}/`);
+    });
+    downloadExport(list, `termx-package-${path.replace(/\//g, "-")}`);
+    setNotice(`已导出分组「${path}」共 ${list.length} 条`);
+  };
+
+  const deleteSelected = () => {
+    if (!selectedIds.size) return;
+    if (!window.confirm(`删除所选 ${selectedIds.size} 条？不可恢复。`)) return;
+    void persist((prev) => prev.filter((s) => !selectedIds.has(s.id)));
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const readImportFile = async (file: File) => {
+    setErr("");
     try {
-      const payload = buildSnippetExportPayload(snippets);
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `termx-snippets-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setNotice(`已导出 ${snippets.length} 条`);
+      const payload = parseSnippetImportPayload(await file.text());
+      if (payload.snippets.length === 0) throw new Error("导入文件没有可用条目");
+      const commandSet = new Set(snippets.map((s) => s.command));
+      const conflicts = payload.snippets.filter((s) => commandSet.has(s.command)).length;
+      setImportPending({ payload, conflicts });
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
   };
 
-  /** 导入：解析 → 按命令判冲突（覆盖 / 跳过）→ 全量保存并通知终端刷新。 */
-  const importSnippets = async (file: File) => {
+  const applyImport = async (conflictAction: "skip" | "overwrite") => {
+    if (!importPending) return;
     setBusy(true);
-    setErr("");
-    setNotice("");
     try {
-      const payload = parseSnippetImportPayload(await file.text());
-      if (payload.snippets.length === 0) throw new Error("导入文件没有可用条目");
-      const overwrite = window.confirm(
-        `共 ${payload.snippets.length} 条。命令相同的条目是否覆盖本地？\n确定 = 覆盖，取消 = 跳过`,
-      );
       const merged = mergeSnippetImport({
         existing: snippets,
-        payload,
-        conflictAction: overwrite ? "overwrite" : "skip",
+        payload: importPending.payload,
+        conflictAction,
         createId: () => crypto.randomUUID(),
       });
       await api.saveSnippets(merged.snippets);
       setSnippets(merged.snippets);
       window.dispatchEvent(new Event(SNIPPETS_CHANGED_EVENT));
       setNotice(`导入完成：${describeImportStats(merged.stats)}`);
+      setImportPending(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : userVisibleError(String(e)));
     } finally {
@@ -359,230 +519,816 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
     }
   };
 
+  /**
+   * 右键菜单坐标：fixed 定位 + 视口内翻转（踩坑 164）。
+   * 菜单若嵌在 overflow 容器里会被裁切。
+   */
+  const openCtx = (event: ReactMouseEvent, target: CtxTarget) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setCtxMenu({
+      x: Math.min(event.clientX, window.innerWidth - 200),
+      y: Math.min(event.clientY, window.innerHeight - 220),
+      target,
+    });
+  };
+
+  const ctxTarget = ctxMenu?.target ?? null;
+  const ctxSnippet =
+    ctxTarget?.type === "snippet"
+      ? snippets.find((s) => s.id === ctxTarget.id) ?? null
+      : null;
+  const ctxPkg = ctxTarget?.type === "package" ? ctxTarget : null;
+
+  const variables = useMemo(
+    () => parseSnippetVariables(draft?.command ?? ""),
+    [draft?.command],
+  );
+
+  const isScript = draft?.kind === "script";
+  const canRunActive = Boolean(activeHandle?.connected());
+  const canSubmit = Boolean(draft?.name.trim() && draft?.command.trim());
+
+  // ── 列表渲染 ─────────────────────────────────────────────────────────────
+
+  const renderSnippetCard = (s: Snippet) => {
+    const script = s.kind === "script";
+    const isSelected = selectedIds.has(s.id);
+    return (
+      <div
+        key={s.id}
+        className={`sn-row ${viewMode === "grid" ? "is-grid" : "is-list"}${
+          isSelected ? " is-selected" : ""
+        }${draft?.id === s.id ? " is-active" : ""}`}
+        data-snippet-id={s.id}
+        onClick={() => (multiSelect ? toggleSelected(s.id) : openEdit(s))}
+        onContextMenu={(e) => openCtx(e, { type: "snippet", id: s.id })}
+      >
+        {multiSelect && (
+          <span className="sn-check" onClick={(e) => e.stopPropagation()}>
+            {isSelected ? (
+              <CheckSquare size={18} className="sn-check-on" onClick={() => toggleSelected(s.id)} />
+            ) : (
+              <Square size={18} className="sn-check-off" onClick={() => toggleSelected(s.id)} />
+            )}
+          </span>
+        )}
+        <span className={`sn-icon ${script ? "is-script" : "is-snippet"}`}>
+          {script ? <Play size={18} /> : <Zap size={18} />}
+        </span>
+        <div className="sn-row-text">
+          <div className="sn-row-name">{s.name}</div>
+          <div className="sn-row-command" title={s.command}>
+            {flattenSnippetCommandPreview(s.command) || "（空命令）"}
+          </div>
+        </div>
+        {s.shortkey && <span className="sn-shortkey-badge">{s.shortkey}</span>}
+        {viewMode === "list" && !multiSelect && (
+          <button
+            className="sn-row-edit"
+            title="编辑"
+            onClick={(e) => {
+              e.stopPropagation();
+              openEdit(s);
+            }}
+          >
+            <Edit2 size={14} />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderPackageCard = (p: { path: string; name: string; count: number }) => (
+    <div
+      key={p.path}
+      className={`sn-row sn-pkg ${viewMode === "grid" ? "is-grid" : "is-list"}`}
+      onClick={() => setPkgFilter(p.path)}
+      onContextMenu={(e) => openCtx(e, { type: "package", path: p.path })}
+    >
+      <span className="sn-icon is-package">
+        <Package size={18} />
+      </span>
+      <div className="sn-row-text">
+        <div className="sn-row-name">{p.name}</div>
+        <div className="sn-row-command">{p.count} 条片段</div>
+      </div>
+      <ChevronRight size={14} className="sn-row-chevron" />
+    </div>
+  );
+
   return (
     <div className="snippets-page">
-      <div className="snippets-toolbar">
-        <div className="snippets-search">
+      <div className="sn-main">
+        <div className="sn-header">
+          <div className="sn-search">
+            <Search size={14} />
+            <input
+              value={query}
+              placeholder="搜索名称 / 命令 / 描述 / 分组 / 标签"
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {query && (
+              <button className="sn-icon-btn" title="清空" onClick={() => setQuery("")}>
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          <div className="sn-menu-wrap">
+            <button
+              className="sn-btn"
+              onClick={() => setOpenMenu(openMenu === "new" ? null : "new")}
+            >
+              <Plus size={14} />
+              新建
+              <ChevronDown size={13} className={openMenu === "new" ? "is-rotated" : ""} />
+            </button>
+            {openMenu === "new" && (
+              <div
+                className="sn-dropdown sn-new-menu"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <button onClick={() => openNew("")}>
+                  <Zap size={16} className="sn-accent-sky" />
+                  新建片段
+                </button>
+                <button onClick={() => openNew("script")}>
+                  <Play size={16} className="sn-accent-violet" />
+                  新建脚本
+                </button>
+                <button
+                  onClick={() => {
+                    setOpenMenu(null);
+                    setPkgNew("");
+                  }}
+                >
+                  <FolderPlus size={16} className="sn-accent-primary" />
+                  新建分组
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button className="sn-btn" onClick={() => importRef.current?.click()} disabled={busy}>
+            <Upload size={14} />
+            导入
+          </button>
+          <button
+            className="sn-btn"
+            onClick={() => {
+              downloadExport(snippets, "termx-snippets");
+              setNotice(`已导出 ${snippets.length} 条`);
+            }}
+            disabled={!snippets.length}
+          >
+            <Download size={14} />
+            导出
+          </button>
+
+          <div className="sn-spacer" />
+
+          <div className="sn-menu-wrap">
+            <button
+              className="sn-icon-btn"
+              title="视图"
+              onClick={() => setOpenMenu(openMenu === "view" ? null : "view")}
+            >
+              {viewMode === "grid" ? <LayoutGrid size={16} /> : <ListIcon size={16} />}
+              <ChevronDown size={10} />
+            </button>
+            {openMenu === "view" && (
+              <div
+                className="sn-dropdown sn-align-end"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <button
+                  className={viewMode === "grid" ? "is-active" : ""}
+                  onClick={() => setViewMode("grid")}
+                >
+                  <LayoutGrid size={14} /> 卡片视图
+                </button>
+                <button
+                  className={viewMode === "list" ? "is-active" : ""}
+                  onClick={() => setViewMode("list")}
+                >
+                  <ListIcon size={14} /> 列表视图
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="sn-menu-wrap">
+            <button
+              className="sn-icon-btn"
+              title={`排序：${SNIPPET_SORT_LABELS[sortMode]}`}
+              onClick={() => setOpenMenu(openMenu === "sort" ? null : "sort")}
+            >
+              <ChevronDown size={16} />
+            </button>
+            {openMenu === "sort" && (
+              <div
+                className="sn-dropdown sn-align-end"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                {(Object.keys(SNIPPET_SORT_LABELS) as SnippetSortMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    className={sortMode === mode ? "is-active" : ""}
+                    onClick={() => setSortMode(mode)}
+                  >
+                    {SNIPPET_SORT_LABELS[mode]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            className={`sn-icon-btn${multiSelect ? " is-active" : ""}`}
+            title="多选"
+            onClick={() => {
+              setMultiSelect((v) => !v);
+              setSelectedIds(new Set());
+            }}
+          >
+            <CheckSquare size={16} />
+          </button>
+
           <input
-            value={query}
-            placeholder="搜索片段（名称 / 命令 / 描述 / 标签）"
-            onChange={(e) => setQuery(e.target.value)}
+            ref={importRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) void readImportFile(f);
+            }}
           />
         </div>
-        <select
-          value={pkgFilter}
-          title="按分组筛选"
-          onChange={(e) => setPkgFilter(e.target.value)}
-        >
-          <option value="">全部分组</option>
-          {packages.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-        <select
-          value={kindFilter}
-          title="按类型筛选"
-          onChange={(e) => setKindFilter(e.target.value as "" | "snippet" | "script")}
-        >
-          <option value="">全部类型</option>
-          <option value="snippet">片段</option>
-          <option value="script">脚本</option>
-        </select>
-        <div className="snippets-toolbar-spacer" />
-        <input
-          ref={importRef}
-          type="file"
-          accept="application/json,.json"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            e.target.value = "";
-            if (f) void importSnippets(f);
-          }}
-        />
-        <button onClick={() => importRef.current?.click()} disabled={busy}>
-          导入
-        </button>
-        <button onClick={exportSnippets} disabled={busy || snippets.length === 0}>
-          导出
-        </button>
-        <button className="snippets-primary" onClick={openNew} disabled={busy}>
-          新建片段
-        </button>
-      </div>
 
-      {err && <div className="snippets-error">{err}</div>}
-      {notice && <div className="snippets-notice">{notice}</div>}
+        {multiSelect && (
+          <div className="sn-selection">
+            <span>已选 {selectedIds.size} 条</span>
+            <div className="sn-spacer" />
+            <button onClick={() => setSelectedIds(new Set(displayedSnippets.map((s) => s.id)))}>
+              全选可见
+            </button>
+            <button onClick={() => setSelectedIds(new Set())}>取消全选</button>
+            <button className="is-primary" disabled={!selectedIds.size} onClick={exportSelected}>
+              <Download size={12} /> 导出所选（{selectedIds.size}）
+            </button>
+            <button className="is-danger" disabled={!selectedIds.size} onClick={deleteSelected}>
+              <Trash2 size={12} /> 删除所选（{selectedIds.size}）
+            </button>
+            <button
+              className="sn-icon-btn"
+              onClick={() => {
+                setMultiSelect(false);
+                setSelectedIds(new Set());
+              }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
 
-      <div className="snippets-runbar">
-        <span className="snippets-run-target">
-          活动终端：
-          {activeHandle
-            ? activeHandle.connected()
-              ? "已连接"
-              : "未连接"
-            : "未打开（先在终端打开会话）"}
-        </span>
-        {run && activeHandle && (
-          <>
-            <span className="snippets-run-name">正在运行「{run.name}」</span>
+        {run && (
+          <div className="sn-runbar">
+            <span className="sn-run-dot" />
+            正在运行「{run.name}」
             <button onClick={() => controlRun("stop")}>停止</button>
             <button onClick={() => controlRun("pause")}>暂停</button>
             <button onClick={() => controlRun("resume")}>恢复</button>
-          </>
+            <span className="sn-run-hint">停止 = Ctrl-C；暂停 = Ctrl-Z；恢复 = fg</span>
+          </div>
         )}
-        <span className="snippets-run-hint">
-          停止 = Ctrl-C（SIGINT）；暂停 = Ctrl-Z（SIGTSTP）；恢复 = fg。暂停 / 恢复只作用于
-          shell 前台任务，不改变逐行发送队列。
-        </span>
-      </div>
 
-      <div className="snippets-trigger-log">
-        <div className="snippets-trigger-log-head">
-          <span>自动触发日志（{triggerLog.length}）</span>
-          <button
-            onClick={() => clearScriptTriggers()}
-            disabled={!triggerLog.length}
-          >
-            清空
-          </button>
+        {(err || notice) && (
+          <div className={`sn-message${err ? " is-error" : ""}`} onClick={() => setErr("")}>
+            {err || notice}
+          </div>
+        )}
+
+        <div className="sn-breadcrumb">
+          <button onClick={() => setPkgFilter("")}>全部分组</button>
+          {breadcrumb.map((b) => (
+            <span key={b.path}>
+              <span className="sn-crumb-sep">/</span>
+              <button onClick={() => setPkgFilter(b.path)}>{b.name}</button>
+            </span>
+          ))}
         </div>
-        {triggerLog.length === 0 ? (
-          <p>暂无记录；onConnect / onOutput 脚本触发后会显示在这里。</p>
+
+        {snippets.length === 0 ? (
+          <div className="sn-empty">
+            <div className="sn-empty-icon">
+              <FileCode size={32} />
+            </div>
+            <h3>还没有片段或脚本</h3>
+            <p>新建片段保存常用命令；新建脚本可发送到当前会话执行或按条件自动触发。</p>
+            <button className="sn-btn is-primary" onClick={() => openNew("")}>
+              <Plus size={14} /> 新建片段
+            </button>
+          </div>
         ) : (
-          <ul>
-            {triggerLog.slice(-6).reverse().map((e, i) => (
-              <li key={`${e.at}-${i}`}>
-                <span className={`snippets-trigger-status ${e.status}`}>
-                  {e.status === "done" ? "完成" : e.status === "error" ? "失败" : "执行中"}
-                </span>
-                <span>
-                  {new Date(e.at).toLocaleTimeString()} ·{" "}
-                  {e.kind === "onConnect" ? "连接触发" : "输出触发"} · {e.name}
-                </span>
-                <span className="snippets-trigger-detail">{e.detail}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="sn-list">
+            {childPackages.length > 0 && (
+              <section className="sn-section">
+                <h4>分组</h4>
+                <div className={viewMode === "grid" ? "sn-grid" : "sn-rows"}>
+                  {childPackages.map(renderPackageCard)}
+                </div>
+              </section>
+            )}
+
+            {displayedSnippets.length > 0 && (
+              <section className="sn-section">
+                <h4>片段</h4>
+                <div className={viewMode === "grid" ? "sn-grid" : "sn-rows"}>
+                  {displayedSnippets.map(renderSnippetCard)}
+                </div>
+              </section>
+            )}
+
+            {displayedSnippets.length === 0 && childPackages.length === 0 && (
+              <div className="sn-noresult">
+                <div className="sn-empty-icon is-sm">
+                  <Search size={24} />
+                </div>
+                <h3>{query.trim() ? "没有匹配的条目" : "此分组为空"}</h3>
+                <p>{query.trim() ? `换个关键词试试（${query.trim()}）` : "从「全部分组」返回，或在此分组下新建。"}</p>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
-      <div className="snippets-body">
-        {snippets.length === 0 ? (
-          <div className="snippets-empty">
-            <h2>还没有片段</h2>
-            <p>把常用命令存成片段，之后在终端右键菜单或用快捷键一键插入。</p>
-          </div>
-        ) : groups.length === 0 ? (
-          <div className="snippets-empty">
-            <h2>没有匹配的片段</h2>
-            <p>换个关键词试试。</p>
-          </div>
-        ) : (
-          groups.map((g) => (
-            <section key={g.pkg || "__ungrouped"} className="snippets-group">
-              <header className="snippets-group-head">
-                <span className="snippets-group-name">{g.pkg || "未分组"}</span>
-                <span className="snippets-group-count">{g.items.length}</span>
-                {g.pkg && (
-                  <div className="snippets-group-actions">
-                    <button onClick={() => setPkgRename({ from: g.pkg, to: g.pkg })}>
-                      重命名
+      {draft && (
+        <aside className="sn-panel">
+          <header className="sn-panel-head">
+            <h3>
+              {isScript
+                ? isNew
+                  ? "新建脚本"
+                  : "编辑脚本"
+                : isNew
+                  ? "新建片段"
+                  : "编辑片段"}
+            </h3>
+            <div className="sn-panel-actions">
+              {!isNew && (
+                <button
+                  className="sn-icon-btn is-danger"
+                  title="删除"
+                  onClick={() => {
+                    const s = snippets.find((x) => x.id === draft.id);
+                    if (s) removeSnippet(s);
+                  }}
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+              <button
+                className="sn-icon-btn"
+                title="保存"
+                disabled={!canSubmit || busy}
+                onClick={() => saveDraft()}
+              >
+                <Check size={16} />
+              </button>
+              <button className="sn-icon-btn" title="关闭" onClick={() => setDraft(null)}>
+                <X size={16} />
+              </button>
+            </div>
+          </header>
+
+          <div className="sn-panel-body">
+            <div className="sn-card">
+              <p className="sn-card-title">名称 *</p>
+              <input
+                className="sn-input"
+                value={draft.name}
+                placeholder="如：查看磁盘用量"
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              />
+              <textarea
+                className="sn-textarea"
+                value={draft.description}
+                rows={2}
+                placeholder="描述（可选）"
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+              />
+            </div>
+
+            <div className="sn-card">
+              <p className="sn-card-title">分组</p>
+              <input
+                className="sn-input"
+                value={draft.package}
+                placeholder="如 ops/db；留空 = 未分组"
+                list="sn-package-options"
+                onChange={(e) => setDraft({ ...draft, package: e.target.value })}
+              />
+              <datalist id="sn-package-options">
+                {packageTree.map((p) => (
+                  <option key={p.path} value={p.path} />
+                ))}
+              </datalist>
+            </div>
+
+            <div className="sn-card">
+              <div className="sn-card-row">
+                <p className="sn-card-title">{isScript ? "脚本内容 *" : "命令 *"}</p>
+                <button
+                  className="sn-mini-btn"
+                  onClick={() => setScriptExpanded(true)}
+                  title="放大编辑"
+                >
+                  <Maximize2 size={13} /> 放大
+                </button>
+              </div>
+              <textarea
+                className="sn-code"
+                value={draft.command}
+                placeholder={isScript ? "如：\nset -e\nuptime" : "如：df -h"}
+                spellCheck={false}
+                rows={8}
+                onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+              />
+              {!isScript && (
+                <>
+                  <p className="sn-hint">
+                    变量占位符：<code>{"{{name}}"}</code>、<code>{"{{name:默认值}}"}</code>
+                  </p>
+                  {variables.length > 0 && (
+                    <div className="sn-vars">
+                      <span className="sn-vars-label">检测到变量：</span>
+                      {variables.map((v) => (
+                        <span key={v.name} className="sn-var">
+                          {v.name}
+                          {v.defaultValue !== undefined && (
+                            <em>（{v.defaultValue}）</em>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {isScript && (
+              <div className="sn-card">
+                <p className="sn-card-title">触发方式</p>
+                <select
+                  className="sn-input"
+                  value={resolveScriptTrigger(draft.trigger)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDraft({
+                      ...draft,
+                      trigger: v === "onConnect" || v === "onOutput" ? v : "",
+                    });
+                  }}
+                >
+                  <option value="manual">手动运行</option>
+                  <option value="onConnect">连接后自动执行（仅 SSH）</option>
+                  <option value="onOutput">输出匹配自动执行</option>
+                </select>
+                {draft.trigger === "onOutput" && (
+                  <input
+                    className="sn-input is-mono"
+                    value={draft.triggerPattern}
+                    placeholder="sudo.*password"
+                    onChange={(e) => setDraft({ ...draft, triggerPattern: e.target.value })}
+                  />
+                )}
+                <p className="sn-hint">{scriptTriggerNote(draft.trigger)}</p>
+              </div>
+            )}
+
+            {isScript && (
+              <div className="sn-card">
+                <div className="sn-card-row">
+                  <p className="sn-card-title">目标主机</p>
+                  <div className="sn-card-actions">
+                    {!draft.targetsAllHosts && (
+                      <button
+                        className="sn-mini-btn is-primary"
+                        onClick={() => setTargetPicker((v) => !v)}
+                      >
+                        <Server size={12} /> 选择主机
+                      </button>
+                    )}
+                    <button
+                      className={`sn-mini-btn${draft.targetsAllHosts ? " is-on" : ""}`}
+                      onClick={() =>
+                        setDraft({
+                          ...draft,
+                          targetsAllHosts: !draft.targetsAllHosts,
+                          targets: draft.targetsAllHosts ? draft.targets : [],
+                        })
+                      }
+                    >
+                      <FolderTree size={12} /> 所有主机
                     </button>
-                    <button onClick={() => removePackage(g.pkg)}>删除分组</button>
+                  </div>
+                </div>
+                {draft.targetsAllHosts ? (
+                  <p className="sn-hint">对所有主机生效。</p>
+                ) : targetPicker ? (
+                  <div className="sn-host-list">
+                    {hosts.length === 0 ? (
+                      <p className="sn-hint">本机还没有主机。</p>
+                    ) : (
+                      hosts.map((h) => (
+                        <label key={h.id} className="sn-host">
+                          <input
+                            type="checkbox"
+                            checked={draft.targets.includes(h.id)}
+                            onChange={(e) =>
+                              setDraft({
+                                ...draft,
+                                targets: e.target.checked
+                                  ? [...draft.targets, h.id]
+                                  : draft.targets.filter((x) => x !== h.id),
+                              })
+                            }
+                          />
+                          <span>{h.name}</span>
+                          <em>{h.host}</em>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                ) : draft.targets.length === 0 ? (
+                  <button
+                    className="sn-btn is-secondary is-block"
+                    onClick={() => setTargetPicker(true)}
+                  >
+                    添加目标主机
+                  </button>
+                ) : (
+                  <div className="sn-target-pills">
+                    {draft.targets.map((id) => {
+                      const h = hosts.find((x) => x.id === id);
+                      if (!h) return null;
+                      return (
+                        <span key={id} className="sn-target-pill">
+                          <Server size={12} />
+                          {h.name}
+                          <button
+                            onClick={() =>
+                              setDraft({
+                                ...draft,
+                                targets: draft.targets.filter((x) => x !== id),
+                              })
+                            }
+                          >
+                            <X size={10} />
+                          </button>
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
-              </header>
-              <div className="snippets-rows">
-                {g.items.map((s) => (
-                  <div key={s.id} className="snippets-row" onClick={() => openEdit(s)}>
-                    <div className="snippets-row-main">
-                      <div className="snippets-row-title">
-                        <span className="snippets-row-name">{s.name}</span>
-                        {s.kind === "script" && (
-                          <span className="snippets-flag-badge">脚本</span>
-                        )}
-                        {s.trigger === "onConnect" || s.trigger === "onOutput" ? (
-                          <span
-                            className="snippets-flag-badge"
-                            title={scriptTriggerNote(s.trigger)}
-                          >
-                            自动触发
-                          </span>
-                        ) : null}
-                        {s.shortkey && (
-                          <span className="snippets-shortkey-badge">{s.shortkey}</span>
-                        )}
-                        {s.multi_line_run_mode === "lineDelay" && (
-                          <span className="snippets-flag-badge">逐行</span>
-                        )}
-                        {s.no_auto_run && <span className="snippets-flag-badge">仅插入</span>}
-                      </div>
-                      <div className="snippets-row-command">
-                        {s.command.split(/\r?\n/)[0]}
-                      </div>
-                      {s.description && <div className="snippets-row-desc">{s.description}</div>}
-                      {s.tags.length > 0 && (
-                        <div className="snippets-row-tags">
-                          {s.tags.map((t) => (
-                            <span key={t}>{t}</span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="snippets-row-actions" onClick={(e) => e.stopPropagation()}>
-                      {s.kind === "script" && (
-                        <button
-                          onClick={() => runScript(s)}
-                          disabled={!activeHandle || !activeHandle.connected()}
-                          title={
-                            !activeHandle
-                              ? "先在终端打开一个会话"
-                              : !activeHandle.connected()
-                                ? "活动终端未连接"
-                                : "发送到活动终端执行"
-                          }
-                        >
-                          运行
-                        </button>
-                      )}
-                      <button onClick={() => openEdit(s)}>编辑</button>
-                      <button onClick={() => removeSnippet(s)}>删除</button>
-                    </div>
-                  </div>
-                ))}
               </div>
-            </section>
-          ))
-        )}
-      </div>
+            )}
+
+            {!isScript && (
+              <>
+                <label className="sn-checkline">
+                  <input
+                    type="checkbox"
+                    checked={draft.noAutoRun}
+                    onChange={(e) => setDraft({ ...draft, noAutoRun: e.target.checked })}
+                  />
+                  <span>仅插入，不自动执行（不发送回车）</span>
+                </label>
+
+                <div className="sn-card">
+                  <p className="sn-card-title">多行发送</p>
+                  <select
+                    className="sn-input"
+                    value={draft.multiLineRunMode || "paste"}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        multiLineRunMode:
+                          e.target.value === "lineDelay" ? "lineDelay" : "",
+                      })
+                    }
+                  >
+                    <option value="paste">一次性发送</option>
+                    <option value="lineDelay">逐行发送（每行 250ms）</option>
+                  </select>
+                  <p className="sn-hint">仅多行且自动执行时生效。</p>
+                </div>
+
+                <div className="sn-card">
+                  <div className="sn-card-row">
+                    <p className="sn-card-title">快捷键</p>
+                    {draft.shortkey && (
+                      <button
+                        className="sn-mini-btn"
+                        title="清除快捷键"
+                        onClick={() => setDraft({ ...draft, shortkey: "" })}
+                      >
+                        <RotateCcw size={12} />
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    className={`sn-record${recording ? " is-recording" : ""}`}
+                    onClick={() => setRecording((v) => !v)}
+                  >
+                    <Keyboard size={14} />
+                    {recording
+                      ? "请按下组合键…（Esc 取消）"
+                      : draft.shortkey || "点击录制快捷键"}
+                  </button>
+                  <p className="sn-hint">终端获得焦点时按快捷键插入到当前会话。</p>
+                </div>
+
+                <div className="sn-card">
+                  <p className="sn-card-title">标签</p>
+                  <input
+                    className="sn-input"
+                    value={draft.tagsText}
+                    placeholder="用逗号分隔"
+                    onChange={(e) => setDraft({ ...draft, tagsText: e.target.value })}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+
+          <footer className="sn-panel-foot">
+            <button
+              className="sn-btn is-primary is-block"
+              disabled={!canSubmit || busy}
+              onClick={() => {
+                if (isScript && canRunActive) {
+                  const saved = saveDraft();
+                  if (saved) runScript(saved, true);
+                } else {
+                  saveDraft();
+                }
+              }}
+            >
+              {isScript && canRunActive ? "保存并运行" : "保存"}
+            </button>
+            {isScript && !canRunActive && (
+              <p className="sn-hint is-center">运行需要先在终端打开一个已连接的会话。</p>
+            )}
+          </footer>
+        </aside>
+      )}
+
+      {scriptExpanded && draft && (
+        <div className="sn-modal-backdrop" onClick={() => setScriptExpanded(false)}>
+          <div className="sn-modal is-wide" onClick={(e) => e.stopPropagation()}>
+            <header>
+              <h3>{isScript ? "脚本内容" : "命令内容"}</h3>
+              <button className="sn-icon-btn" onClick={() => setScriptExpanded(false)}>
+                <X size={16} />
+              </button>
+            </header>
+            <textarea
+              className="sn-code is-fill"
+              value={draft.command}
+              autoFocus
+              spellCheck={false}
+              onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+            />
+            <footer>
+              <button className="sn-btn" onClick={() => setScriptExpanded(false)}>
+                关闭
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {ctxMenu && (
+        <div
+          className="sn-ctx"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {ctxPkg ? (
+            <>
+              <button onClick={() => { setPkgFilter(ctxPkg.path); setCtxMenu(null); }}>
+                打开
+              </button>
+              <button onClick={() => { exportPackage(ctxPkg.path); setCtxMenu(null); }}>
+                <Download size={16} /> 导出分组
+              </button>
+              <button
+                onClick={() => {
+                  setPkgRename({ from: ctxPkg.path, to: ctxPkg.path });
+                  setCtxMenu(null);
+                }}
+              >
+                重命名
+              </button>
+              <button
+                className="is-danger"
+                onClick={() => { removePackage(ctxPkg.path); setCtxMenu(null); }}
+              >
+                <Trash2 size={16} /> 删除
+              </button>
+            </>
+          ) : ctxSnippet ? (
+            <>
+              <button
+                disabled={!canRunActive}
+                title={canRunActive ? "发送到活动终端" : "活动终端未连接"}
+                onClick={() => { runScript(ctxSnippet); setCtxMenu(null); }}
+              >
+                <Play size={16} /> 运行
+              </button>
+              <hr />
+              <button onClick={() => { openEdit(ctxSnippet); setCtxMenu(null); }}>
+                <Edit2 size={16} /> 编辑
+              </button>
+              <button
+                onClick={() => {
+                  void navigator.clipboard.writeText(ctxSnippet.command);
+                  setNotice("已复制命令");
+                  setCtxMenu(null);
+                }}
+              >
+                <Copy size={16} /> 复制
+              </button>
+              <button
+                onClick={() => {
+                  downloadExport([ctxSnippet], `termx-snippet-${ctxSnippet.name}`);
+                  setCtxMenu(null);
+                }}
+              >
+                <Download size={16} /> 导出
+              </button>
+              <button
+                className="is-danger"
+                onClick={() => { removeSnippet(ctxSnippet); setCtxMenu(null); }}
+              >
+                <Trash2 size={16} /> 删除
+              </button>
+            </>
+          ) : null}
+        </div>
+      )}
+
+      {pkgNew !== null && (
+        <div className="sn-modal-backdrop" onClick={() => setPkgNew(null)}>
+          <div className="sn-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>新建分组</h3>
+            <input
+              className="sn-input"
+              autoFocus
+              value={pkgNew}
+              placeholder="如 ops 或 ops/db"
+              onChange={(e) => setPkgNew(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyPkgNew();
+                if (e.key === "Escape") setPkgNew(null);
+              }}
+            />
+            <p className="sn-hint">分组由条目的「分组」字段派生，进入分组后新建条目会自动填入。</p>
+            <div className="sn-modal-actions">
+              <button className="sn-btn" onClick={() => setPkgNew(null)}>取消</button>
+              <button className="sn-btn is-primary" disabled={!pkgNew.trim()} onClick={applyPkgNew}>
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pkgRename && (
-        <div className="snippets-modal-backdrop">
-          <div className="snippets-modal">
+        <div className="sn-modal-backdrop" onClick={() => setPkgRename(null)}>
+          <div className="sn-modal" onClick={(e) => e.stopPropagation()}>
             <h3>重命名分组</h3>
-            <label>
-              <span>分组路径</span>
-              <input
-                autoFocus
-                value={pkgRename.to}
-                onChange={(e) => setPkgRename({ ...pkgRename, to: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") applyPkgRename();
-                  if (e.key === "Escape") setPkgRename(null);
-                }}
-              />
-            </label>
-            <p className="snippets-modal-hint">
-              子分组会一并改名（如 {pkgRename.from}/db →{" "}
-              {pkgRename.to.trim() || "<新名>"}/db）。
+            <input
+              className="sn-input"
+              autoFocus
+              value={pkgRename.to}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applyPkgRename();
+                if (e.key === "Escape") setPkgRename(null);
+              }}
+              onChange={(e) => setPkgRename({ ...pkgRename, to: e.target.value })}
+            />
+            <p className="sn-hint">
+              子分组会一并改名（{pkgRename.from}/db → {pkgRename.to.trim() || "<新名>"}/db）。
             </p>
-            <div className="snippets-modal-actions">
-              <button onClick={() => setPkgRename(null)}>取消</button>
+            <div className="sn-modal-actions">
+              <button className="sn-btn" onClick={() => setPkgRename(null)}>取消</button>
               <button
-                className="snippets-primary"
+                className="sn-btn is-primary"
                 disabled={!pkgRename.to.trim() || pkgRename.to.trim() === pkgRename.from}
                 onClick={applyPkgRename}
               >
@@ -593,227 +1339,30 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
         </div>
       )}
 
-      {draft && (
-        <aside className="snippets-aside">
-          <header className="snippets-aside-head">
-            <h3>{isNew ? "新建片段" : "编辑片段"}</h3>
-            <button className="snippets-aside-close" onClick={() => setDraft(null)} title="关闭">
-              ×
-            </button>
-          </header>
-          <div className="snippets-aside-body">
-            <label>
-              <span>类型</span>
-              <select
-                value={draft.kind}
-                onChange={(e) =>
-                  setDraft({ ...draft, kind: e.target.value as SnippetKind })
-                }
+      {importPending && (
+        <div className="sn-modal-backdrop" onClick={() => setImportPending(null)}>
+          <div className="sn-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>导入片段</h3>
+            <p>
+              共 {importPending.payload.snippets.length} 条，其中{" "}
+              <strong>{importPending.conflicts}</strong> 条与本地命令重复。
+            </p>
+            <p className="sn-hint">重复条目按命令判定：覆盖 = 用导入项替换本地；跳过 = 保留本地。</p>
+            <div className="sn-modal-actions">
+              <button className="sn-btn" onClick={() => setImportPending(null)}>取消</button>
+              <button className="sn-btn" disabled={busy} onClick={() => void applyImport("skip")}>
+                跳过重复
+              </button>
+              <button
+                className="sn-btn is-primary"
+                disabled={busy}
+                onClick={() => void applyImport("overwrite")}
               >
-                <option value="">片段（插入到终端）</option>
-                <option value="script">脚本（发送到活动终端执行）</option>
-              </select>
-              <em>
-                {draft.kind === "script"
-                  ? "执行时把内容发送给当前会话的 shell，输出直接回显；Netcatty 的 nct.* JS 运行时未移植。"
-                  : "片段在终端右键菜单或按快捷键插入到当前会话。"}
-              </em>
-            </label>
-            {draft.kind === "script" && (
-              <>
-                <label>
-                  <span>脚本语言</span>
-                  <select
-                    value={draft.language || "shell"}
-                    onChange={(e) => setDraft({ ...draft, language: e.target.value })}
-                  >
-                    <option value="shell">shell（发送到活动会话执行）</option>
-                    <option value="javascript" disabled>
-                      javascript（nct.* JS 运行时未移植）
-                    </option>
-                    <option value="python" disabled>
-                      python（无 Python 运行时）
-                    </option>
-                  </select>
-                  <em>
-                    termX 脚本按 shell 命令发送到活动终端；Netcatty 的 nct.* JS API
-                    （屏幕等待 / 对话框 / 进度）未移植，javascript / python 仅为标签。
-                  </em>
-                </label>
-                <label>
-                  <span>触发方式</span>
-                  <select
-                    value={resolveScriptTrigger(draft.trigger)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setDraft({
-                        ...draft,
-                        trigger: v === "onConnect" || v === "onOutput" ? v : "",
-                      });
-                    }}
-                  >
-                    <option value="manual">手动运行（在脚本页点「运行」）</option>
-                    <option value="onConnect">连接后自动执行（仅 SSH）</option>
-                    <option value="onOutput">输出匹配自动执行</option>
-                  </select>
-                  <em>{scriptTriggerNote(draft.trigger)}</em>
-                </label>
-                {draft.trigger === "onConnect" && (
-                  <div className="snippets-target-field">
-                    <span>目标主机</span>
-                    <label className="snippets-inline-check">
-                      <input
-                        type="checkbox"
-                        checked={draft.targetsAllHosts}
-                        onChange={(e) =>
-                          setDraft({ ...draft, targetsAllHosts: e.target.checked })
-                        }
-                      />
-                      所有主机
-                    </label>
-                    {!draft.targetsAllHosts && (
-                      <div className="snippets-target-list">
-                        {hosts.length === 0 ? (
-                          <em>本机还没有主机；未选择目标时不会自动执行。</em>
-                        ) : (
-                          hosts.map((h) => (
-                            <label key={h.id} className="snippets-inline-check">
-                              <input
-                                type="checkbox"
-                                checked={draft.targets.includes(h.id)}
-                                onChange={(e) =>
-                                  setDraft({
-                                    ...draft,
-                                    targets: e.target.checked
-                                      ? [...draft.targets, h.id]
-                                      : draft.targets.filter((x) => x !== h.id),
-                                  })
-                                }
-                              />
-                              {h.name}（{h.host}）
-                            </label>
-                          ))
-                        )}
-                      </div>
-                    )}
-                    <em>目标主机命中时，连接建立并出现提示符后按顺序执行。</em>
-                  </div>
-                )}
-                {draft.trigger === "onOutput" && (
-                  <label>
-                    <span>触发模式（正则）</span>
-                    <input
-                      value={draft.triggerPattern}
-                      onChange={(e) =>
-                        setDraft({ ...draft, triggerPattern: e.target.value })
-                      }
-                      placeholder="sudo.*password"
-                    />
-                    <em>同一会话同一脚本只触发一次；正则无效时不会触发。</em>
-                  </label>
-                )}
-                <em>
-                  屏幕等待指令：`#@wait-prompt [ms]`、`#@wait-text &lt;文本&gt; [ms]`、
-                  `#@wait-regex &lt;正则&gt; [ms]`（基于本机终端缓冲）。
-                  未移植并置灰：录制回放、nct.dialog（主进程回调）、nct.progress /
-                  nct.session.startLog（宿主能力）。
-                </em>
-              </>
-            )}
-            <label>
-              <span>名称 *</span>
-              <input
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                placeholder="如：查看磁盘用量"
-              />
-            </label>
-            <label>
-              <span>{draft.kind === "script" ? "脚本内容 *" : "命令 *"}</span>
-              <textarea
-                value={draft.command}
-                onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-                placeholder={
-                  draft.kind === "script"
-                    ? "如：\nset -e\necho start\nuptime"
-                    : "如：df -h"
-                }
-                rows={5}
-                spellCheck={false}
-              />
-            </label>
-            <label>
-              <span>多行运行方式</span>
-              <select
-                value={draft.multiLineRunMode || "paste"}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    multiLineRunMode:
-                      e.target.value === "lineDelay" ? "lineDelay" : "",
-                  })
-                }
-              >
-                <option value="paste">一次性发送</option>
-                <option value="lineDelay">逐行发送（每行 250ms）</option>
-              </select>
-              <em>仅多行且自动执行时生效；登录提示、网络设备宏等场景可用逐行发送。</em>
-            </label>
-            <label>
-              <span>描述</span>
-              <input
-                value={draft.description}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                placeholder="可选"
-              />
-            </label>
-            <label>
-              <span>分组</span>
-              <input
-                value={draft.package}
-                onChange={(e) => setDraft({ ...draft, package: e.target.value })}
-                placeholder="如 ops/db；留空 = 未分组"
-                list="snippets-package-options"
-              />
-              <datalist id="snippets-package-options">
-                {packages.map((p) => (
-                  <option key={p} value={p} />
-                ))}
-              </datalist>
-            </label>
-            <label>
-              <span>标签</span>
-              <input
-                value={draft.tagsText}
-                onChange={(e) => setDraft({ ...draft, tagsText: e.target.value })}
-                placeholder="用逗号分隔"
-              />
-            </label>
-            <label>
-              <span>快捷键</span>
-              <input
-                value={draft.shortkey}
-                onChange={(e) => setDraft({ ...draft, shortkey: e.target.value })}
-                placeholder="如 F1 或 Ctrl + Shift + F1"
-              />
-              <em>终端获得焦点时，按快捷键插入到当前会话</em>
-            </label>
-            <label className="snippets-checkbox">
-              <input
-                type="checkbox"
-                checked={draft.noAutoRun}
-                onChange={(e) => setDraft({ ...draft, noAutoRun: e.target.checked })}
-              />
-              <span>仅插入，不自动执行（不发送回车）</span>
-            </label>
+                覆盖重复
+              </button>
+            </div>
           </div>
-          <footer className="snippets-aside-foot">
-            <button onClick={() => setDraft(null)}>取消</button>
-            <button className="snippets-primary" onClick={saveDraft} disabled={busy}>
-              保存
-            </button>
-          </footer>
-        </aside>
+        </div>
       )}
     </div>
   );

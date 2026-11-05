@@ -16,6 +16,13 @@ import {
   shortkeyMatches,
   SNIPPET_LINE_DELAY_MS,
   snippetWritePlan,
+  buildSnippetPackageTree,
+  flattenSnippetCommandPreview,
+  formatShortkeyEvent,
+  parseSnippetVariables,
+  previewSnippetCommand,
+  snippetBreadcrumb,
+  sortSnippets,
 } from "./snippetsModel";
 
 function snip(over: Partial<Snippet> = {}): Snippet {
@@ -36,6 +43,58 @@ function snip(over: Partial<Snippet> = {}): Snippet {
     ...over,
   };
 }
+
+describe("列表派生（排序 / 分组树 / 变量 / 快捷键录制）", () => {
+  it("排序：manual 保持原序，az/za 按名称，group 先分组再名称", () => {
+    const list = [
+      snip({ id: "b", name: "乙", package: "ops/web" }),
+      snip({ id: "a", name: "甲", package: "" }),
+      snip({ id: "c", name: "丙", package: "ops" }),
+    ];
+    expect(sortSnippets(list, "manual").map((s) => s.id)).toEqual(["b", "a", "c"]);
+    expect(sortSnippets(list, "newest").map((s) => s.id)).toEqual(["c", "a", "b"]);
+    expect(sortSnippets(list, "group").map((s) => s.id)).toEqual(["a", "c", "b"]);
+  });
+
+  it("分组树：隐式父级、子树计数、面包屑", () => {
+    const tree = buildSnippetPackageTree([
+      snip({ package: "ops/web" }),
+      snip({ package: "ops/db" }),
+      snip({ package: "ops" }),
+    ]);
+    expect(tree.map((p) => [p.path, p.count])).toEqual([
+      ["ops", 3],
+      ["ops/db", 1],
+      ["ops/web", 1],
+    ]);
+    expect(snippetBreadcrumb("ops/db")).toEqual([
+      { name: "ops", path: "ops" },
+      { name: "db", path: "ops/db" },
+    ]);
+  });
+
+  it("命令预览折叠空白", () => {
+    expect(flattenSnippetCommandPreview("  df   -h\n du -sh  ")).toBe("df -h du -sh");
+  });
+
+  it("变量解析：去重、默认值、填充", () => {
+    expect(parseSnippetVariables("echo {{host}} {{user:root}} {{host}}")).toEqual([
+      { name: "host" },
+      { name: "user", defaultValue: "root" },
+    ]);
+    expect(previewSnippetCommand("echo {{host}} {{user:root}}", { host: "a" })).toBe(
+      "echo a root",
+    );
+  });
+
+  it("快捷键录制：忽略纯修饰键，主键大写并拼接修饰键", () => {
+    expect(formatShortkeyEvent({ key: "Control", ctrlKey: true, shiftKey: false, altKey: false, metaKey: false })).toBeNull();
+    expect(
+      formatShortkeyEvent({ key: "f1", ctrlKey: true, shiftKey: true, altKey: false, metaKey: false }),
+    ).toBe("Ctrl + Shift + F1");
+    expect(parseShortkey("Ctrl + Shift + F1")?.key).toBe("f1");
+  });
+});
 
 describe("filterSnippets", () => {
   const list = [

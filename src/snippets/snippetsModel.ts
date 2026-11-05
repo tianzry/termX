@@ -259,3 +259,153 @@ export function deleteSnippetPackage(snippets: Snippet[], pkg: string): Snippet[
     return !(p === path || p.startsWith(`${path}/`));
   });
 }
+
+// ── 列表 / 分组树 / 排序（对照 Netcatty SnippetsManager 与 ScriptsSidePanel）──
+
+/** 单行命令预览：折叠所有空白（对齐 Netcatty flattenSnippetCommandPreview）。 */
+export function flattenSnippetCommandPreview(command: string): string {
+  return String(command ?? "").replace(/\s+/g, " ").trim();
+}
+
+export type SnippetSortMode = "manual" | "az" | "za" | "newest" | "oldest" | "group";
+
+export const SNIPPET_SORT_LABELS: Record<SnippetSortMode, string> = {
+  manual: "手动顺序",
+  az: "名称 A→Z",
+  za: "名称 Z→A",
+  newest: "最近添加",
+  oldest: "最早添加",
+  group: "按分组",
+};
+
+/**
+ * 排序。termX 的 Snippet 没有时间戳字段：newest / oldest 用数组顺序近似
+ * （新增条目追加在末尾，故 newest = 反序），与 Netcatty 的 updatedAt 排序语义
+ * 在「只增不改」场景一致。
+ */
+export function sortSnippets(list: Snippet[], mode: SnippetSortMode): Snippet[] {
+  const items = [...list];
+  switch (mode) {
+    case "az":
+      return items.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+    case "za":
+      return items.sort((a, b) => b.name.localeCompare(a.name, "zh-CN"));
+    case "newest":
+      return items.reverse();
+    case "oldest":
+      return items;
+    case "group":
+      return items.sort(
+        (a, b) =>
+          (a.package || "").localeCompare(b.package || "", "zh-CN") ||
+          a.name.localeCompare(b.name, "zh-CN"),
+      );
+    default:
+      return items;
+  }
+}
+
+export interface SnippetPackageNode {
+  /** 完整路径，如 "ops/db"。 */
+  path: string;
+  /** 末级名称，如 "db"。 */
+  name: string;
+  /** 含子分组在内的条目总数。 */
+  count: number;
+  depth: number;
+}
+
+/**
+ * 由条目的 package 路径派生出全部目录节点（含隐式父级），按路径升序。
+ * 父节点 count 累加子树条目（踩坑 163）。
+ */
+export function buildSnippetPackageTree(list: Snippet[]): SnippetPackageNode[] {
+  const counts = new Map<string, number>();
+  for (const s of list) {
+    const path = (s.package || "").trim();
+    if (!path) continue;
+    const parts = path.split("/").map((p) => p.trim()).filter(Boolean);
+    for (let i = 1; i <= parts.length; i++) {
+      const key = parts.slice(0, i).join("/");
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, "zh-CN"))
+    .map(([path, count]) => {
+      const parts = path.split("/");
+      return { path, name: parts[parts.length - 1], count, depth: parts.length - 1 };
+    });
+}
+
+/** 面包屑：`ops/db` → [{name:"ops",path:"ops"},{name:"db",path:"ops/db"}]。 */
+export function snippetBreadcrumb(path: string): { name: string; path: string }[] {
+  const parts = (path || "").split("/").map((p) => p.trim()).filter(Boolean);
+  return parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join("/") }));
+}
+
+// ── {{变量}} 占位符（对照 Netcatty domain/snippetVariables.ts）──
+
+export interface SnippetVariable {
+  name: string;
+  defaultValue?: string;
+}
+
+const VARIABLE_RE = /\{\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}\}/g;
+
+/** 解析命令里的 `{{name}}` / `{{name:默认值}}`，按首次出现去重。 */
+export function parseSnippetVariables(command: string): SnippetVariable[] {
+  const seen = new Set<string>();
+  const result: SnippetVariable[] = [];
+  for (const match of String(command ?? "").matchAll(VARIABLE_RE)) {
+    const name = match[1];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    result.push(match[2] !== undefined ? { name, defaultValue: match[2] } : { name });
+  }
+  return result;
+}
+
+/** 用给定值替换变量；缺值且有默认值时用默认值，否则保留占位符。 */
+export function previewSnippetCommand(
+  command: string,
+  values: Record<string, string>,
+): string {
+  const defs = parseSnippetVariables(command);
+  if (defs.length === 0) return String(command ?? "");
+  return String(command ?? "").replace(VARIABLE_RE, (token, rawName: string) => {
+    const name = rawName;
+    const value = values[name];
+    if (value !== undefined && value.trim() !== "") return value;
+    const def = defs.find((d) => d.name === name);
+    return def?.defaultValue !== undefined ? def.defaultValue : token;
+  });
+}
+
+// ── 快捷键录制（对照 Netcatty keyEventToString）──
+
+export interface RecordableKeyEvent {
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+}
+
+/**
+ * 把键盘事件转成 termX 的快捷键字符串（"Ctrl + Shift + F1"）。
+ * 纯修饰键返回 null（继续录制）；主键字母大写、命名键保留。
+ */
+export function formatShortkeyEvent(ev: RecordableKeyEvent): string | null {
+  const key = ev.key;
+  if (!key || ["Control", "Shift", "Alt", "Meta", "OS"].includes(key)) return null;
+  if (key === "Escape") return null;
+  const mods: string[] = [];
+  if (ev.ctrlKey) mods.push("Ctrl");
+  if (ev.shiftKey) mods.push("Shift");
+  if (ev.altKey) mods.push("Alt");
+  if (ev.metaKey) mods.push("Meta");
+  const main =
+    key.length === 1 ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1);
+  return [...mods, main].join(" + ");
+}
