@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-11-06 — #186 SSH 终端侧栏宽度与时间戳列核对（第七轮 P2 · 2/4）
+
+> 结论：两项均已与 Netcatty 一致，无需改代码（记录核对过程供后续查证）。
+
+- 侧栏宽度：Netcatty `application/state/terminalHostTreeStore.ts` 默认 220（min 176 / max 360）；termX `.nc-sidebar` 有效值为 220（`styles.css` 前置 `:root` 的 264 被后置 `:root` 的 220 覆盖）。CDP 实测 `sidebarWidth=220`。任务里的「170px」来自 1024 宽缩放截图的测量误差（220 × 1024/1200 ≈ 188）。
+- 时间戳列：已实现（`terminal/terminalTimestamps.ts` → `.terminal-timestamp-gutter`，`min 56px` + 文本宽度 + 16，实测 81px），与 Netcatty `resolveTerminalTimestampGutterWidth` 同公式；位于终端内部，不受侧栏宽度影响。
+- 证据：`evidence/audit7-termx-ssh-sidebar-after.png`（侧栏 + 时间戳同屏）、`audit7-termx-ssh-sidebar-after.json`（sidebarWidth 220 / timestampGutter 81 / viewport 1200×800）。
+
 ## 2026-11-06 — #185 Vault 导航结构对齐（第七轮 P2 · 1/4）
 
 > 目标：把 Vault 首页导航入口结构对齐 Netcatty，只改呈现，不动数据层。
