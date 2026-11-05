@@ -9073,17 +9073,30 @@ body {
   color: hsl(var(--foreground));
 }
 
+/* 外壳对照 Netcatty SettingsPage.tsx：标题栏 text-lg + h-8 关闭按钮 */
 .nc-settings-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-bottom: 1px solid hsl(var(--border));
 }
 
 .nc-settings-title {
-  font-size: 14px;
+  font-size: 18px;
+  line-height: 1.5;
   font-weight: 600;
+}
+
+.nc-settings-header .nc-icon-btn {
+  width: 32px;
+  height: 32px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-settings-header .nc-icon-btn:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.2);
+  color: hsl(var(--destructive));
 }
 
 .nc-settings-body {
@@ -9092,14 +9105,14 @@ body {
   min-height: 0;
 }
 
-/* 左侧导航：对照 Netcatty w-56 */
+/* 左侧导航：对照 Netcatty w-56 border-r px-3 py-3 */
 .nc-settings-nav {
   width: 224px;
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px 10px;
+  gap: 4px;
+  padding: 12px;
   border-right: 1px solid hsl(var(--border));
   overflow-y: auto;
 }
@@ -9108,49 +9121,61 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius, 8px);
+  height: 36px;
+  margin-bottom: 12px;
+  padding: 0 12px;
+  border: 1px solid hsl(var(--input));
+  border-radius: 6px;
   background: transparent;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
+}
+
+.nc-settings-search-collapsed:hover {
+  background: hsl(var(--accent) / 0.08);
 }
 
 .nc-settings-search {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius, 8px);
+  height: 36px;
+  margin-bottom: 12px;
+  padding: 0 12px;
+  border: 1px solid hsl(var(--ring));
+  border-radius: 6px;
+  background: hsl(var(--background));
   color: hsl(var(--muted-foreground));
 }
 
 .nc-settings-search input {
   flex: 1;
+  min-width: 0;
   border: none;
   outline: none;
   background: transparent;
   color: hsl(var(--foreground));
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .nc-settings-search-results {
   display: flex;
   flex-direction: column;
+  margin-bottom: 8px;
   border: 1px solid hsl(var(--border));
-  border-radius: var(--radius, 8px);
+  border-radius: 6px;
+  background: hsl(var(--popover));
   overflow: hidden;
 }
 
 .nc-settings-search-results button {
   text-align: left;
-  padding: 7px 10px;
+  padding: 8px 12px;
   background: transparent;
   border: none;
   color: hsl(var(--foreground));
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -9159,38 +9184,51 @@ body {
 }
 
 .nc-settings-search-empty {
-  padding: 8px 10px;
-  font-size: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
   color: hsl(var(--muted-foreground));
 }
 
 .nc-settings-tabs {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
+/* TabsTrigger：w-full justify-start gap-2 px-3 py-2 text-sm rounded-md */
 .nc-settings-tab {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 8px 10px;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
   border: none;
-  border-radius: var(--radius, 8px);
+  border-radius: 6px;
   background: transparent;
-  color: hsl(var(--foreground));
-  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+  font-size: 14px;
   cursor: pointer;
   text-align: left;
+  overflow: hidden;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.nc-settings-tab > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nc-settings-tab:hover:not(:disabled) {
-  background: hsl(var(--accent) / 0.12);
+  background: hsl(var(--background) / 0.6);
+  color: hsl(var(--foreground));
 }
 
 .nc-settings-tab.is-active {
-  background: hsl(var(--accent) / 0.18);
-  color: hsl(var(--primary));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 .nc-settings-tab:disabled {
@@ -9198,48 +9236,75 @@ body {
   cursor: not-allowed;
 }
 
+/* 内容区对照 Netcatty：flex-1 bg-muted/10 + p-6，tab 根容器 space-y-6 */
 .nc-settings-content {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 18px 22px 40px;
+  overflow-x: hidden;
+  padding: 24px;
+  background: hsl(var(--muted) / 0.1);
 }
 
-/* 设置行 / 分区 */
+/* Tab 根容器：Netcatty SettingsTabContent 的 space-y-6（24px 分区间距） */
+.nc-set-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* 设置行 / 分区：对照 Netcatty SettingsSection(gap-2) + SectionHeader
+   (text-sm font-semibold mb-3) + SettingCard(rounded-lg border bg-card px-4)。 */
 .nc-set-section {
-  max-width: 760px;
-  margin-bottom: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 860px;
 }
 
 .nc-set-section-title {
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.4;
   font-weight: 600;
-  margin: 0 0 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid hsl(var(--border));
+  margin: 0;
 }
 
+.nc-set-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  padding: 2px 16px;
+}
+
+/* SettingRow：flex justify-between py-3 gap-4；卡片内相邻行 divide-y */
 .nc-set-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 9px 0;
+  padding: 12px 0;
+}
+
+.nc-set-row + .nc-set-row {
+  border-top: 1px solid hsl(var(--border) / 0.6);
 }
 
 .nc-set-row-text {
+  flex: 1;
   min-width: 0;
 }
 
 .nc-set-row-title {
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 500;
 }
 
 .nc-set-row-desc {
-  font-size: 11.5px;
+  font-size: 12px;
+  line-height: 1.5;
   color: hsl(var(--muted-foreground));
   margin-top: 2px;
-  line-height: 1.5;
 }
 
 .nc-set-row-control {
@@ -9248,42 +9313,75 @@ body {
   align-items: center;
 }
 
-.nc-set-value {
-  font-size: 12.5px;
+/* SettingHint：卡片下方 mt-3 text-xs muted */
+.nc-set-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
   color: hsl(var(--muted-foreground));
 }
 
-/* 控件 */
+.nc-set-value {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 卡片内的自由内容（Netcatty SettingCard padded p-4 的等价物） */
+.nc-set-card-text {
+  margin: 0;
+  padding-top: 12px;
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-set-empty {
+  margin: 0;
+  padding: 12px 0;
+  font-size: 14px;
+  font-style: italic;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 卡片内按钮行（对照 Netcatty <div className="flex items-center gap-2 pt-1">） */
+.nc-set-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+/* 开关：Netcatty Toggle h-5 w-9 border-2 transparent，knob 16px bg-background */
 .nc-set-toggle {
   width: 36px;
   height: 20px;
-  border-radius: 10px;
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--secondary));
+  flex: none;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background: hsl(var(--input));
   position: relative;
   cursor: pointer;
   padding: 0;
+  transition: background-color 0.15s;
 }
 
 .nc-set-toggle .nc-set-toggle-knob {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: hsl(var(--muted-foreground));
-  transition: transform 0.15s ease, background 0.15s ease;
+  background: hsl(var(--background));
+  box-shadow: 0 1px 3px hsl(0 0% 0% / 0.25);
+  transition: transform 0.15s ease;
 }
 
 .nc-set-toggle.is-on {
   background: hsl(var(--primary));
-  border-color: hsl(var(--primary));
 }
 
 .nc-set-toggle.is-on .nc-set-toggle-knob {
   transform: translateX(16px);
-  background: #fff;
 }
 
 .nc-set-toggle:disabled {
@@ -9299,15 +9397,31 @@ body {
   margin: 14px 0 6px;
 }
 
+/* 下拉 / 输入：Netcatty h-9 rounded-md border-input bg-background px-3 text-sm */
 .nc-set-select,
 .nc-set-input {
-  border: 1px solid hsl(var(--border));
+  height: 36px;
+  border: 1px solid hsl(var(--input));
   border-radius: 6px;
-  background: hsl(var(--card));
+  background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-size: 12.5px;
-  padding: 5px 8px;
+  font-size: 14px;
+  padding: 0 12px;
   min-width: 160px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.nc-set-select:focus-visible,
+.nc-set-input:focus-visible {
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 1px hsl(var(--ring));
+}
+
+.nc-set-select:disabled,
+.nc-set-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .nc-set-input-num {
@@ -9315,24 +9429,32 @@ body {
 }
 
 .nc-set-textarea {
-  border: 1px solid hsl(var(--border));
+  border: 1px solid hsl(var(--input));
   border-radius: 6px;
-  background: hsl(var(--card));
+  background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-size: 12px;
+  font-size: 13px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  padding: 8px;
+  padding: 10px 12px;
   width: 420px;
   max-width: 100%;
+  outline: none;
+}
+
+.nc-set-textarea:focus-visible {
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 1px hsl(var(--ring));
 }
 
 .nc-set-stepper {
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid hsl(var(--border));
+  height: 36px;
+  border: 1px solid hsl(var(--input));
   border-radius: 6px;
-  padding: 3px 6px;
+  background: hsl(var(--background));
+  padding: 0 8px;
 }
 
 .nc-set-stepper button {
@@ -9352,7 +9474,7 @@ body {
 .nc-set-stepper span {
   min-width: 34px;
   text-align: center;
-  font-size: 12.5px;
+  font-size: 14px;
 }
 
 .nc-set-slider {
@@ -9557,13 +9679,19 @@ body {
   justify-content: space-between;
   gap: 8px;
   width: 100%;
-  border: 1px solid hsl(var(--border));
+  height: 36px;
+  border: 1px solid hsl(var(--input));
   border-radius: 6px;
-  background: hsl(var(--card));
+  background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-size: 12.5px;
-  padding: 5px 8px;
+  font-size: 14px;
+  padding: 0 12px;
   cursor: pointer;
+}
+
+.nc-set-combo-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px hsl(var(--ring));
 }
 
 .nc-set-combo-trigger span {
@@ -9615,7 +9743,7 @@ body {
   outline: 0;
   background: transparent;
   color: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .nc-set-combo-list {
@@ -9630,14 +9758,28 @@ body {
   justify-content: space-between;
   gap: 8px;
   width: 100%;
-  padding: 6px 8px;
+  min-height: 32px;
+  padding: 6px 8px 6px 32px;
+  position: relative;
   border: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: inherit;
-  font-size: 12.5px;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
+}
+
+.nc-set-combo-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: hsl(var(--primary));
 }
 
 .nc-set-combo-item:hover {
@@ -9671,19 +9813,82 @@ body {
   cursor: pointer;
 }
 
+/* 按钮：Netcatty Button h-9 rounded-md px-4 text-sm font-medium */
 .nc-set-btn {
-  border: 1px solid hsl(var(--border));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid hsl(var(--input));
   border-radius: 6px;
-  background: hsl(var(--card));
+  background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-size: 12.5px;
-  padding: 5px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.nc-set-btn:hover:not(:disabled) {
+  background: hsl(var(--accent) / 0.12);
+}
+
+.nc-set-btn.is-secondary {
+  border-color: hsl(var(--secondary));
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+}
+
+.nc-set-btn.is-secondary:hover:not(:disabled) {
+  background: hsl(var(--secondary) / 0.8);
+}
+
+.nc-set-btn.is-primary {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.nc-set-btn.is-primary:hover:not(:disabled) {
+  background: hsl(var(--primary) / 0.9);
+}
+
+.nc-set-btn.is-ghost {
+  border-color: transparent;
+  background: transparent;
+}
+
+.nc-set-btn.is-ghost:hover:not(:disabled) {
+  background: hsl(var(--accent) / 0.12);
+}
+
+/* 危险操作按钮：对照 Netcatty outline + text-destructive + hover bg-destructive/10 */
+.nc-set-btn.is-danger {
+  color: hsl(var(--destructive));
+}
+
+.nc-set-btn.is-danger:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
+}
+
+.nc-set-btn.is-danger-solid {
+  border-color: hsl(var(--destructive));
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
 }
 
 .nc-set-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.nc-set-btn svg {
+  flex: none;
 }
 
 .nc-set-inline {
@@ -9694,13 +9899,14 @@ body {
 
 .nc-set-keycap {
   min-width: 180px;
+  height: 36px;
   text-align: left;
-  border: 1px solid hsl(var(--border));
+  border: 1px solid hsl(var(--input));
   border-radius: 6px;
   background: hsl(var(--secondary));
   color: hsl(var(--foreground));
-  font-size: 12px;
-  padding: 5px 10px;
+  font-size: 13px;
+  padding: 0 12px;
   cursor: pointer;
 }
 
@@ -9715,10 +9921,149 @@ body {
 }
 
 .nc-set-placeholder {
-  max-width: 760px;
+  display: flex;
+  min-height: 320px;
+  max-width: 860px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
   color: hsl(var(--muted-foreground));
+  font-size: 14px;
+}
+
+/* ── 应用 tab：对照 Netcatty SettingsApplicationTab（lg:flex-row gap-14）
+   左栏 320px（Logo 64px + 版本 + 检查更新），右栏 ActionRow 列表。 ── */
+.nc-set-app {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  max-width: 860px;
+}
+
+.nc-set-app-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (min-width: 1024px) {
+  .nc-set-app {
+    flex-direction: row;
+    gap: 56px;
+  }
+
+  .nc-set-app-side {
+    width: 320px;
+    flex: none;
+  }
+}
+
+.nc-set-app-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.nc-set-app-logo {
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  object-fit: cover;
+  display: block;
+}
+
+.nc-set-app-name {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.nc-set-app-version {
+  font-size: 14px;
+  color: hsl(var(--muted-foreground));
+  margin-top: 4px;
+}
+
+.nc-set-app-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
   font-size: 13px;
-  padding-top: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-set-app-status strong {
+  color: hsl(var(--foreground));
+  font-weight: 500;
+}
+
+.nc-set-app-side .nc-set-btn {
+  width: 100%;
+}
+
+.nc-set-app-links {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ActionRow：w-full flex items-center gap-3 rounded-lg px-3 py-3 hover:bg-muted/50 */
+.nc-set-action-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.nc-set-action-row:hover {
+  background: hsl(var(--muted) / 0.5);
+}
+
+.nc-set-action-icon {
+  display: flex;
+  flex: none;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-set-action-text {
+  min-width: 0;
+}
+
+.nc-set-action-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.nc-set-action-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-set-action-trailing {
+  margin-left: auto;
+  flex: none;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
 /* ── 深色主题（设置中心 · 外观 · 主题 = 深色 / 跟随系统）──
@@ -9949,7 +10294,7 @@ html[data-theme="dark"] {
 }
 .nc-app-lock-error {
   font-size: 12px;
-  color: #c02424;
+  color: hsl(var(--destructive));
 }
 .nc-app-lock-submit {
   width: 100%;
@@ -9960,11 +10305,11 @@ html[data-theme="dark"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 12px;
   margin: 4px 0 8px;
-  border: 1px solid #e3e6ea;
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
-  background: #f8f9fb;
+  background: hsl(var(--muted) / 0.4);
 }
 
 /* ── 快速切换器（对照 Netcatty QuickSwitcher：顶部居中 672px 面板） ── */

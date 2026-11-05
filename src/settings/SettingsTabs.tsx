@@ -242,11 +242,24 @@ function useT(): TFn {
 
 // ── 共享控件 ──────────────────────────────────────────────
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * 分区：标题（Netcatty SectionHeader, text-sm font-semibold）+ 卡片
+ * （SettingCard, rounded-lg border bg-card px-4），提示放在卡片外。
+ */
+function Section({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <section className="nc-set-section">
       <h3 className="nc-set-section-title">{title}</h3>
-      {children}
+      <div className="nc-set-card">{children}</div>
+      {hint && <p className="nc-set-hint">{hint}</p>}
     </section>
   );
 }
@@ -433,75 +446,104 @@ export function ApplicationTab() {
       : null;
 
   return (
-    <div>
-      <Section title={t("settings.update.title")}>
-        <Row title={t("settings.update.currentVersion")}>
-          <span className="nc-set-value">{version}</span>
-        </Row>
-        <Row title={t("settings.application.checkUpdates")} desc={updateStatus ?? undefined}>
-          <button
-            className="nc-set-btn"
-            disabled={checkState.status === "checking" || version === "—"}
-            onClick={() => void check()}
-          >
-            {checkState.status === "checking"
-              ? t("settings.update.checking")
-              : t("settings.application.checkUpdates")}
-          </button>
-        </Row>
-        {checkState.status === "done" && checkState.result && (
-          <>
-            <Row title={t("settings.update.latestVersion")}>
-              <span className="nc-set-value">v{checkState.result.latest_version}</span>
-            </Row>
-            <Row
-              title={t("settings.update.platform")}
-              desc={
-                checkState.result.platform_supported
-                  ? undefined
-                  : t("settings.update.noPlatform")
-              }
-            >
-              <span className="nc-set-value">{checkState.result.platform}</span>
-            </Row>
-            {checkState.result.notes && (
-              <Row title={t("settings.update.notes")}>
-                <span className="nc-set-value">{checkState.result.notes}</span>
-              </Row>
+    <div className="nc-set-app">
+      {/* 左栏：Logo + 版本 + 检查更新（对照 Netcatty lg:w-[320px]） */}
+      <div className="nc-set-app-side">
+        <div className="nc-set-app-brand">
+          <img className="nc-set-app-logo" src="/icons/variants/original.png" alt="" />
+          <div>
+            <div className="nc-set-app-name">termX</div>
+            <div className="nc-set-app-version">{version}</div>
+          </div>
+        </div>
+
+        <button
+          className="nc-set-btn is-secondary"
+          disabled={checkState.status === "checking" || version === "—"}
+          onClick={() => void check()}
+        >
+          <Icon
+            name={
+              checkState.status === "checking"
+                ? "loader"
+                : checkState.status === "done" && checkState.result && !checkState.result.available
+                  ? "check"
+                  : "refresh"
+            }
+            size={16}
+          />
+          {checkState.status === "checking"
+            ? t("settings.update.checking")
+            : t("settings.application.checkUpdates")}
+        </button>
+
+        {updateStatus && (
+          <div className="nc-set-app-status">
+            <span>{updateStatus}</span>
+            {checkState.result && (
+              <span>
+                {t("settings.update.platform")}: <strong>{checkState.result.platform}</strong>
+                {!checkState.result.platform_supported && ` · ${t("settings.update.noPlatform")}`}
+              </span>
             )}
-          </>
+            {checkState.result?.notes && <span>{checkState.result.notes}</span>}
+          </div>
         )}
         {checkState.status === "error" && (
-          <Row title={t("settings.update.checkFailed")} desc={checkState.error}>
-            <span />
-          </Row>
+          <div className="nc-set-app-status">
+            <span>{t("settings.update.checkFailed")}</span>
+            <strong>{checkState.error}</strong>
+          </div>
         )}
-        <Row
-          title={t("settings.update.install")}
-          desc={t("settings.update.installMissing")}
-        >
-          <button className="nc-set-btn" disabled>
-            {t("settings.update.install")}
-          </button>
-        </Row>
-      </Section>
-      <Section title={t("settings.tab.application")}>
+
+        <div className="nc-set-app-status">
+          <strong>{t("settings.update.install")}</strong>
+          <span>{t("settings.update.installMissing")}</span>
+        </div>
+
+        <button className="nc-set-btn" disabled>
+          <Icon name="download" size={16} />
+          {t("settings.update.install")}
+        </button>
+      </div>
+
+      {/* 右栏：ActionRow 列表（保持既有复制链接行为） */}
+      <div className="nc-set-app-links">
         {APP_LINKS.map((l) => (
-          <Row
+          <button
             key={l.key}
-            title={t(`settings.application.${l.key}`)}
-            desc={t(`settings.application.${l.key}.subtitle`)}
+            className="nc-set-action-row"
+            title={t("settings.application.copyLink")}
+            onClick={() => copy(l.key, l.url)}
           >
-            <button
-              className="nc-set-btn"
-              title={t("settings.application.copyLink")}
-              onClick={() => copy(l.key, l.url)}
-            >
+            <span className="nc-set-action-icon">
+              <Icon
+                name={
+                  l.key === "reportProblem"
+                    ? "bug"
+                    : l.key === "community"
+                      ? "message-circle"
+                      : l.key === "github"
+                        ? "github"
+                        : "newspaper"
+                }
+                size={18}
+              />
+            </span>
+            <span className="nc-set-action-text">
+              <span className="nc-set-action-title" style={{ display: "block" }}>
+                {t(`settings.application.${l.key}`)}
+              </span>
+              <span className="nc-set-action-subtitle" style={{ display: "block" }}>
+                {t(`settings.application.${l.key}.subtitle`)}
+              </span>
+            </span>
+            <span className="nc-set-action-trailing">
               {copied === l.key ? t("settings.application.copied") : "→"}
-            </button>
-          </Row>
+            </span>
+          </button>
         ))}
-      </Section>
+      </div>
     </div>
   );
 }
@@ -538,7 +580,7 @@ export function AppearanceTab() {
   const isCustomAccentPicked = ACCENT_COLORS.some((c) => c.value === s.customAccent);
 
   return (
-    <div>
+    <div className="nc-set-page">
       <Section title={t("settings.appearance.section.language")}>
         <Row title={t("settings.appearance.language.label")} desc={t("settings.appearance.language.desc")}>
           <Select
@@ -814,7 +856,7 @@ export function TerminalTab() {
   );
 
   return (
-    <div>
+    <div className="nc-set-page">
       {/* 终端主题（对照 Netcatty settings.terminal.theme.followApp） */}
       <Section title={t("settings.terminal.section.theme")}>
         <Row
@@ -1391,7 +1433,7 @@ export function SftpTab() {
   const withReason = (desc: string) => `${desc} ${unsupported}`;
 
   return (
-    <div>
+    <div className="nc-set-page">
       <Section title={t("settings.sftp.doubleClickBehavior")}>
         <Row
           title={t("settings.sftp.doubleClickBehavior")}
@@ -1583,7 +1625,7 @@ export function ShortcutsTab() {
   const resetAll = () => updateSettings({ customKeyBindings: {}, disabledKeyBindings: [] });
 
   return (
-    <div>
+    <div className="nc-set-page">
       <Section title={t("settings.shortcuts.section.scheme")}>
         <Row
           title={t("settings.shortcuts.scheme.label")}
@@ -1856,7 +1898,7 @@ function AppLockSection() {
           {error && <div className="nc-app-lock-error">{error}</div>}
           <div className="nc-set-inline">
             <button
-              className="nc-set-btn"
+              className={`nc-set-btn ${mode === "disable" ? "is-danger-solid" : "is-primary"}`}
               disabled={busy}
               onClick={() => void (mode === "disable" ? submitDisable() : submitPassword())}
             >
@@ -1913,21 +1955,24 @@ export function SystemTab() {
         : `${t("settings.system.credentials.available")} · ${secret}`;
 
   return (
-    <div>
+    <div className="nc-set-page">
       {/* 软件更新（对照 Netcatty 系统 tab 首节；更新器未移植） */}
-      <Section title={t("settings.update.title")}>
+      <Section
+        title={t("settings.update.title")}
+        hint={`${t("settings.update.notPorted")} · ${t("settings.update.source")}`}
+      >
         <Row title={t("settings.update.currentVersion")}>
-          <div className="nc-set-inline">
-            <span className="nc-set-value">{version}</span>
-            <button className="nc-set-btn" disabled title={t("settings.update.notPorted")}>
-              {t("settings.application.checkUpdates")}
-            </button>
-          </div>
+          <span className="nc-set-value">{version}</span>
         </Row>
         <Row title={t("settings.update.autoUpdate")} desc={t("settings.update.autoUpdate.desc")}>
           <Toggle checked={false} disabled onChange={() => {}} />
         </Row>
-        <Row title={t("settings.update.source")} />
+        <div className="nc-set-actions">
+          <button className="nc-set-btn" disabled title={t("settings.update.notPorted")}>
+            <Icon name="refresh" size={16} />
+            {t("settings.application.checkUpdates")}
+          </button>
+        </div>
       </Section>
 
       <Section title={t("settings.autoLaunch.title")}>
@@ -1948,7 +1993,7 @@ export function SystemTab() {
         </Row>
       </Section>
 
-      <Section title={t("settings.system.networkProxy.title")}>
+      <Section title={t("settings.system.networkProxy.title")} hint={t("settings.system.networkProxy.hint")}>
         <Row
           title={t("settings.system.networkProxy.mode")}
           desc={t("settings.system.networkProxy.description")}
@@ -1985,7 +2030,6 @@ export function SystemTab() {
             </Row>
           </>
         )}
-        <Row title={t("settings.system.networkProxy.hint")} />
       </Section>
 
       <Section title={t("settings.system.credentials.title")}>
@@ -1999,14 +2043,12 @@ export function SystemTab() {
         </Row>
       </Section>
 
-      <Section title={t("settings.system.crashLogs.title")}>
-        <Row title={t("settings.system.crashLogs.description")}>
-          <span className="nc-set-value">{t("settings.system.crashLogs.noLogs")}</span>
-        </Row>
-        <Row title={t("settings.system.crashLogs.notPorted")} />
+      <Section title={t("settings.system.crashLogs.title")} hint={t("settings.system.crashLogs.notPorted")}>
+        <p className="nc-set-card-text">{t("settings.system.crashLogs.description")}</p>
+        <p className="nc-set-empty">{t("settings.system.crashLogs.noLogs")}</p>
       </Section>
 
-      <Section title={t("settings.sessionLogs.title")}>
+      <Section title={t("settings.sessionLogs.title")} hint={t("settings.sessionLogs.hint")}>
         <Row title={t("settings.sessionLogs.description")} />
         <Row title={t("settings.sessionLogs.enableAutoSave")} desc={t("settings.sessionLogs.enableAutoSaveDesc")}>
           <Toggle
@@ -2037,12 +2079,12 @@ export function SystemTab() {
             onChange={(v) => updateSettings({ sessionLogs: { ...s.sessionLogs, timestamps: v } })}
           />
         </Row>
-        <Row title={t("settings.sessionLogs.hint")} />
         <Row title={t("settings.sessionLogs.directory")}>
           <span className="nc-set-value">{t("settings.sessionLogs.directoryDesc")}</span>
         </Row>
         <Row title={t("settings.sessionLogs.clearAll")} desc={t("settings.sessionLogs.clearAllDesc")}>
-          <button className="nc-set-btn" disabled>
+          <button className="nc-set-btn is-danger" disabled>
+            <Icon name="trash" size={16} />
             {t("settings.sessionLogs.clearAll")}
           </button>
         </Row>
@@ -2102,10 +2144,10 @@ export function SystemTab() {
         </Row>
       </Section>
 
-      <Section title={t("settings.system.tempDir.title")}>
-        <Row title={t("settings.system.tempDir.notPorted")} />
+      <Section title={t("settings.system.tempDir.title")} hint={t("settings.system.tempDir.notPorted")}>
         <Row title={t("settings.system.tempDir.openFolder")} desc={t("settings.system.tempDir.openFolderDesc")}>
           <button className="nc-set-btn" disabled>
+            <Icon name="folder-open" size={16} />
             {t("settings.system.tempDir.openFolder")}
           </button>
         </Row>

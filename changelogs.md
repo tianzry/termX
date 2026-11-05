@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-11-05 — #181 设置页 UI 重做（步骤①：应用 + 系统 tab）
+
+> 目标：以 `Netcatty/components/SettingsPage.tsx` + `components/settings/settings-ui.tsx` + `SettingsApplicationTab.tsx` + `tabs/SettingsSystemTab.tsx` 为准抄版面，落到 termX 现有 `styles.css` 令牌（不引入 Tailwind runtime），功能与持久化逻辑不变。本步只覆盖「应用」「系统」，外观/终端/快捷键与占位 tab 留 #182/#183。
+
+### 1. 对照抄取的结构与数值
+
+| 区域 | Netcatty 依据 | termX 落地（`src/styles.css`） |
+|---|---|---|
+| 外壳标题栏 | `text-lg font-semibold`，关闭按钮 `h-8 w-8`，hover `bg-destructive/20 text-destructive` | `.nc-settings-header` padding 12×16；标题 18px/600；关闭按钮 32×32 |
+| 左侧导航 | `w-56 border-r px-3 py-3`，TabsList `gap-1`，Trigger `w-full h-9 px-3 gap-2 text-sm rounded-md`，active `bg-background text-foreground`，默认 muted | `.nc-settings-nav` 224px / padding 12 / gap 4；`.nc-settings-tab` 高 36 / 内边距 12 / 圆角 6 / 14px；`.is-active` 背景 `background`、文字 `foreground` |
+| 搜索框 | `Input h-9 rounded-md border-input bg-background px-3 text-sm`，下方 `mb-3` | 36px / 圆角 6 / 边框 `--input` / 下间距 12 |
+| 内容区 | `flex-1 bg-muted/10 p-6`，tab 内容 `space-y-6` | padding 24 / 背景 `muted/10`；新增 `.nc-set-page` 纵向 gap 24 |
+| 分组 | `SectionHeader text-sm font-semibold mb-3` + `SettingCard rounded-lg border bg-card px-4` | `.nc-set-section` gap 8 + `.nc-set-section-title` 14px/600（去掉旧下划线）；`.nc-set-card` 圆角 8 / 1px 边框 / `--card` / 左右 16 |
+| 设置行 | `flex justify-between py-3 gap-4`，标题 `text-sm font-medium`，说明 `text-xs text-muted-foreground mt-0.5` | `.nc-set-row` 上下 12 / 间距 16；标题 14px/500；说明 12px + 2px 上距；相邻行 `divide-y`（`border/0.6`） |
+| 提示 | `text-xs text-muted-foreground mt-3` | `.nc-set-hint` 12px，`margin-top:4px` 与 section gap 8 合成 12px |
+| 开关 | `h-5 w-9 border-2 border-transparent`，选中 `bg-primary`，拇指 `h-4 w-4 bg-background` `translate-x-4` | 36×20、2px 透明边框；拇指 16px；关闭态 `--input`、开启态 `--primary` |
+| 下拉/输入 | `h-9 rounded-md border-input bg-background px-3 text-sm`，focus ring | 36px / 圆角 6 / 14px / 边框 `--input` / focus `--ring` 1px |
+| 按钮 | `h-9 px-4 rounded-md text-sm font-medium`；secondary / outline / destructive | `.nc-set-btn` 36px / 内边距 16 / 圆角 6 / 14px；新增 `.is-secondary`、`.is-primary`、`.is-ghost`、`.is-danger`（outline + `--destructive` 文字 + hover `destructive/10`）、`.is-danger-solid` |
+| 应用 tab | `lg:flex-row gap-14`，左栏 `w-[320px]`、Logo 64px，右栏 ActionRow `gap-3 px-3 py-3 rounded-lg hover:bg-muted/50`（图标 18px + 标题/副标题） | `.nc-set-app` 桌面 56px 间距、左栏 320px；`.nc-set-app-brand/-logo 64px/-name 24px`；`.nc-set-action-row` 12px 内边距 / 圆角 8 / hover `muted/50` |
+| 危险操作 | outline + `text-destructive` + hover `bg-destructive/10` | 会话日志「清空」按钮改用 `.is-danger` |
+
+### 2. 功能边界（只动视觉）
+
+- 应用 tab 四个链接行仍执行原有「复制链接」，未改成 Netcatty 的打开浏览器（行为不变）。
+- 检查更新 / 升级器、自动更新开关、系统 tab 所有未移植按钮仍禁用，文案与点击语义原样。
+- 「下载并安装」由窄栏 Row 改为左栏状态块（同文案、同禁用态），避免 320px 栏内说明被压成窄条。
+- 应用锁表单容器去掉硬编码浅色（`#f8f9fb`/`#e3e6ea`/`#c02424`），改 `--muted/--border/--destructive`，暗色可读。
+
+### 3. 验证（debug + CDP）
+
+- 断言：应用 tab `logo=true`、名称 `termX`、4 个 ActionRow；系统 tab 14 张卡片 / 26 行 / 14 个分组标题（软件更新→应用锁定），见 `evidence/settings-ui-step1.json`。
+- 截图：`set-app-before-light.png`、`set-app-light-after.png`、`set-app-dark-after.png`、`set-system-before-light.png`、`set-system-light-after.png`、`set-system-dark-after.png`（改动前的暗色截图未归档，故只有浅色 before）。
+- 门禁：`npm run test:run` 65 文件 / 730 用例；`npm run build` 通过；`tauri build --debug` 通过。
+
+### 4. 踩坑
+
+- Shell 工具内的 `Start-Process` 子进程会随命令结束被回收（9222 端口随即拒绝连接）；debug 应用必须以 `run_in_background` 方式直接 `& rssh.exe` 常驻，CDP 才能连续截图。
+- 通用选择器 `.nc-settings-content > div` 会压过 `.nc-set-app` 的媒体查询（特异性 0,1,1 > 0,1,0），导致桌面双栏失效；改为给 tab 根节点显式 `.nc-set-page`。
+- 卡片若加 `overflow:hidden` 会裁掉后续终端 tab 的候选下拉浮层，故只保留圆角不裁切。
+
 ## 2026-11-05 — 剪贴板授权框 / 日志页右键 / 主机与终端右键菜单
 
 ### 1. 三处根因
