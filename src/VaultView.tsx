@@ -208,6 +208,16 @@ const AUTH_METHODS: Array<{
 
 const MFA_HINT = "适用于必须通过 keyboard-interactive 输入密码和 MFA 的服务器。";
 
+/** 设置行 / 分区说明：改为 ⓘ 悬浮提示（对齐 Netcatty `HostDetailsHelp`），不再常驻长段落。 */
+function HostHint({ text }: { text: string }) {
+  if (!text) return null;
+  return (
+    <span className="host-hint" title={text} aria-label={text}>
+      ⓘ
+    </span>
+  );
+}
+
 /** 凭据选择器类型（对齐 netcatty「+ 密钥 / 证书 / 本地密钥」菜单）。 */
 type CredPick = "key" | "certificate" | "localKeyFile" | null;
 
@@ -4315,7 +4325,18 @@ export function VaultView({
                 </div>
 
                 <div className="host-setting-row">
-                  <span className="host-setting-label">登录方式</span>
+                  <span className="host-setting-label">
+                    登录方式
+                    <HostHint
+                      text={
+                        (
+                          AUTH_METHODS.find(
+                            (m) => m.value === composer.auth_method,
+                          ) ?? AUTH_METHODS[0]
+                        ).hint
+                      }
+                    />
+                  </span>
                   <select
                     value={composer.auth_method}
                     onChange={(e) =>
@@ -4336,22 +4357,11 @@ export function VaultView({
                     ))}
                   </select>
                 </div>
-                <p className="host-setting-hint">
-                  {
-                    (
-                      AUTH_METHODS.find(
-                        (m) => m.value === composer.auth_method,
-                      ) ?? AUTH_METHODS[0]
-                    ).hint
-                  }
-                </p>
 
                 <div className="host-setting-row">
-                  <span
-                    className="host-setting-label"
-                    title={MFA_HINT}
-                  >
+                  <span className="host-setting-label">
                     优先交互式认证
+                    <HostHint text={MFA_HINT} />
                   </span>
                   <button
                     type="button"
@@ -4365,10 +4375,12 @@ export function VaultView({
                     <span className="host-switch-knob" />
                   </button>
                 </div>
-                <p className="host-setting-hint">{MFA_HINT}</p>
-
+                
                 <div className="host-setting-row">
-                  <span className="host-setting-label">转发 Agent</span>
+                  <span className="host-setting-label">
+                    转发 Agent
+                    <HostHint text="把本机 SSH Agent 转发到远端；需要本机有运行中的 Agent（Pageant / OpenSSH Agent 等）。" />
+                  </span>
                   <button
                     type="button"
                     role="switch"
@@ -4391,7 +4403,10 @@ export function VaultView({
                 )}
 
                 <div className="host-setting-row">
-                  <span className="host-setting-label">输入兼容模式：逐字发送</span>
+                  <span className="host-setting-label">
+                    输入兼容模式：逐字发送
+                    <HostHint text="中文输入或短粘贴出现丢字时尝试开启；保存后重新连接生效。" />
+                  </span>
                   <button
                     type="button"
                     role="switch"
@@ -4409,10 +4424,6 @@ export function VaultView({
                     <span className="host-switch-knob" />
                   </button>
                 </div>
-                <p className="host-setting-hint">
-                  中文输入或短粘贴出现丢字时尝试开启。
-                </p>
-                <p className="host-setting-hint">保存后重新连接生效。</p>
 
                 <div className="host-setting-row">
                   <span className="host-setting-label">用户名</span>
@@ -4682,6 +4693,40 @@ export function VaultView({
                     );
                   })()
                 )}
+
+                {/* 验证器：Netcatty 放在「端口与凭据」末行，一行式 + 设置… 入口。 */}
+                <div className="host-setting-row">
+                  <span className="host-setting-label">
+                    验证器 (TOTP)
+                    <HostHint text="能打开这个保险库的人会同时得到验证码和密码。请只在个人设备上使用。" />
+                  </span>
+                  {totpConfigured ? (
+                    <span className="host-totp-actions">
+                      <button
+                        type="button"
+                        className="host-link-btn"
+                        onClick={openTotpDialog}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="host-link-btn danger"
+                        onClick={() => void removeTotp()}
+                      >
+                        移除
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="host-link-btn"
+                      onClick={openTotpDialog}
+                    >
+                      设置…
+                    </button>
+                  )}
+                </div>
               </section>
 
               {/* SFTP 设置（对齐 Netcatty HostDetailsSection sftp：文件协议 / sudo / 编码）。 */}
@@ -4756,6 +4801,7 @@ export function VaultView({
                 <div className="host-details-section-head">
                   <Icon name="terminal-square" size={13} />
                   <span>字符集 / 终端编码</span>
+                  <HostHint text="按主机保存在本机，与终端「更多 → 终端编码」共用；输出用对应字符集解码，输入交给后端重新编码。" />
                 </div>
                 <div className="host-setting-row">
                   <span className="host-setting-label">终端编码</span>
@@ -4772,9 +4818,6 @@ export function VaultView({
                     <option value="gb18030">GB18030（GBK / GB2312）</option>
                   </select>
                 </div>
-                <p className="host-setting-hint">
-                  按主机保存在本机，与终端「更多 → 终端编码」共用；输出用对应字符集解码，输入交给后端重新编码。
-                </p>
               </section>
 
               <section className="host-details-section">
@@ -4783,7 +4826,10 @@ export function VaultView({
                   <span>代理</span>
                 </div>
                 <div className="host-setting-row">
-                  <span className="host-setting-label">代理来源</span>
+                  <span className="host-setting-label">
+                    代理来源
+                    <HostHint text="选择代理库条目时以库配置为准；配置与密码在 Vault「代理」页统一维护，修改后所有引用主机即时生效。" />
+                  </span>
                   <select
                     value={composer.proxy_profile_id}
                     onChange={(e) =>
@@ -4798,11 +4844,7 @@ export function VaultView({
                     ))}
                   </select>
                 </div>
-                {composer.proxy_profile_id ? (
-                  <p className="host-setting-hint">
-                    使用代理库条目；配置与密码在 Vault「代理」页统一维护，修改后所有引用主机即时生效。
-                  </p>
-                ) : (
+                {composer.proxy_profile_id ? null : (
                   <>
                     <div className="host-setting-row">
                       <span className="host-setting-label">代理类型</span>
@@ -4887,7 +4929,10 @@ export function VaultView({
                           />
                         </div>
                         <div className="host-setting-row">
-                          <span className="host-setting-label">不使用代理</span>
+                          <span className="host-setting-label">
+                            不使用代理
+                            <HostHint text="逗号分隔的域名 / IP / host:port 不经代理。代理密码保存在系统密钥库，不写入主机档案。" />
+                          </span>
                           <input
                             value={composer.proxy.noProxy}
                             placeholder="localhost, 127.0.0.1"
@@ -4899,9 +4944,6 @@ export function VaultView({
                             }
                           />
                         </div>
-                        <p className="host-setting-hint">
-                          逗号分隔的域名 / IP / host:port 不经代理。代理密码保存在系统密钥库，不写入主机档案。
-                        </p>
                       </>
                     )}
                   </>
@@ -4919,49 +4961,9 @@ export function VaultView({
 
               <section className="host-details-section">
                 <div className="host-details-section-head">
-                  <Icon name="shield" size={13} />
-                  <span>验证器 (TOTP)</span>
-                </div>
-                <div className="host-setting-row">
-                  <span className="host-setting-label">
-                    {totpConfigured ? "已保存 TOTP 密钥" : "为这台主机保存 TOTP 密钥"}
-                  </span>
-                  {totpConfigured ? (
-                    <span className="host-totp-actions">
-                      <button
-                        type="button"
-                        className="host-link-btn"
-                        onClick={openTotpDialog}
-                      >
-                        编辑
-                      </button>
-                      <button
-                        type="button"
-                        className="host-link-btn danger"
-                        onClick={() => void removeTotp()}
-                      >
-                        移除验证器
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="host-link-btn"
-                      onClick={openTotpDialog}
-                    >
-                      设置…
-                    </button>
-                  )}
-                </div>
-                <p className="host-setting-hint">
-                  能打开这个保险库的人会同时得到验证码和密码。请只在个人设备上使用。
-                </p>
-              </section>
-
-              <section className="host-details-section">
-                <div className="host-details-section-head">
                   <Icon name="terminal-square" size={13} />
                   <span>环境变量</span>
+                  <HostHint text="连接时通过 SSH SetEnv 发送；远端 sshd 需在 AcceptEnv 放行对应变量（OpenSSH 默认只放行 LANG / LC_*），否则会被静默丢弃。" />
                   <span className="host-setting-hint" style={{ marginLeft: "auto" }}>
                     {composer.env_vars.length} 项
                   </span>
@@ -5014,16 +5016,13 @@ export function VaultView({
                 >
                   + 添加变量
                 </button>
-                <p className="host-setting-hint">
-                  连接时通过 SSH SetEnv 发送；远端 sshd 需在 AcceptEnv 放行对应变量
-                  （OpenSSH 默认只放行 LANG / LC_*），否则会被静默丢弃。
-                </p>
               </section>
 
               <section className="host-details-section">
                 <div className="host-details-section-head">
                   <Icon name="terminal-square" size={13} />
                   <span>启动命令</span>
+                  <HostHint text="会话建立后自动发送到终端执行（换行结尾）。" />
                 </div>
                 <textarea
                   rows={3}
@@ -5033,28 +5032,27 @@ export function VaultView({
                     setComposer({ ...composer, init_command: e.target.value })
                   }
                 />
-                <p className="host-setting-hint">
-                  会话建立后自动发送到终端执行（换行结尾）。
-                </p>
               </section>
 
               <section className="host-details-section">
                 <div className="host-details-section-head">
                   <Icon name="shield" size={13} />
                   <span>高级字段（Netcatty 有，termX 置灰）</span>
+                  <HostHint
+                    text={[
+                      "主题 / 字体 / 字号覆盖：终端外观只有全局设置，主机档案无对应后端字段（字符集已在上方支持）。",
+                      "启动命令运行模式（逐行 / 等待提示符）：后端只按换行一次发送。",
+                      "登录脚本 / 连接脚本 / 输出触发器：依赖脚本引擎（#13）。",
+                      "Mosh / EternalTerminal / X11 转发：后端未实现对应传输。",
+                      "设备类型 / OS 覆盖：仅影响 Netcatty 的展示与网络设备原始命令模式。",
+                      "SSH 算法偏好：档案已有 algorithms 字段但编辑器未暴露；Keepalive / 连接与认证超时无主机级字段，沿用默认（30s / 3 次 + 全局超时）。",
+                      "系统 SSH Agent 路径 / IdentitiesOnly：后端未实现对应开关（已支持 Agent 转发本身）。",
+                    ].join("\n")}
+                  />
                 </div>
-                <ul
-                  className="host-setting-hint"
-                  style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.8 }}
-                >
-                  <li>主题 / 字体 / 字号覆盖：终端外观目前只有全局设置，主机档案无对应后端字段（字符集已在上方支持）。</li>
-                  <li>启动命令运行模式（逐行 / 等待提示符）：后端只按换行一次发送。</li>
-                  <li>登录脚本 / 连接脚本 / 输出触发器：依赖脚本引擎（#13）。</li>
-                  <li>Mosh / EternalTerminal / X11 转发：后端未实现对应传输。</li>
-                  <li>设备类型 / OS 覆盖：仅影响 Netcatty 的展示与网络设备原始命令模式。</li>
-                  <li>SSH 算法偏好：档案已有 `algorithms` 字段但编辑器未暴露；Keepalive / 连接与认证超时无主机级字段，沿用默认（30s / 3 次 + 全局超时）。</li>
-                  <li>系统 SSH Agent 路径 / IdentitiesOnly：后端未实现对应开关（已支持 Agent 转发本身）。</li>
-                </ul>
+                <p className="host-setting-hint">
+                  这些字段 termX 后端暂不支持，编辑器中不提供入口；悬停标题中的 ⓘ 查看逐项原因。
+                </p>
               </section>
             </div>
 

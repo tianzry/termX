@@ -6631,6 +6631,23 @@ button:disabled {
   color: hsl(var(--muted-foreground));
 }
 
+/* 分区 / 设置行说明：ⓘ 悬浮提示（对齐 Netcatty HostDetailsHelp）。 */
+.host-hint {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: hsl(var(--muted-foreground));
+  cursor: help;
+  opacity: 0.75;
+}
+
+.host-hint:hover {
+  opacity: 1;
+  color: hsl(var(--foreground));
+}
+
 .host-setting-row > input,
 .host-setting-row > select,
 .host-setting-row > .host-pass-wrap {
