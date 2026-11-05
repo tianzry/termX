@@ -26,6 +26,7 @@ import * as api from "./backend/client";
 import { isFindShortcut, linkModifierAllows } from "./terminal/linkActivation";
 import { terminalInsetsStyle } from "./terminal/terminalInsets";
 import {
+  collectSaturatedTerminalTimestampLines,
   collectTerminalTimestampLines,
   formatTerminalTimestamp,
   normalizeTerminalTimestampStamps,
@@ -695,6 +696,11 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
         dropUnanchored: colsChanged,
       });
       if (cols > 0) lastTimestampColsRef.current = cols;
+      // reflow 会改变行号（缩窄列数时 ybase 跳增）：把“上次打点行”同步到当前
+      // 光标行，避免把 reflow 出来的旧行误当成新输出补时间戳。
+      if (colsChanged) {
+        lastTimestampLineRef.current = buffer.baseY + buffer.cursorY;
+      }
       const screen = container.querySelector<HTMLElement>(".xterm-screen");
       const rows =
         buffer.type === "alternate" || !screen || term.rows <= 0
@@ -756,6 +762,12 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       timestampRafRef.current = requestAnimationFrame(render);
     };
 
+    // scrollback 写满后 baseY 封顶，行号差值恒为 0；用 line feed 计数识别新行。
+    let pendingLineFeeds = 0;
+    const lineFeed = term.onLineFeed(() => {
+      pendingLineFeeds += 1;
+    });
+
     const parsed = term.onWriteParsed(() => {
       const buffer = term.buffer.active;
       if (buffer.type !== "alternate") {
@@ -766,6 +778,16 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
             currentAbsolute: current,
             isWrapped: (line) => buffer.getLine(line)?.isWrapped === true,
           });
+          if (lines.length === 0 && pendingLineFeeds > 0) {
+            lines.push(
+              ...collectSaturatedTerminalTimestampLines({
+                currentAbsolute: current,
+                lineFeeds: pendingLineFeeds,
+                rows: term.rows,
+                isWrapped: (line) => buffer.getLine(line)?.isWrapped === true,
+              }),
+            );
+          }
           if (lines.length > 0) {
             const label = formatTerminalTimestamp(new Date());
             for (const line of lines) {
@@ -786,6 +808,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
           lastTimestampLineRef.current = current;
         }
       }
+      pendingLineFeeds = 0;
       scheduleRender();
     });
     const scroll = term.onScroll(scheduleRender);
@@ -797,6 +820,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
 
     return () => {
       parsed.dispose();
+      lineFeed.dispose();
       scroll.dispose();
       rendered.dispose();
       resized.dispose();

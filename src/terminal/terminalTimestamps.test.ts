@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  collectSaturatedTerminalTimestampLines,
   collectTerminalTimestampLines,
   formatTerminalTimestamp,
   normalizeTerminalTimestampStamps,
@@ -66,6 +67,52 @@ describe("collectTerminalTimestampLines", () => {
         isWrapped: () => false,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("collectSaturatedTerminalTimestampLines（scrollback 写满后 baseY 封顶）", () => {
+  it("按 line feed 数补打底部新增行", () => {
+    expect(
+      collectSaturatedTerminalTimestampLines({
+        currentAbsolute: 300,
+        lineFeeds: 3,
+        rows: 10,
+        isWrapped: () => false,
+      }),
+    ).toEqual([298, 299, 300]);
+  });
+
+  it("line feed 数超过可视行数时按 rows 截断", () => {
+    expect(
+      collectSaturatedTerminalTimestampLines({
+        currentAbsolute: 300,
+        lineFeeds: 10,
+        rows: 3,
+        isWrapped: () => false,
+      }),
+    ).toEqual([298, 299, 300]);
+  });
+
+  it("无 line feed 时不打点", () => {
+    expect(
+      collectSaturatedTerminalTimestampLines({
+        currentAbsolute: 300,
+        lineFeeds: 0,
+        rows: 10,
+        isWrapped: () => false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("跳过软换行续行", () => {
+    expect(
+      collectSaturatedTerminalTimestampLines({
+        currentAbsolute: 300,
+        lineFeeds: 2,
+        rows: 10,
+        isWrapped: (line) => line === 300,
+      }),
+    ).toEqual([299]);
   });
 });
 

@@ -47,10 +47,18 @@ export function appendKeystrokes(
 ): RecordedStep | null {
   let line = buffer.line;
   let submitted: RecordedStep | null = null;
-  const input = buffer.pendingEscape
-    ? `${buffer.pendingEscape}${data}`
-    : data;
-  buffer.pendingEscape = "";
+  let input = data;
+  if (buffer.pendingEscape) {
+    // 上一 chunk 末尾只有一个 ESC（vi 模式切换等）：下一 chunk 是普通输入时丢弃它，
+    // 不能把下一 chunk 的首字符当成 Alt 组合键吞掉。
+    const loneEscape =
+      buffer.pendingEscape === "\u001b" &&
+      data.length > 0 &&
+      data[0] !== "[" &&
+      data[0] !== "]";
+    input = loneEscape ? data : `${buffer.pendingEscape}${data}`;
+    buffer.pendingEscape = "";
+  }
 
   const submit = (command: string) => {
     const trimmed = command.trim();

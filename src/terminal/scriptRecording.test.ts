@@ -47,6 +47,16 @@ describe("script recording input buffer", () => {
     expect(buf.line).toBe("ab");
   });
 
+  it("单独按 ESC 后继续输入不会吞掉下一个字符", () => {
+    const buf = createScriptRecordingBuffer(0);
+    appendKeystrokes(buf, "ab\u001b", 10);
+    expect(buf.line).toBe("ab");
+    expect(buf.pendingEscape).toBe("\u001b");
+    appendKeystrokes(buf, "ls", 11);
+    expect(buf.line).toBe("abls");
+    expect(buf.pendingEscape).toBe("");
+  });
+
   it("bracketed paste 多行内容按一条完整命令记录", () => {
     const buf = createScriptRecordingBuffer(0);
     // 粘贴期间的换行不是提交，不应产生多条记录。

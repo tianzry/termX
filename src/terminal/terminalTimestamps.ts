@@ -105,6 +105,27 @@ export function collectTerminalTimestampLines(input: {
 }
 
 /**
+ * scrollback 写满后 xterm 不再增加 `baseY`（`ybase` 封顶），光标绝对行号恒定，
+ * 此时靠行号差值无法判断新输出行；用 line feed 计数补打底部新增行。
+ */
+export function collectSaturatedTerminalTimestampLines(input: {
+  currentAbsolute: number;
+  lineFeeds: number;
+  rows: number;
+  isWrapped: (absoluteLine: number) => boolean;
+}): number[] {
+  if (input.lineFeeds <= 0) return [];
+  const span = Math.min(input.lineFeeds, Math.max(1, input.rows));
+  const lines: number[] = [];
+  for (let offset = span - 1; offset >= 0; offset -= 1) {
+    const line = input.currentAbsolute - offset;
+    if (line < 0 || input.isWrapped(line)) continue;
+    lines.push(line);
+  }
+  return lines;
+}
+
+/**
  * 原地重映射 / 清理时间戳：
  * - marker 已随 scrollback 裁剪被销毁 → 丢弃；
  * - 存活 marker → 把 `line` 同步为 marker.line（reflow 后行号被 xterm 更新）；

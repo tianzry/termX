@@ -928,6 +928,29 @@ export function TerminalPane({
     return stripped;
   }
 
+  /**
+   * 光标所在逻辑行的完整文本（把软换行续行拼回去）：多行粘贴时末行若超宽，
+   * 只看当前可视行会丢内容。
+   */
+  function readCurrentLogicalLine(): string | null {
+    const term = controllerRef.current?.term;
+    if (!term) return null;
+    const buf = term.buffer.active;
+    if (buf.type === "alternate") return null;
+    const cursorRow = buf.baseY + buf.cursorY;
+    const current = buf.getLine(cursorRow);
+    if (!current) return null;
+    let text = current.translateToString(true).slice(0, buf.cursorX);
+    let row = cursorRow;
+    while (row > 0 && buf.getLine(row)?.isWrapped) {
+      row -= 1;
+      const upper = buf.getLine(row);
+      if (!upper) break;
+      text = upper.translateToString(true) + text;
+    }
+    return text.replace(/^.*?[#$>❯]\s/u, "");
+  }
+
   function scheduleAutocompleteSuggestions() {
     const ac = autocompleteRef.current;
     if (ac.timer !== null) window.clearTimeout(ac.timer);
@@ -1185,10 +1208,16 @@ export function TerminalPane({
     if (line === null) return;
     // bracketed paste 的多行内容：终端只显示最后一行，不能用单行覆盖整段，
     // 否则命令历史只会记下最后一行。
-    if (inputBufferRef.current.line.includes("\n")) {
-      const parts = inputBufferRef.current.line.split("\n");
+    const buffered = inputBufferRef.current.line;
+    if (buffered.includes("\n")) {
+      const parts = buffered.split("\n");
       const bufferedLast = parts[parts.length - 1] ?? "";
-      if (line.trim() === bufferedLast.trim()) return;
+      // 末行可能因超宽被软换行，用逻辑行（跨续行拼接）校准。
+      const candidate = readCurrentLogicalLine() ?? line;
+      if (candidate.trim() === bufferedLast.trim()) return;
+      parts[parts.length - 1] = candidate;
+      inputBufferRef.current.line = parts.join("\n");
+      return;
     }
     inputBufferRef.current.line = line;
   }
