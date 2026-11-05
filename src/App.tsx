@@ -130,6 +130,8 @@ export default function App() {
   );
   const sftpOpenSeqRef = useRef(0);
   const [tool, setTool] = useState<Tool>(null);
+  /** #205：笔记面板开关按标签记忆（切换标签后各标签恢复自己的开关状态）。 */
+  const [notesOpenTabs, setNotesOpenTabs] = useState<Record<string, boolean>>({});
   const [showManager, setShowManager] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 设置中心打开时定位的 tab（终端工具栏「终端设置」→ 外观）。 */
@@ -493,6 +495,14 @@ export default function App() {
   }
 
   function toggleTool(next: Exclude<Tool, null>) {
+    // 笔记面板按标签记忆：只切换当前标签的开关，切标签时由 effect 恢复。
+    if (next === "notes") {
+      if (!activeTabId) return;
+      const open = !notesOpenTabs[activeTabId];
+      setNotesOpenTabs((prev) => ({ ...prev, [activeTabId]: open }));
+      setTool(open ? "notes" : null);
+      return;
+    }
     if (tool === next) {
       setTool(null);
       return;
@@ -504,6 +514,20 @@ export default function App() {
     }
     setTool(next);
   }
+
+  function closeTool() {
+    if (tool === "notes" && activeTabId) {
+      setNotesOpenTabs((prev) => ({ ...prev, [activeTabId]: false }));
+    }
+    setTool(null);
+  }
+
+  useEffect(() => {
+    if (!activeTabId) return;
+    setTool((current) =>
+      current === "sftp" ? current : notesOpenTabs[activeTabId] ? "notes" : null,
+    );
+  }, [activeTabId, notesOpenTabs]);
 
   const terminalActive = surface === null;
 
@@ -695,7 +719,7 @@ export default function App() {
             title={TOOL_TITLE[tool]}
             subtitle="工具面板"
             width={TOOL_WIDTH[tool]}
-            onClose={() => setTool(null)}
+            onClose={closeTool}
           >
             {tool === "sftp" && (
               <SftpPanel sshSessionId={activeSshSid} terminalCwd={activeCwd} />

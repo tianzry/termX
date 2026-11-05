@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-06 — #209 #205 原生验证（真实 129 SSH）+ 面板开关按标签记忆
+
+- **面板开关按标签记忆**：`App.tsx` 原先 `tool` 是全局状态，切标签后面板开关不随标签变化，不满足 #205 的验收项。新增 `notesOpenTabs: Record<tabId, boolean>`；`toggleTool("notes")` 只切当前标签、`closeTool()` 记录关闭、`activeTabId` 变化时按 map 恢复（SFTP 仍保持既有全局行为）。
+- **原生验证（真实 `tianzry@192.168.126.129`，CDP 1440×900，证据 `evidence/audit12-*`）**，`audit12-assertions.json` 16/16 通过：
+  1. **列表→编辑→保存→重开**：面板「+」新建并写入标题/正文（含 Markdown 主机链接）→ footer 显示「已保存 · 04:08:39」→ 返回列表可见 → 关闭面板再重开数据仍在；验证后删除该笔记，未留测试数据（另清理了一轮失败跑产生的同名笔记）。
+  2. **fit 正确**：开面板前 `.xterm-screen` 1344px、cols 163、rows 47；开 420px 面板后 924px、cols 112、rows 47（rows 不变）；关面板恢复 1344px / 163 / 47；开、关两态 `.xterm-viewport` 的 `scrollWidth == clientWidth`（无横向滚动条）。
+  3. **分屏**：右键「水平分屏」后 2 个 `.pane-cell`（各 510px，screen 412px）；再开 420px 面板，两窗格 `overflowX=0`、screen 均在窗格边界内。
+  4. **ssh:// 链接**：预览点击 `ssh://tianzry@192.168.126.129`，会话标签 1→2，新标签标题「129」。
+  5. **按标签记忆**：链接新建的标签 B 默认不带面板；切回标签 A 面板自动恢复开启；切到标签 B 保持关闭；在 B 手动开面板成功。
+- 踩坑（取证脚本）：
+  - xterm 6 取不到 `.xterm-char-measure-element`，cols/rows 改为「用 `.xterm-rows` 同字体探针 span（100 个 W）算单元格宽高 + `.xterm-screen` 像素」换算；
+  - 右键菜单处理器挂在 `.pane`（TerminalPane 根节点）而不是 `.pane-cell`，在 `.pane-cell` 上派发 `contextmenu` 不会弹出菜单；
+  - Node 的全局 WebSocket 会挂住事件循环，脚本末尾必须 `process.exit()`，否则外层 `Stop-Process` 永远跑不到（上一轮 120s 超时的根因）。
+- 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 946 通过 + 1 项首跑超时（`commands::plugin::tests::local_exec_caps_output_without_breaking_the_pipe`，已知偶发），单跑通过；`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #207 脚本页列表行样式对齐 Netcatty（卡片视图不动）
 
 - 仅改 `src/snippets/snippets.css` 的 `.sn-row` 体系，不动 `SnippetsView.tsx` 结构：
