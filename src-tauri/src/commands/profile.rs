@@ -3,8 +3,8 @@ use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::db::profile_env::EnvVar;
-use crate::models::{Credential, Profile, SshAlgorithmCatalog};
-use crate::secret::cred_secret_key;
+use crate::models::{Credential, CredentialType, Profile, SshAlgorithmCatalog};
+use crate::secret::{cert_secret_key, cred_secret_key};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -93,14 +93,32 @@ pub fn update_credential(state: State<AppState>, credential: Credential) -> Resu
 pub fn delete_credential(state: State<AppState>, id: String) -> Result<(), AppError> {
     crate::db::credential::delete(&state.db, &id)?;
     state.secret_store.delete(&cred_secret_key(&id))?;
+    // 证书凭据额外有 `cert:<id>:cert`（证书文本）；不清会留孤儿密文。
+    state.secret_store.delete(&cert_secret_key(&id))?;
     Ok(())
 }
 
 fn save_credential_secrets(state: &State<AppState>, c: &Credential) -> Result<(), AppError> {
+    save_credential_secrets_to(state.secret_store.as_ref(), c)
+}
+
+/// 把凭据 secret 落 SecretStore；抽成 `&dyn SecretStore` 便于单测。
+///
+/// 证书凭据的私钥 / 证书文本由钥匙串导入链路（keychain_import_certificate_credential）
+/// 分别写入 `cred:<id>:secret` 与 `cert:<id>:cert`。主机保存只更新元数据，
+/// 序列化回来的 `secret` 永远是 None；若按普通凭据的「None = 删除」处理，
+/// 会在编辑主机时把已导入的私钥静默清掉，因此这里直接跳过。
+fn save_credential_secrets_to(
+    store: &dyn crate::secret::SecretStore,
+    c: &Credential,
+) -> Result<(), AppError> {
+    if c.credential_type == CredentialType::Certificate {
+        return Ok(());
+    }
     let secret_key = cred_secret_key(&c.id);
     match c.secret.as_deref() {
-        Some(s) if !s.is_empty() => state.secret_store.set(&secret_key, s)?,
-        _ => state.secret_store.delete(&secret_key)?,
+        Some(s) if !s.is_empty() => store.set(&secret_key, s)?,
+        _ => store.delete(&secret_key)?,
     }
     Ok(())
 }
@@ -366,6 +384,7 @@ mod tests {
     //! Key-file reads for the default-key quick fill: capped at 1 MiB,
     //! NotFound maps to the friendly key_file_not_found code.
     use super::*;
+    use crate::secret::SecretStore;
 
     #[test]
     fn read_key_file_capped_reads_a_normal_key() {
@@ -418,5 +437,79 @@ mod tests {
         assert!(looks_like_private_key("openssh-key-v1\0\0\0..."));
         assert!(!looks_like_private_key("Host example.com\n  IdentityFile ~/.ssh/id_rsa"));
         assert!(!looks_like_private_key("example.com ssh-ed25519 AAAA..."));
+    }
+
+    // ── 证书凭据保存链路 ─────────────────────────────────────────
+
+    struct MemStore(std::sync::Mutex<std::collections::HashMap<String, String>>);
+
+    impl crate::secret::SecretStore for MemStore {
+        fn get(&self, key: &str) -> AppResult<Option<String>> {
+            Ok(self.0.lock().unwrap().get(key).cloned())
+        }
+        fn set(&self, key: &str, value: &str) -> AppResult<()> {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+        fn delete(&self, key: &str) -> AppResult<()> {
+            self.0.lock().unwrap().remove(key);
+            Ok(())
+        }
+        fn backend_name(&self) -> &'static str {
+            "mem"
+        }
+    }
+
+    fn cert_credential(id: &str, secret: Option<&str>) -> Credential {
+        Credential {
+            id: id.into(),
+            name: "cert".into(),
+            username: "root".into(),
+            credential_type: CredentialType::Certificate,
+            secret: secret.map(str::to_string),
+            save_to_remote: false,
+        }
+    }
+
+    /// 编辑主机时序列化回来的证书凭据没有 secret；保存不得清掉钥匙串
+    /// 导入时写进 `cred:<id>:secret` 的私钥。
+    #[test]
+    fn certificate_credential_update_keeps_imported_key_material() {
+        let store = MemStore(Default::default());
+        store
+            .set(&cred_secret_key("c1"), "-----BEGIN OPENSSH PRIVATE KEY-----")
+            .unwrap();
+        store.set(&cert_secret_key("c1"), "ssh-ed25519-cert-v01@openssh.com AAAA").unwrap();
+
+        save_credential_secrets_to(&store, &cert_credential("c1", None)).unwrap();
+
+        assert_eq!(
+            store.get(&cred_secret_key("c1")).unwrap().as_deref(),
+            Some("-----BEGIN OPENSSH PRIVATE KEY-----")
+        );
+        assert_eq!(
+            store.get(&cert_secret_key("c1")).unwrap().as_deref(),
+            Some("ssh-ed25519-cert-v01@openssh.com AAAA")
+        );
+    }
+
+    /// 非证书凭据维持原语义：secret=None 表示删除已存口令。
+    #[test]
+    fn password_credential_update_with_none_still_deletes_secret() {
+        let store = MemStore(Default::default());
+        store.set(&cred_secret_key("c2"), "pw").unwrap();
+        let cred = Credential {
+            id: "c2".into(),
+            name: "pw".into(),
+            username: "root".into(),
+            credential_type: CredentialType::Password,
+            secret: None,
+            save_to_remote: false,
+        };
+        save_credential_secrets_to(&store, &cred).unwrap();
+        assert_eq!(store.get(&cred_secret_key("c2")).unwrap(), None);
     }
 }

@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-11-06 — #201 放开证书认证保存链路（ComposerDraft → CredentialType::Certificate）
+
+- `persistComposerDraft` 删除 `auth_method === "certificate"` 的硬拒；`effectiveCredType()` 映射证书 → `CredentialType::Certificate`，`authMethodOfCredential()` 反向映射（编辑既有证书主机可回显）。
+- 证书凭据来源沿用钥匙串：选择器列出 `Credential.type = certificate` 的已有条目；另枚举 `~/.ssh` 下带私钥的 `*-cert.pub`，点击走既有 `keychainImportCertificateCredential`（后端 `is_plain_file_name` 单层文件名校验，路径逃逸防护复用，不新增读文件命令）。
+- 保存校验：证书认证必须绑定一个类型为 `certificate` 的凭据，否则报「请选择证书凭据」，避免把密钥 / 密码凭据误改成证书类型。
+- SecretStore 安全：前端不做 `getCredential` 拉取证书私钥材料（编辑回显与绑定均跳过），密钥 / 证书文本只在后端钥匙串导入链路读写；`update_credential` 对证书类型**跳过** `save_credential_secrets`（否则序列化回来的 `secret=None` 会按「None=删除」清掉已导入私钥）；`delete_credential` 同步清 `cert:<id>:cert`，避免孤儿密文。
+- 登录方式下拉切到「证书」时自动清空非证书身份并展开证书选择器；证书与「优先交互式认证（MFA）/内联密码」互斥（该行在证书态隐藏）。
+- 测试：新增 `save_credential_secrets_to` 单测（证书 None 保留私钥 / 普通凭据 None 仍删除）；`npm run test:run` 66 文件 / 735 用例、`cargo test --lib` 939 用例通过。
+- **未实测**：真实证书认证连接（无 CA 服务器 / OpenSSH 证书环境），连接分支仅按 `ssh/auth.rs` 既有 `CredentialType::Certificate` 路径静态确认。
+
 ## 2026-11-06 — #200 主机弹窗默认宽度固定 420（忽略本地记忆值）
 
 对齐 #192 差异清单第 10 条：

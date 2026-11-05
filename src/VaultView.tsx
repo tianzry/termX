@@ -200,8 +200,8 @@ const AUTH_METHODS: Array<{
   {
     value: "certificate",
     label: "证书",
-    hint: "termX 的主机保存链路暂不支持证书认证，请改用密钥或本地密钥。",
-    enabled: false,
+    hint: "使用钥匙串中的证书凭据（OpenSSH 证书 + 对应私钥）进行认证。",
+    enabled: true,
   },
 ];
 
@@ -272,6 +272,8 @@ function effectiveCredType(d: ComposerDraft): CredentialType {
       return "password";
     case "key":
       return "key";
+    case "certificate":
+      return "certificate";
     default:
       return "agent";
   }
@@ -288,6 +290,8 @@ function authMethodOfCredential(c: Credential): {
       return { auth: "key", mfa: false };
     case "interactive":
       return { auth: "password", mfa: true };
+    case "certificate":
+      return { auth: "certificate", mfa: false };
     default:
       return { auth: "auto", mfa: false };
   }
@@ -1607,6 +1611,7 @@ export function VaultView({
     setCredMenu(false);
     setCredPick(null);
     setCredSearch("");
+    extraCredsRef.current = [];
     setTotpConfigured(false);
     setComposer({
       id: newId(),
@@ -1648,12 +1653,19 @@ export function VaultView({
     composerProxySecretRef.current = false;
     setCredMenu(false);
     setCredSearch("");
+    extraCredsRef.current = [];
     const cred = credentials.find((c) => c.id === p.credential_id);
     const { auth, mfa } = cred
       ? authMethodOfCredential(cred)
       : { auth: "auto" as AuthMethod, mfa: false };
-    // 编辑既有主机：凭据选择器按已绑凭据类型展开（密钥）。
-    setCredPick(cred?.type === "key" ? "key" : null);
+    // 编辑既有主机：凭据选择器按已绑凭据类型展开（密钥 / 证书）。
+    setCredPick(
+      cred?.type === "key"
+        ? "key"
+        : cred?.type === "certificate"
+          ? "certificate"
+          : null,
+    );
     setComposer({
       id: p.id,
       name: p.name,
@@ -1698,8 +1710,9 @@ export function VaultView({
         );
       })
       .catch(() => {});
-    if (cred) {
+    if (cred && cred.type !== "certificate") {
       // 取回原 secret：密码框留空时原样回填；已有保存密码则显示掩码（D7）。
+      // 证书凭据的私钥 / 证书由后端钥匙串链路管理，不在前端多取一份密钥材料。
       void api
         .getCredential(cred.id)
         .then((full) => {
@@ -1737,7 +1750,7 @@ export function VaultView({
   }
 
   function bindComposerCredential(id: string) {
-    const cred = credentials.find((c) => c.id === id);
+    const cred = findComposerCredential(id);
     if (!cred) return;
     const { auth, mfa } = authMethodOfCredential(cred);
     composerSecretRef.current = null;
@@ -1754,12 +1767,45 @@ export function VaultView({
           }
         : d,
     );
+    // 证书凭据的私钥材料不拉到前端；连接时后端直接从 SecretStore 读取。
+    if (cred.type === "certificate") return;
     void api
       .getCredential(id)
       .then((full) => {
         composerSecretRef.current = full.secret;
       })
       .catch(() => {});
+  }
+
+  /**
+   * 把 `~/.ssh/<name>` + `<name>-cert.pub` 导入为证书凭据并绑定。
+   * 路径校验（单层文件名）与私钥 / 证书读取都在后端完成，密钥材料不经过 webview。
+   */
+  async function importComposerCertificate(name: string) {
+    if (!composer) return;
+    const existing = credentials.find(
+      (c) => c.type === "certificate" && c.name === name,
+    );
+    if (existing) {
+      bindComposerCredential(existing.id);
+      setCredPick(null);
+      setCredSearch("");
+      return;
+    }
+    try {
+      const cred = await api.keychainImportCertificateCredential(
+        name,
+        composer.username.trim() || "root",
+        name,
+      );
+      extraCredsRef.current = [...extraCredsRef.current, cred];
+      bindComposerCredential(cred.id);
+      setCredPick(null);
+      setCredSearch("");
+      onDataChanged();
+    } catch (e) {
+      setComposerErr(userVisibleError(String(e)));
+    }
   }
 
   function parseTags(raw: string): string[] {
@@ -1789,10 +1835,6 @@ export function VaultView({
       setComposerErr("端口需在 1–65535 之间");
       return null;
     }
-    if (d.auth_method === "certificate") {
-      setComposerErr("证书认证尚未移植，请选择其他登录方式");
-      return null;
-    }
     const proxyErr = d.proxy_profile_id ? null : proxyDraftError(d.proxy);
     if (proxyErr) {
       setComposerErr(proxyErr);
@@ -1800,6 +1842,14 @@ export function VaultView({
     }
     const effType = effectiveCredType(d);
     const username = d.username.trim();
+    const bound = d.credential_id ? findComposerCredential(d.credential_id) : undefined;
+    if (
+      effType === "certificate" &&
+      bound?.type !== "certificate"
+    ) {
+      setComposerErr("请选择证书凭据（可在钥匙串或 ~/.ssh 导入证书）");
+      return null;
+    }
     if (!d.credential_id && !username) {
       setComposerErr("请填写用户名");
       return null;
@@ -1833,7 +1883,7 @@ export function VaultView({
           save_to_remote: false,
         });
       } else {
-        const existing = credentials.find((c) => c.id === credentialId);
+        const existing = findComposerCredential(credentialId);
         await api.updateCredential({
           id: credentialId,
           name: existing?.name ?? d.name.trim(),
@@ -2069,11 +2119,12 @@ export function VaultView({
   /** composer 是否为编辑既有主机（标题 / 身份 chip 显隐据此）。 */
   const isEditComposer =
     composer !== null && profiles.some((p) => p.id === composer.id);
-  /** 已绑定凭据类型：绑定密钥时隐藏内联密码框（证书凭据尚未移植）。 */
+  /** 已绑定凭据类型：绑定密钥 / 证书时隐藏内联密码框。 */
   const boundCredType = composer?.credential_id
-    ? credentials.find((c) => c.id === composer.credential_id)?.type
+    ? findComposerCredential(composer.credential_id)?.type
     : undefined;
-  const composerPasswordVisible = boundCredType !== "key";
+  const composerPasswordVisible =
+    boundCredType !== "key" && boundCredType !== "certificate";
   useEffect(() => {
     if (!composerOpen) return;
     let alive = true;
@@ -2089,6 +2140,22 @@ export function VaultView({
       alive = false;
     };
   }, [composerOpen]);
+  /** 打开「证书」选择器时才枚举 ~/.ssh 证书（只回元数据，不含私钥）。 */
+  useEffect(() => {
+    if (!composerOpen || credPick !== "certificate") return;
+    let alive = true;
+    api
+      .keychainListCertificates()
+      .then((list) => {
+        if (alive) setCertFiles(list.filter((e) => e.has_private_key));
+      })
+      .catch(() => {
+        if (alive) setCertFiles([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [composerOpen, credPick]);
 
   /** 删除走确认对话框（对齐 netcatty VaultDeleteConfirmDialog），不用 window.confirm。 */
   function confirmDeleteKnownHost() {
@@ -4329,12 +4396,35 @@ export function VaultView({
                   </span>
                   <select
                     value={composer.auth_method}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const next = e.target.value as AuthMethod;
+                      const bound = composer.credential_id
+                        ? findComposerCredential(composer.credential_id)
+                        : undefined;
                       setComposer({
                         ...composer,
-                        auth_method: e.target.value as AuthMethod,
-                      })
-                    }
+                        auth_method: next,
+                        // 证书凭据与内联密码 / MFA 互斥。
+                        mfa: next === "certificate" ? false : composer.mfa,
+                        credential_id:
+                          next === "certificate"
+                            ? bound?.type === "certificate"
+                              ? composer.credential_id
+                              : ""
+                            : bound?.type === "certificate"
+                              ? ""
+                              : composer.credential_id,
+                        password:
+                          next === "certificate" ? "" : composer.password,
+                      });
+                      if (
+                        next === "certificate" &&
+                        bound?.type !== "certificate"
+                      ) {
+                        setCredPick("certificate");
+                        setCredSearch("");
+                      }
+                    }}
                   >
                     {AUTH_METHODS.map((m) => (
                       <option
@@ -4348,23 +4438,25 @@ export function VaultView({
                   </select>
                 </div>
 
-                <div className="host-setting-row">
-                  <span className="host-setting-label">
-                    优先交互式认证
-                    <HostHint text={MFA_HINT} />
-                  </span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={composer.mfa}
-                    className={`host-switch${composer.mfa ? " on" : ""}`}
-                    onClick={() =>
-                      setComposer({ ...composer, mfa: !composer.mfa })
-                    }
-                  >
-                    <span className="host-switch-knob" />
-                  </button>
-                </div>
+                {composer.auth_method !== "certificate" && (
+                  <div className="host-setting-row">
+                    <span className="host-setting-label">
+                      优先交互式认证
+                      <HostHint text={MFA_HINT} />
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={composer.mfa}
+                      className={`host-switch${composer.mfa ? " on" : ""}`}
+                      onClick={() =>
+                        setComposer({ ...composer, mfa: !composer.mfa })
+                      }
+                    >
+                      <span className="host-switch-knob" />
+                    </button>
+                  </div>
+                )}
                 
                 <div className="host-setting-row">
                   <span className="host-setting-label">
@@ -4499,9 +4591,7 @@ export function VaultView({
                     <Icon name="user" size={13} />
                     <span className="host-identity-name">
                       {(() => {
-                        const c = credentials.find(
-                          (x) => x.id === composer.credential_id,
-                        );
+                        const c = findComposerCredential(composer.credential_id);
                         return c ? c.name : "已选身份";
                       })()}
                     </span>
@@ -4541,9 +4631,8 @@ export function VaultView({
                               v: "certificate",
                               label: "证书",
                               icon: "shield",
-                              enabled: false,
-                              reason:
-                                "主机保存链路暂不支持证书认证（保存时会拒绝），钥匙串里的证书目前无法用于主机登录。",
+                              enabled: true,
+                              reason: "",
                             },
                             {
                               v: "localKeyFile",
@@ -4657,7 +4746,7 @@ export function VaultView({
                         </div>
                         {filtered.length === 0 ? (
                           <div className="host-key-combo-empty">
-                            {isCert ? "暂无证书" : "暂无密钥"}
+                            {isCert ? "暂无证书凭据" : "暂无密钥"}
                           </div>
                         ) : (
                           filtered.map((c) => (
@@ -4669,7 +4758,10 @@ export function VaultView({
                                 setCredSearch("");
                               }}
                             >
-                              <Icon name="key" size={13} />
+                              <Icon
+                                name={isCert ? "shield" : "key"}
+                                size={13}
+                              />
                               <span>{c.name}</span>
                               {c.username && (
                                 <span className="host-key-combo-user">
@@ -4679,6 +4771,47 @@ export function VaultView({
                             </button>
                           ))
                         )}
+                        {/* 证书：把 ~/.ssh 里已有的 `<name>` + `<name>-cert.pub` 导入钥匙串。
+                            文件枚举由后端完成，私钥不经过前端；无对应私钥的条目已过滤。 */}
+                        {isCert &&
+                          certFiles.filter(
+                            (e) =>
+                              !credentials.some(
+                                (c) =>
+                                  c.type === "certificate" &&
+                                  c.name === e.name,
+                              ),
+                          ).length > 0 && (
+                            <div className="host-key-combo-section">
+                              ~/.ssh 中的证书
+                            </div>
+                          )}
+                        {isCert &&
+                          certFiles
+                            .filter(
+                              (e) =>
+                                !credentials.some(
+                                  (c) =>
+                                    c.type === "certificate" &&
+                                    c.name === e.name,
+                                ),
+                            )
+                            .map((e) => (
+                              <button
+                                key={e.cert_path}
+                                className="host-key-combo-item"
+                                title={`导入 ${e.cert_path}`}
+                                onClick={() => void importComposerCertificate(e.name)}
+                              >
+                                <Icon name="file-text" size={13} />
+                                <span>{e.name}</span>
+                                {e.principals.length > 0 && (
+                                  <span className="host-key-combo-user">
+                                    {e.principals.join(", ")}
+                                  </span>
+                                )}
+                              </button>
+                            ))}
                       </div>
                     );
                   })()

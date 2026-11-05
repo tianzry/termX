@@ -6868,6 +6868,15 @@ button:disabled {
   color: hsl(var(--muted-foreground));
 }
 
+/* 证书选择器里的「~/.ssh 中的证书」小标题（沿用 key combo 内边距）。 */
+.host-key-combo-section {
+  padding: 8px 6px 4px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  border-top: 1px solid hsl(var(--border));
+  margin-top: 4px;
+}
+
 /* ── TOTP 验证器分区 / 对话框 ─────────────────────────────── */
 
 .host-totp-actions {
