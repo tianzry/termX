@@ -51,7 +51,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 串口弹窗细节 | 弹窗 407 vs 360px、「保存配置」vs「保存为主机」、端口框多一个箭头 | P3 | 待有串口设备时一并调 |
 | SFTP 空态图标 | Netcatty 左 Monitor / 右 HardDrive；termX 左 Monitor / 右 Server | P3 | ✅ #191：右栏改 hard-drive（源码 + 截图证实是硬盘图标，非文件夹） |
 | 设置窗口形态 | Netcatty 独立 Electron 窗口 980×720（min 820×600，非 modal，隐藏预热）；termX 全屏 overlay | P3 | 调研完成 #192（不改代码）：单窗口模型下改独立 Tauri 窗口需新增路由/跨窗口同步/生命周期，建议单独立项 |
-| 主机新建/编辑弹窗 | Netcatty HostDetailsPanel（w420、白卡、分区顺序、SFTP 分区等 10 条差异） | P3 | ✅ #194–#200 已对齐：白卡+浅灰页底 / 卡片12·输入8·按钮8 圆角 / 输入40px / 补 SFTP 设置分区 + 代理归位 / 分组·标签图标与 X / 保存密码 + 密钥入口（证书置灰）/ 说明改 ⓘ tooltip / 验证器一行式 / 默认宽固定 420｜剩余：证书认证需改保存链路；行式「设置行」条状底色未做 |
+| 主机新建/编辑弹窗 | Netcatty HostDetailsPanel（w420、白卡、分区顺序、SFTP 分区等 10 条差异） | P3 | ✅ #194–#203 已对齐：白卡+浅灰页底 / 卡片12·输入8·按钮8 圆角 / 输入40px / 补 SFTP 设置分区 + 代理归位 / 分组·标签图标与 X / 保存密码 + 密钥入口 / 说明改 ⓘ tooltip / 验证器一行式 / 默认宽固定 420 / **#201 证书认证保存链路放开**（`CredentialType::Certificate` + 路径逃逸校验复用 + 迁移 v47；SecretStore 只存指纹/路径，真机 CA 未实测）/ **#202 主机级 known-host 策略**（`profiles.host_key_policy` verify·skip·NULL=跟随全局，连接前覆盖全局；端到端 host key 变化场景未实测）｜设置页：**#203 每行 48px 条状底色 + 边框 + 12px 左右内边距**，8 tab 覆盖、720 窄窗无横向溢出 |
 
 ---
 
