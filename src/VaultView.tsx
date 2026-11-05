@@ -730,7 +730,8 @@ export function VaultView({
   const composerSecretRef = useRef<string | null>(null);
   const composerProxySecretRef = useRef(false);
   /** Telnet 主机是否已有自动登录密码（密码本体只来自 SecretStore，不在草稿里缓存）。 */
-  const composerTelnetSecretRef = useRef(false);
+  // true=已存在密码 / false=确认无密码 / null=读取失败（保存时不得误删既有密码）
+  const composerTelnetSecretRef = useRef<boolean | null>(null);
   /** 「+ 密钥 / 证书 / 本地密钥」菜单与当前选择器类型。 */
   const [credMenu, setCredMenu] = useState(false);
   const [credPick, setCredPick] = useState<CredPick>(null);
@@ -1635,7 +1636,7 @@ export function VaultView({
     setPassMasked(false);
     composerSecretRef.current = null;
     composerProxySecretRef.current = false;
-    composerTelnetSecretRef.current = false;
+    composerTelnetSecretRef.current = null;
     setCredMenu(false);
     setCredPick(null);
     setCredSearch("");
@@ -1682,7 +1683,7 @@ export function VaultView({
     setPassMasked(false);
     composerSecretRef.current = null;
     composerProxySecretRef.current = false;
-    composerTelnetSecretRef.current = false;
+    composerTelnetSecretRef.current = null;
     setCredMenu(false);
     setCredSearch("");
     extraCredsRef.current = [];
@@ -1787,7 +1788,8 @@ export function VaultView({
           if (s) setPassMasked(true);
         })
         .catch(() => {
-          composerTelnetSecretRef.current = false;
+          // 读取失败保持 null（未知），保存时跳过写入而不是误删既有密码
+          composerTelnetSecretRef.current = null;
         });
     }
     setCtxMenu(null);
@@ -1928,7 +1930,8 @@ export function VaultView({
         let secret: string | null | undefined;
         if (d.password) secret = d.save_password ? d.password : null;
         else if (!d.save_password) secret = null;
-        else secret = composerTelnetSecretRef.current ? undefined : null;
+        else if (composerTelnetSecretRef.current === false) secret = null;
+        else secret = undefined; // 已有密码或读取失败：不覆写
         if (secret !== undefined) {
           await api.setProfileTelnetPassword(base.id, secret);
           composerTelnetSecretRef.current = secret !== null;
@@ -4511,12 +4514,15 @@ export function VaultView({
                         // 协议切换后凭据 / MFA / 密码语义不同，清掉 SSH 专属选择。
                         credential_id: protocol === "telnet" ? "" : composer.credential_id,
                         mfa: protocol === "telnet" ? false : composer.mfa,
-                        password: protocol === "telnet" ? "" : composer.password,
+                        // 两个协议的密码语义不同，切换后一律清空，避免 Telnet 密码写成 SSH 口令
+                        password: "",
                         save_password:
                           protocol === "telnet" ? true : composer.save_password,
                       });
                       setPassMasked(
-                        protocol === "ssh" ? false : composerTelnetSecretRef.current,
+                        protocol === "ssh"
+                          ? false
+                          : Boolean(composerTelnetSecretRef.current),
                       );
                       if (protocol === "telnet") {
                         setCredPick(null);

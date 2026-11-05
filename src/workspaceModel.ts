@@ -26,6 +26,8 @@ export interface SerialSessionConfig {
 
 /** Telnet 标签的连接参数（对齐 Netcatty host 的 protocol=telnet；凭据可选）。 */
 export interface TelnetSessionConfig {
+  /** 来源主机档案 id；用于恢复工作区时按需回取密码（不落盘）。 */
+  profileId?: string;
   host: string;
   port: number;
   /** 发送回车时使用的行结束符（NVT 默认 CRLF）。 */

@@ -1,4 +1,4 @@
-﻿//! 代理库 CRUD（`proxy_profiles` 表，schema v40）。
+//! 代理库 CRUD（`proxy_profiles` 表，schema v40）。
 //!
 //! 一条记录 = 一份可复用的 HTTP / SOCKS5 代理配置（对齐 Netcatty
 //! `ProxyProfile` 的 label + config）。密码不入表，走 SecretStore

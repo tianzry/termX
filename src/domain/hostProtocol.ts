@@ -36,13 +36,14 @@ export function telnetSessionFromProfile(
   profile: Pick<
     Profile,
     "host" | "port" | "telnet_username" | "telnet_charset"
-  >,
+  > & { id?: string },
   password: string | null,
 ): TelnetSessionConfig {
   const username = (profile.telnet_username ?? "").trim();
   const encoding: TerminalEncoding =
     profile.telnet_charset === "gb18030" ? "gb18030" : "utf-8";
   return {
+    ...(profile.id ? { profileId: profile.id } : {}),
     host: profile.host,
     port: profile.port || 23,
     inputNewline: "crlf",

@@ -310,6 +310,13 @@ export function TerminalPane({
 }: Props) {
   const isSsh = tab.connector.kind === "ssh";
   const sshProfileId = tab.connector.kind === "ssh" ? tab.connector.profileId : null;
+  /** 终端编码按主机持久化的 key：SSH 用 profileId，Telnet 用来源档案 id。 */
+  const encodingProfileId =
+    tab.connector.kind === "ssh"
+      ? tab.connector.profileId
+      : tab.connector.kind === "telnet"
+        ? tab.connector.session.profileId ?? null
+        : null;
 
   const [status, setStatus] = useState<PaneStatus>("connecting");
   // 会话标签状态点：把窗格级连接状态上报给 Workspace（对照 Netcatty tab dot）。
@@ -350,7 +357,7 @@ export function TerminalPane({
   const [encoding, setEncoding] = useState<TerminalEncoding>(() =>
     tab.connector.kind === "telnet" && tab.connector.session.encoding
       ? tab.connector.session.encoding
-      : loadTerminalEncoding(sshProfileId),
+      : loadTerminalEncoding(encodingProfileId),
   );
   const encodingRef = useRef<TerminalEncoding>(encoding);
   /**
@@ -472,8 +479,8 @@ export function TerminalPane({
   useEffect(() => {
     encodingRef.current = encoding;
     decoderRef.current = createTerminalDecoder(encoding);
-    saveTerminalEncoding(sshProfileId, encoding);
-  }, [encoding, sshProfileId]);
+    saveTerminalEncoding(encodingProfileId, encoding);
+  }, [encoding, encodingProfileId]);
 
   /** 「更多」菜单点外部关闭（对齐 Netcatty Popover 的 dismiss 行为）。 */
   useEffect(() => {

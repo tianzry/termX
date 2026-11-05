@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-11-06 — #208 复审 #204（c422e22 / 2bf4568）Telnet 纳入主机协议
+
+- 复审分级与处理：
+  - **高 1｜Telnet 密码明文写入工作区**（`Workspace` 保存时 `session.password` 随 connector 进 localStorage）：已修。新增 `workspaceStore.sanitizeConnectorForStorage` 落盘前剥离密码；`TelnetSessionConfig` 增 `profileId`，恢复工作区前 `hydrateTelnetPasswords` 按 profileId 从 SecretStore 回填。单测断言 localStorage 不含探针、profileId 保留。
+  - **高 2｜CLI 编译失败**（`bin/rssh/commands/add.rs` Profile 字面量缺 `telnet_username`/`telnet_charset`，默认 `cargo check` 不编译 `--features cli`）：已修；门禁补 `cargo check --features cli --bin rssh`。
+  - **中 3｜headless/CLI 缺接线**：`server.rs` 补 `profile_telnet_password_get/set` 分派；headless `delete_profile` 与 CLI `rssh profile rm` 同步清理 `totp:<id>` / `proxy:<id>` / `telnet:<id>:password`，不再留孤儿密文。
+  - **中 4｜编辑时读密码失败会误删**：`composerTelnetSecretRef` 改三态（`null`=读取失败），保存时空口令 + 三态 `null/true` 一律跳过写入；仅确认无密码（`false`）才删除。
+  - **中 5｜跨协议密码误用**：协议下拉切换一律清空 `password`，避免 Telnet 口另写成 SSH 凭据 secret。
+  - **中 6｜Telnet 编码改动不持久**：`TerminalPane` 统一 `encodingProfileId`（SSH=profileId，Telnet=session.profileId），编码选择与主机偏好写同一 key，下次连接不再回退。
+  - **低 7/8｜** 密码回取失败仍按空密码尝试自动登录（仅日志层面）、复制/导入 Telnet 主机不带密码：记录不改，属产品口径，导入后需手动填写。
+  - **低 9｜** `db/proxy_profile.rs` UTF-8 BOM 已移除。
+- 门禁：`npm run test:run` 746 通过、`npm run build` 通过、`cargo test --lib` 943 通过、`cargo check --features cli --bin rssh` 通过。
+- **未实测**：恢复工作区时密码回填的真实重连（需重启桌面端 + SecretStore 有值）仅单测与静态确认。
+
 ## 2026-11-06 — #204 Telnet 纳入主机协议（保留独立 Telnet 入口）
 
 - 数据层：`profiles.protocol` 白名单扩展为 `ssh` / `local` / `serial` / `telnet`（未知值报 `profile_protocol_invalid`，避免拼写错误静默按 SSH 连接）；新增可空列 `telnet_username` / `telnet_charset`（schema v48，`column_exists` 幂等，老库只加列不写默认值 → 原 SSH 主机行为不变）。

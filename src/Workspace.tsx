@@ -40,8 +40,10 @@ import {
   loadWorkspace,
   saveWorkspace,
   clearWorkspace,
+  type SavedTab,
   type SavedWorkspace,
 } from "./backend/workspaceStore";
+import { getProfileTelnetPassword } from "./backend/client";
 
 export interface WorkspaceHandle {
   /** 新建一个标签并立即连接。 */
@@ -460,11 +462,39 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       );
     }, []);
 
+    /**
+     * 工作区落盘时已剥离 Telnet 密码（见 workspaceStore.sanitizeConnectorForStorage），
+     * 恢复前按 profileId 从 SecretStore 回填；取不到就保持空密码，避免明文进 localStorage。
+     */
+    async function hydrateTelnetPasswords(tabs: SavedTab[]): Promise<SavedTab[]> {
+      return Promise.all(
+        tabs.map(async (tab) => {
+          if (tab.connector.kind !== "telnet") return tab;
+          const profileId = tab.connector.session.profileId;
+          if (!profileId) return tab;
+          try {
+            const password = await getProfileTelnetPassword(profileId);
+            if (password == null) return tab;
+            return {
+              ...tab,
+              connector: {
+                ...tab.connector,
+                session: { ...tab.connector.session, password },
+              },
+            };
+          } catch {
+            return tab;
+          }
+        }),
+      );
+    }
+
     // 恢复 / 忽略
-    function acceptRestore() {
+    async function acceptRestore() {
       if (!restore) return;
-      setTabs(restore.tabs);
-      setActiveTabId(restore.activeTabId ?? restore.tabs[0]?.id ?? null);
+      const tabs = await hydrateTelnetPasswords(restore.tabs);
+      setTabs(tabs);
+      setActiveTabId(restore.activeTabId ?? tabs[0]?.id ?? null);
       setActivePaneByTab(
         Object.fromEntries(
           restore.tabs.map((t) => [t.id, firstLeafId(t.layout)]),

@@ -99,9 +99,21 @@ export function loadWorkspace(key: string = KEY): SavedWorkspace | null {
   }
 }
 
+/** 落盘前剥离 Telnet 自动登录密码；恢复时按 profileId 从 SecretStore 重新取。 */
+export function sanitizeConnectorForStorage(connector: Connector): Connector {
+  if (connector.kind !== "telnet" || !connector.session.password) return connector;
+  const session = { ...connector.session };
+  delete session.password;
+  return { ...connector, session };
+}
+
 export function saveWorkspace(state: SavedWorkspace, key: string = KEY): void {
   try {
-    localStorage.setItem(key, JSON.stringify(state));
+    const tabs = state.tabs.map((tab) => ({
+      ...tab,
+      connector: sanitizeConnectorForStorage(tab.connector),
+    }));
+    localStorage.setItem(key, JSON.stringify({ ...state, tabs }));
   } catch {
     /* 隐私模式或配额满时静默失败，不影响会话 */
   }

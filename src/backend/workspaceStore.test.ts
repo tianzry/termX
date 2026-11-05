@@ -80,6 +80,35 @@ describe("workspaceStore", () => {
     expect(loadWorkspace()).toEqual(ws);
   });
 
+  it("Telnet 密码不写入 localStorage，profileId 保留用于恢复时回取", () => {
+    const ws = validWorkspace();
+    ws.tabs.push({
+      id: "t3",
+      title: "Telnet prod",
+      layout: { type: "leaf", id: "l4" },
+      connector: {
+        kind: "telnet",
+        session: {
+          profileId: "p9",
+          host: "10.0.0.5",
+          port: 23,
+          inputNewline: "crlf",
+          username: "admin",
+          password: "secret-probe",
+        },
+      },
+    });
+    saveWorkspace(ws);
+    expect(localStorage.getItem("termx.workspace.v1")).not.toContain("secret-probe");
+    const loaded = loadWorkspace();
+    const session = loaded?.tabs.find((t) => t.id === "t3")?.connector;
+    expect(session?.kind).toBe("telnet");
+    if (session?.kind === "telnet") {
+      expect(session.session.password).toBeUndefined();
+      expect(session.session.profileId).toBe("p9");
+    }
+  });
+
   it("无记录时返回 null", () => {
     expect(loadWorkspace()).toBeNull();
   });

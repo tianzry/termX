@@ -92,6 +92,8 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         serial_charset: None,
         distro: None,
         host_key_policy: None,
+        telnet_username: None,
+        telnet_charset: None,
     };
     rssh_lib::db::profile::insert(conn, &p)?;
     println!("Profile '{}' created.", p.name);

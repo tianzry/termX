@@ -65,6 +65,20 @@ describe("telnetSessionFromProfile", () => {
     });
   });
 
+  it("携带来源档案 id，供工作区恢复时按需回取密码", () => {
+    const session = telnetSessionFromProfile(
+      {
+        id: "p1",
+        host: "10.0.0.9",
+        port: 23,
+        telnet_username: "admin",
+        telnet_charset: "utf-8",
+      },
+      null,
+    );
+    expect(session.profileId).toBe("p1");
+  });
+
   it("无用户名时丢弃密码（无法自动登录）", () => {
     const session = telnetSessionFromProfile(
       { ...base, telnet_username: "", telnet_charset: "utf-8" },

@@ -260,6 +260,16 @@ fn dispatch(
             ok((|| -> AppResult<()> {
                 crate::db::profile::delete(&state.db, &id)?;
                 crate::db::profile_env::delete_for_profile(&state.db, &id)?;
+                // 与 GUI 的 delete_profile 同语义：档案级 secret 不留孤儿密文。
+                state
+                    .secret_store
+                    .delete(&crate::secret::totp_secret_key(&id))?;
+                state
+                    .secret_store
+                    .delete(&crate::secret::proxy_secret_key(&id))?;
+                state
+                    .secret_store
+                    .delete(&crate::secret::telnet_password_key(&id))?;
                 Ok(())
             })())
         }
@@ -882,6 +892,19 @@ fn dispatch(
         ),
         "profile_proxy_password_set" => ok(
             crate::commands::profile::profile_proxy_password_set_impl(
+                state,
+                &arg::<String>(&args, "profileId")?,
+                args.get("secret").and_then(|v| v.as_str()),
+            ),
+        ),
+        "profile_telnet_password_get" => ok(
+            crate::commands::profile::profile_telnet_password_get_impl(
+                state,
+                &arg::<String>(&args, "profileId")?,
+            ),
+        ),
+        "profile_telnet_password_set" => ok(
+            crate::commands::profile::profile_telnet_password_set_impl(
                 state,
                 &arg::<String>(&args, "profileId")?,
                 args.get("secret").and_then(|v| v.as_str()),
