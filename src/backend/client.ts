@@ -1242,6 +1242,30 @@ export function monitorSample(
   return invoke("monitor_sample", { sessionId, timeoutMs });
 }
 
+/** 监控面板（#206）：默认「全部 SSH 主机」不入库，见 monitorPanelsModel。 */
+export interface MonitorPanel {
+  id: string;
+  name: string;
+  host_ids: string[];
+  layout: "charts" | "list";
+  /** 0 = 自动列数。 */
+  columns: number;
+  interval: number;
+  sort_order: number;
+}
+
+export function listMonitorPanels(): Promise<MonitorPanel[]> {
+  return invoke("list_monitor_panels");
+}
+
+export function saveMonitorPanel(panel: MonitorPanel): Promise<MonitorPanel> {
+  return invoke("save_monitor_panel", { panel });
+}
+
+export function deleteMonitorPanel(id: string): Promise<void> {
+  return invoke("delete_monitor_panel", { id });
+}
+
 /** 云同步：一次发布 / 拉取使用的元数据（版本 + 配置摘要）。 */
 export interface SyncMetadata {
   version: number;

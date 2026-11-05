@@ -5014,6 +5014,198 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* 监控面板编辑弹窗（#206） */
+.monitor-panel-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: hsl(0 0% 0% / 0.45);
+}
+
+.monitor-panel-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: min(640px, 100%);
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card));
+  box-shadow: 0 24px 60px hsl(0 0% 0% / 0.35);
+}
+
+.monitor-panel-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.monitor-panel-dialog-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.monitor-panel-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.monitor-panel-dialog-close:hover {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+
+.monitor-panel-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  overflow-y: auto;
+}
+
+.monitor-panel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.monitor-panel-field input,
+.monitor-panel-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+}
+
+.monitor-panel-field-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.monitor-panel-hosts {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--secondary) / 0.4);
+}
+
+.monitor-panel-host-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.monitor-panel-host-row:hover {
+  background: hsl(var(--secondary) / 0.7);
+}
+
+.monitor-panel-host-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-panel-host-addr {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.monitor-panel-hint {
+  margin: 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.monitor-panel-error {
+  margin: 0;
+  font-size: 12px;
+  color: hsl(var(--destructive));
+}
+
+.monitor-panel-dialog-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.monitor-panel-dialog-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.monitor-panel-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.monitor-panel-btn:hover:not(:disabled) {
+  background: hsl(var(--secondary) / 0.75);
+}
+
+.monitor-panel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.monitor-panel-btn.is-primary {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.monitor-panel-btn.is-danger {
+  border-color: hsl(var(--destructive) / 0.5);
+  color: hsl(var(--destructive));
+}
+
+.monitor-panel-btn.is-danger.is-confirming {
+  border-color: hsl(var(--destructive));
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+}
+
 .term-record-dot {
   color: hsl(var(--destructive));
 }

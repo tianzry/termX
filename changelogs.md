@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-06 — #206 监控多面板持久化（DB 表 + 面板 CRUD + 按面板监控）
+
+- 数据层：schema v49 新增 `monitor_panels`（`id / name / host_ids(JSON) / layout / columns / interval / sort_order`），`CREATE TABLE IF NOT EXISTS` + 索引，迁移块幂等，重复执行安全；`SCHEMA_VERSION` 48→49。
+- 后端：`db/monitor_panel.rs` 提供 `list/save/delete`；保存前归一化（名称去空白、空名/空 id 报 `monitor_panel_name_required` / `monitor_panel_id_required`、主机去空去重、`layout` 仅 charts/list、`columns` 上限 8、`interval` clamp 1..60），按 `sort_order ASC, name ASC` 返回；`models::MonitorPanel` + 三个 Tauri 命令注册进 `lib.rs`，`server.rs` headless 三命令同引擎分派（R4）。
+  - 顺带修复 headless 既有编译错误：`server.rs` 的 `recordings_dir` 分派把 `String` 直接传给 `ok(AppResult<T>)`，补 `Ok(...)` 后 `cargo check --features server --bin rssh-server` 通过（该错误与 #206 无关，但阻塞 headless 门禁）。
+- 前端：新增 `src/monitor/monitorPanelsModel.ts`（默认面板 `all`=「全部 SSH 主机」、`panelsWithDefault` / `profilesForPanel` / `sortPanels` / `nextSortOrder` / `normalizePanelDraft`）与 5 例单测。
+- `MonitorView`：页头新增面板下拉（运行中禁用切换，保证开始/停止只作用于当前面板）、新建/编辑按钮；自定义面板可编辑名称、勾选 SSH 主机、默认布局、列数（自动 / 1-4）、刷新间隔、排序；删除需二次确认；默认面板不可编辑/删除。选面板即应用其布局 / 列数 / 间隔；页头改间隔或图表/列表会即时落库到自定义面板。图表网格 `columns=0` 沿用 `auto-fill minmax(340px,1fr)`，否则固定列数。
+- 交互口径：面板存主机 id，已删除主机的 id 自动忽略；自定义面板保存要求 ≥1 台 SSH 主机；面板读取失败在页头下方提示，不阻断「全部 SSH 主机」默认面板。
+- 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 947 通过、`cargo check --features server --bin rssh-server` 通过。
+- **未实测**：桌面端面板 CRUD 点击回归与截图（数据层/模型有单测，UI 仅静态检查）；多面板同时运行（按设计运行中不能切面板，需先停止）。
+
 ## 2026-11-06 — #205 SSH 终端右侧笔记面板
 
 - Netcatty 取证：笔记是终端侧栏（`TerminalLayer` side panel）的一个工具 tab，不是独立窗口；侧栏默认宽 420px（最小 280px），可停靠；sidebar 模式只显示「搜索 + 分组/笔记列表」，点笔记后在侧栏内切换为编辑态；复用全局 `NotesManager` 数据（本地笔记库），`ssh://` 链接点击打开对应主机；侧栏开关按标签页记忆（`sidePanelOpenTabs`）。

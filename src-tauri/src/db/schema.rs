@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 48;
+const SCHEMA_VERSION: u32 = 49;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -982,6 +982,23 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if version < 49 {
+        // 监控多面板（#206）：名称、SSH 主机集合（JSON）、布局 / 列数、刷新间隔、排序。
+        // 「全部 SSH 主机」是前端固定默认面板，不入库。
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS monitor_panels (
+                 id         TEXT PRIMARY KEY,
+                 name       TEXT NOT NULL,
+                 host_ids   TEXT NOT NULL DEFAULT '[]',
+                 layout     TEXT NOT NULL DEFAULT 'charts',
+                 columns    INTEGER NOT NULL DEFAULT 0,
+                 interval   INTEGER NOT NULL DEFAULT 2,
+                 sort_order INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE INDEX IF NOT EXISTS idx_monitor_panels_order ON monitor_panels(sort_order);",
+        )?;
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1300,6 +1317,24 @@ mod tests {
             )
             .unwrap();
         assert_eq!(value, None);
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_49_creates_monitor_panels_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "user_version", 48u32).unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        assert!(table_exists(&conn, "monitor_panels").unwrap());
+        for col in ["name", "host_ids", "layout", "columns", "interval", "sort_order"] {
+            assert!(column_exists(&conn, "monitor_panels", col).unwrap(), "missing {col}");
+        }
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();

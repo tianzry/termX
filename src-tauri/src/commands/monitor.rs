@@ -610,6 +610,27 @@ pub async fn monitor_sample(
     .await
 }
 
+/// Tauri 命令：列出监控面板（按 sort_order）。
+#[tauri::command]
+pub fn list_monitor_panels(state: State<'_, AppState>) -> AppResult<Vec<crate::models::MonitorPanel>> {
+    crate::db::monitor_panel::list(&state.db)
+}
+
+/// Tauri 命令：新建 / 更新监控面板（按 id upsert）。
+#[tauri::command]
+pub fn save_monitor_panel(
+    state: State<'_, AppState>,
+    panel: crate::models::MonitorPanel,
+) -> AppResult<crate::models::MonitorPanel> {
+    crate::db::monitor_panel::save(&state.db, &panel)
+}
+
+/// Tauri 命令：删除监控面板。
+#[tauri::command]
+pub fn delete_monitor_panel(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    crate::db::monitor_panel::delete(&state.db, &id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

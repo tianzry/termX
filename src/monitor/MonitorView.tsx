@@ -18,7 +18,7 @@ import {
   type CSSProperties,
 } from "react";
 import * as api from "../backend/client";
-import type { MonitorSample, Profile } from "../backend/client";
+import type { MonitorPanel, MonitorSample, Profile } from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import {
   appendPoint,
@@ -35,10 +35,18 @@ import {
   type TrendField,
 } from "../domain/monitorModel";
 import { Icon } from "../ui/icons";
+import { MonitorPanelDialog } from "./MonitorPanelDialog";
+import {
+  ALL_PANELS_ID,
+  DEFAULT_MONITOR_INTERVAL,
+  MONITOR_INTERVALS,
+  nextSortOrder,
+  panelsWithDefault,
+  profilesForPanel,
+  sortPanels,
+} from "./monitorPanelsModel";
 
-const INTERVALS = [2, 5, 10, 30];
 const RANGES = [5, 15, 30];
-const DEFAULT_INTERVAL = 2;
 const DEFAULT_RANGE = 5;
 const VIEW_KEY = "termx.monitor.view.v1";
 
@@ -286,9 +294,26 @@ export function MonitorView({
     () => profiles.filter((p) => (p.protocol ?? "ssh") === "ssh"),
     [profiles],
   );
-  const movableIds = useMemo(() => new Set(movable.map((p) => p.id)), [movable]);
-  const movableIdsRef = useRef(movableIds);
-  movableIdsRef.current = movableIds;
+
+  // #206：面板列表来自 DB；「全部 SSH 主机」由前端派生。开始/停止只作用于当前面板。
+  const [panels, setPanels] = useState<MonitorPanel[]>([]);
+  const [panelId, setPanelId] = useState(ALL_PANELS_ID);
+  const [panelsError, setPanelsError] = useState<string | null>(null);
+  const [editor, setEditor] = useState<{ initial: MonitorPanel; canDelete: boolean } | null>(
+    null,
+  );
+  const [savingPanel, setSavingPanel] = useState(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
+
+  const allPanels = useMemo(() => panelsWithDefault(panels, movable), [panels, movable]);
+  const currentPanel = allPanels.find((panel) => panel.id === panelId) ?? allPanels[0];
+  const panelProfiles = useMemo(
+    () => profilesForPanel(movable, currentPanel),
+    [movable, currentPanel],
+  );
+  const panelIds = useMemo(() => new Set(panelProfiles.map((p) => p.id)), [panelProfiles]);
+  const panelIdsRef = useRef(panelIds);
+  panelIdsRef.current = panelIds;
 
   const [hosts, setHosts] = useState<Record<string, HostState>>({});
   const hostsRef = useRef(hosts);
@@ -299,7 +324,7 @@ export function MonitorView({
   const runningRef = useRef(running);
   runningRef.current = running;
 
-  const [interval, setIntervalSec] = useState(DEFAULT_INTERVAL);
+  const [interval, setIntervalSec] = useState(DEFAULT_MONITOR_INTERVAL);
   const [range, setRange] = useState(DEFAULT_RANGE);
   const rangeRef = useRef(range);
   rangeRef.current = range;
@@ -311,6 +336,20 @@ export function MonitorView({
     }
   });
 
+  useEffect(() => {
+    let alive = true;
+    api
+      .listMonitorPanels()
+      .then((list) => {
+        if (alive) setPanels(list);
+      })
+      .catch((e) => {
+        if (alive) setPanelsError(userVisibleError(String(e)));
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   function patchHost(id: string, patch: Partial<HostState>) {
     const next = {
@@ -410,7 +449,7 @@ export function MonitorView({
     if (!runningRef.current || tickBusyRef.current) return;
     tickBusyRef.current = true;
     try {
-      for (const id of movableIdsRef.current) {
+      for (const id of panelIdsRef.current) {
         if (!runningRef.current) return;
         const state = hostsRef.current[id];
         if (!state || state.unsupported || pendingRef.current.has(id)) continue;
@@ -451,7 +490,7 @@ export function MonitorView({
   }, []);
 
   function start() {
-    const ids = [...movableIdsRef.current];
+    const ids = [...panelIdsRef.current];
     if (!ids.length) return;
     for (const id of ids) {
       patchHost(id, {
@@ -514,8 +553,92 @@ export function MonitorView({
     }
   }
 
+  /** 切换面板：应用该面板的布局 / 列数 / 间隔；运行中禁止切换（开始/停止只作用于当前面板）。 */
+  function applyPanel(id: string) {
+    const panel = allPanels.find((item) => item.id === id);
+    if (!panel) return;
+    setPanelId(panel.id);
+    setIntervalSec(panel.interval);
+    changeView(panel.layout);
+  }
+
+  /** 自定义面板的页头偏好即时落库；默认面板只改本次会话。 */
+  function savePanelPrefs(patch: Partial<MonitorPanel>) {
+    if (!currentPanel || currentPanel.id === ALL_PANELS_ID) return;
+    const next = { ...currentPanel, ...patch };
+    setPanels((previous) =>
+      sortPanels(previous.map((panel) => (panel.id === next.id ? next : panel))),
+    );
+    void api
+      .saveMonitorPanel(next)
+      .catch((e) => setPanelsError(userVisibleError(String(e))));
+  }
+
+  function openCreatePanel() {
+    setEditorError(null);
+    setEditor({
+      canDelete: false,
+      initial: {
+        id: crypto.randomUUID(),
+        name: "",
+        host_ids: [],
+        layout: currentPanel.layout,
+        columns: currentPanel.columns,
+        interval: currentPanel.interval,
+        sort_order: nextSortOrder(panels),
+      },
+    });
+  }
+
+  function openEditPanel() {
+    if (currentPanel.id === ALL_PANELS_ID) return;
+    setEditorError(null);
+    setEditor({
+      canDelete: true,
+      initial: { ...currentPanel, host_ids: [...currentPanel.host_ids] },
+    });
+  }
+
+  async function savePanel(panel: MonitorPanel) {
+    setSavingPanel(true);
+    setEditorError(null);
+    try {
+      const saved = await api.saveMonitorPanel(panel);
+      setPanels((previous) =>
+        sortPanels([...previous.filter((item) => item.id !== saved.id), saved]),
+      );
+      setEditor(null);
+      setPanelId(saved.id);
+      setIntervalSec(saved.interval);
+      changeView(saved.layout);
+    } catch (e) {
+      setEditorError(userVisibleError(String(e)));
+    } finally {
+      setSavingPanel(false);
+    }
+  }
+
+  async function deletePanel(panel: MonitorPanel) {
+    setSavingPanel(true);
+    setEditorError(null);
+    try {
+      await api.deleteMonitorPanel(panel.id);
+      setPanels((previous) => previous.filter((item) => item.id !== panel.id));
+      setEditor(null);
+      if (panelId === panel.id) {
+        setPanelId(ALL_PANELS_ID);
+        setIntervalSec(DEFAULT_MONITOR_INTERVAL);
+        changeView("charts");
+      }
+    } catch (e) {
+      setEditorError(userVisibleError(String(e)));
+    } finally {
+      setSavingPanel(false);
+    }
+  }
+
   const now = Date.now();
-  const monitoredProfiles = running ? movable.filter((p) => hosts[p.id]) : [];
+  const monitoredProfiles = running ? panelProfiles.filter((p) => hosts[p.id]) : [];
 
   const renderCard = (profile: Profile) => {
     const state = hosts[profile.id] ?? EMPTY_HOST;
@@ -775,7 +898,7 @@ export function MonitorView({
         <span>网络</span>
         <span>更新</span>
       </div>
-      {movable.map((profile) => {
+      {panelProfiles.map((profile) => {
         const state = hosts[profile.id] ?? EMPTY_HOST;
         const sample = state.sample;
         const stale =
@@ -833,10 +956,38 @@ export function MonitorView({
         }}
       >
         <div style={{ fontSize: 15, fontWeight: 600, marginRight: 4 }}>监控</div>
+        <select
+          value={currentPanel.id}
+          disabled={running}
+          aria-label="监控面板"
+          title={running ? "运行中不能切换面板，请先停止" : "选择监控面板"}
+          onChange={(e) => applyPanel(e.target.value)}
+          style={{ maxWidth: 180, padding: "4px 6px", borderRadius: 6, border: "1px solid hsl(var(--border))", background: "hsl(var(--secondary))", color: "hsl(var(--foreground))", fontSize: 12 }}
+        >
+          {allPanels.map((panel) => (
+            <option key={panel.id} value={panel.id}>{panel.name}</option>
+          ))}
+        </select>
+        <button
+          style={{ ...iconBtn, padding: "5px 6px", opacity: running ? 0.5 : 1 }}
+          title="新建面板"
+          disabled={running}
+          onClick={openCreatePanel}
+        >
+          <Icon name="plus" size={13} />
+        </button>
+        <button
+          style={{ ...iconBtn, padding: "5px 6px", opacity: running || currentPanel.id === ALL_PANELS_ID ? 0.5 : 1 }}
+          title={currentPanel.id === ALL_PANELS_ID ? "默认面板不可编辑" : "编辑面板"}
+          disabled={running || currentPanel.id === ALL_PANELS_ID}
+          onClick={openEditPanel}
+        >
+          <Icon name="pencil" size={13} />
+        </button>
         <span style={{ ...muted }}>
           {running
-            ? `${movable.length} 台监控中 · 每 ${interval} 秒采样`
-            : `${movable.length} 台 SSH 主机 · 未开始`}
+            ? `${panelProfiles.length} 台监控中 · 每 ${interval} 秒采样`
+            : `${panelProfiles.length} 台 SSH 主机 · 未开始`}
         </span>
         <div style={{ flex: 1 }} />
         <label style={{ display: "flex", alignItems: "center", gap: 5, ...muted }}>
@@ -844,10 +995,14 @@ export function MonitorView({
           <select
             value={interval}
             disabled={running}
-            onChange={(e) => setIntervalSec(Number(e.target.value))}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setIntervalSec(next);
+              savePanelPrefs({ interval: next });
+            }}
             style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid hsl(var(--border))", background: "hsl(var(--secondary))", color: "hsl(var(--foreground))", fontSize: 12 }}
           >
-            {INTERVALS.map((value) => (
+            {MONITOR_INTERVALS.map((value) => (
               <option key={value} value={value}>每 {value} 秒</option>
             ))}
           </select>
@@ -866,14 +1021,20 @@ export function MonitorView({
         </label>
         <div style={{ display: "flex", border: "1px solid hsl(var(--border))", borderRadius: 6, overflow: "hidden" }}>
           <button
-            onClick={() => changeView("charts")}
+            onClick={() => {
+              changeView("charts");
+              savePanelPrefs({ layout: "charts" });
+            }}
             style={{ ...btn, border: "none", borderRadius: 0, background: view === "charts" ? "hsl(var(--primary) / 0.18)" : "transparent", color: view === "charts" ? "hsl(var(--primary))" : "hsl(var(--foreground))" }}
             title="图表"
           >
             图表
           </button>
           <button
-            onClick={() => changeView("list")}
+            onClick={() => {
+              changeView("list");
+              savePanelPrefs({ layout: "list" });
+            }}
             style={{ ...btn, border: "none", borderRadius: 0, background: view === "list" ? "hsl(var(--primary) / 0.18)" : "transparent", color: view === "list" ? "hsl(var(--primary))" : "hsl(var(--foreground))" }}
             title="列表"
           >
@@ -884,7 +1045,7 @@ export function MonitorView({
           <button
             style={{ ...btn, borderColor: "hsl(var(--primary) / 0.6)", color: "hsl(var(--primary))" }}
             onClick={start}
-            disabled={movable.length === 0}
+            disabled={panelProfiles.length === 0}
           >
             <Icon name="play" size={13} /> 开始监控
           </button>
@@ -895,6 +1056,12 @@ export function MonitorView({
         )}
       </div>
 
+      {panelsError && (
+        <p role="alert" style={{ margin: "6px 0 0", fontSize: 11, color: "hsl(var(--destructive))" }}>
+          {panelsError}
+        </p>
+      )}
+
       {movable.length === 0 ? (
         <div className="monitor-empty">
           <div className="monitor-empty-icon">
@@ -902,6 +1069,21 @@ export function MonitorView({
           </div>
           <h2>还没有可监控的主机</h2>
           <p>监控只对已保存的 SSH 主机生效；本地终端 / 串口 / Telnet 不支持采集。</p>
+        </div>
+      ) : panelProfiles.length === 0 ? (
+        <div className="monitor-empty">
+          <div className="monitor-empty-icon">
+            <Icon name="activity" size={32} />
+          </div>
+          <h2>当前面板还没有主机</h2>
+          <p>编辑「{currentPanel.name}」并勾选要监控的 SSH 主机。</p>
+          <button
+            className="monitor-empty-btn"
+            onClick={openEditPanel}
+            disabled={currentPanel.id === ALL_PANELS_ID}
+          >
+            <Icon name="pencil" size={14} /> 编辑面板
+          </button>
         </div>
       ) : !running ? (
         // 对齐 Netcatty MonitorPanels 空态：居中图标 + 标题 + 说明 + 主按钮。
@@ -911,7 +1093,7 @@ export function MonitorView({
           </div>
           <h2>一眼查看多台主机</h2>
           <p>
-            开始后会为 {movable.length} 台 SSH 主机各建独立会话并每 {interval} 秒只读采样；
+            开始后会为「{currentPanel.name}」的 {panelProfiles.length} 台 SSH 主机各建独立会话并每 {interval} 秒只读采样；
             连接失败自动退避重试。Netcatty 有而 termX 后端无数据的字段会置灰并写明原因。
           </p>
           <button className="monitor-empty-btn" onClick={start}>
@@ -919,11 +1101,40 @@ export function MonitorView({
           </button>
         </div>
       ) : view === "charts" ? (
-        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 12, overflowY: "auto", paddingBottom: 12 }}>
+        <div
+          style={{
+            marginTop: 12,
+            display: "grid",
+            gridTemplateColumns:
+              currentPanel.columns > 0
+                ? `repeat(${currentPanel.columns}, minmax(260px, 1fr))`
+                : "repeat(auto-fill, minmax(340px, 1fr))",
+            gap: 12,
+            overflowY: "auto",
+            overflowX: "auto",
+            paddingBottom: 12,
+          }}
+        >
           {monitoredProfiles.map(renderCard)}
         </div>
       ) : (
         <div style={{ marginTop: 12, overflowY: "auto", paddingBottom: 12 }}>{renderTable()}</div>
+      )}
+
+      {editor && (
+        <MonitorPanelDialog
+          initial={editor.initial}
+          canDelete={editor.canDelete}
+          sshProfiles={movable}
+          saving={savingPanel}
+          error={editorError}
+          onSave={savePanel}
+          onDelete={deletePanel}
+          onClose={() => {
+            setEditor(null);
+            setEditorError(null);
+          }}
+        />
       )}
     </div>
   );

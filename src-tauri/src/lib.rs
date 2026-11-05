@@ -288,6 +288,9 @@ pub fn run() {
             commands::session::ssh_host_key_cancel,
             commands::session::ssh_exec,
             commands::monitor::monitor_sample,
+            commands::monitor::list_monitor_panels,
+            commands::monitor::save_monitor_panel,
+            commands::monitor::delete_monitor_panel,
             // session lifecycle
             commands::lifecycle::reconcile_sessions,
             // PTY (desktop only)

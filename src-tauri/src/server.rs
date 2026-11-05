@@ -855,7 +855,7 @@ fn dispatch(
             state,
             arg(&args, "name")?,
         )),
-        "recordings_dir" => ok(crate::commands::settings::recordings_dir_impl(state)),
+        "recordings_dir" => ok(Ok(crate::commands::settings::recordings_dir_impl(state))),
 
         "read_default_key_file" => ok(crate::commands::profile::read_default_key_file(arg(
             &args, "name",
@@ -1163,6 +1163,22 @@ async fn dispatch_async(
             .await
             .map_err(err_value)?;
             serde_json::to_value(sample).map_err(|e| json!(e.to_string()))
+        }
+        "list_monitor_panels" => {
+            let panels = crate::db::monitor_panel::list(&state.db).map_err(err_value)?;
+            serde_json::to_value(panels).map_err(|e| json!(e.to_string()))
+        }
+        "save_monitor_panel" => {
+            let panel: crate::models::MonitorPanel =
+                serde_json::from_value(args.get("panel").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| json!(e.to_string()))?;
+            let saved = crate::db::monitor_panel::save(&state.db, &panel).map_err(err_value)?;
+            serde_json::to_value(saved).map_err(|e| json!(e.to_string()))
+        }
+        "delete_monitor_panel" => {
+            let id: String = arg(&args, "id")?;
+            crate::db::monitor_panel::delete(&state.db, &id).map_err(err_value)?;
+            Ok(Value::Null)
         }
         "ssh_write" => {
             let sid: String = arg(&args, "sessionId")?;

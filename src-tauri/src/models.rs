@@ -912,6 +912,32 @@ pub struct CastHeader {
     pub timestamp: i64,
 }
 
+/// 监控面板（#206）。`host_ids` 只存 SSH 主机档案 id，按 JSON 数组落库；
+/// `layout` 取 `charts` / `list`，`columns = 0` 表示自动列数。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorPanel {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub host_ids: Vec<String>,
+    #[serde(default = "default_monitor_layout")]
+    pub layout: String,
+    #[serde(default)]
+    pub columns: u32,
+    #[serde(default = "default_monitor_interval")]
+    pub interval: u32,
+    #[serde(default)]
+    pub sort_order: u32,
+}
+
+pub fn default_monitor_layout() -> String {
+    "charts".to_owned()
+}
+
+pub fn default_monitor_interval() -> u32 {
+    2
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
