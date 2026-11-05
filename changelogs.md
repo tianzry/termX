@@ -15,7 +15,7 @@
 - 连接路径：新增 `src/domain/hostProtocol.ts` 纯函数 `hostProtocolOf` / `telnetSessionFromProfile`；`App.connect()` 对 Telnet 档案派生 `Connector.kind = "telnet"`，按需从 SecretStore 取密码后走现有 telnet 后端（卡片 / 右键 / 快速切换器共用同一入口）。会话字符集经 `TelnetSessionConfig.encoding` 注入 TerminalPane。
 - 标签 / 工具栏 / 右键：标签图标为 amber Terminal（对齐 Netcatty `protocolVisuals` 的 telnet 视觉）；既有 `toolbarCapabilities` 对 telnet 关闭 SFTP / 系统监控；右键菜单无「打开 SFTP」。主机卡片为 amber Terminal 头像 + 「Telnet · 用户名 · host:port」副标题。
 - 会话日志 / 录制 / 自动补全：均基于 `sid` 与前端缓冲，Telnet 会话同样生效（工具栏保留日志 / 录制入口）。
-- 测试：`hostProtocol` 6 例（老数据回落 / 端口 23 / 字符集 / 无用户名丢弃密码）、`vaultTransfer` Telnet 导入 2 例、DB roundtrip 与未知协议拒绝、schema v48 迁移幂等；`npm run test:run` 743 用例、`cargo test --lib` 943 用例、`npm run build`、`tauri build --debug` 通过。
+- 测试：`hostProtocol` 6 例（老数据回落 / 端口 23 / 字符集 / 无用户名丢弃密码）、`vaultTransfer` Telnet 导入 2 例、DB roundtrip 与未知协议拒绝、schema v48 迁移幂等；`npm run test:run` 744 用例、`cargo test --lib` 943 用例、`npm run build`、`tauri build --debug` 通过。
 - 实机验证：本地 `evidence/telnet-echo-server.mjs`（127.0.0.1:2324，含 IAC 协商）→ 新建 Telnet 主机（admin/termx）→ 卡片连接成功，服务端 banner / 自动登录 / `hello telnet` 回显均正常。
 - **未实测**：快速切换器 / 右键「连接」的端到端点击（与卡片共用 `onConnect`，静态确认）；Telnet 主机「测试连接」按设计禁用（后端仅有 SSH 测试命令）；导入 Telnet 主机不含密码，导入后需手动登录或重新填写。
 
