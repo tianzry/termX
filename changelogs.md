@@ -5884,6 +5884,75 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 
 - **门禁**：`npm run test:run` 64 文件 / **695 用例** ✓；`npm run build` ✓。
 
+---
+
+## 2026-11-05 — #178 取证：终端自动补全（下一轮实现依据）
+
+来源：`Netcatty/components/terminal/autocomplete/*`（`completionEngine.ts`、`remotePathCompleter.ts`、`useTerminalAutocomplete.ts`、`terminalAutocompleteKeyEvent.ts`、`AutocompletePopup.tsx`、`terminalCompletionProviders.ts`、`terminalAutocompleteSettings.ts`）。
+
+### A. Provider 清单（`getCompletions` 内顺序，score 降序后统一去重截断）
+
+| # | provider | 取数方式 | 匹配/评分 | 条数 |
+|---|---|---|---|---|
+| 1 | 命令前缀历史 | 内存 host 历史（`historyScope` host/global） | 前缀（不区分大小写），score 1000+使用频次 | 5 |
+| 2 | 路径实参历史 | 上次以该命令开头的历史行（`queryRecentHistoryByCommand`） | score 720−序号 | 5 |
+| 3 | 远端/本地路径 | SFTP `readdir`（远端）/ fs（本地），见 B | score 750；目录补 `/` | 受 maxSuggestions 约束 |
+| 4 | Fig spec（命令/子命令/选项/实参） | 内置 fig 规格库（`getAvailableSpecs`、`loadSpec`） | 命令名 600、子命令 800、option 700、实参 600；前缀匹配 | 每类 ≤10/15 |
+| 5 | 模糊历史 | 同一历史池 | 子序列匹配，score 500+频次；仅命令位 | 5 |
+| 6 | Snippet | host 片段库 | 前缀，score 高于历史；仅命令位 | — |
+| 7 | 插件 | 插件注册表 `terminal.completion`（deadline 750ms） | 与内置合并，按 `text` 去重保留高分 | ≤ maximum |
+
+- 全局：`debounceMs=100`、`minChars=1`、`maxSuggestions=50`、打字间隔 `<40ms` 时跳过、`enabled/showGhostText/showPopupMenu/livePreview/allowLineReplacement` 默认全 true、`historyScope=host`。
+- 最终按 `score desc → text localeCompare`，同 `text` 去重（插件优先让位内置），`slice(0, maximum)`。
+
+### B. 远端路径补全机制
+
+- **不是**每次按键跑 `ls`：连上后按目录读 SFTP `readdir` 建缓存，key = `sessionId + 绝对目录`；TTL 5s、同 key in-flight 请求合并、结果再按前缀过滤并二次缓存（过滤缓存单独限长）。
+- 先返回缓存命中（软预算 150ms），超时则走 `onLatePathSuggestions` 迟到回填；请求可 abort。
+- 当前词解析为「待列目录 + 过滤前缀」，展开 `~`、相对 `.`/`..`、绝对路径；目录补尾随 `/`，文件不补；`foldersOnly` 分支（`cd` 类命令只给目录）。命令白名单 `ls/cd/vim/...` 决定是否走路径补全，其余命令按 spec 的 `template`/`foldersOnly` 判断。
+- cwd 来源：会话 `cwd` + `cwdSource`（shell 集成/OSC 优先，prompt 解析兜底）；`canQueryPaths = protocol === "local" || sessionId !== undefined`。
+
+### C. 浮层规格（`AutocompletePopup.tsx`）
+
+- 主列表 `maxWidth 400`、行高 `28px`、`maxHeight 240`（估算 = n*28+8）、锚点距光标 `8px`、视口安全边 `8px`；下方空间不足则向上展开（`expandUpward`）。
+- 子目录面板并列展开，每级宽 `240`；详情浮窗 `280×96`；总高受视口钳制，列表可滚动。
+- 选中行底色 = 终端主题 accent 26%，hover 12%，边框同主题；等宽字体。
+- 来源标记：字母徽标 `h`(history 琥珀 `#FBBF24`) / `c`(command 绿 `#34D399`) / `s`(snippet) / `o`(option) / `a`(arg) / `p`(plugin) / `{`(spec) / `P`(path)，有回退色；路径行图标 Folder `#38BDF8` / File `#94A3B8` / Link `#A78BFA`（14px），目录名蓝色。
+- 行内容 = 名称 + 右侧描述（灰色小字）；`livePreview` 为 true 时，高亮候选实时写回终端输入行（`computeLivePreviewWrite`），Tab 放行前会先清掉预览。
+- 关闭条件：无候选 / Esc / 焦点离开 / 光标位移 / 输入被清空 / 切换到备用屏。
+
+### D. 接受键语义（`terminalAutocompleteKeyEvent.ts`）
+
+| 键 | 行为 |
+|---|---|
+| `↑`/`↓` | 在候选间移动；越过首/尾回到「原始输入」，不循环 |
+| `→` | 有 ghost 时接受 ghost（写尾随文本）；否则放行 |
+| `Tab` | **不消费候选**：清状态后放行给 shell 原生补全（与 xterm 输入一致） |
+| `Enter` | 弹层/ghost 可见时消费并提交当前选中候选（补尾随空格）；无候选时放行 |
+| `Esc` | 关闭并回滚 live preview |
+| 组合/IME | 组合态忽略；敏感输入（密码）不触发 |
+
+### E. 传输差异
+
+- SSH：全 provider（路径走 SFTP）。
+- 本地 shell：全 provider（路径走本地 fs）。
+- 串口：`protocol === "serial"` → 保留 popup/ghost，但 `livePreview=false`、`allowLineReplacement=false`；无 sessionId 即无路径 provider。
+- Telnet：与 SSH 同（有 sessionId，路径走当前会话），不做 livePreview 限制。
+
+### F. 对照表
+
+| 维度 | Netcatty 实际 | termX 现状 | 差距 | 处理方式（下一轮） |
+|---|---|---|---|---|
+| 候选来源 | 历史 + 路径 + fig spec + snippet + 插件 | `COMMON_COMMANDS` 静态表 + 命令历史 | 缺路径、缺 snippet；无 fig | 新增 path provider（SSH 走现有 `sftp_list`，本地走 fs 侧接口）；命令表保留静态表，不上 fig |
+| 远端路径 | SFTP readdir + 5s 缓存 + 迟到回填 | 无 | 完全没有 | 按当前会话复用 `sftp_list`（R1：只经 `backend/client.ts`），5s TTL + in-flight 合并 + 失败降级为无路径候选 |
+| 多级下钻 | 子目录并排面板，逐级 Enter/Tab 接受 | 无 | 无 | 先做「目录补 `/` + 单级列表」；多级面板列为后续 |
+| 浮层 | 400 宽 / 28 行高 / 240 高 / 来源徽标 / 目录图标 / 描述 | 自定义列表，无来源徽标、无描述、无目录图标 | 视觉与信息量不足 | 对齐尺寸与徽标，加目录图标与描述列 |
+| ghost / live preview | 有，可写回输入行 | 有（`computeLivePreviewWrite`） | 基本一致 | 保留，仅确认脚本/敏感输入不触发 |
+| 接受键 | Tab 放行、→ ghost、Enter 提交、Esc 回滚 | 语义已对齐（`resolveAutocompleteKey`） | 已一致 | 补单测：目录补 `/`、无候选放行、多级路径 |
+| 传输差异 | 串口禁 livePreview/行替换 | 未区分 | 串口会尝试写回 | 按 protocol 关闭 livePreview/行替换 |
+| 设置项 | 6 项（开关/ghost/popup/防抖/最少字符/条数/历史范围） | 仅常量 | 无可配置项 | 后续接设置页（非本轮必须） |
+
+
 
 
 
