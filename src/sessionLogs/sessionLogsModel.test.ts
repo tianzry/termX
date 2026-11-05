@@ -8,6 +8,7 @@ import {
   formatLogTime,
   parseAsciicast,
   sessionLogExportName,
+  sessionLogItemTitle,
   sortSessionLogs,
 } from "./sessionLogsModel";
 
@@ -105,17 +106,30 @@ describe("sessionLogsModel", () => {
     ).toEqual(["a"]);
   });
 
-  it("主机精确匹配、格式精确匹配", () => {
+  it("主机精确匹配；不再按格式过滤", () => {
     const logs = [
       log({ id: "a", host_name: "prod" }),
-      log({ id: "b", host_name: "prod-web" }),
+      log({ id: "b", host_name: "prod-web", format: "log" }),
     ];
     expect(filterSessionLogs(logs, { host: "prod" }).map((l) => l.id)).toEqual([
       "a",
     ]);
     expect(filterSessionLogs(logs, { host: "pro" })).toEqual([]);
-    expect(filterSessionLogs(logs, { format: "asciicast" })).toHaveLength(2);
-    expect(filterSessionLogs(logs, { format: "log" })).toEqual([]);
+    expect(filterSessionLogs(logs, {})).toHaveLength(2);
+  });
+
+  it("列表首行标题：与主机名相同则不重复，自定义标题保留", () => {
+    expect(sessionLogItemTitle(log({ title: "129", host_name: "129" }))).toBeNull();
+    expect(
+      sessionLogItemTitle(log({ title: "129", host_name: "129 " })),
+    ).toBeNull();
+    expect(
+      sessionLogItemTitle(log({ title: "数据库巡检", host_name: "prod" })),
+    ).toBe("数据库巡检");
+    expect(sessionLogItemTitle(log({ title: "my session", host_name: "" }))).toBe(
+      "my session",
+    );
+    expect(sessionLogItemTitle(log({ title: "  ", host_name: "prod" }))).toBeNull();
   });
 
   it("collectLogHosts 去重并排序", () => {

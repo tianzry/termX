@@ -1,7 +1,7 @@
 // Vault「日志」页（会话日志阶段 A + B）。
 // 对照 Netcatty：日志本体是 recordings 目录里的 .cast 文件，反过来索引到本页列表；
 // 本页做浏览 / 彩色查看 / 导出落盘（Asciicast · 纯文本 · HTML）/ 删除。
-// 左栏 300px（刷新 / 搜索 / 主机 / 格式 / 列表）+ 右侧详情，布局对齐 NotesView。
+// 左栏 300px（刷新 / 搜索 / 主机 / 列表）+ 右侧详情，布局对齐 NotesView。
 import {
   useCallback,
   useEffect,
@@ -22,6 +22,7 @@ import {
   formatLogTime,
   parseAsciicast,
   sessionLogExportName,
+  sessionLogItemTitle,
 } from "./sessionLogsModel";
 import { parseAnsi, type AnsiSpan } from "./ansi";
 import "./sessionLogs.css";
@@ -67,7 +68,6 @@ export function SessionLogsView() {
   const [logs, setLogs] = useState<SessionLog[]>([]);
   const [query, setQuery] = useState("");
   const [host, setHost] = useState("");
-  const [format, setFormat] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionLogDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -164,13 +164,9 @@ export function SessionLogsView() {
   );
 
   const hosts = useMemo(() => collectLogHosts(logs), [logs]);
-  const formats = useMemo(
-    () => Array.from(new Set(logs.map((log) => log.format))).sort(),
-    [logs],
-  );
   const visible = useMemo(
-    () => filterSessionLogs(logs, { query, host, format }),
-    [logs, query, host, format],
+    () => filterSessionLogs(logs, { query, host }),
+    [logs, query, host],
   );
   const summary = useMemo(
     () => (detail ? parseAsciicast(detail.content) : null),
@@ -228,18 +224,6 @@ export function SessionLogsView() {
               </option>
             ))}
           </select>
-          <select
-            className="session-logs-select"
-            value={format}
-            onChange={(e) => setFormat(e.target.value)}
-          >
-            <option value="">全部格式</option>
-            {formats.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
         </div>
 
         {err && <p className="session-logs-message error">{err}</p>}
@@ -259,30 +243,33 @@ export function SessionLogsView() {
               )}
             </div>
           ) : (
-            visible.map((log) => (
-              <button
-                key={log.id}
-                className={`session-logs-item${
-                  activeId === log.id ? " active" : ""
-                }`}
-                onClick={() => void openLog(log)}
-              >
-                <div className="session-logs-item-title">
-                  <span className="session-logs-item-name">
-                    {log.title || log.path}
-                  </span>
-                  <span className="session-logs-badge">{log.format}</span>
-                </div>
-                <div className="session-logs-item-meta">
-                  <span>{log.host_name || "—"}</span>
-                  <span>{formatLogTime(log.started_at)}</span>
-                </div>
-                <div className="session-logs-item-meta">
-                  <span>{formatLogDuration(log.duration_ms)}</span>
-                  <span>{formatLogSize(log.size_bytes)}</span>
-                </div>
-              </button>
-            ))
+            visible.map((log) => {
+              // 默认记录的 title 由文件名派生，通常与主机名相同；只有自定义标题才单独占一行。
+              const itemTitle = sessionLogItemTitle(log);
+              return (
+                <button
+                  key={log.id}
+                  className={`session-logs-item${
+                    activeId === log.id ? " active" : ""
+                  }`}
+                  onClick={() => void openLog(log)}
+                >
+                  {itemTitle && (
+                    <div className="session-logs-item-title">
+                      <span className="session-logs-item-name">{itemTitle}</span>
+                    </div>
+                  )}
+                  <div className="session-logs-item-meta">
+                    <span>{log.host_name || "—"}</span>
+                    <span>{formatLogTime(log.started_at)}</span>
+                  </div>
+                  <div className="session-logs-item-meta">
+                    <span>{formatLogDuration(log.duration_ms)}</span>
+                    <span>{formatLogSize(log.size_bytes)}</span>
+                  </div>
+                </button>
+              );
+            })
           )}
         </div>
       </aside>

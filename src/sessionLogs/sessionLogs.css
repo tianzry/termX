@@ -127,14 +127,15 @@
 .session-logs-item {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 6px 10px;
   margin-bottom: 2px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: inherit;
+  line-height: 1.5;
   text-align: left;
   cursor: pointer;
 }
@@ -151,9 +152,8 @@
 .session-logs-item-title {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -162,16 +162,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.session-logs-badge {
-  flex: 0 0 auto;
-  padding: 1px 6px;
-  border: 1px solid hsl(var(--nc-border));
-  border-radius: 999px;
-  color: hsl(var(--nc-muted));
-  font-size: 10px;
-  font-weight: 500;
 }
 
 .session-logs-item-meta {

@@ -82,17 +82,15 @@ export function formatLogSize(bytes: number): string {
 export interface SessionLogFilter {
   query?: string;
   host?: string;
-  format?: string;
 }
 
-/** query 匹配 title / host_name / status（大小写不敏感）；host / format 精确匹配。 */
+/** query 匹配 title / host_name / status（大小写不敏感）；host 精确匹配。 */
 export function filterSessionLogs(
   logs: SessionLog[],
   filter: SessionLogFilter,
 ): SessionLog[] {
   const query = (filter.query ?? "").trim().toLowerCase();
   const host = filter.host ?? "";
-  const format = filter.format ?? "";
   return logs.filter((log) => {
     if (
       query &&
@@ -104,9 +102,18 @@ export function filterSessionLogs(
       return false;
     }
     if (host && log.host_name !== host) return false;
-    if (format && log.format !== format) return false;
     return true;
   });
+}
+
+/**
+ * 列表首行标题：默认记录的 title 由文件名派生，与 host_name 相同，再显示一遍就是冗余；
+ * 只有自定义标题（与主机名不同）才返回，空标题不显示。徽标已移除。
+ */
+export function sessionLogItemTitle(log: SessionLog): string | null {
+  const title = log.title.trim();
+  if (!title) return null;
+  return title === log.host_name.trim() ? null : title;
 }
 
 /** 主机名去重（忽略空值）并排序。 */

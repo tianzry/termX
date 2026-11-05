@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-11-05 — 日志页精简：移除格式筛选 + 去重首行
+
+### 1. 删除「全部格式」筛选
+
+- 左栏筛选只保留「全部主机」；移除格式下拉的 UI、`format` state、`formats` 派生集合与 `filterSessionLogs` 的格式参数（`SessionLogFilter` 现在只有 `query` / `host`）。
+- 格式筛选文案为组件内硬编码，i18n 无对应 key；设置中心的 `sessionLogs.format` 是「默认导出格式」，与列表筛选无关，保留不动。
+- 单测同步：原「格式精确匹配」用例改为只断言主机匹配与不过滤；列表仍按后端 `started_at` 倒序，未改排序。
+
+### 2. 日志项去掉冗余首行
+
+- 默认记录的 `title` 由文件名派生，通常与 `host_name` 相同，首行标题 + `asciicast` 徽标属于重复信息。
+- 新增纯函数 `sessionLogItemTitle(log)`：标题 trim 后为空或与 `host_name`（trim）相同 → 不显示首行；只有自定义标题才保留首行（徽标一并移除）。
+- 条目保留 `主机 · 时间` 与 `时长 · 大小` 两行；内边距 8px→6px、行间距 3px→2px、`line-height 1.5`，条目高度约 70px→49px，hover / active / 点击进详情行为不变。
+- 清理检查：`format` 字段只用于导出（`cast/txt/html` 由用户选择）与后端索引，不再参与列表展示 / 筛选 / 详情；`session-logs-badge` 样式无残留引用。
+
+### 3. 验证
+
+- 改前：`evidence/logs-page-129.png`（两个下拉 + 首行标题与 asciicast 徽标）；改后：`evidence/logs-page-after.png`（单下拉、每项 2 行、高度 49px、徽标数 0），详情交互 `evidence/logs-page-after-detail.png`（active=1、标题 / 统计正常、无右键菜单），机器可读结果 `evidence/logs-page-after.json`。
+- 门禁：`npm run test:run` 52 文件 / 552 用例；`npm run build` 通过。
+
+### 踩坑
+
+- 171. **列表「标题 == 主机名」才是冗余**：默认 cast 的 title 由文件名派生，不能按「字段是否有值」判断；要比较 trim 后的 title 与 host_name，只有自定义标题才保留首行，否则一旦主机名带空格就会漏判。
+
+---
+
 ## 2026-11-05 — 脚本 / 笔记模块按 Netcatty 一比一重做
 
 > 用户反馈当前移植「差异很大」，要求图标、UI 与功能逻辑全部对齐。先取证（`Netcatty/components/SnippetsManager.tsx`、`ScriptsSidePanel.tsx`、`SnippetsRightPanel.tsx`、`scripts/ScriptEditorPanel.tsx`、`scripts/ScriptMetaFields.tsx`、`snippets/SnippetTargetsSection.tsx`、`notes/NotesManager.tsx`、`NoteToolbar.tsx`、`NoteSourceEditor.tsx`、`NoteTitleInput.tsx`、`NoteOutline.tsx`、`NoteExportMenu.tsx`），再按差异清单重写组件层。后端 `snippets*` / `notes*` 命令与 schema 沿用，未新增裸 invoke（R1），未改事件（R3）。
