@@ -5997,3 +5997,46 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 门禁：`npm run test:run` 65 文件 / 726 用例 ✓（首跑一次 worker `Channel closed` 偶发，复跑通过）；`npm run build` ✓；`cargo check` ✓。
 
 证据截图：`shots/ac-44-local-l.png`、`ac-48-local-ls.png`、`ac-50-local-right.png`、`ac-63-ssh-ls.png`、`ac-65-ssh-right.png`、`ac-66-ssh-right2.png`、`ac-68-ssh-accept.png`、`ac-69-ssh-exec.png`、`ac-73-local-right-fixed.png`、`ac-90-right.png`、`ac-92-exec.png`。
+
+
+## 2026-11-05 — #180 自动补全 review 修复 + 设置热更新 / Telnet / Netcatty 并排验证
+
+### Review（子 agent，范围 `a0c43fa`：path provider / 下钻 / 浮层 / 缓存）
+
+- 高危 3（已修）：
+  1. 路径查询无版本号：切目录 / 换会话后旧异步响应会覆盖新状态 → 引入 `queryVersion`，配合 `typed` / `timer` 判定过期响应直接丢弃。
+  2. 150ms 迟到回填无视用户操作：已选中候选或已预览时仍 merge，会打乱列表 / 覆盖选中 → 回调前检查 `selected` / `previewedCommand`，满足则丢弃。
+  3. 接受 / Esc 会把已输入行清空：`dismissAutocomplete` 顺带清 `typed`，接受后继续输入不再出候选 → 改为只清浮层状态，保留 `typed` / `reliable`。
+- 中危 6（已修）：SFTP 句柄跨会话复用只覆盖 ref 不关闭旧子通道 → 切会话时关闭旧句柄；根路径 `/` 与盘符根 `C:\` 退化成 cwd → 按分隔符 / 盘符判定；Windows 带空格目录用 POSIX 单引号（cmd 不认）→ 按分隔符选双引号；窄窗格子面板总宽溢出 pane → 子面板宽自适应 `(pane - 主宽 - 间距×层数)/层数`（下限 120）；`←` 在无子面板时清空层级 → 保留已有层级只回退聚焦；子面板 Enter/Tab 无条目仍吞键 → 直接 dismiss 并放行。
+- 中危 3（部分处理）：子面板高度按条目数收缩（上限 240）；选中 / 预览状态与行替换的清理边界；重连 / 卸载时缓存与在途查询清理。
+- 低危 4（未修，记录原因）：符号链接指向目录无法从后端拿到目标类型（`RemoteEntry` 只有 `is_symlink`，不新增后端字段）；缓存超上限是「淘汰最旧」近似而非严格 LRU；POSIX 反斜杠转义语义保留（Windows 单独关闭）；Esc 仍回滚预览而不清行（与 Netcatty 一致）。
+- 验证中新发现（高危，已修 + 单测）：Windows 本地尾随 `\` 被 tokenizer 当成转义符，会把后面的空格吞进上一个实参，`dir C:\a\b\ ` 的前缀过滤拿到 `" "` 导致路径候选全空、只剩历史（`rv-55-space.png`、`rv-56-space-later.png`、`rv-59-trailbs.png` 复现）。修复：`tokenizeCommandLine` / `currentWordOf` / `commandPrefixOf` / `replaceCommandWord` / `shouldCompletePath` 增加 `windows` 开关，Windows 下不把 `\` 视为转义；新增单测覆盖尾随反斜杠与 POSIX 转义保持。
+
+### 设置热更新（设置 → 终端，全程不关终端）
+
+- 候选浮层关：`shots/rv-04-popup-off.png`（输入 `l` 无浮层）。
+- ghost 开：`shots/rv-13-ghost-on.png`（灰色 ghost `s`）。
+- ghost + 浮层：`shots/rv-15-ghost-popup.png`（放大 `rv-15-crop2.png`）。
+- 总开关关：`shots/rv-20-disabled.png`、`rv-22-disabled-l.png`（输入 `l` 无候选 / 无 ghost）。
+- 恢复原状：`shots/rv-28-restored.png`（启用开 / ghost 关 / 浮层开 / 来源 当前主机）。
+- 历史范围 host/global：切到 global 后同一会话候选不变（当前只有一个主机桶，无法区分差异），切换即时生效，已恢复「当前主机」。
+
+### Telnet（本地 Node 服务）
+
+- `node evidence/telnet-echo-server.mjs`（:2325，`termx-telnet>` 提示符）+ 临时 Telnet profile。
+- `shots/rv-38-telnet-connected.png` 握手成功；`rv-39-telnet-l.png` 输入 `l` 出系统命令候选（c 徽标）；`rv-40-telnet-ls.png` 输入 `ls ` 无路径候选（Telnet 无 SFTP provider，按实现静默降级）。命令候选行为与 SSH 一致。
+
+### 与 Netcatty 并排对照
+
+- Netcatty 实例（运行中窗口，129 会话）实拍：`shots/nc-02-command-l.png`（命令候选）、`shots/nc-03-dir-ls.png`（`ls ` 目录下拉）。
+- 合成图：`shots/sbs-command-2026-11-05.png`（termX 129 SSH / termX 本地 cmd / Netcatty 129 SSH）、`shots/sbs-directory-2026-11-05.png`（同三栏，目录下拉）。
+
+### 串口
+
+- COM1 仍被其他进程占用（沿 #172），未实机，无截图（未伪造）。
+
+### 门禁
+
+- `npm run test:run`：65 文件 / 730 用例 ✓。
+- `npm run build` ✓；`cargo check` ✓（本轮后端无改动）。
+- review 修复单独提交 `ae2c362`。
