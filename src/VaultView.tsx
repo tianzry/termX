@@ -112,6 +112,8 @@ interface Props {
   onLocal: () => void;
   onSerial: () => void;
   onTelnet: () => void;
+  /** 主机右键「打开 SFTP」：打开 SFTP 视图并把该主机定位到右栏。 */
+  onOpenSftp: (profile: Profile) => void;
   /** 新建 / 删除后刷新 App 侧列表。 */
   onDataChanged: () => void;
   /** 当前活动终端窗格（脚本页运行链路使用；Vault 态下终端仍常驻隐藏挂载）。 */
@@ -589,6 +591,7 @@ export function VaultView({
   onLocal,
   onSerial,
   onTelnet,
+  onOpenSftp,
   onDataChanged,
   activeHandle,
   focusView,
@@ -5156,12 +5159,20 @@ export function VaultView({
             protocol: ctxMenu.profile.protocol,
             host: ctxMenu.profile.host,
             pinned: pinnedIds.includes(ctxMenu.profile.id),
-          }).map((item) => {
+          })
+            .filter((item) => item.id !== "sftp" || settings.showSftpTab)
+            .map((item) => {
             const p = ctxMenu.profile;
             const close = () => setCtxMenu(null);
             if (item.id === "sftp") {
               return (
-                <button key={item.id} disabled title="尚未实现">
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    close();
+                    onOpenSftp(p);
+                  }}
+                >
                   <Icon name={HOST_CONTEXT_MENU_ICON[item.id]} size={14} />
                   {item.label}
                 </button>

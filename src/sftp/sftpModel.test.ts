@@ -26,6 +26,7 @@ import {
   permsFromMode,
   permsToOctal,
   pickerItemToTarget,
+  planSftpOpenFromHost,
   remoteParent,
   resolveBreadcrumbVisibleParts,
   rowTypeLabel,
@@ -33,6 +34,7 @@ import {
   sftpDragSideMime,
   sortSftpRows,
   type ConnectedHostEntry,
+  type PaneConnection,
   type PickerSection,
   type SftpDragPayload,
 } from "./sftpModel";
@@ -514,5 +516,67 @@ describe("跨栏拖放：载荷解析 / 落点目录 / 任务构建", () => {
       "a.md",
       "b.txt",
     ]);
+  });
+});
+
+describe("planSftpOpenFromHost（右键打开 SFTP 定位）", () => {
+  const local: PaneConnection = {
+    kind: "local",
+    label: "本地",
+    path: "C:\\",
+    os: "windows",
+  };
+  const remote = (hostId: string): PaneConnection => ({
+    kind: "remote",
+    sftpId: `sftp-${hostId}`,
+    canExec: true,
+    label: "host",
+    meta: "",
+    path: "/",
+    os: "unknown",
+    hostId,
+  });
+
+  it("空的双栏：左本地 + 右主机都要连接", () => {
+    const plan = planSftpOpenFromHost({
+      leftTabs: [],
+      rightTabs: [],
+      hostId: "h1",
+    });
+    expect(plan).toEqual({
+      leftTabId: null,
+      connectLeft: true,
+      rightTabId: null,
+      connectRight: true,
+    });
+  });
+
+  it("已有本地标签与同主机 SFTP：聚焦复用，不新建标签", () => {
+    const plan = planSftpOpenFromHost({
+      leftTabs: [{ id: "l1", connection: local }],
+      rightTabs: [
+        { id: "r1", connection: remote("other") },
+        { id: "r2", connection: remote("h1") },
+      ],
+      hostId: "h1",
+    });
+    expect(plan).toEqual({
+      leftTabId: "l1",
+      connectLeft: false,
+      rightTabId: "r2",
+      connectRight: false,
+    });
+  });
+
+  it("同主机在左栏不影响右栏匹配（只按右栏去重）", () => {
+    const plan = planSftpOpenFromHost({
+      leftTabs: [{ id: "l1", connection: remote("h1") }],
+      rightTabs: [],
+      hostId: "h1",
+    });
+    expect(plan.leftTabId).toBeNull();
+    expect(plan.connectLeft).toBe(true);
+    expect(plan.rightTabId).toBeNull();
+    expect(plan.connectRight).toBe(true);
   });
 });

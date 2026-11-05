@@ -1,6 +1,29 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Snippet } from "../backend/client";
 import { ComposeBar } from "./ComposeBar";
+
+function snippet(id: string, name: string, command = name): Snippet {
+  return {
+    id,
+    name,
+    command,
+    description: "",
+    package: "",
+    tags: [],
+    shortkey: "",
+    no_auto_run: false,
+    kind: "snippet",
+    multi_line_run_mode: "paste",
+    language: "",
+    trigger: "manual",
+    trigger_pattern: "",
+  };
+}
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 function renderBar(overrides: Partial<React.ComponentProps<typeof ComposeBar>> = {}) {
   const onChange = vi.fn();
@@ -84,5 +107,59 @@ describe("ComposeBar", () => {
     expect(onChange).toHaveBeenLastCalledWith("two");
     fireEvent.keyDown(textarea, { key: "ArrowUp" });
     expect(onChange).toHaveBeenLastCalledWith("one");
+  });
+});
+
+describe("ComposeBar 快捷片段条", () => {
+  const snippets = [
+    snippet("s1", "df -h", "df -h"),
+    snippet("s2", "uptime", "uptime"),
+  ];
+
+  it("固定片段按名称排序展示，点击追加到草稿末尾", async () => {
+    const onChange = vi.fn();
+    renderBar({ value: "pwd", onChange, snippets });
+    const chip = await screen.findByRole("button", { name: "uptime" });
+    fireEvent.click(chip);
+    expect(onChange).toHaveBeenLastCalledWith("pwd\nuptime");
+  });
+
+  it("草稿为空时插入不带前导换行", async () => {
+    const onChange = vi.fn();
+    renderBar({ value: "", onChange, snippets });
+    fireEvent.click(await screen.findByRole("button", { name: "df -h" }));
+    expect(onChange).toHaveBeenLastCalledWith("df -h");
+  });
+
+  it("Shift+点击直接发送执行（复用脚本模块），不改草稿", async () => {
+    const onRunSnippet = vi.fn(() => true);
+    const onChange = vi.fn();
+    renderBar({ value: "draft", onChange, snippets, onRunSnippet });
+    const chip = await screen.findByRole("button", { name: "uptime" });
+    fireEvent.click(chip, { shiftKey: true });
+    expect(onRunSnippet).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s2", command: "uptime" }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("管理浮层搜索过滤，点击行切换固定状态", async () => {
+    const { container } = renderBar({ snippets });
+    fireEvent.click(await screen.findByRole("button", { name: "管理快捷片段" }));
+    const search = screen.getByRole("textbox", { name: "搜索片段" });
+    fireEvent.change(search, { target: { value: "upt" } });
+    const popover = container.querySelector(".term-compose-snippet-popover");
+    expect(popover).not.toBeNull();
+    expect(popover).toHaveTextContent("uptime");
+    expect(popover).not.toHaveTextContent("df -h");
+    fireEvent.click(
+      within(popover as HTMLElement).getByRole("button", { name: "uptime" }),
+    );
+    // 取消固定后，顶部只剩 df -h 的 chip。
+    await waitFor(() => {
+      const chips = container.querySelectorAll(".term-compose-chip");
+      expect(chips).toHaveLength(1);
+      expect(chips[0]).toHaveTextContent("df -h");
+    });
   });
 });

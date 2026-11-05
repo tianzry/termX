@@ -88,6 +88,14 @@ export function SftpPanel({ sshSessionId, terminalCwd = null }: Props) {
   // 传输队列与取消标记
   const [transfers, setTransfers] = useState<TransferRow[]>([]);
   const canceled = useRef<Set<string>>(new Set());
+  /** 当前 sftp 会话 id 的同步镜像（自动连接在 state 更新前就要用）。 */
+  const sftpIdRef = useRef<string | null>(null);
+  /** 已建立 SFTP 的来源 SSH 会话（切换会话时先释放旧的）。 */
+  const sessionRef = useRef<string | null>(null);
+  const sshSessionIdRef = useRef(sshSessionId);
+  sshSessionIdRef.current = sshSessionId;
+  /** 连接代次：切会话 / 卸载 / 断开都会自增，用于丢弃过期的异步连接结果。 */
+  const attemptRef = useRef(0);
 
   useEffect(() => {
     setFollowEnabled(getSettings().sftpFollowTerminalCwd);
@@ -128,13 +136,16 @@ export function SftpPanel({ sshSessionId, terminalCwd = null }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sftpId, terminalCwd, followEnabled, cwd, transfers, handledPath, blockedPath]);
 
-  async function refresh(path?: string): Promise<boolean> {
-    if (!sftpId) return false;
+  async function refresh(
+    path?: string,
+    id: string | null = sftpIdRef.current,
+  ): Promise<boolean> {
+    if (!id) return false;
     setBusy(true);
     setErr("");
     try {
       const target = path ?? cwd;
-      const list = await api.sftpList(sftpId, target);
+      const list = await api.sftpList(id, target);
       setCwd(target);
       setPathInput(target);
       setEntries(list);
@@ -176,48 +187,85 @@ export function SftpPanel({ sshSessionId, terminalCwd = null }: Props) {
     }
     setBusy(true);
     setErr("");
+    let id: string | null = null;
     try {
-      const id = await api.sftpConnect(
+      id = await api.sftpConnect(
         host,
         Number(port) || 22,
         user,
         authType,
         secret || null,
       );
+      // 独立连接也必须写 ref：refresh() 默认从 ref 取 id，否则列表空白且卸载关不掉。
+      sftpIdRef.current = id;
+      sessionRef.current = null;
       setSftpId(id);
       const home = await api.sftpHome(id);
       await refresh(home);
     } catch (e) {
+      if (id) await api.sftpClose(id).catch(() => {});
+      if (sftpIdRef.current === id) {
+        sftpIdRef.current = null;
+        setSftpId(null);
+      }
       setErr(userVisibleError(String(e)));
     } finally {
       setBusy(false);
     }
   }
 
-  async function connectFromSsh() {
-    if (!sshSessionId) return;
+  /**
+   * 复用终端 SSH 会话建 SFTP（对照 Netcatty 工具栏：点击即自动连接）。
+   * 失败时关闭半开会话，不留下 sftpId / 空列表。
+   */
+  async function connectFromSsh(sessionId: string | null = sshSessionIdRef.current) {
+    if (!sessionId) return;
+    const attempt = ++attemptRef.current;
     setBusy(true);
     setErr("");
+    let id: string | null = null;
     try {
-      const id = await api.sftpConnectSession(sshSessionId);
-      setSftpId(id);
+      id = await api.sftpConnectSession(sessionId);
+      if (attempt !== attemptRef.current || sshSessionIdRef.current !== sessionId) {
+        if (id) await api.sftpClose(id).catch(() => {});
+        return;
+      }
       const home = await api.sftpHome(id);
+      if (attempt !== attemptRef.current || sshSessionIdRef.current !== sessionId) {
+        await api.sftpClose(id).catch(() => {});
+        return;
+      }
+      sftpIdRef.current = id;
+      sessionRef.current = sessionId;
+      setSftpId(id);
       await refreshInitial(home);
     } catch (e) {
-      setErr(userVisibleError(String(e)));
+      if (id) await api.sftpClose(id).catch(() => {});
+      if (sftpIdRef.current === id) {
+        sftpIdRef.current = null;
+        setSftpId(null);
+      }
+      if (sshSessionIdRef.current === sessionId) {
+        setErr(userVisibleError(String(e)));
+      }
     } finally {
       setBusy(false);
     }
   }
 
   async function disconnect() {
-    if (sftpId) {
+    // 使进行中的 connectFromSsh 结果过期，避免被关掉后再写回旧 id。
+    attemptRef.current += 1;
+    const id = sftpIdRef.current;
+    if (id) {
       try {
-        await api.sftpClose(sftpId);
+        await api.sftpClose(id);
       } catch {
         /* 忽略关闭失败 */
       }
     }
+    sftpIdRef.current = null;
+    sessionRef.current = null;
     setSftpId(null);
     setEntries([]);
     setStat(null);
@@ -227,6 +275,32 @@ export function SftpPanel({ sshSessionId, terminalCwd = null }: Props) {
     setHandledPath(null);
     setBlockedPath(null);
   }
+
+  // 面板挂载 / 切换 SSH 会话：自动复用会话建 SFTP（Netcatty 的工具栏语义）。
+  useEffect(() => {
+    const sid = sshSessionId;
+    if (!sid) {
+      if (sessionRef.current || sftpIdRef.current) void disconnect();
+      return;
+    }
+    if (sessionRef.current === sid && sftpIdRef.current) return;
+    void (async () => {
+      await disconnect();
+      if (sshSessionIdRef.current !== sid) return;
+      await connectFromSsh(sid);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sshSessionId]);
+
+  // 面板卸载时释放本面板持有的 SFTP 会话，避免切走留下孤儿连接。
+  useEffect(() => {
+    return () => {
+      attemptRef.current += 1;
+      const id = sftpIdRef.current;
+      if (id) void api.sftpClose(id).catch(() => {});
+      sftpIdRef.current = null;
+    };
+  }, []);
 
   async function openEntry(e: RemoteEntry) {
     if (e.is_dir) await refresh(joinPath(cwd, e.name));
@@ -546,8 +620,13 @@ export function SftpPanel({ sshSessionId, terminalCwd = null }: Props) {
       {/* 连接区 */}
       {!sftpId ? (
         <div className="sftp-connect">
+          {busy && (
+            <div className="sftp-connecting" role="status">
+              正在连接当前 SSH 会话…
+            </div>
+          )}
           <div className="sftp-row">
-            <button onClick={connectFromSsh} disabled={busy || !sshSessionId}>
+            <button onClick={() => void connectFromSsh()} disabled={busy || !sshSessionId}>
               复用当前 SSH 会话
             </button>
           </div>

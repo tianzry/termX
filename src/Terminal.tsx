@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Terminal,
   type IDecoration,
@@ -24,6 +24,14 @@ import {
 import "@xterm/xterm/css/xterm.css";
 import * as api from "./backend/client";
 import { isFindShortcut, linkModifierAllows } from "./terminal/linkActivation";
+import { terminalInsetsStyle } from "./terminal/terminalInsets";
+import {
+  formatTerminalTimestamp,
+  pruneTerminalTimestampLines,
+  resolveTerminalTimestampGutterWidth,
+  resolveVisibleTerminalTimestampRows,
+  stampTerminalTimestampLines,
+} from "./terminal/terminalTimestamps";
 import type { AppSettings } from "./settings/settingsModel";
 import {
   clampCursorBarWidth,
@@ -47,6 +55,8 @@ interface Props {
   onOsc7?: (payload: string) => void;
   /** Cmd/Ctrl+F：打开终端搜索条（对照 Netcatty searchTerminal 热键）。 */
   onFindShortcut?: () => void;
+  /** 显示每行输出左侧时间戳 gutter（对照 Netcatty 工具栏时钟开关）。 */
+  showTimestamps?: boolean;
 }
 
 const DEFAULT_FONT_STACK = "Menlo, Monaco, Consolas, 'Courier New', monospace";
@@ -71,6 +81,7 @@ const TERM_THEME_DARK: ITheme = {
   cursor: "#6aa1ff",
   cursorAccent: "#16181d",
   selectionBackground: "rgba(106, 161, 255, 0.28)",
+  brightCyan: "#56d4dd",
 };
 
 const TERM_THEME_LIGHT: ITheme = {
@@ -79,6 +90,7 @@ const TERM_THEME_LIGHT: ITheme = {
   cursor: "#0a84ff",
   cursorAccent: "#ffffff",
   selectionBackground: "rgba(10, 132, 255, 0.22)",
+  brightCyan: "#0e7490",
 };
 
 /** 是否使用深色终端配色（跟随应用主题 / 固定深色）。 */
@@ -345,8 +357,16 @@ export function readTerminalSelection(term: Terminal, normalize: boolean): strin
 }
 
 /** 单例 xterm 画布：创建即 fit + focus，销毁时 unmount 清理。 */
-export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut }: Props) {
+export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut, showTimestamps = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const timestampsRef = useRef<Map<number, string>>(new Map());
+  const lastTimestampLineRef = useRef<number>(0);
+  const timestampRafRef = useRef<number | null>(null);
+  const gutterWidthRef = useRef(0);
+  const [gutterWidth, setGutterWidth] = useState(0);
   // 回调可能随状态更新而变化，用 ref 保证 xterm 只注册一次处理器。
   const onOsc7Ref = useRef(onOsc7);
   onOsc7Ref.current = onOsc7;
@@ -372,6 +392,8 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       }),
     );
     term.open(containerRef.current!);
+    xtermRef.current = term;
+    fitRef.current = fit;
     // 内嵌图片：SIXEL / Kitty / iTerm IIP（@xterm/addon-image，对照 Netcatty）。
     // 总开关关闭或三个协议全关时不加载 addon，避免向远端声明图形能力。
     let imageAddon: ImageAddon | null = null;
@@ -638,5 +660,148 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <div ref={containerRef} className="terminal" />;
+  // ── 输出行时间戳 gutter（对照 Netcatty TerminalTimestampGutter）──
+  useEffect(() => {
+    const term = xtermRef.current;
+    const container = containerRef.current;
+    if (!term || !container) return;
+    const initial = term.buffer.active;
+    lastTimestampLineRef.current = initial.baseY + initial.cursorY;
+    const stamps = new Map<number, string>();
+    timestampsRef.current = stamps;
+
+    if (!showTimestamps) {
+      setGutterWidth(0);
+      return;
+    }
+
+    const render = () => {
+      timestampRafRef.current = null;
+      const gutter = gutterRef.current;
+      if (!gutter) return;
+      const buffer = term.buffer.active;
+      const screen = container.querySelector<HTMLElement>(".xterm-screen");
+      const rows =
+        buffer.type === "alternate" || !screen || term.rows <= 0
+          ? []
+          : resolveVisibleTerminalTimestampRows({
+              stamps,
+              viewportY: buffer.viewportY,
+              rows: term.rows,
+              isWrapped: (line) => buffer.getLine(line)?.isWrapped === true,
+            });
+      const cellHeight = screen && term.rows > 0
+        ? screen.clientHeight / term.rows
+        : 0;
+      const gutterRect = gutter.getBoundingClientRect();
+      const screenTop = screen
+        ? screen.getBoundingClientRect().top - gutterRect.top
+        : 4;
+      const fontStyle = screen ? window.getComputedStyle(screen) : null;
+      const fontSize = fontStyle
+        ? Number.parseFloat(fontStyle.fontSize) || 12
+        : 12;
+      const width = resolveTerminalTimestampGutterWidth({ fontSize });
+      if (width !== gutterWidthRef.current) {
+        gutterWidthRef.current = width;
+        setGutterWidth(width);
+      }
+      gutter.style.fontFamily = fontStyle?.fontFamily ?? "monospace";
+      gutter.style.fontSize = `${fontSize}px`;
+      gutter.style.fontWeight = fontStyle?.fontWeight ?? "400";
+      gutter.style.color =
+        term.options.theme?.brightCyan ??
+        window.getComputedStyle(gutter).getPropertyValue("--terminal-timestamp-fg") ??
+        "#56d4dd";
+      gutter.style.background = term.options.theme?.background ?? "transparent";
+
+      const children = gutter.children;
+      let index = 0;
+      for (; index < rows.length; index += 1) {
+        let item = children[index] as HTMLElement | undefined;
+        if (!item) {
+          item = document.createElement("div");
+          item.className = "term-timestamp-row";
+          gutter.appendChild(item);
+        }
+        const { row, label } = rows[index];
+        if (item.textContent !== label) item.textContent = label;
+        item.style.top = `${screenTop + row * cellHeight}px`;
+        item.style.height = `${cellHeight}px`;
+        item.style.lineHeight = `${cellHeight}px`;
+        item.style.display = "";
+      }
+      for (; index < children.length; index += 1) {
+        (children[index] as HTMLElement).style.display = "none";
+      }
+    };
+
+    const scheduleRender = () => {
+      if (timestampRafRef.current !== null) return;
+      timestampRafRef.current = requestAnimationFrame(render);
+    };
+
+    const parsed = term.onWriteParsed(() => {
+      const buffer = term.buffer.active;
+      if (buffer.type !== "alternate") {
+        const current = buffer.baseY + buffer.cursorY;
+        if (current >= lastTimestampLineRef.current) {
+          lastTimestampLineRef.current = stampTerminalTimestampLines({
+            stamps,
+            previousAbsolute: lastTimestampLineRef.current,
+            currentAbsolute: current,
+            label: formatTerminalTimestamp(new Date()),
+            isWrapped: (line) => buffer.getLine(line)?.isWrapped === true,
+          });
+          pruneTerminalTimestampLines(stamps, buffer.baseY - 200);
+        } else {
+          lastTimestampLineRef.current = current;
+        }
+      }
+      scheduleRender();
+    });
+    const scroll = term.onScroll(scheduleRender);
+    const rendered = term.onRender(scheduleRender);
+    const resized = term.onResize(scheduleRender);
+    const ro = new ResizeObserver(scheduleRender);
+    ro.observe(container);
+    render();
+
+    return () => {
+      parsed.dispose();
+      scroll.dispose();
+      rendered.dispose();
+      resized.dispose();
+      ro.disconnect();
+      if (timestampRafRef.current !== null) {
+        cancelAnimationFrame(timestampRafRef.current);
+        timestampRafRef.current = null;
+      }
+      stamps.clear();
+    };
+  }, [showTimestamps]);
+
+  // gutter 出现/变宽后容器尺寸变化，重新 fit 并同步远端 PTY 行列。
+  useEffect(() => {
+    fitRef.current?.fit();
+  }, [showTimestamps, gutterWidth]);
+
+  return (
+    <div className="terminal-shell">
+      {showTimestamps && (
+        <div
+          ref={gutterRef}
+          aria-hidden="true"
+          className="terminal-timestamp-gutter"
+          data-section="terminal-timestamp-gutter"
+          style={{ width: gutterWidth || 56 }}
+        />
+      )}
+      <div
+        ref={containerRef}
+        className="terminal"
+        style={terminalInsetsStyle()}
+      />
+    </div>
+  );
 }

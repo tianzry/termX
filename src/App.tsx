@@ -28,7 +28,7 @@ import { ForwardPanel } from "./ForwardPanel";
 import { useForwardSupervisor } from "./forwardSupervisor";
 import { ConnectionManager } from "./ConnectionManager";
 import { SftpView } from "./sftp/SftpView";
-import type { ConnectedHostEntry } from "./sftp/sftpModel";
+import type { ConnectedHostEntry, SftpOpenRequest } from "./sftp/sftpModel";
 import * as api from "./backend/client";
 import {
   SettingsDialog,
@@ -113,6 +113,11 @@ export default function App() {
     if (surface === "sftp") setSftpMounted(true);
   }, [surface]);
   const [activeSshSid, setActiveSshSid] = useState<string | null>(null);
+  /** 外部「打开 SFTP」请求（主机右键）；seq 自增保证重复点击也重新定位。 */
+  const [sftpOpenRequest, setSftpOpenRequest] = useState<SftpOpenRequest | null>(
+    null,
+  );
+  const sftpOpenSeqRef = useRef(0);
   const [tool, setTool] = useState<Tool>(null);
   const [showManager, setShowManager] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -452,21 +457,49 @@ export default function App() {
       setTool(null);
       return;
     }
+    // SFTP 侧栏复用当前 SSH 会话（对齐 Netcatty：未连接时不可用）。
+    if (next === "sftp" && !activeSshSid) {
+      setStatus("SFTP 需要已连接的 SSH 会话");
+      return;
+    }
     setTool(next);
   }
 
   const terminalActive = surface === null;
 
   // SFTP 主机选择器「已连接」分区：当前活动的 SSH 终端会话可复用建 SFTP。
+  const activeTab = tabs.find((t) => t.id === activeTabId);
   const sftpConnectedHosts: ConnectedHostEntry[] = activeSshSid
     ? [
         {
           sessionId: activeSshSid,
-          label: tabs.find((t) => t.id === activeTabId)?.title ?? "终端会话",
+          label: activeTab?.title ?? "终端会话",
           meta: "复用当前终端会话",
+          profileId:
+            activeTab?.connector.kind === "ssh"
+              ? activeTab.connector.profileId
+              : undefined,
         },
       ]
     : [];
+
+  /** 主机右键「打开 SFTP」：打开 SFTP 视图，左本地 + 右该主机（可复用已有会话）。 */
+  function openSftpForHost(profile: Profile) {
+    if (!settings.showSftpTab) {
+      setStatus("设置中已关闭 SFTP 标签页");
+      return;
+    }
+    setSurface("sftp");
+    const session = sftpConnectedHosts.find((e) => e.profileId === profile.id);
+    sftpOpenSeqRef.current += 1;
+    setSftpOpenRequest({
+      seq: sftpOpenSeqRef.current,
+      hostId: profile.id,
+      label: profile.name,
+      meta: profile.host,
+      sessionId: session?.sessionId,
+    });
+  }
 
   return (
     <div
@@ -568,6 +601,7 @@ export default function App() {
               onLocal={openLocal}
               onSerial={openSerial}
               onTelnet={openTelnet}
+              onOpenSftp={openSftpForHost}
               onDataChanged={() => void loadData()}
               activeHandle={activeHandle}
               focusView={vaultFocus}
@@ -583,6 +617,7 @@ export default function App() {
                 profiles={profiles}
                 credentials={credentials}
                 connectedHosts={sftpConnectedHosts}
+                openRequest={sftpOpenRequest}
               />
             </div>
           )}

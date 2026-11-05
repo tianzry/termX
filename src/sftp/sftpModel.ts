@@ -121,6 +121,10 @@ export interface RemoteConnection {
   path: string;
   /** 远端 OS；未探测成功为 unknown（标签回落服务器图标）。 */
   os: HostOs;
+  /** 来源主机的 profile id（右键「打开 SFTP」重复点击时据此聚焦已有标签）。 */
+  hostId?: string;
+  /** 复用终端 SSH 会话建连时的会话 id（独立连接为空）。 */
+  sessionId?: string;
 }
 
 export type PaneConnection = LocalConnection | RemoteConnection;
@@ -267,6 +271,50 @@ export function connectBranch(target: SftpConnectTarget): ConnectBranch {
     case "profile":
       return "standalone";
   }
+}
+
+/**
+ * 右键「打开 SFTP」→ 双栏定位计划（对照 Netcatty `planDualPaneSftpOpen` 的
+ * 可见语义子集）：左栏固定是本地文件系统、右栏是目标主机。
+ * - 左栏已有本地标签 → 选中复用，否则新建本地标签；
+ * - 右栏已有同一 hostId 的远端标签 → 选中聚焦（重复点击不产生重复标签）；
+ * - 否则在右栏新建连接。
+ */
+export interface SftpOpenPlan {
+  leftTabId: string | null;
+  connectLeft: boolean;
+  rightTabId: string | null;
+  connectRight: boolean;
+}
+
+/** 外部（右键菜单 / 工具栏）请求打开 SFTP 并定位主机的载荷。 */
+export interface SftpOpenRequest {
+  /** 自增序号：同一主机重复点击也要重新执行一次定位（聚焦已有标签）。 */
+  seq: number;
+  hostId: string;
+  label: string;
+  meta: string;
+  /** 可复用的 SSH 会话 id；缺省时走独立连接。 */
+  sessionId?: string;
+  /** 初始目录（工具栏带终端 cwd；不可达时回退 home）。 */
+  initialPath?: string | null;
+}
+
+export function planSftpOpenFromHost(input: {
+  leftTabs: Array<{ id: string; connection: PaneConnection }>;
+  rightTabs: Array<{ id: string; connection: PaneConnection }>;
+  hostId: string;
+}): SftpOpenPlan {
+  const localLeft = input.leftTabs.find((t) => t.connection.kind === "local");
+  const matchingRight = input.rightTabs.find(
+    (t) => t.connection.kind === "remote" && t.connection.hostId === input.hostId,
+  );
+  return {
+    leftTabId: localLeft?.id ?? null,
+    connectLeft: !localLeft,
+    rightTabId: matchingRight?.id ?? null,
+    connectRight: !matchingRight,
+  };
 }
 
 /** 从选择器条目映射为连接目标。 */
