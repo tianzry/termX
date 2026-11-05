@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-06 — #203 设置行改为 48px 条状底色 + 边框（对齐 Netcatty 设置页）
+
+- 对齐 Netcatty `HostDetailsSection` 的 `host-input-row`（`h-12 rounded-lg border bg-secondary/40 px-3`）：
+  - `.nc-set-row`：`min-height: 48px`、左右内边距 12px、1px `--border` 边框、8px 圆角、`--secondary/0.4` 条状底色；多行内容自动增高（不截断）。
+  - `.nc-set-card` 不再自带边框 / 底色 / 内边距，改为 6px 间距的纵向容器，避免与行条边框形成双层框。
+  - 相邻行使用 6px 间隔 + 各自边框；`--secondary` / `--border` 均为主题变量，明暗两套自动一致。
+- 覆盖：8 个设置 tab（终端 / 外观 / 同步与云 / 安全 / 高级 / 快捷键 / 关于 / 其他）共用 `SettingRow`，一处样式全局生效。
+- 窄窗 720px：行保持 48px 最小高度，内容由 `flex-wrap` 换行，左右 12px 内边距不产生横向溢出（截图见 evidence/audit9-*）。
+
 ## 2026-11-06 — #202 主机级 known-host 校验策略（profile.host_key_policy）
 
 - 数据层：`profiles` 新增可空列 `host_key_policy TEXT`（schema v47，迁移幂等 `column_exists` 守卫）；NULL = 跟随全局 `verifyHostKeys`，老库升级只加列不写默认值，既有主机行为不变。

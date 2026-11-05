@@ -9482,24 +9482,31 @@ body {
   margin: 0;
 }
 
+/* SettingCard：容器不再自带边框 / 底色，由每行条状卡片承担（对齐 Netcatty
+   HostDetailsSection 的 `host-input-row`：h-12 rounded-lg border bg-secondary/40 px-3）。 */
 .nc-set-card {
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  background: hsl(var(--card));
-  padding: 2px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
 }
 
-/* SettingRow：flex justify-between py-3 gap-4；卡片内相邻行 divide-y */
+/* SettingRow：48px 条状底色卡片，行间留 6px 间隔，左右内边距 12px。 */
 .nc-set-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 0;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--secondary) / 0.4);
 }
 
+/* 相邻行各自带边框；这条保留显式行间分隔语义，避免主题变量下边框对比过弱。 */
 .nc-set-row + .nc-set-row {
-  border-top: 1px solid hsl(var(--border) / 0.6);
+  border-top: 1px solid hsl(var(--border));
 }
 
 .nc-set-row-text {
