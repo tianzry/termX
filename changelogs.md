@@ -44,6 +44,39 @@
 - 通用选择器 `.nc-settings-content > div` 会压过 `.nc-set-app` 的媒体查询（特异性 0,1,1 > 0,1,0），导致桌面双栏失效；改为给 tab 根节点显式 `.nc-set-page`。
 - 卡片若加 `overflow:hidden` 会裁掉后续终端 tab 的候选下拉浮层，故只保留圆角不裁切。
 
+## 2026-11-05 — #182 设置页 UI 重做（步骤②：外观 + 终端 + 快捷键）
+
+> 延续 #181 的令牌与外壳，本步只重排这三个 tab 的版面与控件，不改任何读写逻辑。
+
+### 1. 对照抄取的增量
+
+| 区域 | Netcatty 依据 | termX 落地 |
+|---|---|---|
+| 外观分组 | 语言与 UI 字体同卡；透明度、模糊、主题、强调色、图标按 SectionHeader + Card | 语言 + 界面字体合并为一张卡；主题 + 浅/深色板 + 强调色合并为一张卡（原「语言/字体/主题/强调色」四个分组收敛为 2 张） |
+| 窗口透明度 | `flex-col items-end gap-2`：`range w-28` + 数值 `w-10 text-sm tabular`，预设 `px-2.5 py-1 text-xs rounded-md border`，选中 `bg-primary` | `.nc-set-slider.is-stacked` 上滑杆 112px + 右对齐数值，下滑杆预设胶囊 28px 高；选中主色填充 |
+| 主题色板 | 24px 圆点、选中 `ring-2 ring-offset-2 scale-110` | 色板由 flex-wrap 改 12 列 Grid（`repeat(12, 24px)`，右对齐），31 个预设整齐 12/12/7 |
+| 应用图标 | 说明 `text-xs muted` 在卡片内顶部 | `.nc-set-icon-desc` 12px、卡片内顶部 12px |
+| 终端滑杆 | `range w-24`（96px） | `.nc-set-slider` 基础宽 96px，`accent-color: primary` |
+| 终端提示 | `SettingHint text-xs muted mt-3` 在卡片外 | 固定深色提示、内嵌图片休眠提示、侧边栏/本地 Shell 侧边栏未实现提示由占用整行的 `Row` 改为 `Section hint`（卡片外 12px） |
+| 快捷键方案卡 | 方案 + 3 个开关同卡 | 原结构保留，仅套用新卡片与行 |
+| 自定义快捷键头 | 标题 + 右侧 ghost `size=sm`「Reset All」 | `.nc-set-custom-head` + `.nc-set-btn.is-ghost.is-sm`（28px 高），删掉原先占一整行的「全部重置」Row |
+| 快捷键分类 | `text-xs font-medium uppercase tracking-wide`，每个分类一张卡 | `.nc-set-cat-title` 12px/500/大写/0.05em + 每类 `.nc-set-section` + `.nc-set-card` |
+| 快捷键行/键帽 | 行 `py-2`；键帽 `px-2 py-1 text-xs mono rounded border min-w-[80px]`；禁用/重置为 `size-6` 图标按钮 | `.nc-set-row.is-compact` 8px；`.nc-set-keycap` 28px/80px/12px mono；`.nc-set-icon-action` 26px；录制态主色边框 + 10% 底色 |
+| 组合键特殊绑定 | `[1...9]`、`arrows` 拆成「修饰键 + + + 后缀徽标」 | 同等拆分（`modifierPrefix` + `.nc-set-keycap-suffix`），不再把整串塞进一个键帽 |
+
+### 2. 功能边界
+
+- 快捷键禁用/启用、单项重置、全部重置、录制流程全部沿用原 handler；仅把文字按钮换为图标按钮（`aria-label`/`title` 保留原语义）。
+- 特殊绑定（`[1...9]`/`arrows`）按 Netcatty 隐藏禁用按钮，启用/禁用状态仍可通过原数据生效。
+- 终端提示改为 `hint` 后仍按原条件显示（未跟随主题时、启用内嵌图片时、侧边栏未实现时）。
+- 外观分组只搬动 JSX，设置项、默认值、更新函数未改。
+
+### 3. 验证（debug + CDP）
+
+- 断言：外观 6 卡 / 13 行 / 3 个预设胶囊 / 31 个色板；终端 11 卡 / 58 行 / 11 个分组；快捷键 6 卡（方案 1 + 分类 5）/ 36 个紧凑行 / 36 个键帽 / 70 个图标按钮 / 5 个分类小标题，见 `evidence/settings-ui-step2.json`。
+- 截图：`set-appearance-before-light.png`、`set-appearance-light-after.png`、`set-appearance-dark-after.png`、`set-terminal-before-light.png`、`set-terminal-light-after.png`、`set-terminal-dark-after.png`、`set-shortcuts-light-after.png`、`set-shortcuts-dark-after.png`（快捷键改前截图未归档）。
+- 门禁：`npm run test:run` 65 / 730；`npm run build`；`tauri build --debug`。
+
 ## 2026-11-05 — 剪贴板授权框 / 日志页右键 / 主机与终端右键菜单
 
 ### 1. 三处根因

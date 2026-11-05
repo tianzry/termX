@@ -267,14 +267,16 @@ function Section({
 function Row({
   title,
   desc,
+  className,
   children,
 }: {
   title: string;
   desc?: string;
+  className?: string;
   children?: React.ReactNode;
 }) {
   return (
-    <div className="nc-set-row">
+    <div className={"nc-set-row" + (className ? ` ${className}` : "")}>
       <div className="nc-set-row-text">
         <div className="nc-set-row-title">{title}</div>
         {desc && <div className="nc-set-row-desc">{desc}</div>}
@@ -581,6 +583,7 @@ export function AppearanceTab() {
 
   return (
     <div className="nc-set-page">
+      {/* 语言 + 界面字体同卡片（对照 Netcatty appearance language 分组） */}
       <Section title={t("settings.appearance.section.language")}>
         <Row title={t("settings.appearance.language.label")} desc={t("settings.appearance.language.desc")}>
           <Select
@@ -592,9 +595,6 @@ export function AppearanceTab() {
             ]}
           />
         </Row>
-      </Section>
-
-      <Section title={t("settings.appearance.section.fonts")}>
         <Row title={t("settings.appearance.fonts.uiFontFamily")} desc={t("settings.appearance.fonts.uiFontFamily.desc")}>
           <FontCombo
             value={s.uiFontFamilyId}
@@ -606,26 +606,30 @@ export function AppearanceTab() {
 
       <Section title={t("settings.appearance.section.window")}>
         <Row title={t("settings.appearance.window.opacity")} desc={t("settings.appearance.window.opacity.desc")}>
-          <div className="nc-set-slider">
-            <input
-              type="range"
-              min={50}
-              max={100}
-              value={Math.round(s.windowOpacity * 100)}
-              onChange={(e) => updateSettings({ windowOpacity: Number(e.target.value) / 100 })}
-            />
-            <span className="nc-set-value">{Math.round(s.windowOpacity * 100)}%</span>
-            {/* 快捷预设（对照 Netcatty 透明度行 100% / 85% / 70% 按钮） */}
-            {[100, 85, 70].map((p) => (
-              <button
-                key={p}
-                type="button"
-                className="nc-set-btn"
-                onClick={() => updateSettings({ windowOpacity: p / 100 })}
-              >
-                {p}%
-              </button>
-            ))}
+          {/* 对照 Netcatty：滑杆 + 右侧数值在上，预设胶囊在下 */}
+          <div className="nc-set-slider is-stacked">
+            <div className="nc-set-slider-line">
+              <input
+                type="range"
+                min={50}
+                max={100}
+                value={Math.round(s.windowOpacity * 100)}
+                onChange={(e) => updateSettings({ windowOpacity: Number(e.target.value) / 100 })}
+              />
+              <span className="nc-set-value">{Math.round(s.windowOpacity * 100)}%</span>
+            </div>
+            <div className="nc-set-slider-presets">
+              {[100, 85, 70].map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={"nc-set-preset" + (Math.round(s.windowOpacity * 100) === p ? " is-active" : "")}
+                  onClick={() => updateSettings({ windowOpacity: p / 100 })}
+                >
+                  {p}%
+                </button>
+              ))}
+            </div>
           </div>
         </Row>
         {isMac && (
@@ -678,9 +682,6 @@ export function AppearanceTab() {
             ))}
           </div>
         </Row>
-      </Section>
-
-      <Section title={t("settings.appearance.section.accent")}>
         <Row
           title={t("settings.appearance.accent.useCustom")}
           desc={t("settings.appearance.accent.useCustom.desc")}
@@ -858,18 +859,23 @@ export function TerminalTab() {
   return (
     <div className="nc-set-page">
       {/* 终端主题（对照 Netcatty settings.terminal.theme.followApp） */}
-      <Section title={t("settings.terminal.section.theme")}>
+      <Section
+        title={t("settings.terminal.section.theme")}
+        hint={!term.followAppTheme ? t("settings.terminal.theme.fixedDarkHint") : undefined}
+      >
         <Row
           title={t("settings.terminal.theme.followApp")}
           desc={t("settings.terminal.theme.followApp.desc")}
         >
           <Toggle checked={term.followAppTheme} onChange={(v) => patch({ followAppTheme: v })} />
         </Row>
-        {!term.followAppTheme && <Row title={t("settings.terminal.theme.fixedDarkHint")} />}
       </Section>
 
       {/* 内嵌图片（对照 Netcatty inlineImages：Kitty / SIXEL / iTerm IIP） */}
-      <Section title={t("settings.terminal.section.inlineImages")}>
+      <Section
+        title={t("settings.terminal.section.inlineImages")}
+        hint={term.inlineImagesEnabled ? t("settings.terminal.inlineImages.hibernateNote") : undefined}
+      >
         <Row
           title={t("settings.terminal.inlineImages.enabled")}
           desc={t("settings.terminal.inlineImages.enabled.desc")}
@@ -944,7 +950,6 @@ export function TerminalTab() {
                 suffix="MB"
               />
             </Row>
-            <Row title={t("settings.terminal.inlineImages.hibernateNote")} />
           </>
         )}
       </Section>
@@ -1365,7 +1370,7 @@ export function TerminalTab() {
         </Row>
       </Section>
 
-      <Section title={t("settings.terminal.section.sidePanel")}>
+      <Section title={t("settings.terminal.section.sidePanel")} hint={t("settings.terminal.sidePanel.unavailableHint")}>
         <Row title={t("settings.terminal.sidePanel.autoOpen")} desc={t("settings.terminal.sidePanel.autoOpen.desc")}>
           <Toggle checked={s.sidePanelAutoOpen} onChange={(v) => updateSettings({ sidePanelAutoOpen: v })} />
         </Row>
@@ -1379,10 +1384,12 @@ export function TerminalTab() {
             }))}
           />
         </Row>
-        <Row title={t("settings.terminal.sidePanel.unavailableHint")} />
       </Section>
 
-      <Section title={t("settings.terminal.section.localShellSidePanel")}>
+      <Section
+        title={t("settings.terminal.section.localShellSidePanel")}
+        hint={t("settings.terminal.localShellSidePanel.unavailableHint")}
+      >
         <Row
           title={t("settings.terminal.localShellSidePanel.autoOpen")}
           desc={t("settings.terminal.localShellSidePanel.autoOpen.desc")}
@@ -1404,7 +1411,6 @@ export function TerminalTab() {
             options={[{ value: "files", label: t("settings.terminal.localShellSidePanel.pane.files") }]}
           />
         </Row>
-        <Row title={t("settings.terminal.localShellSidePanel.unavailableHint")} />
       </Section>
 
       <Section title={t("settings.terminal.section.connection")}>
@@ -1674,55 +1680,104 @@ export function ShortcutsTab() {
         </Row>
       </Section>
 
-      <Section title={t("settings.shortcuts.section.custom")}>
-        <Row title={t("settings.shortcuts.resetAll")}>
-          <button className="nc-set-btn" onClick={resetAll}>
+      {/* 自定义快捷键：标题 + 右侧 ghost「全部重置」，每个分类一张卡片（对照 Netcatty） */}
+      <div className="nc-set-custom">
+        <div className="nc-set-custom-head">
+          <h3 className="nc-set-section-title">{t("settings.shortcuts.section.custom")}</h3>
+          <button className="nc-set-btn is-ghost is-sm" onClick={resetAll}>
+            <Icon name="rotate-ccw" size={12} />
             {t("settings.shortcuts.resetAll")}
           </button>
-        </Row>
+        </div>
         {BINDING_CATEGORY_ORDER.map((cat) => {
           const rows = DEFAULT_KEY_BINDINGS.filter((b) => b.category === cat);
           if (rows.length === 0) return null;
           return (
-            <div key={cat}>
-              <div className="nc-set-group-title">{t(`settings.shortcuts.category.${cat}`)}</div>
-              {rows.map((b) => {
-                const isDisabled = disabledSet.has(b.id);
-                const binding = effectiveBinding(b, s, s.hotkeyScheme);
-                // 绑定标签优先用 i18n（Netcatty zh-CN 为中文），缺键回落英文原标签。
-                const i18nKey = `settings.shortcuts.binding.${b.id}`;
-                const localized = t(i18nKey);
-                const label = localized === i18nKey ? b.label : localized;
-                return (
-                  <Row key={b.id} title={label}>
-                    <div className="nc-set-inline">
-                      <button
-                        className={"nc-set-keycap" + (recording === b.id ? " is-recording" : "")}
-                        disabled={isDisabled}
-                        onClick={() => setRecording(recording === b.id ? null : b.id)}
-                      >
-                        {recording === b.id
-                          ? t("settings.shortcuts.captureHint")
-                          : isDisabled
-                            ? t("settings.shortcuts.disabled")
-                            : binding}
-                      </button>
-                      <button className="nc-set-btn" onClick={() => toggleDisabled(b.id)}>
-                        {isDisabled
-                          ? t("settings.shortcuts.setEnabled")
-                          : t("settings.shortcuts.setDisabled")}
-                      </button>
-                      <button className="nc-set-btn" onClick={() => resetOne(b)}>
-                        {t("settings.shortcuts.resetToDefault")}
-                      </button>
-                    </div>
-                  </Row>
-                );
-              })}
+            <div key={cat} className="nc-set-section">
+              <h4 className="nc-set-cat-title">{t(`settings.shortcuts.category.${cat}`)}</h4>
+              <div className="nc-set-card">
+                {rows.map((b) => {
+                  const isDisabled = disabledSet.has(b.id);
+                  const binding = effectiveBinding(b, s, s.hotkeyScheme);
+                  // 绑定标签优先用 i18n（Netcatty zh-CN 为中文），缺键回落英文原标签。
+                  const i18nKey = `settings.shortcuts.binding.${b.id}`;
+                  const localized = t(i18nKey);
+                  const label = localized === i18nKey ? b.label : localized;
+                  const specialSuffix = binding.includes("[1...9]")
+                    ? "[1...9]"
+                    : binding.includes("arrows")
+                      ? "arrows"
+                      : null;
+                  const modifierPrefix = specialSuffix
+                    ? binding.replace(specialSuffix, "").trim().replace(/\+\s*$/, "").trim()
+                    : null;
+                  const recordingThis = recording === b.id;
+                  const keycapText = recordingThis
+                    ? t("settings.shortcuts.captureHint")
+                    : isDisabled
+                      ? t("settings.shortcuts.disabled")
+                      : specialSuffix
+                        ? modifierPrefix || t("settings.shortcuts.none")
+                        : binding;
+                  return (
+                    <Row key={b.id} title={label} className="is-compact">
+                      <div className="nc-set-inline">
+                        {specialSuffix ? (
+                          <>
+                            <button
+                              className={"nc-set-keycap" + (recordingThis ? " is-recording" : "")}
+                              disabled={isDisabled}
+                              onClick={() => setRecording(recordingThis ? null : b.id)}
+                            >
+                              {keycapText}
+                            </button>
+                            <span className="nc-set-keycap-plus">+</span>
+                            <span className="nc-set-keycap-suffix">{specialSuffix}</span>
+                          </>
+                        ) : (
+                          <button
+                            className={"nc-set-keycap" + (recordingThis ? " is-recording" : "")}
+                            disabled={isDisabled}
+                            onClick={() => setRecording(recordingThis ? null : b.id)}
+                          >
+                            {keycapText}
+                          </button>
+                        )}
+                        {!specialSuffix && (
+                          <button
+                            className="nc-set-icon-action"
+                            title={
+                              isDisabled
+                                ? t("settings.shortcuts.setEnabled")
+                                : t("settings.shortcuts.setDisabled")
+                            }
+                            aria-label={
+                              isDisabled
+                                ? t("settings.shortcuts.setEnabled")
+                                : t("settings.shortcuts.setDisabled")
+                            }
+                            onClick={() => toggleDisabled(b.id)}
+                          >
+                            <Icon name="ban" size={12} />
+                          </button>
+                        )}
+                        <button
+                          className="nc-set-icon-action"
+                          title={t("settings.shortcuts.resetToDefault")}
+                          aria-label={t("settings.shortcuts.resetToDefault")}
+                          onClick={() => resetOne(b)}
+                        >
+                          <Icon name="rotate-ccw" size={12} />
+                        </button>
+                      </div>
+                    </Row>
+                  );
+                })}
+              </div>
             </div>
           );
         })}
-      </Section>
+      </div>
     </div>
   );
 }
