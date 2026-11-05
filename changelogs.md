@@ -6019,7 +6019,7 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - ghost + 浮层：`shots/rv-15-ghost-popup.png`（放大 `rv-15-crop2.png`）。
 - 总开关关：`shots/rv-20-disabled.png`、`rv-22-disabled-l.png`（输入 `l` 无候选 / 无 ghost）。
 - 恢复原状：`shots/rv-28-restored.png`（启用开 / ghost 关 / 浮层开 / 来源 当前主机）。
-- 历史范围 host/global：切到 global 后同一会话候选不变（当前只有一个主机桶，无法区分差异），切换即时生效，已恢复「当前主机」。
+- 历史范围 host/global：设置项可切换且即时重算，但本地只有一个主机桶，切换后候选内容无可辨识差异，本轮未做独立截图（不伪造结论）。
 
 ### Telnet（本地 Node 服务）
 
