@@ -9326,6 +9326,81 @@ body {
   color: hsl(var(--muted-foreground));
 }
 
+/* 窄窗口（overlay 可被拖到小窗）：导航收窄、行内控件换到标签下方 */
+@media (max-width: 900px) {
+  .nc-settings-nav {
+    width: 192px;
+  }
+
+  .nc-settings-content {
+    padding: 20px;
+  }
+}
+
+@media (max-width: 720px) {
+  .nc-settings-nav {
+    width: 168px;
+    padding: 8px;
+  }
+
+  .nc-settings-search-collapsed,
+  .nc-settings-search {
+    padding: 0 8px;
+    font-size: 13px;
+  }
+
+  .nc-settings-tab {
+    padding: 0 8px;
+  }
+
+  .nc-settings-content {
+    padding: 16px;
+  }
+
+  .nc-set-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .nc-set-row-control {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .nc-set-select,
+  .nc-set-input,
+  .nc-set-combo,
+  .nc-set-textarea {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .nc-set-app,
+  .nc-set-custom {
+    gap: 20px;
+  }
+
+  .nc-set-app-side {
+    width: 100%;
+  }
+
+  .nc-set-slider.is-stacked {
+    align-items: flex-start;
+  }
+
+  .nc-set-swatches {
+    grid-template-columns: repeat(auto-fill, 24px);
+    justify-content: start;
+  }
+
+  .nc-set-empty-state {
+    min-height: 240px;
+    padding: 24px 16px;
+  }
+}
+
 /* 卡片内的自由内容（Netcatty SettingCard padded p-4 的等价物） */
 .nc-set-card-text {
   margin: 0;
@@ -10057,16 +10132,59 @@ body {
   padding: 8px 0;
 }
 
-.nc-set-placeholder {
+/* 占位/空状态：对照 Netcatty LazyTab 居中空态（图标圆底 + 标题 + 12px 说明） */
+.nc-set-empty-state {
   display: flex;
   min-height: 320px;
   max-width: 860px;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 8px;
+  padding: 32px 24px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card));
+  text-align: center;
+}
+
+.nc-set-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: hsl(var(--muted) / 0.6);
   color: hsl(var(--muted-foreground));
+}
+
+.nc-set-empty-title {
   font-size: 14px;
+  font-weight: 600;
+}
+
+.nc-set-empty-desc {
+  margin: 0;
+  max-width: 420px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-set-empty-actions {
+  margin-top: 8px;
+}
+
+/* 卡片内联空态（文件关联为空） */
+.nc-set-empty-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-style: italic;
+  color: hsl(var(--muted-foreground));
 }
 
 /* ── 应用 tab：对照 Netcatty SettingsApplicationTab（lg:flex-row gap-14）

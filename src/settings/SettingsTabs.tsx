@@ -17,7 +17,7 @@ import {
   type FontInfo,
   type UpdateCheckResult,
 } from "../backend/client";
-import { Icon } from "../ui/icons";
+import { Icon, type IconName } from "../ui/icons";
 import { decodeAppError, userVisibleError } from "../domain/sshErrors";
 import {
   disableAppLock,
@@ -499,7 +499,6 @@ export function ApplicationTab() {
         )}
 
         <div className="nc-set-app-status">
-          <strong>{t("settings.update.install")}</strong>
           <span>{t("settings.update.installMissing")}</span>
         </div>
 
@@ -1576,7 +1575,8 @@ export function SftpTab() {
           title={t("settings.sftpFileAssociations.title")}
           desc={withReason(t("settings.sftpFileAssociations.desc"))}
         >
-          <span className="nc-set-row-desc">
+          <span className="nc-set-empty-row">
+            <Icon name="file-type" size={14} />
             {t("settings.sftpFileAssociations.noAssociations")}
           </span>
         </Row>
@@ -2220,23 +2220,53 @@ export function SystemTab() {
 export function SyncTab({ onOpenSync }: { onOpenSync?: () => void }) {
   const t = useT();
   return (
-    <div className="nc-set-placeholder">
-      <p>{t("settings.sync.desc")}</p>
-      <button className="nc-set-btn" disabled={!onOpenSync} onClick={onOpenSync}>
-        <Icon name="cloud" size={14} />
-        {t("settings.sync.open")}
-      </button>
-    </div>
+    <EmptyState
+      icon="cloud"
+      title={t("settings.tab.sync")}
+      desc={t("settings.sync.desc")}
+      action={
+        <button className="nc-set-btn is-primary" disabled={!onOpenSync} onClick={onOpenSync}>
+          <Icon name="cloud" size={16} />
+          {t("settings.sync.open")}
+        </button>
+      }
+    />
   );
 }
 
 // ── 占位 ──────────────────────────────────────────────────
 
+/** 空状态：对照 Netcatty LazyTab 的居中空态（图标 + 标题 + 说明 + 操作）。 */
+function EmptyState({
+  icon,
+  title,
+  desc,
+  action,
+}: {
+  icon: IconName;
+  title: string;
+  desc?: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="nc-set-empty-state">
+      <div className="nc-set-empty-icon">
+        <Icon name={icon} size={20} />
+      </div>
+      <div className="nc-set-empty-title">{title}</div>
+      {desc && <p className="nc-set-empty-desc">{desc}</p>}
+      {action && <div className="nc-set-empty-actions">{action}</div>}
+    </div>
+  );
+}
+
 export function PlaceholderTab({ tab }: { tab: "ai" }) {
   const t = useT();
   return (
-    <div className="nc-set-placeholder">
-      <p>{t(`settings.placeholder.${tab}`)}</p>
-    </div>
+    <EmptyState
+      icon="sparkles"
+      title={t("settings.tab.ai")}
+      desc={t(`settings.placeholder.${tab}`)}
+    />
   );
 }

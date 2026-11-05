@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-11-05 — #183 设置页 UI 重做（步骤③：占位 tab 空状态 + 窄窗复查）
+
+> 收尾 #181/#182：三个占位 tab（SFTP 文件关联空态、AI、同步与云）统一为 Netcatty 居中空状态卡片，并复查 720px 窄窗。仍只改视觉，未动任何读写逻辑。
+
+### 1. 对照抄取的结构与数值
+
+| 区域 | Netcatty 依据 | termX 落地（`src/styles.css`） |
+|---|---|---|
+| 空状态容器 | 居中 `flex flex-col items-center justify-center`，卡片边框与圆角 | `.nc-set-empty-state`：min-height 320 / max-width 860 / padding 32×24 / 1px `--border` / 圆角 8 / `--card` 背景 / 纵向 gap 8 |
+| 空状态图标 | 圆形柔底图标 | `.nc-set-empty-icon` 40px 圆形、`--muted/0.6` 底、`--muted-foreground` 图标、下距 4 |
+| 空状态文案 | 标题 `text-sm font-semibold`，说明 `text-xs text-muted-foreground` | 标题 14/600；说明 12px、行高 1.6、最大宽 420；操作区上距 8 |
+| 卡片内联空态 | muted italic 单行 | `.nc-set-empty-row` inline-flex / gap 6 / 12px / italic / `--muted-foreground`（SFTP 文件关联「暂无文件关联。」带 `file-type` 图标） |
+| 同步空状态操作 | 主按钮 | `打开同步页` 用 `.nc-set-btn.is-primary`（36px 高、主色填充） |
+| 窄窗（≤900px） | — | 导航 192px、内容 padding 20 |
+| 窄窗（≤720px） | — | 导航 168px、内容 padding 16、tab 内边距 8、设置行改纵排且控件 100%、空状态 min-height 240 / padding 24×16、色板自动换行左对齐 |
+
+### 2. 覆盖范围
+
+- SFTP：文件关联空行（原纯文本）改为带图标的 `.nc-set-empty-row`。
+- AI：`PlaceholderTab` 改为 `sparkles` 图标 + 标题 + 占位说明的居中空状态。
+- 同步与云：`SyncTab` 改为 `cloud` 图标 + 说明 + 主按钮「打开同步页」的空状态（按钮行为原样）。
+- 一致性复查：应用/系统/外观/终端/快捷键全部套用同一 `.nc-set-page`、分组标题、卡片、行分隔与控件尺寸。
+
+### 3. 验证（debug + CDP）
+
+- 截图（明暗各一）：SFTP 顶部 + 底部 `set-file-assocs-{light,dark}-after[-bottom].png`、AI `set-ai-{light,dark}-after.png`、同步 `set-sync-{light,dark}-after.png`；窄窗 720×820：`set-narrow-720-{system,shortcuts,appearance}-light.png`。
+- 断言：三个占位 tab 空状态标题/说明/操作齐全、SFTP 内联空态存在；720 宽下 `contentScrollWidth == clientWidth`、`docScrollWidth == 720`、`overflowX=false`、`rowDirection=column`、`navWidth=168`，见 `evidence/settings-ui-step3.json`（全部 PASS）。
+- 门禁：`npm run test:run` 65 文件 / 730 用例通过；`npm run build` 通过；`tauri build --debug` 通过。
+
+### 4. 踩坑
+
+- AI tab 在导航中为 `disabled`，CDP 点不开；截图时临时改为启用、截完立即还原 `disabled: true`（工作区无残留）。因此 AI 空状态截图来自临时启用版本，导航置灰态未改变。
+- 旧版同步 tab 有改前截图（`set-sync-before-light.png` ← `p1-settings-sync-tab.png`）；SFTP / AI 此前没有可用改前截图，回执中如实标注为「无改前」。
+- 空状态用 `max-width: 860px`（上限而非固定宽）而非 `width: 860px`，内容区收窄时自然跟随容器；720px 下仅需媒体查询把 min-height 降到 240、padding 收到 24×16，实测无横向滚动。
+
 ## 2026-11-05 — #181 设置页 UI 重做（步骤①：应用 + 系统 tab）
 
 > 目标：以 `Netcatty/components/SettingsPage.tsx` + `components/settings/settings-ui.tsx` + `SettingsApplicationTab.tsx` + `tabs/SettingsSystemTab.tsx` 为准抄版面，落到 termX 现有 `styles.css` 令牌（不引入 Tailwind runtime），功能与持久化逻辑不变。本步只覆盖「应用」「系统」，外观/终端/快捷键与占位 tab 留 #182/#183。
