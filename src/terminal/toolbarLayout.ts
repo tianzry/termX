@@ -24,6 +24,8 @@ export const TERMINAL_TOOLBAR_ACTIONS = [
   "search",
   "sessionLog",
   "scripts",
+  // Netcatty 的笔记入口在侧栏工具 rail；termX 没有 rail，落在工具栏末尾（唯一新增项）。
+  "notes",
 ] as const;
 
 export type TerminalToolbarAction = (typeof TERMINAL_TOOLBAR_ACTIONS)[number];
@@ -47,9 +49,11 @@ export function resolveTerminalToolbarActions(
   kind: TerminalKind,
 ): TerminalToolbarAction[] {
   const caps = deriveToolbarCapabilities(kind);
-  return TERMINAL_TOOLBAR_ACTIONS.filter((action) =>
-    action === "sftp" ? caps.sftp : true,
-  );
+  return TERMINAL_TOOLBAR_ACTIONS.filter((action) => {
+    if (action === "sftp") return caps.sftp;
+    if (action === "notes") return caps.notes;
+    return true;
+  });
 }
 
 /** 按终端类型过滤标题行条目（保持 Netcatty 顺序）。 */

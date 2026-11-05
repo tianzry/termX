@@ -1,4 +1,4 @@
-/* 笔记模块（对照 Netcatty NotesManager 重做）。
+﻿/* 笔记模块（对照 Netcatty NotesManager 重做）。
    树默认 300px、大纲 256px、标题 18px、工具栏 16px 图标，变量沿用 styles.css 的 --nc-*。 */
 
 .notes-page {
@@ -744,4 +744,222 @@
 .notes-md-empty {
   color: hsl(var(--nc-faint));
   font-size: 13px;
+}
+
+/* ── 终端右侧笔记面板（#205，对照 Netcatty NotesManager sidebar 模式）──────── */
+.notes-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: hsl(var(--nc-bg));
+}
+
+.notes-panel-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.5);
+  flex: none;
+}
+
+.notes-panel-search {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid hsl(var(--nc-border) / 0.8);
+  border-radius: 6px;
+  background: hsl(var(--nc-bg));
+  color: hsl(var(--nc-fg));
+  font-size: 12px;
+  outline: none;
+}
+.notes-panel-search:focus {
+  border-color: hsl(var(--nc-primary) / 0.9);
+}
+
+.notes-panel-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--nc-muted));
+  cursor: pointer;
+}
+.notes-panel-icon-btn:hover {
+  background: hsl(var(--nc-hover));
+  color: hsl(var(--nc-fg));
+}
+.notes-panel-icon-btn[aria-pressed="true"] {
+  background: hsl(var(--nc-hover));
+  color: hsl(var(--nc-primary));
+}
+.notes-panel-icon-btn.is-danger:hover {
+  color: hsl(var(--destructive));
+}
+
+.notes-panel-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+}
+
+.notes-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 56px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: hsl(var(--nc-fg));
+  text-align: left;
+  cursor: pointer;
+}
+.notes-panel-row:hover {
+  background: hsl(var(--nc-hover));
+}
+
+.notes-panel-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 8px;
+  background: hsl(var(--nc-border) / 0.35);
+  color: hsl(var(--nc-primary));
+}
+
+.notes-panel-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notes-panel-row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-panel-pin {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: hsl(var(--nc-primary) / 0.15);
+  color: hsl(var(--nc-primary));
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.notes-panel-row-sub {
+  font-size: 11px;
+  color: hsl(var(--nc-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notes-panel-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: hsl(var(--nc-muted));
+}
+
+.notes-panel-error-banner {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: hsl(var(--destructive));
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.5);
+}
+
+/* 编辑态：覆盖列表 */
+.notes-panel.is-editor {
+  padding: 0;
+}
+
+.notes-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notes-panel-spacer {
+  flex: 1;
+}
+
+.notes-panel-title-input {
+  margin: 8px 10px 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid hsl(var(--nc-border) / 0.8);
+  border-radius: 6px;
+  background: hsl(var(--nc-bg));
+  color: hsl(var(--nc-fg));
+  font-size: 14px;
+  font-weight: 600;
+  outline: none;
+}
+.notes-panel-title-input:focus {
+  border-color: hsl(var(--nc-primary) / 0.9);
+}
+
+.notes-panel-editor {
+  flex: 1;
+  min-height: 0;
+  margin: 8px 10px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--nc-border) / 0.8);
+  border-radius: 6px;
+  background: hsl(var(--nc-bg));
+  color: hsl(var(--nc-fg));
+  font-family: var(--nc-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+}
+.notes-panel-editor:focus {
+  border-color: hsl(var(--nc-primary) / 0.9);
+}
+
+.notes-panel-preview {
+  flex: 1;
+  min-height: 0;
+  margin: 8px 10px;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid hsl(var(--nc-border) / 0.8);
+  border-radius: 6px;
+}
+
+.notes-panel-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 12px 8px;
+  font-size: 11px;
+  color: hsl(var(--nc-muted));
+}
+
+.notes-panel-error {
+  color: hsl(var(--destructive));
 }

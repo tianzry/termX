@@ -31,6 +31,8 @@ export interface ToolbarCapabilities {
   copyHost: boolean;
   /** 右侧：SFTP（termX 仅 SSH 会话可开）。 */
   sftp: boolean;
+  /** 右侧：笔记面板（Netcatty 从侧栏工具 rail 打开；termX 落在 SSH 工具栏）。 */
+  notes: boolean;
   /** 右侧：关键词高亮（所有类型）。 */
   highlight: boolean;
   /** 右侧：撰写栏（所有类型）。 */
@@ -59,6 +61,7 @@ export function deriveToolbarCapabilities(kind: TerminalKind): ToolbarCapabiliti
     systemMonitor: ssh,
     copyHost: kind !== "pty",
     sftp: ssh,
+    notes: ssh,
     highlight: true,
     compose: true,
     search: true,

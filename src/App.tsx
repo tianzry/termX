@@ -18,6 +18,7 @@ import type { PaneHandle } from "./TerminalPane";
 import { newId, type Tab, type Connector } from "./workspaceModel";
 import type { ConnectionStatus } from "./terminal/connectionStatus";
 import { findProfileForHostLink } from "./notes/notesModel";
+import { NotesPanel } from "./notes/NotesPanel";
 import { TopTabs, type RootSurface } from "./TopTabs";
 import { HostSidebar } from "./HostSidebar";
 import { VaultView } from "./VaultView";
@@ -56,10 +57,17 @@ import {
   isTelnetProfile,
   telnetSessionFromProfile,
 } from "./domain/hostProtocol";
-type Tool = "sftp" | null;
+type Tool = "sftp" | "notes" | null;
 
 const TOOL_TITLE: Record<Exclude<Tool, null>, string> = {
   sftp: "文件传输",
+  notes: "笔记",
+};
+
+/** 笔记面板宽度对齐 Netcatty 侧栏默认 420px（SFTP 沿用 380px）。 */
+const TOOL_WIDTH: Record<Exclude<Tool, null>, number> = {
+  sftp: 380,
+  notes: 420,
 };
 
 const SIDEBAR_KEY = "termx.sidebar.v1";
@@ -686,10 +694,14 @@ export default function App() {
           <AsidePanel
             title={TOOL_TITLE[tool]}
             subtitle="工具面板"
+            width={TOOL_WIDTH[tool]}
             onClose={() => setTool(null)}
           >
             {tool === "sftp" && (
               <SftpPanel sshSessionId={activeSshSid} terminalCwd={activeCwd} />
+            )}
+            {tool === "notes" && (
+              <NotesPanel profiles={profiles} onOpenHost={connect} />
             )}
           </AsidePanel>
         )}

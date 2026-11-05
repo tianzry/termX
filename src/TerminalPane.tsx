@@ -263,7 +263,7 @@ interface Props {
   /** 连接状态变化（供会话标签状态点使用）。 */
   onConnectionStatus?: (status: PaneStatus) => void;
   /** 打开右侧工具面板（SFTP）。 */
-  onOpenTool?: (tool: "sftp") => void;
+  onOpenTool?: (tool: "sftp" | "notes") => void;
   /** 关闭当前窗格。 */
   onClosePane?: () => void;
   /** 分屏（在当前标签内）。 */
@@ -3303,6 +3303,16 @@ export function TerminalPane({
             onClick={() => onOpenTool?.("sftp")}
           >
             <Icon name="folder-input" size={12} />
+          </button>
+          )}
+          {toolbarActions.includes("notes") && (
+          <button
+            className="term-tool-btn"
+            title="笔记面板"
+            disabled={!onOpenTool}
+            onClick={() => onOpenTool?.("notes")}
+          >
+            <Icon name="file-text" size={12} />
           </button>
           )}
           <button

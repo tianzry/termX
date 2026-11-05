@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-06 — #205 SSH 终端右侧笔记面板
+
+- Netcatty 取证：笔记是终端侧栏（`TerminalLayer` side panel）的一个工具 tab，不是独立窗口；侧栏默认宽 420px（最小 280px），可停靠；sidebar 模式只显示「搜索 + 分组/笔记列表」，点笔记后在侧栏内切换为编辑态；复用全局 `NotesManager` 数据（本地笔记库），`ssh://` 链接点击打开对应主机；侧栏开关按标签页记忆（`sidePanelOpenTabs`）。
+- termX 落地：
+  - `Tool` 增加 `notes`，复用现有 `AsidePanel`（标题「笔记」、宽 420px、关闭按钮），不新增常驻侧栏 rail。
+  - 入口：SSH 终端工具栏新增 `file-text` 图标（本地/串口/Telnet 不显示，`toolbarCapabilities.notes` 仅 SSH 为真）；这是相对 Netcatty 唯一的新增入口——Netcatty 从侧栏工具 rail 打开，termX 无 rail，已在此记录。
+  - 新增 [NotesPanel.tsx](file:///g:/AiCode/termX/termX/src/notes/NotesPanel.tsx)：搜索无防抖、列表 56px 行（32px 图标盒 + 标题 + 摘要 + 置顶徽标）、新建笔记、编辑态覆盖列表（标题输入 + Markdown 编辑/预览切换 + 删除）；保存复用 `createNoteSaveQueue`（500ms 合并写）与 `save_note`/`list_notes`/`delete_note`，与 Vault 笔记页同数据层，切换/关闭面板前 flush。
+  - `ssh://` / `telnet://` 链接在预览态复用 `findProfileForHostLink` 匹配主机并调用 `App.connect`；找不到时在面板底部给出提示。
+  - 布局：`AsidePanel` 与 `.nc-main` 同级，展开后终端列宽变化由 TerminalPane 既有 ResizeObserver → `fit()` 自动重排，分屏结构不变。
+- 门禁：`npm run test:run` 746 通过、`npm run build` 通过、`cargo test --lib` 943 通过。
+- **未实测**：未做桌面端截图/点击回归（笔记列表与编辑保存走既有接口与既有 Vault 流程）；面板开合后分屏 xterm fit 仅按 ResizeObserver 静态确认。
+
 ## 2026-11-06 — #208 复审 #204（c422e22 / 2bf4568）Telnet 纳入主机协议
 
 - 复审分级与处理：
