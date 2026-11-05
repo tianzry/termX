@@ -1180,7 +1180,15 @@ export function TerminalPane({
       return;
     }
     const line = readCurrentCommandLine();
-    if (line !== null) inputBufferRef.current.line = line;
+    if (line === null) return;
+    // bracketed paste 的多行内容：终端只显示最后一行，不能用单行覆盖整段，
+    // 否则命令历史只会记下最后一行。
+    if (inputBufferRef.current.line.includes("\n")) {
+      const parts = inputBufferRef.current.line.split("\n");
+      const bufferedLast = parts[parts.length - 1] ?? "";
+      if (line.trim() === bufferedLast.trim()) return;
+    }
+    inputBufferRef.current.line = line;
   }
 
   /** 会话断开 / 未连接时不保留候选浮层（避免点击残留项写入已失效的传输）。 */

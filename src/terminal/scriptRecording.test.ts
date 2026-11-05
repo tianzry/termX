@@ -47,6 +47,39 @@ describe("script recording input buffer", () => {
     expect(buf.line).toBe("ab");
   });
 
+  it("bracketed paste 多行内容按一条完整命令记录", () => {
+    const buf = createScriptRecordingBuffer(0);
+    // 粘贴期间的换行不是提交，不应产生多条记录。
+    expect(
+      appendKeystrokes(buf, "\u001b[200~echo a\necho b\u001b[201~", 10),
+    ).toBeNull();
+    expect(buf.line).toBe("echo a\necho b");
+    expect(buf.steps).toHaveLength(0);
+    // Enter 提交整段，作为一条多行命令。
+    expect(appendKeystrokes(buf, "\r", 20)).toEqual({
+      command: "echo a\necho b",
+      delayMs: 0,
+    });
+    expect(buf.steps).toHaveLength(1);
+  });
+
+  it("粘贴内容跨 chunk：200~ 与 201~ 分别到达仍合成一条", () => {
+    const buf = createScriptRecordingBuffer(0);
+    appendKeystrokes(buf, "\u001b[200~aws s3\nls -l\u001b[20", 10);
+    expect(appendKeystrokes(buf, "1~", 11)).toBeNull();
+    expect(buf.line).toBe("aws s3\nls -l");
+    expect(appendKeystrokes(buf, "\r", 12)?.command).toBe("aws s3\nls -l");
+  });
+
+  it("粘贴内容里的 CRLF 归一为 LF，且可继续追加输入", () => {
+    const buf = createScriptRecordingBuffer(0);
+    appendKeystrokes(buf, "\u001b[200~cd /tmp\r\npwd\r\u001b[201~", 10);
+    expect(buf.line).toBe("cd /tmp\npwd\n");
+    appendKeystrokes(buf, "&& ls", 11);
+    expect(buf.line).toBe("cd /tmp\npwd\n&& ls");
+    expect(appendKeystrokes(buf, "\r", 20)?.command).toBe("cd /tmp\npwd\n&& ls");
+  });
+
   it("builds a script with sleeps for long gaps", () => {
     const text = buildScriptCommand([
       { command: "cd /tmp", delayMs: 0 },
