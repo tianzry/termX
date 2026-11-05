@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-06 — #211 设置独立窗口可行性立项（只调研 + 方案，不写代码）
+
+- **Netcatty 现状（Electron，只读对照）**：`electron/bridges/windowManager/settingsWindow.cjs` 创建 `BrowserWindow`：`980×720`、`minWidth 820 / minHeight 600`、`modal:false`、**不设 parent**（mac 拖屏不可见 / Windows 关设置连带关主窗）、`show:false` 加载完再显示；关闭时 `preventDefault + hide()` 复用；每次打开按主窗口所在显示器的 `workArea` 居中；路由为 `#/settings`；Windows 下无边框自定义 chrome + `restoreWindowInputFocus`（`setAlwaysOnTop(true→focus→false)` 闪现抢焦点）。
+- **termX 现状**：设置是 `SettingsDialog` 全屏 overlay（`.nc-settings-overlay`，`App.tsx` 用 `settingsOpen/settingsTab` 控制）；设置对象整包存 db `settings` 表 key `settings.center.v1`（`settingsStore.ts` 模块级单例 + `applySideEffects`，200ms 去抖持久化）；Rust 已有 `on_window_event`（`Destroyed` 按 window label 关会话）与多窗口先例（`emitter.rs` 的 `WebviewWindowBuilder` AI 分析窗）。
+- **方案（Tauri 2 单 WebView2 模型，独立 `WebviewWindow`）**：
+  1. **建窗**：Rust 命令 `open_settings_window(tab)`（不走前端建窗可省一大组 capability）：`WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("index.html#/settings".into()))`，`title("termX 设置")`、`inner_size(980,720)`、`min_inner_size(820,600)`、`resizable(true)`、`decorations(true)`（不做 Netcatty 的无边框/自定义 chrome，降风险）、`visible(false)` 后 `show()` 防白屏；位置按主窗口 `outer_position` + `current_monitor().work_area` 居中（复刻 Netcatty 的「跟随主窗所在显示器」）。已存在 `app.get_webview_window("settings")` 时去重：重新居中 + `show/unminimize/set_focus`。
+  2. **路由**：`main.tsx` 启动时判断 `location.hash`：`#/settings` → 只渲染 `<SettingsWindowApp>`（壳 + `SettingsDialog`，CSS 增加 `nc-settings-window` 变体把 overlay 改成填满窗口，无遮罩）；`#/settings?tab=appearance` 支持入口指定初始 tab。主窗口忽略该 hash；设置窗口**不启动主 App**（不恢复工作区、不建会话），避免双份副作用。
+  3. **入口改造**：`App.tsx` 的 `onOpenSettings`（application）、终端 toolbar「终端设置」（appearance）改调 `invoke("open_settings_window", { tab })`；invoke 失败（移动端/能力缺失）回落到现有 overlay，overlay 代码保留作为 fallback。
+  4. **跨窗口同步**：`settingsStore` 增加 `applySettingsFromPeer(payload)`（规范化 + `applySideEffects` + `emit`，**不再落库**）；`persist` 去抖写库成功后 `emit("settings:changed", { version, origin, settings })`（Tauri JS `emit` 广播）；两窗口启动时 `listen("settings:changed")`，忽略 `origin` 与自己；payload 带 `version+origin`（对齐 Netcatty `terminalFontSizeSync` 的 `version|origin` 记录），解决双窗并发写 `settings.center.v1` 的后写覆盖问题。主题/UI 字体/透明度/自定义 CSS/终端字号全部走同一 payload。
+  5. **生命周期**：设置窗 `CloseRequested` → `prevent_close + hide()`（隐藏复用，对齐 Netcatty）；主窗口 `Destroyed` 时 `destroy` 设置窗（否则主窗关掉后 app 因设置窗仍存活而不退出）；`RunEvent::ExitRequested` 时强制 destroy。现有 `close_window_sessions(state, window.label())` 对 `settings` 无会话，天然无副作用（补注释即可）。
+  6. **配置/权限**：Rust 建窗则前端无需新增 `core:webview:allow-create-webview-window`；窗口尺寸首版不持久化（每次 980×720 居中，对齐 Netcatty），后续可选存 db。
+- **风险**：
+  - 双 WebView2：额外常驻内存约 80–150 MB、冷开 0.5–1.5s（共享同一 user data 目录，localStorage 可见，但设置以 DB 为准）。
+  - 双窗写设置竞态：全量 payload + version/origin 广播可解，但仍需回归「设置窗改主题 → 主窗即时应用、反之亦然」。
+  - dev/prod 路径差异：`index.html#/settings` 在 dev 由 devUrl 解析、打包后走 asset 协议，需各回归一次。
+  - AppLock（`AppLockGate`）：主窗锁定后是否允许设置窗修改安全项需产品决策；建议设置窗同样挂锁或锁定时禁止打开。
+  - 主窗关闭到托盘/最小化时设置窗是否跟随隐藏；`single_instance` 回调目前只聚焦 main，需补 settings。
+  - 隐藏复用 = 内存常驻（与 Netcatty 相同取舍）。
+- **工作量估计**：路由 + 设置窗壳（含 overlay 变体/初始 tab）0.5–1 人日；Rust 建窗/去重/居中/隐藏复用/主窗联动 1–1.5 人日；跨窗口同步（version+origin 事件 + 副作用回归）1–1.5 人日；能力与 dev/打包回归 + 手动双窗测试 0.5–1 人日；**合计 3–5 人日**。建议先做 0.5 人日 spike（Rust 建窗 + `#/settings` 空壳 + 主题广播）验证 WebView2 双窗行为，再正式排期。
+- **结论**：可行，保持「每个窗口一个 WebView2 实例」的模型；不做无边框/mac 特化。本轮只立项与方案，等排期，不写代码。
+- 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 947 项（首跑 1 项已知偶发超时，单跑通过）、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #210 笔记页信息架构对齐 Netcatty
 
 - **同一套模型确认**：Netcatty `VaultView` 直接渲染 `NotesManager`（`displayMode` full/sidebar 分支），分组、大纲、编辑/预览模式都在同一个组件里；termX 页面版与 #205 终端面板也共用 `src/notes/notesModel.ts`（`createNoteSaveQueue` / `draftToNote` / `api.saveNote`），两处保存入口均只调用 `api.saveNote`，未出现第二套保存逻辑。
