@@ -15,10 +15,12 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
+import { Folder, FolderLock, TerminalSquare } from "lucide-react";
 import type { DiscoveredShell, Group, Profile } from "./backend/client";
 import type { Tab } from "./workspaceModel";
-import { Icon, type IconName } from "./ui/icons";
-import { avatarStyle, initial } from "./VaultView";
+import { Icon } from "./ui/icons";
+import { DistroAvatar } from "./ui/DistroAvatar";
+import { isMonochromeShellIcon, shellIconSrc } from "./ui/shellIcons";
 
 interface Props {
   open: boolean;
@@ -36,15 +38,16 @@ interface Props {
 }
 
 type Item =
-  | { kind: "vault"; key: string; label: string; icon: IconName }
-  | { kind: "sftp"; key: string; label: string; icon: IconName }
-  | { kind: "tab"; key: string; label: string; icon: IconName; tabId: string }
-  | { kind: "host"; key: string; label: string; icon: IconName; profile: Profile; meta: string }
+  | { kind: "vault"; key: string; label: string }
+  | { kind: "sftp"; key: string; label: string }
+  | { kind: "tab"; key: string; label: string; tabId: string }
+  | { kind: "host"; key: string; label: string; profile: Profile; meta: string }
   | {
       kind: "shell";
       key: string;
       label: string;
-      icon: IconName;
+      /** shell 图标 id（`public/shells` 或 `public/distro`） */
+      icon: string;
       shell: DiscoveredShell;
       isDefault: boolean;
     };
@@ -82,10 +85,10 @@ export function QuickSwitcher({
 
     const tabItems: Item[] = [];
     if (hit("Vaults", "vault")) {
-      tabItems.push({ kind: "vault", key: "surface:vault", label: "Vaults", icon: "folder" });
+      tabItems.push({ kind: "vault", key: "surface:vault", label: "Vaults" });
     }
     if (showSftpTab && hit("SFTP", "sftp")) {
-      tabItems.push({ kind: "sftp", key: "surface:sftp", label: "SFTP", icon: "folder" });
+      tabItems.push({ kind: "sftp", key: "surface:sftp", label: "SFTP" });
     }
     for (const t of tabs) {
       if (!hit(t.title)) continue;
@@ -93,7 +96,6 @@ export function QuickSwitcher({
         kind: "tab",
         key: `tab:${t.id}`,
         label: t.title,
-        icon: t.connector.kind === "ssh" ? "server" : "terminal",
         tabId: t.id,
       });
     }
@@ -105,7 +107,6 @@ export function QuickSwitcher({
         kind: "host" as const,
         key: `host:${p.id}`,
         label: p.name,
-        icon: p.protocol === "serial" ? "network" : "terminal",
         profile: p,
         meta: groupPath(groups, p.group_id),
       }));
@@ -116,7 +117,7 @@ export function QuickSwitcher({
         kind: "shell" as const,
         key: `shell:${s.id}`,
         label: s.name,
-        icon: "terminal" as const,
+        icon: s.icon,
         shell: s,
         isDefault: s.is_default,
       }));
@@ -187,7 +188,30 @@ export function QuickSwitcher({
   };
 
   let index = -1;
-  const row = (item: Item, extra?: ReactNode, leading?: ReactNode) => {
+  /** 行首图标：Vaults / SFTP / 会话 / 主机 / 本地 Shell 各自对齐 Netcatty。 */
+  const leadingFor = (item: Item): ReactNode => {
+    switch (item.kind) {
+      case "vault":
+        return <FolderLock size={16} className="qs-row-icon" />;
+      case "sftp":
+        return <Folder size={16} className="qs-row-icon" />;
+      case "tab":
+        return <TerminalSquare size={16} className="qs-row-icon" />;
+      case "host":
+        return <DistroAvatar profile={item.profile} size="sm" />;
+      case "shell":
+        return (
+          <img
+            src={shellIconSrc(item.icon)}
+            alt={item.label}
+            className={`nc-shell-icon${
+              isMonochromeShellIcon(item.icon) ? " mono" : ""
+            }`}
+          />
+        );
+    }
+  };
+  const row = (item: Item, extra?: ReactNode) => {
     index += 1;
     const i = index;
     const active = i === selected;
@@ -199,7 +223,7 @@ export function QuickSwitcher({
         onMouseEnter={() => setSelected(i)}
         onClick={() => run(item)}
       >
-        {leading ?? <Icon name={item.icon} size={16} className="qs-row-icon" />}
+        {leadingFor(item)}
         <span className="qs-row-label">{item.label}</span>
         {extra}
       </button>
@@ -239,31 +263,14 @@ export function QuickSwitcher({
           {sections.hostItems.length > 0 && (
             <>
               <div className="qs-section">主机</div>
-              {sections.hostItems.map((item) => {
-                const p = item.kind === "host" ? item.profile : null;
-                const leading = p ? (
-                  p.protocol === "local" ? (
-                    <span className="nc-avatar sm local">
-                      <Icon name="terminal" size={14} />
-                    </span>
-                  ) : p.protocol === "serial" ? (
-                    <span className="nc-avatar sm serial" title="串口主机">
-                      <Icon name="usb" size={14} />
-                    </span>
-                  ) : (
-                    <span className="nc-avatar sm" style={avatarStyle(p.name)}>
-                      {initial(p.name)}
-                    </span>
-                  )
-                ) : undefined;
-                return row(
+              {sections.hostItems.map((item) =>
+                row(
                   item,
                   item.kind === "host" ? (
                     <span className="qs-row-meta">{item.meta}</span>
                   ) : null,
-                  leading,
-                );
-              })}
+                ),
+              )}
             </>
           )}
 

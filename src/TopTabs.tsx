@@ -8,11 +8,25 @@
  * 这里只展示快照并回调。
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  Cloud,
+  Folder,
+  FolderLock,
+  Lock,
+  Plus,
+  Server,
+  Settings,
+  SlidersHorizontal,
+  Sparkles,
+  Terminal,
+  Usb,
+} from "lucide-react";
 import { useSettings } from "./settings/settingsStore";
 import type { Tab } from "./workspaceModel";
 import { Icon } from "./ui/icons";
 import type { DiscoveredShell, Group, Profile } from "./backend/client";
+import { isMonochromeShellIcon, shellIconSrc } from "./ui/shellIcons";
 import { QuickSwitcher } from "./QuickSwitcher";
 
 export type RootSurface = "vault" | "sftp" | null;
@@ -53,6 +67,61 @@ interface Props {
   onCloseAll: () => void;
   onReconnectTab: (id: string) => void;
   onMoveTab: (id: string, toIndex: number) => void;
+}
+
+/** 会话标签 16px 图标容器：accent 15% 底 + accent 前景（Netcatty TOP_TAB 图标）。 */
+const TAB_GLYPH_BOX: CSSProperties = {
+  width: 16,
+  height: 16,
+  borderRadius: 4,
+  flexShrink: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  backgroundColor: "color-mix(in srgb, hsl(var(--accent)) 15%, transparent)",
+  color: "hsl(var(--accent))",
+};
+
+/** 串口标签：琥珀底色（与 DistroAvatar 串口头像一致）。 */
+const TAB_GLYPH_SERIAL: CSSProperties = {
+  ...TAB_GLYPH_BOX,
+  backgroundColor: "#D97706",
+  color: "#fff",
+};
+
+/** 会话标签图标：SSH → Server / serial → USB / 本地 → shell 图标或终端。 */
+function TabGlyph({ tab }: { tab: Tab }) {
+  const connector = tab.connector;
+  if (connector.kind === "serial") {
+    return (
+      <div style={TAB_GLYPH_SERIAL}>
+        <Usb size={10} />
+      </div>
+    );
+  }
+  if (connector.kind === "pty") {
+    // termX 的 pty 连接器暂未携带 shell 图标快照，缺失时回退终端图标。
+    const icon = (connector as { icon?: string }).icon;
+    if (icon) {
+      return (
+        <img
+          src={shellIconSrc(icon)}
+          alt={tab.title}
+          className={`nc-shell-icon${isMonochromeShellIcon(icon) ? " mono" : ""}`}
+        />
+      );
+    }
+    return (
+      <div style={TAB_GLYPH_BOX}>
+        <Terminal size={10} />
+      </div>
+    );
+  }
+  return (
+    <div style={TAB_GLYPH_BOX}>
+      <Server size={10} />
+    </div>
+  );
 }
 
 /** 后端能力尚未移植：入口保留，禁用点击。 */
@@ -135,7 +204,7 @@ export function TopTabs({
             className={`nc-root-tab${surface === "vault" ? " active flat" : ""}`}
             onClick={onOpenVault}
           >
-            <Icon name="folder" size={14} />
+            <FolderLock size={14} />
             <span>Vaults</span>
           </button>
           {settings.showSftpTab && (
@@ -143,7 +212,7 @@ export function TopTabs({
               className={`nc-root-tab${surface === "sftp" ? " active" : ""}`}
               onClick={onOpenSftp}
             >
-              <Icon name="folder" size={14} />
+              <Folder size={14} />
               <span>SFTP</span>
             </button>
           )}
@@ -201,11 +270,7 @@ export function TopTabs({
                   onDuplicateTab(tab.id);
                 }}
               >
-                <Icon
-                  name={tab.connector.kind === "ssh" ? "server" : "terminal"}
-                  size={14}
-                  className="nc-session-tab-icon"
-                />
+                <TabGlyph tab={tab} />
                 <span className="nc-session-tab-title">{tab.title}</span>
                 <button
                   className="nc-tab-close"
@@ -223,7 +288,7 @@ export function TopTabs({
             title="打开快速切换器 (Ctrl+J)"
             onClick={() => setQuickOpen(true)}
           >
-            <Icon name="plus" size={14} />
+            <Plus size={14} />
           </button>
         </div>
 
@@ -235,7 +300,7 @@ export function TopTabs({
               title={u.label}
               disabled
             >
-              <Icon name={u.icon} size={16} />
+              <Sparkles size={16} />
             </button>
           ))}
           <button
@@ -243,28 +308,28 @@ export function TopTabs({
             title={`云端同步 · ${status}`}
             onClick={onOpenSync}
           >
-            <Icon name="cloud" size={16} />
+            <Cloud size={16} />
           </button>
           <button
             className="nc-icon-btn nc-utility-btn"
             title="应用锁"
             onClick={onOpenLock}
           >
-            <Icon name="lock" size={16} />
+            <Lock size={16} />
           </button>
           <button
             className="nc-icon-btn nc-utility-btn"
             title="外观与窗口"
             onClick={onOpenAppearance}
           >
-            <Icon name="sliders" size={16} />
+            <SlidersHorizontal size={16} />
           </button>
           <button
             className="nc-icon-btn nc-utility-btn"
             title="设置中心"
             onClick={onOpenSettings}
           >
-            <Icon name="gear" size={16} />
+            <Settings size={16} />
           </button>
         </div>
       </div>

@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-11-05 — Vault / 顶部标签 / 快速切换器图标对齐 Netcatty
+
+- **图标库**：安装 `lucide-react@0.560.0`（与 Netcatty 同版本），不再用 `src/ui/icons.tsx` 自绘路径画这些位置。
+- **资源**：原样拷入 Netcatty `public/distro/*.svg`（28 个 distro/OS/厂商）与 `public/shells/*.svg`（10 个 shell 图标）到 termX `public/`。
+- **新增** `src/ui/DistroAvatar.tsx`（xs16 / sm20 / md32 / tree24 / log36 / lg44，品牌底色 + SVG 白化 + 串口琥珀 Usb + fallback 主色 Server）与 `src/ui/shellIcons.tsx`（`/distro|/shells` 路径解析，distro 单色图标暗色反色）。
+- **替换清单**：
+  - 左导航 10 项 → `LayoutGrid / Gauge / Cloud / Key / Globe / Plug / FileCode / NotebookText / BookMarked / Activity`，16px。
+  - 顶部根标签 `FolderLock` / `Folder` 14px，加号 `Plus` 14px；会话标签 SSH `Server` 10px（accent 15% 容器）、串口 `Usb` 10px（琥珀）、本地 shell 图标 16px。
+  - 快速切换器：Vaults `FolderLock`、SFTP `Folder`、会话 `TerminalSquare`（16px），主机行 `DistroAvatar sm`，本地 Shell 行走 `/shells/{icon}.svg` 16px。
+  - 主机卡片 `DistroAvatar lg`、列表头像 `DistroAvatar sm`（替换色块首字母）。
+- **Fallback（数据缺失）**：termX `Profile` 无 distro 字段，SSH 主机统一走 Netcatty 的兜底「主色 + Server」；本地主机用 `windows.svg`；串口用琥珀 `Usb`；`icon_color` 存在时用自定义底色。
+- **保持原样**：Netcatty 没有「同步」导航项，该项保留并用 `Cloud`；终端设置等其它非本次范围的图标未动。
+- **验证**：CDP 实测截图 `evidence/plus-menu.png`；`tsc --noEmit`、`test:run`（50 文件/526 用例）、`build` 全绿。
+- **已知差异**：129 等 SSH 主机在 Netcatty 里能显示 Ubuntu 橙色图标（其 Host 存 distro / 由 SSH banner 探测），termX 暂无该数据，只能显示通用 Server 兜底。
+
+---
+
 ## 2026-11-05 — Vault 顶部「+」改为 Netcatty QuickSwitcher
 
 - **真实实现来源**：Netcatty `components/TopTabs.tsx` 的「+」按钮 `onClick={onOpenQuickSwitcher}`，
@@ -11,11 +28,11 @@
   容器 `fixed inset-x-0 top-12 z-50 flex justify-center pt-2`；面板
   `w-full max-w-2xl mx-4 rounded-xl shadow-2xl max-h-[520px]`；列表
   `max-h-[min(360px,calc(100vh-14rem))]`。
-- **新增** `src/QuickSwitcher.tsx`：分区顺序「标签页 → 主机 → 本地 Shell」；
-  标签页含固定项 Vaults / SFTP 与当前已开会话标签（当前项带「当前」徽标）；
+- **新增** `src/QuickSwitcher.tsx`：分区顺序「主机 → 标签页 → 本地 Shell」；
+  标签页含固定项 Vaults / SFTP 与当前已开会话标签；
   主机按名称/地址过滤（最多 40 条，右侧显示 `Personal / 分组`）；
   本地 Shell 显示后端 `discover_shells` 结果并给默认 shell 打「默认」徽标。
-  顶部行「跳转到 Ctrl+J」+「+ 新建工作区」，搜索框 placeholder「搜索主机或标签页」+ Esc 键帽。
+  顶部行「跳转到 Ctrl+J」+「+ 新建工作区」，搜索框 placeholder「搜索主机或标签页」+ `Ctrl+J` 键帽。
 - **置灰项**：Netcatty 的「+ 新建工作区」在 termX 无对应能力（暂无工作区概念），
   按行内原因置灰：`暂未支持` + title「termX 暂无工作区功能」。
 - **交互**：Ctrl+J 全局开关、「+」打开；↑↓ 移动高亮、Enter 执行、Esc 关闭、点遮罩关闭；

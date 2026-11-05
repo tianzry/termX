@@ -56,7 +56,21 @@ import {
   getVaultHostRowSubtitle,
   LOCAL_SHELL_HOST_TAG,
 } from "./domain/localShellHost";
+import {
+  Activity,
+  BookMarked,
+  Cloud,
+  FileCode,
+  Gauge,
+  Globe,
+  Key,
+  LayoutGrid,
+  NotebookText,
+  Plug,
+  type LucideIcon,
+} from "lucide-react";
 import { Icon, type IconName } from "./ui/icons";
+import { DistroAvatar } from "./ui/DistroAvatar";
 import { LocalShellPanel } from "./LocalShellPanel";
 import { SerialHostPanel } from "./serial/SerialHostPanel";
 import { ForwardOverview } from "./ForwardOverview";
@@ -259,19 +273,19 @@ function authMethodOfCredential(c: Credential): {
 const navItems: Array<{
   id: string;
   label: string;
-  icon: IconName;
+  icon: LucideIcon;
   enabled?: boolean;
 }> = [
-  { id: "hosts", label: "主机", icon: "grid", enabled: true },
-  { id: "monitor", label: "监控", icon: "monitor", enabled: true },
-  { id: "sync", label: "同步", icon: "cloud", enabled: true },
-  { id: "keys", label: "钥匙串", icon: "key", enabled: true },
-  { id: "proxies", label: "代理", icon: "network", enabled: true },
-  { id: "port", label: "端口转发", icon: "transfer", enabled: true },
-  { id: "snippets", label: "脚本", icon: "file-code", enabled: true },
-  { id: "notes", label: "笔记", icon: "file-text", enabled: true },
-  { id: "known-hosts", label: "已知主机", icon: "shield", enabled: true },
-  { id: "logs", label: "日志", icon: "history", enabled: true },
+  { id: "hosts", label: "主机", icon: LayoutGrid, enabled: true },
+  { id: "monitor", label: "监控", icon: Gauge, enabled: true },
+  { id: "sync", label: "同步", icon: Cloud, enabled: true },
+  { id: "keys", label: "钥匙串", icon: Key, enabled: true },
+  { id: "proxies", label: "代理", icon: Globe, enabled: true },
+  { id: "port", label: "端口转发", icon: Plug, enabled: true },
+  { id: "snippets", label: "脚本", icon: FileCode, enabled: true },
+  { id: "notes", label: "笔记", icon: NotebookText, enabled: true },
+  { id: "known-hosts", label: "已知主机", icon: BookMarked, enabled: true },
+  { id: "logs", label: "日志", icon: Activity, enabled: true },
 ];
 
 /** 新建主机下拉（对齐 Netcatty：本地终端 (CMD)/新建分组/导入/导出）。 */
@@ -496,20 +510,6 @@ function parseQuickConnect(raw: string): {
   if (username !== undefined && !/^[A-Za-z0-9._-]+$/.test(username)) return null;
   if (port < 1 || port > 65535) return null;
   return { host, port, username };
-}
-
-function hueOf(name: string): number {
-  let n = 0;
-  for (const ch of name) n = (n * 31 + ch.charCodeAt(0)) % 360;
-  return n;
-}
-
-export function avatarStyle(name: string) {
-  return { "--nc-avatar-hue": hueOf(name) } as CSSProperties;
-}
-
-export function initial(name: string): string {
-  return (name.trim()[0] ?? "?").toUpperCase();
 }
 
 function viewIcon(mode: ViewMode): IconName {
@@ -3265,19 +3265,7 @@ export function VaultView({
             <Icon name="pin" size={12} />
           </span>
         )}
-        {p.protocol === "local" ? (
-          <span className="nc-avatar lg local">
-            <Icon name="terminal" size={20} />
-          </span>
-        ) : p.protocol === "serial" ? (
-          <span className="nc-avatar lg serial" title="串口主机">
-            <Icon name="usb" size={20} />
-          </span>
-        ) : (
-          <span className="nc-avatar lg" style={avatarStyle(p.name)}>
-            {initial(p.name)}
-          </span>
-        )}
+        <DistroAvatar profile={p} size="lg" />
         <span className="vault-host-card-main">
           <strong>{p.name}</strong>
           <span className="vault-host-card-sub">{subtitle(p)}</span>
@@ -3480,7 +3468,7 @@ export function VaultView({
                   }
                 }}
               >
-                <Icon name={item.icon} size={16} />
+                <item.icon size={16} />
                 {!collapsed && <span>{item.label}</span>}
               </button>
             );
@@ -5454,19 +5442,7 @@ export function VaultView({
                   key={p.id}
                   onClick={() => connectFromSwitcher(p)}
                 >
-                  {p.protocol === "local" ? (
-                    <span className="nc-avatar local">
-                      <Icon name="terminal" size={10} />
-                    </span>
-                  ) : p.protocol === "serial" ? (
-                    <span className="nc-avatar serial" title="串口主机">
-                      <Icon name="usb" size={10} />
-                    </span>
-                  ) : (
-                    <span className="nc-avatar sm" style={avatarStyle(p.name)}>
-                      {initial(p.name)}
-                    </span>
-                  )}
+                  <DistroAvatar profile={p} size="sm" />
                   <span className="vault-switcher-main">
                     <strong>{p.name}</strong>
                     <span>{fullSubtitle(p)}</span>

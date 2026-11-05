@@ -21,6 +21,7 @@
     "@xterm/addon-search": "^0.17.0-beta.330",
     "@xterm/addon-web-links": "^0.13.0-beta.330",
     "@xterm/xterm": "^6.1.0-beta.336",
+    "lucide-react": "0.560.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zmodem.js": "^0.1.10"

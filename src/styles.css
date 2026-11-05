@@ -9555,3 +9555,69 @@ html[data-theme="dark"] {
   text-align: center;
 }
 
+/* ── DistroAvatar / shell 图标（对齐 Netcatty components/DistroAvatar.tsx）── */
+.nc-distro-avatar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.nc-distro-avatar-xs {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+
+.nc-distro-avatar-sm {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+.nc-distro-avatar-md {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.nc-distro-avatar-tree {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.nc-distro-avatar-log {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+
+.nc-distro-avatar-lg {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+/* 徽标统一反白；h3c 白底 + 深色徽标，保持原图并缩到 80% 宽。 */
+.nc-distro-avatar-img {
+  object-fit: contain;
+  filter: invert(1) brightness(0);
+}
+
+.nc-distro-avatar-img.is-h3c {
+  width: 80%;
+  filter: none;
+}
+
+.nc-shell-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+html[data-theme="dark"] .nc-shell-icon.mono {
+  filter: invert(1);
+}
+
