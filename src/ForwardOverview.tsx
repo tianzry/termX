@@ -420,19 +420,18 @@ export function ForwardOverview() {
       {!loaded ? (
         <div style={{ ...mutedText, fontSize: 13, padding: 24 }}>正在加载…</div>
       ) : filteredGroups.length === 0 ? (
-        <div
-          style={{
-            border: "1px dashed hsl(var(--border))",
-            borderRadius: 10,
-            padding: "28px 24px",
-            color: "hsl(var(--muted-foreground))",
-            fontSize: 13,
-            marginTop: 12,
-          }}
-        >
-          {query
-            ? `没有匹配「${search.trim()}」的转发条目或规则。`
-            : "还没有端口转发规则。点击右上角「新建转发」选择目标主机并添加规则；启动后会在这里按主机汇总显示。"}
+        <div className="fwd-empty">
+          <div className="fwd-empty-icon">
+            <Icon name="zap" size={24} />
+          </div>
+          <div className="fwd-empty-title">
+            {query ? "没有匹配的转发规则" : "配置端口转发规则"}
+          </div>
+          <div className="fwd-empty-desc">
+            {query
+              ? `没有匹配「${search.trim()}」的转发条目或规则。`
+              : "保存端口转发规则，用于访问数据库、Web 应用等服务。"}
+          </div>
         </div>
       ) : (
         <div style={{ marginTop: 12 }}>

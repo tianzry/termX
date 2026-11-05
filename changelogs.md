@@ -4,6 +4,57 @@
 
 ---
 
+## 2026-11-06 — #184 全应用逐功能比对（第七轮：差异清单 + P1 修复）
+
+> 目标：摸清 termX 与 Netcatty 的可见差距，只修 P1（明显不一致或影响使用），其余记入 todo。未重构、未改动数据与持久化逻辑。
+
+### 1. 逐页对照（debug 版 + 本机 Netcatty 实际界面）
+
+| 页面 | Netcatty 实际 | termX 实际 | 等级 | 处理方式 |
+|---|---|---|---|---|
+| Vault 首页 | 导航 8 项 + 底部「设置」；顶部「新建主机」主色 + 下拉；最近连接卡片 248px、3 列 | 导航 9 项（多「同步」，无底部设置）；顶部多「Telnet」；最近连接 4 列、卡片较窄；另有「分组」「主机」两节 | P2 | 记 todo；分组与最近连接为数据模型差异 |
+| 主机管理（列表） | 卡片 248×64、图标 44px 主色方块 | 同样式但卡片区无独立列宽基准 | P2 | 记 todo（弹窗未打开，本轮不做像素对照） |
+| SSH 终端 | 侧栏 200px（工具图标行 + 笔记面板），时间戳列，工具栏图标 16px | 侧栏 170px 主机树，无笔记面板与时间戳列，工具栏 12px | P2 | 记 todo（需侧栏/笔记面板改造） |
+| 本地终端 | 本地会话隐藏侧栏、终端全宽，第二行显示 Shell 名 | 侧栏保留、终端从 x≈180 开始，无 Shell 名标题行 | P2 | 记 todo |
+| 串口 | 弹窗 407px，「保存配置」 | 弹窗 360px，「保存为主机」，端口框多一个原生下拉箭头 | P3 | 记 todo（COM1 环境阻塞，见 §4） |
+| Telnet | 走主机协议向导，无独立「Telnet」入口 | 顶部独立「Telnet」入口 + 单步弹窗 | P2 | 记 todo（入口模型差异） |
+| SFTP | 左右分栏 + 空态 | 几乎一致 | P3 | 空态图标不同（文件夹 vs 服务器），记 todo |
+| 设置（各 tab） | 独立窗口 | 全屏 overlay | P3 | #181–183 已按源码对齐；窗口形态差异保留 |
+| 钥匙串 | 单页：新建密钥/导入证书/新建身份 + 空态 | 「系统密钥 / 已存密钥」tab + SSH Agent + 系统 ~/.ssh 列表 | P2 | 记 todo（模型差异，需产品决策） |
+| 监控 | 面板化：空态「一眼查看多台主机」+ 新建面板 | 勾选主机 + 频率/范围 + 开始监控的控制台 | P2 | 记 todo（需面板化改造） |
+| 同步 | 无独立导航；同步在设置/云同步页 | 独立「同步」导航页 + 设置占位 tab | P2 | 记 todo（多出入口，非缺陷） |
+| 代理 | 顶部「添加代理」主色按钮；区块「代理 0 项」居中空态 | 「新建代理」次色按钮；「已保存的代理 (1)」卡片 | P2/P3 | 记 todo |
+| 端口转发 | 居中空态：56px 图标 + 标题 + 说明 | 虚线一行提示（页面顶部另有标题与计数） | **P1** | **已修**：改居中空态（见 §2） |
+| 脚本 | 透明 56px 行 + 40px 图标方块；有「Shell 历史」 | 卡片行 + 分组卡片；无 Shell 历史，有「导出」 | P2 | 记 todo |
+| 笔记 | 左栏 292px 列表；右栏标题 + 实时预览下拉 | 分组树 232px；行号编辑器 + 分屏 + 状态栏 | P2 | 记 todo（termX 为超集） |
+| 已知主机 | 卡片 248px、3 列；图标 44px 主色方块 + 18px 白图标 | 卡片 4 列较窄；图标 18px 灰线、无底色 | **P1** | **已修**：图标方块 + 3 列（见 §2） |
+| 日志 | 整页表格：日期/用户/主机/收藏 | 左栏列表 + 右侧详情主从布局 | P2 | 记 todo（需表格化改造） |
+
+### 2. P1 修复（两项，各自独立小改）
+
+1. 已知主机卡片（`styles.css`）
+   - `.kh-card-icon`：18px 灰线图标 → 44×44、圆角 12、`--primary` 底、`--primary-foreground` 图标（对照 Netcatty `VaultEntityIcon`）。
+   - `.kh-grid`：minmax 220 → 248，内容区恢复 3 列；`.kh-card-name` 13 → 14px。
+   - 实测：图标 44×44/12px/亮色 `rgb(0,136,255)`、暗色 `rgb(56,189,255)`；网格 3 列；见 `evidence/audit7-termx-after.json`。
+2. 端口转发空状态（`ForwardOverview.tsx` + `styles.css`）
+   - 虚线一行提示 → 居中空态：56×56 圆角 12 `--muted` 底 + `zap` 24px + 标题 14/600「配置端口转发规则」+ 说明 12/1.6「保存端口转发规则，用于访问数据库、Web 应用等服务。」；搜索无结果复用同一空态。
+   - 实测明暗两套均渲染，标题/说明/图标尺寸见 `evidence/audit7-termx-after.json`。
+   - 新增 CSS：`.fwd-empty`（min-height 360 / 居中）、`.fwd-empty-icon/-title/-desc`。
+
+### 3. 验证与证据
+
+- Netcatty 实际界面（UIAutomation + PrintWindow）：`evidence/audit7-nc-{hosts,monitor,keychain,proxy,forward,scripts,notes,knownhosts,logs,sftp,terminal-ssh,terminal-local,serial-modal,settings}.png`。
+- termX 逐页（CDP，修复前）：`evidence/audit7-termx-{hosts,monitor,sync,keychain,proxy,forward,scripts,notes,knownhosts,logs,sftp,terminal-ssh,terminal-local,serial-modal,telnet-modal,settings-*}.png`。
+- P1 修复后：`evidence/audit7-termx-knownhosts-{light,dark}-after.png`、`evidence/audit7-termx-forward-{light,dark}-after.png` + `audit7-termx-after.json`。
+- 门禁：`npm run test:run` 65 文件 / 730 用例通过；`npm run build` 通过；`tauri build --debug` 通过。
+- 说明：截图顶部黄色「发现上次会话记录…」为重启后的会话恢复提示，与本次 UI 无关。
+
+### 4. 阻塞与未验证
+
+- 串口收发：termX 打开 COM1 串口标签无输出，本机无可用串口回环/设备（COM1 被占用/不可读写），未验证真实收发；仅完成弹窗视觉对照与标签创建。
+- Netcatty 设置为独立窗口，PrintWindow 主窗口捕获不到；设置对照依据源码 + #181–183，未做像素级并排。
+- 主机新建/编辑弹窗两边均未打开，未做弹窗像素对照。
+
 ## 2026-11-05 — #183 设置页 UI 重做（步骤③：占位 tab 空状态 + 窄窗复查）
 
 > 收尾 #181/#182：三个占位 tab（SFTP 文件关联空态、AI、同步与云）统一为 Netcatty 居中空状态卡片，并复查 720px 窄窗。仍只改视觉，未动任何读写逻辑。

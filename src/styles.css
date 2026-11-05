@@ -422,6 +422,43 @@ body {
   width: 100%;
 }
 
+/* 端口转发空状态（对照 Netcatty PortForwardingNew 空态：居中图标 + 标题 + 说明）。 */
+.fwd-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+  padding: 24px;
+  text-align: center;
+}
+
+.fwd-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 12px;
+}
+
+.fwd-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.fwd-empty-desc {
+  max-width: 420px;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
 /* 转发创建表单与规则编辑器 */
 .fwd-form {
   display: flex;
@@ -7006,7 +7043,7 @@ button:disabled {
 
 .kh-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
   gap: 12px;
   align-items: start;
 }
@@ -7044,18 +7081,23 @@ button:disabled {
   opacity: 0.6;
 }
 
+/* 对照 Netcatty VaultEntityIcon：44px 主色圆角方块承载 18px 白色图标。 */
 .kh-card-icon {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: hsl(var(--muted-foreground));
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
 }
 
 .kh-card-name {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: hsl(var(--foreground));
   overflow: hidden;
