@@ -19,6 +19,30 @@ export const COMMAND_HISTORY_STORAGE_KEY = "termx.commandHistory.v1";
 export const COMMAND_HISTORY_CHANGED_EVENT = "termx:command-history-changed";
 export const COMMAND_HISTORY_MAX = 500;
 
+import type { Connector } from "../workspaceModel";
+
+/**
+ * 历史分桶用的稳定主机标识：只取连接参数，不取标签标题。
+ * 非 SSH 终端重命名标签后仍落到同一个桶（标题只用于展示）。
+ */
+export function resolveCommandHistoryHostId(connector: Connector): string {
+  switch (connector.kind) {
+    case "ssh":
+      return connector.profileId;
+    case "pty":
+      return [
+        "local",
+        connector.shell ?? "",
+        (connector.args ?? []).join(" "),
+        connector.startDir ?? "",
+      ].join(":");
+    case "serial":
+      return `serial:${connector.session.port}`;
+    case "telnet":
+      return `telnet:${connector.session.host}:${connector.session.port}`;
+  }
+}
+
 export interface CommandHistoryEntry {
   id: string;
   command: string;

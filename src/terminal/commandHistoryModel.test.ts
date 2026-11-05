@@ -10,6 +10,7 @@ import {
   parseCommandHistory,
   readCommandHistory,
   recordCommandHistory,
+  resolveCommandHistoryHostId,
   type CommandHistoryEntry,
 } from "./commandHistoryModel";
 
@@ -22,6 +23,74 @@ function entry(
 ): CommandHistoryEntry {
   return { id, command, hostId, hostLabel: hostId, timestamp, count };
 }
+
+describe("resolveCommandHistoryHostId", () => {
+  const serialConnector = (port: string, name?: string) =>
+    ({
+      kind: "serial" as const,
+      name,
+      session: {
+        port,
+        config: { baud_rate: 115200 },
+        lineMode: false,
+        localEcho: false,
+        backspaceBehavior: "default" as const,
+        byteOrientedBackspace: false,
+      },
+    });
+
+  it("SSH 直接用档案 id", () => {
+    expect(
+      resolveCommandHistoryHostId({ kind: "ssh", profileId: "p-1", name: "生产机" }),
+    ).toBe("p-1");
+  });
+
+  it("本地 shell 按启动参数区分，标签改名不影响分桶", () => {
+    const a = resolveCommandHistoryHostId({
+      kind: "pty",
+      shell: "bash.exe",
+      args: ["-l"],
+      startDir: "~",
+      name: "Git Bash",
+    });
+    const b = resolveCommandHistoryHostId({
+      kind: "pty",
+      shell: "bash.exe",
+      args: ["-l"],
+      startDir: "~",
+      name: "重命名后的标签",
+    });
+    expect(a).toBe(b);
+    expect(
+      resolveCommandHistoryHostId({ kind: "pty", shell: "pwsh.exe" }),
+    ).not.toBe(a);
+  });
+
+  it("串口按端口区分，标签改名不影响分桶", () => {
+    expect(resolveCommandHistoryHostId(serialConnector("COM1", "开发板"))).toBe(
+      resolveCommandHistoryHostId(serialConnector("COM1", "另一个名字")),
+    );
+    expect(resolveCommandHistoryHostId(serialConnector("COM1"))).not.toBe(
+      resolveCommandHistoryHostId(serialConnector("COM3")),
+    );
+  });
+
+  it("Telnet 按 host:port 区分，标签改名不影响分桶", () => {
+    const base = {
+      kind: "telnet" as const,
+      session: { host: "10.0.0.5", port: 23, inputNewline: "crlf" as const },
+    };
+    expect(
+      resolveCommandHistoryHostId({ ...base, name: "交换机" }),
+    ).toBe(resolveCommandHistoryHostId({ ...base, name: "router" }));
+    expect(
+      resolveCommandHistoryHostId({
+        ...base,
+        session: { ...base.session, port: 2323 },
+      }),
+    ).not.toBe(resolveCommandHistoryHostId(base));
+  });
+});
 
 describe("normalizeHistoryCommand", () => {
   it("去掉行尾 CR/LF 与首尾空白，空命令丢弃", () => {

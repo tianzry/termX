@@ -20,7 +20,11 @@ import { TerminalView, type TerminalController } from "./Terminal";
 import { ComposeBar } from "./terminal/ComposeBar";
 import { appendComposeHistory, buildComposePayload } from "./terminal/composeBarModel";
 import { CommandHistoryPanel } from "./terminal/CommandHistoryPanel";
-import { readCommandHistory, recordCommandHistory } from "./terminal/commandHistoryModel";
+import {
+  readCommandHistory,
+  recordCommandHistory,
+  resolveCommandHistoryHostId,
+} from "./terminal/commandHistoryModel";
 import {
   AUTOCOMPLETE_DEBOUNCE_MS,
   classifyAutocompleteData,
@@ -320,10 +324,8 @@ export function TerminalPane({
   const [historyOpen, setHistoryOpen] = useState(false);
   /** 自动补全浮层（候选下拉 / 内联 ghost text），空闲为 null。 */
   const [autocompleteUi, setAutocompleteUi] = useState<AutocompleteUiState | null>(null);
-  const historyHostId =
-    tab.connector.kind === "ssh"
-      ? tab.connector.profileId
-      : `${tab.connector.kind}:${tab.title}`;
+  /** 历史分桶 id：非 SSH 终端按连接参数（端口 / 主机 / shell）区分，不随标签标题变化。 */
+  const historyHostId = resolveCommandHistoryHostId(tab.connector);
   /** 输出行时间戳（工具栏时钟开关；应用级持久化，四类终端共用）。 */
   const [showTimestamps, setShowTimestamps] = useState(readShowTimestamps);
   /** 撰写栏 / 终端搜索 / 主机关键词高亮。 */
