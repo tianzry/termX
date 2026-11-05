@@ -26,13 +26,18 @@ import * as api from "./backend/client";
 import { isFindShortcut, linkModifierAllows } from "./terminal/linkActivation";
 import { terminalInsetsStyle } from "./terminal/terminalInsets";
 import {
-  collectSaturatedTerminalTimestampLines,
-  collectTerminalTimestampLines,
   formatTerminalTimestamp,
+  getTerminalTimestampState,
   normalizeTerminalTimestampStamps,
   pruneTerminalTimestampStamps,
+  resetTerminalTimestampState,
+  resolveLastContentLine,
+  resolveTerminalTimestampDividerShadow,
   resolveTerminalTimestampGutterWidth,
+  resolveTerminalTimestampStampLine,
   resolveVisibleTerminalTimestampRows,
+  scanTerminalTimestampOutput,
+  type TerminalTimestampMarker,
   type TerminalTimestampStamp,
 } from "./terminal/terminalTimestamps";
 import type { AppSettings } from "./settings/settingsModel";
@@ -63,6 +68,9 @@ interface Props {
 }
 
 const DEFAULT_FONT_STACK = "Menlo, Monaco, Consolas, 'Courier New', monospace";
+
+/** 复用同一个解码器，避免每次 write 的 Uint8Array 都构造 TextDecoder。 */
+const terminalTextDecoder = new TextDecoder();
 
 /** Option+方向键映射仅对 macOS 生效（对照 Netcatty optionArrowWordJump 的 isMac 门控）。 */
 const IS_MAC_PLATFORM =
@@ -365,10 +373,9 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
   const gutterRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const timestampsRef = useRef<TerminalTimestampStamp[]>([]);
-  const lastTimestampLineRef = useRef<number>(0);
-  const lastTimestampColsRef = useRef<number>(0);
   const timestampRafRef = useRef<number | null>(null);
+  /** 当前 gutter 渲染调度器（录制 effect 通过它请求重绘；gutter 关闭时为空操作）。 */
+  const renderTimestampRef = useRef<() => void>(() => {});
   const gutterWidthRef = useRef(0);
   const [gutterWidth, setGutterWidth] = useState(0);
   // 回调可能随状态更新而变化，用 ref 保证 xterm 只注册一次处理器。
@@ -665,51 +672,144 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
   }, []);
 
   // ── 输出行时间戳 gutter（对照 Netcatty TerminalTimestampGutter）──
+  // ── 打点（录制）与 TimeStamps gutter（渲染）分离，对照 Netcatty：
+  // 写入时的秒级打点始终进行（关闭 gutter 时也记录），因此重新开启后
+  // history / scrollback 里的旧行也能靠填充式绘制拿到时间戳。
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term) return;
+    // 时间戳状态按 xterm 实例隔离（WeakMap），分屏两侧各自独立。
+    const state = getTerminalTimestampState(term);
+
+    // ── 写入时打点（Netcatty writeTerminalDataWithSecondLedger 的精简版）──
+    // 包裹 term.write：写入前用字符分段器判断「行首出现可打印字符」，据此给该行
+    // 记一个时间戳（同一秒只记一次，其余行由填充式绘制沿用）。marker 在该次
+    // write 的完成回调里按相对光标行补挂（Netcatty attachLedgerAnchors 同位置），
+    // 保证 reflow / scrollback 裁剪安全，且多个写入排队时不会张冠李戴。
+    const originalWrite = term.write;
+    term.write = function patchedWrite(
+      data: string | Uint8Array,
+      callback?: () => void,
+    ) {
+      const pending: TerminalTimestampStamp[] = [];
+      if (data) {
+        const active = term.buffer.active;
+        // 备用屏（vim/top）里 cursor 行号来自 alt buffer，不能用于换算普通缓冲区
+        // 的绝对行；对照 Netcatty 用 buffer.normal 作为种子。
+        const cursorBuffer = active.type === "alternate" ? term.buffer.normal : active;
+        const text =
+          typeof data === "string" ? data : terminalTextDecoder.decode(data);
+        const offsets = scanTerminalTimestampOutput(state.segmenter, text, {
+          alternate: active.type === "alternate",
+          columns: term.cols,
+          startColumn: cursorBuffer.cursorX,
+          wraparoundMode: term.modes.wraparoundMode,
+        });
+        if (offsets.length > 0) {
+          const label = formatTerminalTimestamp(new Date());
+          if (label !== state.lastSecondKey) {
+            const baseLine = cursorBuffer.baseY + cursorBuffer.cursorY;
+            const stamp: TerminalTimestampStamp = {
+              line: Math.max(0, baseLine + offsets[0]),
+              label,
+            };
+            state.stamps.push(stamp);
+            pending.push(stamp);
+            state.lastSecondKey = label;
+            pruneTerminalTimestampStamps(state.stamps, cursorBuffer.baseY - 200);
+          }
+        }
+      }
+      originalWrite.call(term, data, () => {
+        if (pending.length > 0) {
+          const post = term.buffer.active;
+          const postBuffer = post.type === "alternate" ? term.buffer.normal : post;
+          const postAbsolute = postBuffer.baseY + postBuffer.cursorY;
+          for (const stamp of pending) {
+            let marker: TerminalTimestampMarker | undefined;
+            try {
+              // offset 相对写入后的光标行；marker 由 xterm 在 reflow / scrollback
+              // 裁剪时同步更新 line，绘制时以它为准。
+              marker = term.registerMarker(stamp.line - postAbsolute) ?? undefined;
+            } catch {
+              marker = undefined;
+            }
+            stamp.marker = marker;
+          }
+        }
+        renderTimestampRef.current();
+        callback?.();
+      });
+    } as typeof term.write;
+
+    const parsed = term.onWriteParsed(() => renderTimestampRef.current());
+    const scroll = term.onScroll(() => renderTimestampRef.current());
+
+    return () => {
+      term.write = originalWrite as typeof term.write;
+      parsed.dispose();
+      scroll.dispose();
+      resetTerminalTimestampState(term);
+    };
+  }, []);
+
   useEffect(() => {
     const term = xtermRef.current;
     const container = containerRef.current;
     if (!term || !container) return;
-    const initial = term.buffer.active;
-    lastTimestampLineRef.current = initial.baseY + initial.cursorY;
-    lastTimestampColsRef.current = term.cols;
-    const stamps: TerminalTimestampStamp[] = [];
-    timestampsRef.current = stamps;
-
     if (!showTimestamps) {
       setGutterWidth(0);
+      // 清掉缓存的宽度，否则重新显示时「宽度未变」判定会阻止 setState，
+      // gutter 停留在 JSX 兜底的 56px。
+      gutterWidthRef.current = 0;
+      renderTimestampRef.current = () => {};
       return;
     }
+    const state = getTerminalTimestampState(term);
+    // 不在订阅前覆盖 state.cols：隐藏期间发生的 reflow 需要在首次绘制时按
+    // 「列数变化」丢弃无锚点行号（对照 Netcatty rebase）。
 
     const render = () => {
       timestampRafRef.current = null;
       const gutter = gutterRef.current;
       if (!gutter) return;
       const buffer = term.buffer.active;
+      const cols = term.cols;
       // 字号 / 窗口尺寸变化会触发 xterm reflow：绝对行号被重排。先按 marker
       // 的实时行号重映射；无 marker 的旧行号在列数变化后不可信，直接丢弃。
-      const cols = term.cols;
       const colsChanged =
-        lastTimestampColsRef.current > 0 &&
-        cols > 0 &&
-        cols !== lastTimestampColsRef.current;
-      normalizeTerminalTimestampStamps(stamps, {
+        state.cols > 0 && cols > 0 && cols !== state.cols;
+      normalizeTerminalTimestampStamps(state.stamps, {
         dropUnanchored: colsChanged,
       });
-      if (cols > 0) lastTimestampColsRef.current = cols;
-      // reflow 会改变行号（缩窄列数时 ybase 跳增）：把“上次打点行”同步到当前
-      // 光标行，避免把 reflow 出来的旧行误当成新输出补时间戳。
-      if (colsChanged) {
-        lastTimestampLineRef.current = buffer.baseY + buffer.cursorY;
-      }
+      if (cols > 0) state.cols = cols;
       const screen = container.querySelector<HTMLElement>(".xterm-screen");
+      let lastStampLine = -1;
+      for (const stamp of state.stamps) {
+        const line = resolveTerminalTimestampStampLine(stamp);
+        if (line > lastStampLine) lastStampLine = line;
+      }
+      // 填充式绘制：同一秒内的行沿用上一打点，提示符 / 命令回显行也覆盖到；
+      // 只画到最后一条有内容的行（Netcatty lastPaintLine）。
+      const lastContentLine = resolveLastContentLine({
+        cursorAbsolute: buffer.baseY + buffer.cursorY,
+        cursorX: buffer.cursorX,
+        isBlank: (line) => {
+          const bufferLine = buffer.getLine(line);
+          return !bufferLine || bufferLine.translateToString(true).trim().length === 0;
+        },
+        lastStampLine,
+        bufferLength: buffer.length,
+      });
       const rows =
         buffer.type === "alternate" || !screen || term.rows <= 0
           ? []
           : resolveVisibleTerminalTimestampRows({
-              stamps,
+              stamps: state.stamps,
               viewportY: buffer.viewportY,
               rows: term.rows,
               isWrapped: (line) => buffer.getLine(line)?.isWrapped === true,
+              lastContentLine,
             });
       const cellHeight = screen && term.rows > 0
         ? screen.clientHeight / term.rows
@@ -735,6 +835,10 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
         window.getComputedStyle(gutter).getPropertyValue("--terminal-timestamp-fg") ??
         "#56d4dd";
       gutter.style.background = term.options.theme?.background ?? "transparent";
+      // 右侧灰色细分隔线（Netcatty gutter 同款：fg 8% 的 0.5px inset shadow）。
+      gutter.style.boxShadow = resolveTerminalTimestampDividerShadow(
+        term.options.theme?.foreground ?? "#dfe3ea",
+      );
 
       const children = gutter.children;
       let index = 0;
@@ -761,57 +865,8 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       if (timestampRafRef.current !== null) return;
       timestampRafRef.current = requestAnimationFrame(render);
     };
+    renderTimestampRef.current = scheduleRender;
 
-    // scrollback 写满后 baseY 封顶，行号差值恒为 0；用 line feed 计数识别新行。
-    let pendingLineFeeds = 0;
-    const lineFeed = term.onLineFeed(() => {
-      pendingLineFeeds += 1;
-    });
-
-    const parsed = term.onWriteParsed(() => {
-      const buffer = term.buffer.active;
-      if (buffer.type !== "alternate") {
-        const current = buffer.baseY + buffer.cursorY;
-        if (current >= lastTimestampLineRef.current) {
-          const lines = collectTerminalTimestampLines({
-            previousAbsolute: lastTimestampLineRef.current,
-            currentAbsolute: current,
-            isWrapped: (line) => buffer.getLine(line)?.isWrapped === true,
-          });
-          if (lines.length === 0 && pendingLineFeeds > 0) {
-            lines.push(
-              ...collectSaturatedTerminalTimestampLines({
-                currentAbsolute: current,
-                lineFeeds: pendingLineFeeds,
-                rows: term.rows,
-                isWrapped: (line) => buffer.getLine(line)?.isWrapped === true,
-              }),
-            );
-          }
-          if (lines.length > 0) {
-            const label = formatTerminalTimestamp(new Date());
-            for (const line of lines) {
-              let marker: IMarker | undefined;
-              try {
-                // offset 相对光标行；marker 由 xterm 在 reflow / scrollback
-                // 裁剪时同步更新 line，绘制时以它为准。
-                marker = term.registerMarker(line - current);
-              } catch {
-                marker = undefined;
-              }
-              stamps.push({ line, label, marker });
-            }
-          }
-          lastTimestampLineRef.current = current;
-          pruneTerminalTimestampStamps(stamps, buffer.baseY - 200);
-        } else {
-          lastTimestampLineRef.current = current;
-        }
-      }
-      pendingLineFeeds = 0;
-      scheduleRender();
-    });
-    const scroll = term.onScroll(scheduleRender);
     const rendered = term.onRender(scheduleRender);
     const resized = term.onResize(scheduleRender);
     const ro = new ResizeObserver(scheduleRender);
@@ -819,9 +874,6 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
     render();
 
     return () => {
-      parsed.dispose();
-      lineFeed.dispose();
-      scroll.dispose();
       rendered.dispose();
       resized.dispose();
       ro.disconnect();
@@ -829,10 +881,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
         cancelAnimationFrame(timestampRafRef.current);
         timestampRafRef.current = null;
       }
-      stamps.forEach((stamp) => {
-        if (stamp.marker && !stamp.marker.isDisposed) stamp.marker.dispose?.();
-      });
-      stamps.length = 0;
+      renderTimestampRef.current = () => {};
     };
   }, [showTimestamps]);
 
