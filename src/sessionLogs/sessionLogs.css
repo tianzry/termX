@@ -180,8 +180,9 @@
   overflow-y: auto;
 }
 
+/* 行高单行（用户偏好优先于 Netcatty 的两行样式）：列结构保留，行内文字合成一行。 */
 .session-logs-row {
-  min-height: 56px;
+  min-height: 48px;
   border-bottom: 1px solid hsl(var(--nc-border) / 0.3);
   cursor: pointer;
   transition: background-color 120ms ease;
@@ -212,22 +213,26 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 30px;
+  height: 30px;
   flex: none;
-  border-radius: 12px;
+  border-radius: 8px;
   background: hsl(var(--nc-primary));
   color: #fff;
 }
 
 .session-logs-cell-main {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   line-height: 1.35;
 }
 
 .session-logs-cell-main strong {
+  flex: none;
+  max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -245,13 +250,14 @@
 }
 
 .session-logs-time {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
   line-height: 1.35;
 }
 
 .session-logs-time strong {
+  flex: none;
   font-size: 12px;
   font-weight: 500;
 }
