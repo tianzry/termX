@@ -321,7 +321,8 @@ export function ProxyProfilesView({
   const isCommand = form?.draft.proxy_type === "command";
 
   return (
-    <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+    // 对齐 Netcatty ProxyProfilesManager：列表区 p-3（左 12px）。
+    <div style={{ display: "flex", gap: 14, alignItems: "flex-start", padding: "8px 12px 12px" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
           <button style={buttonStyle} onClick={openCreate}>

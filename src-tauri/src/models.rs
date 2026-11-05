@@ -145,6 +145,11 @@ pub struct Profile {
     pub serial_byte_backspace: Option<bool>,
     #[serde(default)]
     pub serial_charset: Option<String>,
+    // ── 发行版探测结果（schema v46，对齐 Netcatty Host.distro）──
+    /// 连接成功后自动探测到的发行版 / 设备厂商 ID（`ubuntu` / `windows` /
+    /// `cisco` …）。NULL = 尚未探测或无法识别，前端回落 Server 图标。
+    #[serde(default)]
+    pub distro: Option<String>,
 }
 
 /// 代理库条目（对齐 Netcatty `ProxyProfile` 的 label + config 扁平化）：

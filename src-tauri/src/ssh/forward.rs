@@ -331,6 +331,8 @@ async fn connect_authed(
         log,
         None,
         None,
+        // 转发通道不需要 banner 截获。
+        None,
     )
     .await?;
     client::authenticate(&mut handle, credential, None).await?;
@@ -1401,6 +1403,7 @@ mod tests {
                 serial_backspace: None,
                 serial_byte_backspace: None,
                 serial_charset: None,
+                distro: None,
             },
             credential: crate::models::Credential {
                 id: "smoke-credential".into(),

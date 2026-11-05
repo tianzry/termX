@@ -839,13 +839,14 @@ export function MonitorView({
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
+    // 对齐 Netcatty MonitorPanels：页头与内容统一左 16px（px-4）。
+    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%", padding: "8px 16px 16px" }}>
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "10px 4px 10px 0",
+          padding: "10px 0",
           borderBottom: "1px solid hsl(var(--border) / 0.6)",
           flexWrap: "wrap",
         }}

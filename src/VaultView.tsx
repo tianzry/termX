@@ -8,7 +8,8 @@
  * - 顶部 56px 工具栏：搜索（支持快速连接）/ 连接 / 视图 / 标签 / 排序 /
  *   多选 / 新建主机（分体按钮）/ 终端 / 串口。
  * - 内容区：「全部主机」面包屑（树视图隐藏）→ 已置顶 → 最近连接 →
- *   分组 → 主机（排除已置顶 / 最近，空则整节隐藏，对齐 Netcatty）。
+ *   分组 → 主机（排除已置顶 / 最近；剩余为空时回退全部主机，
+ *   仅当确实没有主机才整节隐藏）。
  */
 
 import {
@@ -39,6 +40,10 @@ import {
 } from "./terminal/terminalEncoding";
 import { userVisibleError } from "./domain/sshErrors";
 import { shellDisplayName } from "./domain/shellName";
+import {
+  rootHostsForDisplay,
+  shouldHideRootHostsSection,
+} from "./vault/rootHostsModel";
 import {
   EMPTY_PROXY_DRAFT,
   proxyDraftError,
@@ -1157,16 +1162,12 @@ export function VaultView({
             (!settings.showOnlyUngroupedHostsInRoot || !p.group_id),
         )
       : scopedHosts;
-  const hideRootHostsSection =
-    atRoot &&
-    view !== "tree" &&
-    !keyword &&
-    profiles.length > 0 &&
-    rootRemaining.length === 0 &&
-    (pinnedHosts.length > 0 ||
-      recentProfiles.length > 0 ||
-      showLocalRecently ||
-      groupTiles.length > 0);
+  const hideRootHostsSection = shouldHideRootHostsSection({
+    atRoot,
+    view,
+    keyword,
+    hostCount: scopedHosts.length,
+  });
 
   const switcherHosts = sortHosts(visible).filter((p) => {
     const q = switcherQuery.trim().toLowerCase();
@@ -3493,7 +3494,10 @@ export function VaultView({
 
       <div className="vault-stage" data-section="vault-stage">
         <div className="vault-surface" data-section="vault-surface">
-          <header className="vault-header">
+          {/* 对齐 Netcatty VaultPageHeader：主机工具栏只在「主机」section 显示，其它 section 整行隐藏（不做过渡动画）。 */}
+          <header
+            className={`vault-header${activeNav === "hosts" ? "" : " is-hidden"}`}
+          >
             <div className={`vault-search${quick ? " quick" : ""}`}>
               <Icon name="search" size={14} className="nc-search-icon" />
               <input
@@ -3792,7 +3796,7 @@ export function VaultView({
             </div>
           </header>
 
-          {selectMode && (
+          {selectMode && activeNav === "hosts" && (
             <div className="vault-select-bar">
               <span className="vault-select-count">
                 已选 {selected.size} 台主机
@@ -4056,7 +4060,13 @@ export function VaultView({
                   </div>
                 )
               ) : (
-                hostCollection(rootRemaining)
+                hostCollection(
+                  rootHostsForDisplay(
+                    scopedHosts,
+                    rootRemaining,
+                    settings.showOnlyUngroupedHostsInRoot,
+                  ),
+                )
               )}
 
               {profiles.length === 0 && (

@@ -48,6 +48,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         serial_backspace: row.get(38)?,
         serial_byte_backspace: row.get(39)?,
         serial_charset: row.get(40)?,
+        distro: row.get(41)?,
     })
 }
 
@@ -96,7 +97,7 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro";
 
 
 
@@ -171,8 +172,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, \
          protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, \
          proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, \
-         ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41) \
+         ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -191,7 +192,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          serial_parity=excluded.serial_parity, serial_stop_bits=excluded.serial_stop_bits, serial_flow=excluded.serial_flow, \
          serial_local_echo=excluded.serial_local_echo, serial_line_mode=excluded.serial_line_mode, \
          serial_backspace=excluded.serial_backspace, serial_byte_backspace=excluded.serial_byte_backspace, \
-         serial_charset=excluded.serial_charset",
+         serial_charset=excluded.serial_charset, \
+         distro=COALESCE(excluded.distro, distro)",
         params![
             p.id,
             p.name,
@@ -233,7 +235,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.serial_line_mode,
             p.serial_backspace,
             p.serial_byte_backspace,
-            p.serial_charset
+            p.serial_charset,
+            p.distro
         ],
     )?;
     Ok(())
@@ -256,7 +259,8 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
          agent_forwarding=?22, proxy_type=?23, proxy_host=?24, proxy_port=?25, proxy_username=?26, proxy_no_proxy=?27, \
          proxy_profile_id=?28, ssh_input_compatibility=?29, serial_port=?30, serial_baud=?31, serial_data_bits=?32, \
          serial_parity=?33, serial_stop_bits=?34, serial_flow=?35, serial_local_echo=?36, serial_line_mode=?37, \
-         serial_backspace=?38, serial_byte_backspace=?39, serial_charset=?40 WHERE id=?41",
+         serial_backspace=?38, serial_byte_backspace=?39, serial_charset=?40, \
+         distro=COALESCE(?41, distro) WHERE id=?42",
         params![
             p.name,
             p.host,
@@ -298,10 +302,25 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.serial_backspace,
             p.serial_byte_backspace,
             p.serial_charset,
+            p.distro,
             p.id
         ],
     )?;
     Ok(())
+}
+
+/// 自动探测结果写入：仅在 `distro` 仍为 NULL / 空串时更新。
+///
+/// 策略说明（对齐任务要求）：本轮没有「手动设置发行版」UI，为避免后续自动
+/// 探测覆盖用户心中认定的结果，采用「已有值不覆盖」——第一次成功探测写入
+/// 后再连接同一主机不会改写。返回 true 表示本次确实写入了新值。
+pub fn set_distro_if_unset(db: &Db, id: &str, distro: &str) -> AppResult<bool> {
+    let conn = db.lock()?;
+    let affected = conn.execute(
+        "UPDATE profiles SET distro = ?1 WHERE id = ?2 AND (distro IS NULL OR trim(distro) = '')",
+        params![distro, id],
+    )?;
+    Ok(affected > 0)
 }
 
 pub fn delete(db: &Db, id: &str) -> AppResult<()> {
@@ -378,6 +397,7 @@ mod tests {
             serial_backspace: None,
             serial_byte_backspace: None,
             serial_charset: None,
+            distro: None,
         }
     }
 
@@ -434,6 +454,23 @@ mod tests {
         let got = get(&db, "p1").unwrap();
         assert_eq!(got.protocol, "ssh");
         assert!(got.local_shell.is_none());
+    }
+
+    #[test]
+    fn distro_persist_and_no_overwrite() {
+        let db = Db::open_in_memory().unwrap();
+        // 首次探测：NULL → 写入。
+        insert(&db, &mk("p1", "alpha")).unwrap();
+        assert!(set_distro_if_unset(&db, "p1", "ubuntu").unwrap());
+        assert_eq!(get(&db, "p1").unwrap().distro.as_deref(), Some("ubuntu"));
+        // 已有值不覆盖。
+        assert!(!set_distro_if_unset(&db, "p1", "debian").unwrap());
+        assert_eq!(get(&db, "p1").unwrap().distro.as_deref(), Some("ubuntu"));
+        // 整档 update 未携带 distro 时（None）也不得清空已探测结果。
+        let mut p = mk("p1", "alpha");
+        p.distro = None;
+        update(&db, &p).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().distro.as_deref(), Some("ubuntu"));
     }
 
     #[test]

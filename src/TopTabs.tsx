@@ -27,6 +27,7 @@ import type { Tab } from "./workspaceModel";
 import { Icon } from "./ui/icons";
 import type { DiscoveredShell, Group, Profile } from "./backend/client";
 import { isMonochromeShellIcon, shellIconSrc } from "./ui/shellIcons";
+import { DistroAvatar } from "./ui/DistroAvatar";
 import { QuickSwitcher } from "./QuickSwitcher";
 
 export type RootSurface = "vault" | "sftp" | null;
@@ -89,8 +90,8 @@ const TAB_GLYPH_SERIAL: CSSProperties = {
   color: "#fff",
 };
 
-/** 会话标签图标：SSH → Server / serial → USB / 本地 → shell 图标或终端。 */
-function TabGlyph({ tab }: { tab: Tab }) {
+/** 会话标签图标：SSH → 对应档案的 distro 头像（16px）/ serial → USB / 本地 → shell 图标或终端。 */
+function TabGlyph({ tab, profiles }: { tab: Tab; profiles: Profile[] }) {
   const connector = tab.connector;
   if (connector.kind === "serial") {
     return (
@@ -116,6 +117,12 @@ function TabGlyph({ tab }: { tab: Tab }) {
         <Terminal size={10} />
       </div>
     );
+  }
+  // SSH：能找到 tab 对应档案就用 16px distro 头像（含 Server 回退），
+  // 找不到档案（例如会话恢复数据不完整）保留原来的 Server 图标。
+  if (connector.kind === "ssh") {
+    const profile = profiles.find((p) => p.id === connector.profileId);
+    if (profile) return <DistroAvatar profile={profile} size="xs" />;
   }
   return (
     <div style={TAB_GLYPH_BOX}>
@@ -270,7 +277,7 @@ export function TopTabs({
                   onDuplicateTab(tab.id);
                 }}
               >
-                <TabGlyph tab={tab} />
+                <TabGlyph tab={tab} profiles={profiles} />
                 <span className="nc-session-tab-title">{tab.title}</span>
                 <button
                   className="nc-tab-close"

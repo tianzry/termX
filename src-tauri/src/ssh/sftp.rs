@@ -178,6 +178,8 @@ impl SftpHandle {
             agent_forwarding: false,
             // 独立连接沿用主机档案的代理配置（终端 / SFTP 一致）。
             proxy,
+            // SFTP 独立连接不做发行版探测，无需 banner 截获。
+            banner: None,
         };
         let mut handle = client::ssh_connect(dial, host, port).await?;
 

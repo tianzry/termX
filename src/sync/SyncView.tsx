@@ -398,7 +398,8 @@ export function SyncView({ onAfterPull }: { onAfterPull?: () => void | Promise<v
   const actionDisabled = busy !== null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 0 }}>
+    // 对齐 Netcatty 云同步页（SettingsTabContent p-6）：左/右 24px。
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 0, padding: "8px 24px 24px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <div style={{ fontSize: 15, fontWeight: 600 }}>同步</div>
         <span style={{ ...muted }}>

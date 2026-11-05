@@ -102,6 +102,11 @@ export interface Profile {
   serial_backspace?: string | null;
   serial_byte_backspace?: boolean | null;
   serial_charset?: string | null;
+  /**
+   * 连接成功后自动探测到的发行版 / 设备厂商 ID（schema v46，对齐 Netcatty
+   * Host.distro）。null / 缺省 = 未探测或无法识别，图标回落 Server。
+   */
+  distro?: string | null;
 }
 
 /** 代理库条目（`list_proxy_profiles`），密码单独走 SecretStore。 */
@@ -1904,6 +1909,20 @@ export function onSftpQueueChanged(
   cb: (items: TransferItem[]) => void,
 ): Promise<UnlistenFn> {
   return listen<TransferItem[]>("sftp:queue_changed", (ev) => cb(ev.payload));
+}
+
+/** 主机档案发生变更（发行版探测首次写入等），前端据此重拉 profiles。 */
+export interface ProfilesChangedEvent {
+  id: string;
+  distro: string | null;
+}
+
+export function onProfilesChanged(
+  cb: (event: ProfilesChangedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ProfilesChangedEvent>("profiles:changed", (ev) =>
+    cb(ev.payload),
+  );
 }
 
 // ── 连接管理器：档案 / 凭据 / 分组 CRUD ────────────────────

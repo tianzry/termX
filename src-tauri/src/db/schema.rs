@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 45;
+const SCHEMA_VERSION: u32 = 46;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -951,6 +951,15 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if version < 46 && table_exists(conn, "profiles")? {
+        // SSH 主机发行版自动探测结果（对齐 Netcatty Host.distro）。
+        // 可空：NULL = 尚未探测 / 无法识别，前端回落现有 Server 图标；
+        // 老库原地升级只加列，不写默认值，避免把「未探测」固化成具体发行版。
+        if !column_exists(conn, "profiles", "distro")? {
+            conn.execute_batch("ALTER TABLE profiles ADD COLUMN distro TEXT;")?;
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1177,6 +1186,34 @@ mod tests {
                 [],
                 |row| row.get(0),
             )
+            .unwrap();
+        assert_eq!(value, None);
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_46_adds_profile_distro_column() {
+        // v45 老库：distro 列必须新增且可空，旧行保持 NULL（= 尚未探测）；
+        // 重复执行迁移不应报错（原地升级幂等）。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+             INSERT INTO profiles VALUES ('h', 'legacy');
+             PRAGMA user_version = 45;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        assert!(column_exists(&conn, "profiles", "distro").unwrap());
+        let value: Option<String> = conn
+            .query_row("SELECT distro FROM profiles WHERE id = 'h'", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(value, None);
         let version: u32 = conn

@@ -159,6 +159,11 @@ pub async fn ssh_connect(
     let known_hosts_path = crate::ssh::known_hosts::path_for(&state.data_dir);
     let env_vars = crate::db::profile_env::list(&state.db, &profile.id).unwrap_or_default();
     let init_command = profile.init_command.clone();
+    // 发行版探测所需的上下文（profile 会 move 进 ConnectParams，提前取出）。
+    let detect_profile_id = profile.id.clone();
+    let known_distro = profile.distro.clone();
+    let agent_forwarding = profile.agent_forwarding;
+    let host = crate::emitter::Host::Tauri(app.clone());
     let result = client::run_blocking_ssh(move || async move {
         client::connect(client::ConnectParams {
             session_id,
@@ -168,7 +173,7 @@ pub async fn ssh_connect(
             proxy_configs,
             cols,
             rows,
-            app: crate::emitter::Host::Tauri(app),
+            app: host,
             owner,
             recording_path,
             log_session_id: effective_log_id,
@@ -187,6 +192,17 @@ pub async fn ssh_connect(
             result.handle.write(format!("{}\n", cmd).as_bytes())?;
         }
     }
+
+    // 发行版自动探测：后台异步执行，失败只记日志，绝不影响会话建立。
+    crate::ssh::distro::spawn_detection(
+        result.handle.ssh_handle().clone(),
+        detect_profile_id,
+        result.server_banner.clone(),
+        known_distro,
+        state.db.clone(),
+        crate::emitter::Host::Tauri(app),
+        agent_forwarding,
+    );
 
     let session_id = result.session_id;
     reservation.activate_returned(

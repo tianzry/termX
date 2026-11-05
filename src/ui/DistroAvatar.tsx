@@ -1,9 +1,10 @@
 /**
  * 主机头像（移植 Netcatty `components/DistroAvatar.tsx`）。
  *
- * termX 的 Profile 没有 distro 字段，因此只保留可用的分支：
- * 串口（琥珀 + USB）/ 本地（Windows 徽标）/ 自定义图标颜色 / SSH 主色回退。
- * 颜色与尺寸表沿用 Netcatty，徽标文件来自 `public/distro/*.svg`。
+ * 优先使用自动探测到的 `profile.distro`（normalize 后查品牌色 + svg）；
+ * 缺失时沿用原有分支：串口（琥珀 + USB）/ 本地（Windows 徽标）/
+ * 自定义图标颜色 / SSH 主色回退 Server。颜色与尺寸表沿用 Netcatty，
+ * 徽标文件来自 `public/distro/*.svg`。
  */
 
 import { useState } from "react";
@@ -93,8 +94,73 @@ const SIZES: Record<
 /** Netcatty 串口头像：bg-amber-600 + 白字。 */
 const AMBER = "#D97706";
 
+/** 网络设备厂商 ID（探测结果可能已是这些值，normalize 时原样保留）。 */
+const NETWORK_DEVICE_IDS = [
+  "cisco",
+  "juniper",
+  "huawei",
+  "h3c",
+  "hpe",
+  "mikrotik",
+  "fortinet",
+  "paloalto",
+  "zyxel",
+  "ruijie",
+];
+
+/**
+ * 把任意探测结果归一成标准发行版 ID。
+ * 关键字表与顺序照抄 Netcatty `domain/host.ts` 的 `normalizeDistroId`。
+ */
+export function normalizeDistroId(value?: string | null): string | null {
+  const v = (value ?? "").trim().toLowerCase();
+  if (!v) return null;
+  if (
+    v === "darwin" ||
+    v === "macos" ||
+    v === "mac os" ||
+    v === "mac os x" ||
+    v.includes("darwin kernel") ||
+    v.includes("macos") ||
+    v.includes("mac os")
+  ) {
+    return "macos";
+  }
+  if (v === "windows" || v === "win32" || v.startsWith("openssh_for_windows")) {
+    return "windows";
+  }
+  if (v.includes("freebsd")) return "freebsd";
+  if (v.includes("ubuntu")) return "ubuntu";
+  if (v.includes("debian")) return "debian";
+  if (v.includes("centos")) return "centos";
+  if (v.includes("rocky")) return "rocky";
+  if (v.includes("fedora")) return "fedora";
+  if (v.includes("arch") || v.includes("manjaro")) return "arch";
+  if (v.includes("alpine")) return "alpine";
+  if (v.includes("amzn") || v.includes("amazon") || v.includes("aws")) {
+    return "amazon";
+  }
+  if (v.includes("opensuse") || v.includes("suse") || v.includes("sles")) {
+    return "opensuse";
+  }
+  if (v.includes("red hat") || v.includes("redhat") || v.includes("rhel")) {
+    return "redhat";
+  }
+  if (v.includes("almalinux")) return "almalinux";
+  if (v.includes("oracle")) return "oracle";
+  if (v.includes("kali")) return "kali";
+  if (v.includes("openeuler") || v.includes("open euler")) return "openeuler";
+  // Alibaba Cloud Linux：必须在通用 linux 兜底之前（alinux 含 linux）。
+  if (v.includes("alinux") || v.includes("aliyun") || v.includes("alibaba cloud")) {
+    return "alinux";
+  }
+  if (NETWORK_DEVICE_IDS.includes(v)) return v;
+  if (v === "linux" || v.includes("linux")) return "linux";
+  return null;
+}
+
 interface Props {
-  profile: Pick<Profile, "protocol" | "icon_color" | "name">;
+  profile: Pick<Profile, "protocol" | "icon_color" | "name" | "distro">;
   size?: DistroAvatarSize;
   className?: string;
 }
@@ -110,6 +176,34 @@ export function DistroAvatar({ profile, size = "md", className }: Props) {
     height: dims.size,
     borderRadius: dims.radius,
   };
+
+  // 自动探测到的发行版 / 设备厂商优先。
+  const detected = normalizeDistroId(profile.distro);
+  const detectedLogo = detected ? DISTRO_LOGOS[detected] : undefined;
+  if (detected && detectedLogo) {
+    const isH3c = detected === "h3c";
+    return (
+      <div
+        className={boxClass}
+        style={{
+          ...boxStyle,
+          backgroundColor: DISTRO_COLORS[detected] ?? DISTRO_COLORS.default,
+        }}
+      >
+        {imageFailed ? (
+          <Server size={dims.icon} style={{ color: "#fff" }} />
+        ) : (
+          <img
+            src={detectedLogo}
+            alt={profile.name}
+            className={`nc-distro-avatar-img${isH3c ? " is-h3c" : ""}`}
+            style={isH3c ? undefined : { width: dims.icon, height: dims.icon }}
+            onError={() => setImageFailed(true)}
+          />
+        )}
+      </div>
+    );
+  }
 
   if (profile.protocol === "serial") {
     return (

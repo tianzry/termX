@@ -191,6 +191,23 @@ export default function App() {
     void loadData();
   }, [loadData]);
 
+  // 后端发行版探测首次写入后会 emit `profiles:changed`：重拉档案，
+  // 让主机卡片 / 快速切换器 / 选择器 / 终端标签的头像自动更新。
+  useEffect(() => {
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    void api.onProfilesChanged(() => {
+      if (alive) void loadData();
+    }).then((stop) => {
+      if (alive) unlisten = stop;
+      else stop();
+    });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [loadData]);
+
   useEffect(() => {
     let alive = true;
     api

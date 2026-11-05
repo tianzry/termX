@@ -58,6 +58,10 @@
 | 全应用逐功能比对·第二轮（终端标签与分屏、工具栏与更多菜单） | ✅ | `src/TopTabs.tsx`、`src/Workspace.tsx`、`src/TerminalPane.tsx`、`src/Terminal.tsx`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
 | 全应用逐功能比对·第四轮（SFTP） | ✅ | `src/sftp/SftpPaneView.tsx`、`src/sftp/sftpModel.ts`、`src/styles.css`；差异清单见 `changelogs.md` 2026-11-04 |
 | 端口转发 Vault 总览 + 条目 CRUD + 高级能力（P1 #16） | ✅ | `src/ForwardOverview.tsx`、`src/ForwardForm.tsx`、`src/forwardSupervisor.ts`、`src/domain/forwardOverview.ts`、`src/domain/forwardDraft.ts`、`commands/forward.rs`、`ssh/forward.rs`、`db/forward.rs`；schema v42：`forward_rules.bind_address` + `forwards.auto_start/auto_reconnect`；渲染层自动启动/断线重连监督器；托盘开关不移植（无 tray-icon 基础设施，置灰写原因）。 |
+| Vault 顶部连接工具栏按导航显隐（对齐 Netcatty） | ✅ | `src/VaultView.tsx`、`src/styles.css`；仅「主机」分区显示，其余 9 页 `display:none`，无过渡。 |
+| Vault 各子页左侧留白逐页对齐 Netcatty | ✅ | `src/VaultView.tsx`、`src/styles.css`、`monitor/MonitorView.tsx`、`sync/SyncView.tsx`、`ProxyProfilesView.tsx`、`snippets/snippets.css`、`keychain/keychain.css`、`notes/notes.css`、`sessionLogs/sessionLogs.css`。 |
+| 主机发行版（distro）自动探测 + 持久化（schema v46） | ✅ | `src-tauri/src/ssh/distro.rs`、`db/schema.rs`、`db/profile.rs`、`commands/session.rs`、`models.rs`、`src/ui/DistroAvatar.tsx`；banner → `/etc/os-release` → `uname`，`set_distro_if_unset` + `COALESCE`；129 实测 Ubuntu 图标，未知回落 Server。 |
+| Vault「主机」节回归修复（关标签后卡片观感丢失） | ✅ | `src/vault/rootHostsModel.ts` + `rootHostsModel.test.ts`、`src/VaultView.tsx`；剩余主机为空时回退全部主机，仅真正无主机才隐藏整节。 |
 
 ---
 

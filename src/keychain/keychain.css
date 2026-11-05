@@ -7,6 +7,8 @@
   gap: 10px;
   min-height: 0;
   flex: 1;
+  /* 对齐 Netcatty KeychainManager：内容区 p-3（12px）。 */
+  padding: 12px;
 }
 
 .kc-subtabs {

@@ -242,6 +242,7 @@ mod tests {
             serial_backspace: None,
             serial_byte_backspace: None,
             serial_charset: None,
+            distro: None,
         };
         insert_profile(db, &p).unwrap();
     }

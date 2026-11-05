@@ -195,7 +195,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  /* 对齐 Netcatty NoteTitleInput 行：px-4（左 16px）。 */
+  padding: 10px 16px;
   border-bottom: 1px solid hsl(var(--nc-border) / 0.45);
 }
 
@@ -287,7 +288,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 16px;
   border-bottom: 1px solid hsl(var(--nc-border) / 0.3);
   color: hsl(var(--nc-muted));
 }
@@ -307,7 +308,8 @@
   min-height: 0;
   resize: none;
   border: 0;
-  padding: 12px 14px;
+  /* 对齐 Netcatty 正文区 px-4（左 16px）。 */
+  padding: 12px 16px;
   background: transparent;
   color: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

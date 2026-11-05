@@ -90,6 +90,7 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         serial_backspace: None,
         serial_byte_backspace: None,
         serial_charset: None,
+        distro: None,
     };
     rssh_lib::db::profile::insert(conn, &p)?;
     println!("Profile '{}' created.", p.name);

@@ -608,6 +608,9 @@ pub struct DialCtx {
     pub agent_forwarding: bool,
     /// 主机级连接代理（已解析密码）。None = 直连；目标在 no_proxy 内也会直连。
     pub proxy: Option<crate::ssh::proxy::ProxyConfig>,
+    /// 服务端 SSH identification string 截获槽。仅对「目标」跳设置，
+    /// 堡垒跳为 None（避免把堡垒的 banner 当成目标主机的发行版）。
+    pub banner: Option<crate::ssh::distro::BannerSink>,
 }
 
 fn new_handler(
@@ -709,6 +712,7 @@ async fn establish_connection(
         progress,
         agent_forwarding,
         proxy,
+        banner,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
@@ -730,6 +734,7 @@ async fn establish_connection(
                     return Err(e);
                 }
             };
+            let stream = crate::ssh::distro::BannerCaptureStream::new(stream, banner);
             match timeout(connect_timeout, client::connect_stream(config, stream, handler)).await {
                 Ok(Ok(handle)) => Ok(handle),
                 Ok(Err(e)) => Err(map_connect_error(e, &host, port, &mismatch)),
@@ -740,14 +745,54 @@ async fn establish_connection(
             }
         }
         None => {
-            match timeout(connect_timeout, client::connect(config, (host.as_str(), port), handler))
+            if let Some(sink) = banner {
+                // 直连也自行建 TCP，以便在握手前截获服务端 banner；
+                // 与 russh `client::connect` 内部的 TcpStream 连接等价。
+                // TCP 与握手共享同一个连接超时预算（对齐原先单次 timeout 语义）。
+                let started = std::time::Instant::now();
+                match timeout(
+                    connect_timeout,
+                    tokio::net::TcpStream::connect((host.clone(), port)),
+                )
                 .await
-            {
-                Ok(result) => result.map_err(|e| map_connect_error(e, &host, port, &mismatch)),
-                Err(_) => Err(AppError::ssh(
-                    "ssh_connect_timeout",
-                    json!({ "host": &host, "port": port, "secs": timeout_secs }),
-                )),
+                {
+                    Ok(Ok(stream)) => {
+                        let stream =
+                            crate::ssh::distro::BannerCaptureStream::new(stream, Some(sink));
+                        let remaining = connect_timeout.saturating_sub(started.elapsed());
+                        match timeout(
+                            remaining,
+                            client::connect_stream(config, stream, handler),
+                        )
+                        .await
+                        {
+                            Ok(Ok(handle)) => Ok(handle),
+                            Ok(Err(e)) => Err(map_connect_error(e, &host, port, &mismatch)),
+                            Err(_) => Err(AppError::ssh(
+                                "ssh_handshake_timeout",
+                                json!({ "host": &host, "port": port }),
+                            )),
+                        }
+                    }
+                    Ok(Err(e)) => Err(AppError::ssh(
+                        "ssh_connect_failed",
+                        json!({ "err": e.to_string() }),
+                    )),
+                    Err(_) => Err(AppError::ssh(
+                        "ssh_connect_timeout",
+                        json!({ "host": &host, "port": port, "secs": timeout_secs }),
+                    )),
+                }
+            } else {
+                match timeout(connect_timeout, client::connect(config, (host.as_str(), port), handler))
+                    .await
+                {
+                    Ok(result) => result.map_err(|e| map_connect_error(e, &host, port, &mismatch)),
+                    Err(_) => Err(AppError::ssh(
+                        "ssh_connect_timeout",
+                        json!({ "host": &host, "port": port, "secs": timeout_secs }),
+                    )),
+                }
             }
         }
     };
@@ -786,12 +831,14 @@ where
         progress,
         agent_forwarding,
         proxy: _,
+        banner,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
         p.emit("connecting", None);
     }
     let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
+    let stream = crate::ssh::distro::BannerCaptureStream::new(stream, banner);
     let handle = match timeout(
         connect_timeout,
         client::connect_stream(config, stream, handler),
@@ -841,6 +888,7 @@ pub async fn establish_via_chain(
     log: LogFn,
     ctx: Option<&AuthCtx>,
     progress: Option<&ProgressEmitter>,
+    banner: Option<crate::ssh::distro::BannerSink>,
 ) -> AppResult<(client::Handle<SshHandler>, ForwardedChannelRouter)> {
     let total = (bastion_chain.len() + 1) as u32;
     let target_label = profile_label(&target_profile);
@@ -853,20 +901,17 @@ pub async fn establish_via_chain(
             target_host, target_port
         ));
         let hop_progress = progress.map(|p| p.hop(1, total, target_label.clone()));
-        let (h, fwd) = ssh_connect_with_forward(
-            dial_ctx_for_profile(
-                &target_profile,
-                &known_hosts_path,
-                timeout_secs,
-                &log,
-                ctx,
-                hop_progress,
-                proxy_configs.get(&target_profile.id).cloned(),
-            ),
-            target_host,
-            target_port,
-        )
-        .await?;
+        let mut target_ctx = dial_ctx_for_profile(
+            &target_profile,
+            &known_hosts_path,
+            timeout_secs,
+            &log,
+            ctx,
+            hop_progress,
+            proxy_configs.get(&target_profile.id).cloned(),
+        );
+        target_ctx.banner = banner;
+        let (h, fwd) = ssh_connect_with_forward(target_ctx, target_host, target_port).await?;
         log("TCP connected. SSH handshake OK.".to_owned());
         return Ok((h, fwd));
     }
@@ -971,16 +1016,18 @@ pub async fn establish_via_chain(
     )
     .await?;
     log("Tunnel established. SSH handshake with target ...".to_owned());
+    let mut target_ctx = dial_ctx_for_profile(
+        &target_profile,
+        &known_hosts_path,
+        timeout_secs,
+        &log,
+        ctx,
+        target_progress,
+        proxy_configs.get(&target_profile.id).cloned(),
+    );
+    target_ctx.banner = banner;
     ssh_connect_stream(
-        dial_ctx_for_profile(
-            &target_profile,
-            &known_hosts_path,
-            timeout_secs,
-            &log,
-            ctx,
-            target_progress,
-            proxy_configs.get(&target_profile.id).cloned(),
-        ),
+        target_ctx,
         tunnel.into_stream(),
         target_host,
         target_port,
@@ -1014,6 +1061,7 @@ fn dial_ctx_for_profile(
         progress,
         agent_forwarding: profile.agent_forwarding,
         proxy,
+        banner: None,
     }
 }
 
@@ -1130,6 +1178,7 @@ mod tests {
                 serial_backspace: None,
                 serial_byte_backspace: None,
                 serial_charset: None,
+                distro: None,
             },
             credential: Credential {
                 id: "credential".into(),
@@ -1292,6 +1341,7 @@ mod tests {
                 serial_backspace: None,
                 serial_byte_backspace: None,
                 serial_charset: None,
+                distro: None,
             },
             credential: Credential {
                 id: "smoke-credential".into(),
@@ -1443,6 +1493,7 @@ mod tests {
                 serial_backspace: None,
                 serial_byte_backspace: None,
                 serial_charset: None,
+                distro: None,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1557,6 +1608,7 @@ mod tests {
                 serial_backspace: None,
                 serial_byte_backspace: None,
                 serial_charset: None,
+                distro: None,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1881,6 +1933,9 @@ pub async fn exec_once(
 pub struct ConnectResult {
     pub session_id: String,
     pub handle: SessionHandle,
+    /// 握手阶段截获的服务端 SSH identification string（`SSH-2.0-...`）。
+    /// 拿不到时为 None，发行版探测会跳过 banner 分支。
+    pub server_banner: Option<String>,
 }
 
 /// Complete policy and ownership context for one interactive SSH connection.
@@ -1952,6 +2007,9 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
     let progress = ProgressEmitter::root(app.clone(), session_id.clone(), target_label.clone());
     let target_progress = progress.hop(total_hops, total_hops, target_label);
 
+    // 握手期截获服务端 banner（仅目标跳；堡垒跳不设置），供发行版探测使用。
+    let banner_sink = crate::ssh::distro::new_banner_sink();
+
     let (mut handle, _fwd) = establish_via_chain(
         bastion_chain,
         profile.clone(),
@@ -1961,6 +2019,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         log.clone(),
         ctx.as_ref(),
         Some(&progress),
+        Some(banner_sink.clone()),
     )
     .await?;
 
@@ -2074,6 +2133,8 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
             recorder_slot,
             text_log_slot,
         },
+        // 握手已完成：banner 一定已经读到（或明确截获失败）。
+        server_banner: banner_sink.lock().ok().and_then(|slot| slot.clone()),
     })
 }
 

@@ -4,6 +4,55 @@
 
 ---
 
+## 2026-11-05 — Vault 工具栏显隐 / 各页左留白 / 主机 distro 探测（schema v46）/ 「主机」节回归修复
+
+### 1. 顶部连接工具栏按导航显隐
+
+- **Netcatty 规则**：`components/vault/VaultViewLayout.tsx` 把整个 VaultPageHeader（搜索 / 连接 / 视图 / 排序 / 多选 / 新建）包在 `cn(!isHostsSectionActive && "hidden")`；只有当前在「主机」分区时显示，切到监控 / 同步 / 钥匙串 / 代理 / 端口转发 / 脚本 / 笔记 / 已知主机 / 日志一律 `display:none`，**无过渡动画**。多选工具行另外再要求 hosts 分区。
+- **termX 落地**：`VaultView.tsx` 头部改为 `className={\`vault-header${activeNav === "hosts" ? "" : " is-hidden"}\`}`，多选行同样加 `activeNav === "hosts"` 条件；`styles.css` 新增 `.vault-header.is-hidden { display: none }`。
+- **实测**：CDP 读取 `.vault-header` computed display —— 主机 `flex`，其余 9 页全部 `none`（`evidence/vault-final-check.json`）；截图 `evidence/vault-page-监控.png / 钥匙串.png / 代理.png / 脚本.png`。
+
+### 2. 各子页左侧留白（逐页对齐 Netcatty，不一刀切）
+
+| 页面 | Netcatty 容器 padding | termX 修正前 | termX 修正后 |
+|---|---|---|---|
+| 主机 | 16 | 16 | 16（不变） |
+| 监控 | 16 | 0 | 16 |
+| 同步 | 24 | 0 | 24 |
+| 钥匙串·系统 | 12 | 0 | 12 |
+| 钥匙串·已存 | 12 | 20 | 20（已大于 Netcatty，保持不回退） |
+| 代理 | 12 | 0 | 12 |
+| 端口转发 | 12 | 22 | 22（已大于 Netcatty，保持） |
+| 脚本 | 16 | 0 | 16 |
+| 笔记 | 16 | 12/14 | 16 |
+| 已知主机 | 16 | 20 | 20（已大于 Netcatty，保持） |
+| 日志 | 16 | 12/14 | 16 |
+
+涉及文件：`VaultView.tsx`、`styles.css`、`monitor/MonitorView.tsx`、`sync/SyncView.tsx`、`ProxyProfilesView.tsx`、`snippets/snippets.css`、`keychain/keychain.css`、`notes/notes.css`、`sessionLogs/sessionLogs.css`。
+
+### 3. 主机发行版（distro）探测 + 持久化
+
+- **Netcatty 真实判定**（`components/terminal/runtime/terminalDistroDetection.ts`）：SSH banner（`OpenSSH_for_Windows` → windows；`detectVendorFromSshVersion` 识别厂商关键词）→ 单通道路由跳过 → 连上后 exec `/etc/os-release`（失败回退 `uname`）→ `normalizeDistroId`；自动结果写回 Host，同时允许用户手动覆盖。
+- **termX 实现**：schema 升到 **v46**，`profiles.distro TEXT` 可空（`column_exists` 幂等守卫，老数据不受影响）；新增 `src-tauri/src/ssh/distro.rs`（连接期捕获 SSH banner + 5s 超时 exec `/etc/os-release`，失败回退 `uname`）；`commands/session.rs` 在 SSH 连接成功后后台 `spawn_detection`；`db/profile.rs` 用 `COALESCE` 保留用户覆盖、`set_distro_if_unset` 只补空值，写入后 emit `profiles:changed`；前端 `Profile.distro?: string | null`，`DistroAvatar` 优先 `profile.distro`（Ubuntu `#E95420` 等品牌色），未知/探测失败回落现有主色 + Server 图标。主机卡片 / 列表 / 快速切换器 / 标签页头像同一数据源自动刷新。
+- **实测**：129（`tianzry@192.168.126.129`）连接 → 关闭 → 重启应用后，卡片 `img src="/distro/ubuntu.svg"` 仍存在；截图 `evidence/vault-hosts-129-before.png / vault-hosts-129-after.png`、`evidence/vault-after-restart.png`。
+
+### 4. 回归 bug：「主机」节卡片在关闭会话后"消失"
+
+- **现象**：Vault 首页初始「最近连接 / 分组（未分组 3 台主机）/ 主机（Git Bash 等）」齐全；点 Git Bash 连接 → 关闭标签回首页后，「主机」节的卡片全部消失，只剩最近连接与分组卡片，看似主机列表丢失。
+- **根因（非数据丢失，是过滤 + 整节隐藏）**：`VaultView.tsx` 的根「主机」节为 `rootRemaining`（排除已置顶 / 最近）；连接后 Git Bash / 129 进入最近列表，`rootRemaining` 变为空，而 `hideRootHostsSection` 在 `remaining 为空 && 存在分组/最近` 时整节隐藏。该逻辑逐字移植自 Netcatty `useVaultHostCollections.tsx` 的 `shouldHideEmptyRootHostsSection`，在 termX 的最近连接上限 8 下更容易触发，被用户感知为数据丢失。
+- **修复**：新增纯选择器 `src/vault/rootHostsModel.ts` —— `rootHostsForDisplay()` 在 `rootRemaining` 为空时回退全部 `scopedHosts`；`shouldHideRootHostsSection()` 仅在 `scopedHosts.length === 0` 时才隐藏。`VaultView.tsx` 的渲染与隐藏判断改为调用这两个函数，分组计数与「主机」节卡片始终一致。
+- **回归测试**：`src/vault/rootHostsModel.test.ts` 7 例（剩余非空只显示剩余 / 剩余为空回退全部 / 回退仍遵守「仅未分组」设置 / 两者皆空 / 有主机不隐藏 / 无主机隐藏 / 搜索与树视图例外），覆盖 store 派生逻辑而非渲染空壳。
+- **实测**：修复前仅 [最近连接, 分组]（`evidence/vault-bug-before.png`）；修复后 [最近连接, 分组, 主机] 且三卡片（129 / 串口验证 COM1 / Git Bash）、分组「未分组 3 台主机」；连接→关闭后一致（`evidence/vault-bug-after.png`）；切到非主机页再切回一致；重启应用后一致（`evidence/vault-after-restart.png` / `vault-after-switch-back.png`）；129 图标在最近与主机两节均为 Ubuntu（`evidence/vault-hosts-129-after.png`）。
+- **门禁**：`npm run test:run` 51 文件 / 533 用例通过；`npm run build` 通过；`cargo check --no-default-features` 通过；`cargo test --lib` 933 通过。
+
+### 踩坑
+
+- 151. **「整节隐藏」移植会放大为数据丢失观感**：Netcatty 根「主机」节排除最近/置顶后，若剩余为空就整节隐藏；termX 最近记录上限 8，连接几台后剩余很容易空。移植这类"空态隐藏"必须同时检查回退数据源，并补「回退显示全部」的回归测试。
+- 152. **distro 探测不能覆盖用户覆盖值**：自动探测结果写回时要 `distro IS NULL` 才写（`set_distro_if_unset`）+ 读取走 `COALESCE`，否则每次连接都会冲掉手工指定的发行版。
+- 153. **`.vault-content` 只包主机页**：非主机子页直接挂在内容面板里，用 `document.querySelector('.vault-content')` 量 padding 会得到 null；逐页留白要按各页根容器/CSS 取值，截图只能作视觉佐证。
+
+---
+
 ## 2026-11-05 — Vault / 顶部标签 / 快速切换器图标对齐 Netcatty
 
 - **图标库**：安装 `lucide-react@0.560.0`（与 Netcatty 同版本），不再用 `src/ui/icons.tsx` 自绘路径画这些位置。
