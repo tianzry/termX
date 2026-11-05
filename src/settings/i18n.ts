@@ -357,7 +357,6 @@ const zhCN: Record<string, string> = {
   "settings.shortcuts.binding.quick-switch": "快速切换",
   "settings.shortcuts.binding.new-workspace": "新建工作区",
   "settings.shortcuts.binding.snippets": "打开代码片段",
-  "settings.shortcuts.binding.broadcast": "切换广播模式",
   "settings.shortcuts.binding.toggle-opacity": "切换窗口透明度",
   "settings.shortcuts.binding.toggle-side-panel": "切换侧边栏",
   "settings.shortcuts.binding.toggle-host-tree": "切换主机列表",

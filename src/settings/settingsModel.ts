@@ -296,7 +296,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   localShellSidePanelAutoOpenPane: "files",
   verifyHostKeys: true,
   networkProxy: { mode: "system", url: "", bypass: "" },
-  sessionLogs: { enabled: false, format: "txt", timestamps: false },
+  sessionLogs: { enabled: true, format: "txt", timestamps: false },
   sshDebugLogsEnabled: false,
   sftpDoubleClickBehavior: "open",
   sftpShowHiddenFiles: false,

@@ -274,9 +274,77 @@ pub fn delete_session_log_impl(state: &AppState, id: &str) -> AppResult<()> {
 
 // ── 会话级手动录制（阶段 B）──────────────────────────────────────
 //
-// 录制器挂在 SessionHandle 的共享 slot 上：session_task 持续写入，命令层
-// 负责开 / 停 / 查。三者共用同一个 Arc<Mutex<Option<ActiveRecording>>>，
-// 因此自动录制（settings.recording_enabled）也能被手动"停止"接管。
+// 录制器挂在会话的共享 slot 上：会话任务持续写入，命令层负责开 / 停 / 查。
+// SSH 用 `SessionHandle` 里的同名槽位；PTY / 串口 / Telnet 用 lifecycle
+// session 上挂的 `LogSlots`（spawn 前由命令层准备），两者语义一致。
+
+/// 解析一条会话的录制槽：优先 SSH handle，其次 lifecycle record。
+fn slots_for(
+    state: &AppState,
+    session_id: &str,
+) -> AppResult<crate::terminal::recorder::LogSlots> {
+    if let Ok(handle) = crate::commands::session::session_handle(state, session_id) {
+        return Ok(crate::terminal::recorder::LogSlots {
+            rec: handle.recorder_slot(),
+            text: handle.text_log_slot(),
+        });
+    }
+    lifecycle_log_slots(state, session_id)
+}
+
+fn lifecycle_log_slots(
+    state: &AppState,
+    session_id: &str,
+) -> AppResult<crate::terminal::recorder::LogSlots> {
+    let guard = locked(&state.lifecycle_sessions)?;
+    let record = guard.get(session_id).ok_or_else(|| {
+        AppError::not_found(
+            "session_not_found",
+            serde_json::json!({ "id": session_id }),
+        )
+    })?;
+    // SSH 的槽位在 SessionHandle 上（由 slots_for 优先取）；SFTP / Forward
+    // 没有终端输出，返回空槽会「开始成功但文件恒空」，按不存在处理。
+    if matches!(
+        record.kind,
+        crate::state::SessionKind::Ssh
+            | crate::state::SessionKind::Sftp
+            | crate::state::SessionKind::Forward
+    ) {
+        return Err(AppError::not_found(
+            "session_not_found",
+            serde_json::json!({ "id": session_id }),
+        ));
+    }
+    Ok(record.log_slots.clone())
+}
+
+/// 非 SSH 传输在 spawn 前调用：拿到（并注册）本会话的两套槽位，
+/// 若自动录制开启则立刻创建 asciicast 文件，后续输出由 sink 写入。
+pub(crate) fn prepare_log_slots(
+    state: &AppState,
+    session_id: &str,
+    title: &str,
+    cols: u32,
+    rows: u32,
+) -> AppResult<crate::terminal::recorder::LogSlots> {
+    let slots = lifecycle_log_slots(state, session_id)?;
+    if let Some(path) = crate::commands::settings::recording_path_for(state, title)? {
+        if let Ok(active) = crate::terminal::recorder::ActiveRecording::new(
+            path,
+            cols.clamp(2, 500),
+            rows.clamp(2, 500),
+            title.to_string(),
+        ) {
+            if let Ok(mut guard) = locked(&slots.rec) {
+                if guard.is_none() {
+                    *guard = Some(active);
+                }
+            }
+        }
+    }
+    Ok(slots)
+}
 
 fn recording_filename(path: &Path) -> String {
     path.file_name()
@@ -300,8 +368,8 @@ pub fn start_session_log_impl(
     cols: Option<u32>,
     rows: Option<u32>,
 ) -> AppResult<SessionLogRecording> {
-    let handle = crate::commands::session::session_handle(state, session_id)?;
-    let slot = handle.recorder_slot();
+    let handle = slots_for(state, session_id)?;
+    let slot = handle.rec;
     let mut guard = locked(&slot)?;
     if guard.is_some() {
         return Err(AppError::config(
@@ -323,8 +391,8 @@ pub fn start_session_log_impl(
 }
 
 pub fn stop_session_log_impl(state: &AppState, session_id: &str) -> AppResult<SessionLog> {
-    let handle = crate::commands::session::session_handle(state, session_id)?;
-    let slot = handle.recorder_slot();
+    let handle = slots_for(state, session_id)?;
+    let slot = handle.rec;
     // 立刻释放 map 锁；take 之后 session_task 看到 None 就不再写。
     let active = locked(&slot)?.take().ok_or_else(|| {
         AppError::config(
@@ -352,10 +420,10 @@ pub fn session_log_status_impl(
     state: &AppState,
     session_id: &str,
 ) -> AppResult<Option<SessionLogRecording>> {
-    let Ok(handle) = crate::commands::session::session_handle(state, session_id) else {
+    let Ok(handle) = slots_for(state, session_id) else {
         return Ok(None);
     };
-    let slot = handle.recorder_slot();
+    let slot = handle.rec;
     let guard = locked(&slot)?;
     Ok(guard.as_ref().map(recording_view))
 }
@@ -383,8 +451,8 @@ pub fn start_manual_session_log_impl(
     format: &str,
     timestamps: bool,
 ) -> AppResult<ManualSessionLogStatus> {
-    let handle = crate::commands::session::session_handle(state, session_id)?;
-    let slot = handle.text_log_slot();
+    let handle = slots_for(state, session_id)?;
+    let slot = handle.text;
     let mut guard = locked(&slot)?;
     if guard.is_some() {
         return Err(AppError::config(
@@ -423,8 +491,8 @@ pub fn stop_manual_session_log_impl(
     state: &AppState,
     session_id: &str,
 ) -> AppResult<ManualSessionLogStatus> {
-    let handle = crate::commands::session::session_handle(state, session_id)?;
-    let slot = handle.text_log_slot();
+    let handle = slots_for(state, session_id)?;
+    let slot = handle.text;
     let active = locked(&slot)?.take().ok_or_else(|| {
         AppError::config(
             "session_log_not_recording",
@@ -440,10 +508,10 @@ pub fn manual_session_log_status_impl(
     state: &AppState,
     session_id: &str,
 ) -> AppResult<Option<ManualSessionLogStatus>> {
-    let Ok(handle) = crate::commands::session::session_handle(state, session_id) else {
+    let Ok(handle) = slots_for(state, session_id) else {
         return Ok(None);
     };
-    let slot = handle.text_log_slot();
+    let slot = handle.text;
     let guard = locked(&slot)?;
     Ok(guard.as_ref().map(manual_status_view))
 }

@@ -57,20 +57,45 @@ pub fn pty_spawn(
         SessionKind::Pty,
         SessionOwner::Window(window.label().to_owned()),
     )?;
+    // 默认自动记录：spawn 前挂好两套录制槽（asciicast + 手动文本），
+    // sink 的每个输出块同时写入；关闭时刷盘。失败不阻塞连接。
+    let log_title = std::path::Path::new(&shell)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("本地终端")
+        .to_string();
+    let log_slots = crate::commands::session_logs::prepare_log_slots(
+        &state,
+        &session_id,
+        &log_title,
+        u32::from(cols),
+        u32::from(rows),
+    )
+    .unwrap_or_default();
+    let sink_slots = log_slots.clone();
     // Turn transport-agnostic PTY output into Tauri events. The headless ws
     // server builds a different sink over the same `pty::spawn`.
     let sink: pty::PtySink = std::sync::Arc::new(move |id: &str, out: pty::PtyOut| match out {
         pty::PtyOut::Data(b) => {
+            sink_slots.record(&b);
             let _ = app.emit(&format!("pty:data:{id}"), b64_payload(&b));
         }
         pty::PtyOut::Close { exit_code, signal } => {
+            sink_slots.finish();
             let _ = app.emit(
                 &format!("pty:close:{id}"),
                 crate::models::CloseInfo { exit_code, signal },
             );
         }
     });
-    let (id, handle) = pty::spawn_local_shell(session_id, cols, rows, sink, shell, args, cwd)?;
+    let (id, handle) = match pty::spawn_local_shell(session_id, cols, rows, sink, shell, args, cwd) {
+        Ok(v) => v,
+        Err(error) => {
+            // spawn 失败时槽位已建好文件，立刻收尾，避免留下空 `.cast` 与悬挂句柄。
+            log_slots.finish();
+            return Err(error);
+        }
+    };
     reservation.activate_returned(&id, crate::commands::lifecycle::ReadySession::Pty(handle))?;
     Ok(id)
 }
@@ -160,11 +185,22 @@ pub fn pty_spawn_connector(
         SessionKind::Pty,
         SessionOwner::Window(window.label().to_owned()),
     )?;
+    let log_slots = crate::commands::session_logs::prepare_log_slots(
+        &state,
+        &session_id,
+        "连接器会话",
+        u32::from(cols),
+        u32::from(rows),
+    )
+    .unwrap_or_default();
+    let sink_slots = log_slots.clone();
     let sink: pty::PtySink = std::sync::Arc::new(move |id: &str, out: pty::PtyOut| match out {
         pty::PtyOut::Data(b) => {
+            sink_slots.record(&b);
             let _ = app.emit(&format!("pty:data:{id}"), b64_payload(&b));
         }
         pty::PtyOut::Close { exit_code, signal } => {
+            sink_slots.finish();
             let _ = app.emit(
                 &format!("pty:close:{id}"),
                 crate::models::CloseInfo { exit_code, signal },

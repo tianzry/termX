@@ -4,6 +4,73 @@
 
 ---
 
+## 2026-11-05 — 终端工具栏类型自适应 / 删除主机浏览器与广播 / 会话日志默认自动记录
+
+### 1. 删除「主机浏览器」与「广播模式」
+
+- **引用点全量检索**：`TerminalPane.tsx`（工具栏地球按钮、左侧广播按钮、终端右键「浏览器」项）、`src/settings/keyBindings.ts`（`broadcast` 快捷键）、`src/settings/i18n.ts`（`settings.shortcuts.binding.broadcast`）、`VaultView.tsx`（主机右键「打开浏览器」占位）。`src-tauri/` 无对应命令或设置项。
+- **处理**：全部删除，不留置灰占位。Netcatty 工具栏本身也没有「广播模式」，该项属 termX 早期假按钮；`browser` 在 Netcatty 仅 SSH/Mosh/本地可见，termX 后端无内嵌浏览器能力，按用户要求直接移除。
+
+### 2. 工具栏按终端类型自适应
+
+**Netcatty 真实可用性矩阵**（`components/terminal/TerminalToolbar.tsx` `availableIds`）：
+
+| 功能 | SSH | 本地 shell | 串口 | Telnet | 依据 |
+|---|---|---|---|---|---|
+| highlight / compose / search / scripts / terminalSettings | ✓ | ✓ | ✓ | ✓ | 无类型门控 |
+| sessionLog（手动文本日志） | ✓ | ✓ | ✓ | ✓ | `showLogButton` 由 Terminal 统一传入 |
+| openSessionLog（打开已有日志） | ✓ | ✓ | ✓ | ✓ | handler 存在即可 |
+| sftp | ✓ | ✓ | ✗ | ✓ | `hidesSftp = serial \|\| plugin` |
+| browser | ✓ | ✓ | ✗ | ✗ | ssh/mosh/local（termX 已删） |
+| history（命令历史） | ✓ | ✗ | ✗ | ✗ | 排除 local/serial/plugin/telnet |
+| configureOsc7（目录追踪） | ✓ | ✓ | ✗ | ✓ | 与 sftp 同门控 |
+| encoding（终端编码） | ✓ | ✗ | ✓ | ✓ | `!local/!mosh/!et/!plugin` |
+| ymodem 上传/下载 | ✗ | ✗ | ✓ | ✗ | serial only |
+| recording（脚本录制） | ✓ | ✓ | ✓ | ✓ | `onStartRecording` 由 Terminal 传入 |
+
+**termX 落地**（`src/terminal/toolbarCapabilities.ts` 纯函数 + 5 例单测）：
+
+| 功能 | SSH | 本地 shell | 串口 | Telnet | 说明 |
+|---|---|---|---|---|---|
+| 命令历史 / 系统监控 / 目录追踪 | ✓ | ✗ | ✗ | ✗ | 依赖 SSH exec |
+| SFTP / 端口转发 | ✓ | ✗ | ✗ | ✗ | 后端 SftpHandle 仅 SSH（Netcatty 本地/Telnet 有 SFTP，termX 无本地文件面板） |
+| 复制主机地址 | ✓ | ✗ | ✓ | ✓ | 本地终端无远端主机 |
+| 终端编码 | ✓ | ✗ | ✗ | ✓ | 串口编码固定在连接表单 |
+| 高亮 / 撰写 / 搜索 / 会话日志 / 脚本 / 终端设置 / 脚本录制 | ✓ | ✓ | ✓ | ✓ | 与 Netcatty 一致 |
+| 主机浏览器 / 广播模式 | — | — | — | — | 已删除 |
+
+- **实现规则**：类型不支持直接不渲染（不是置灰）；「更多」菜单里的命令历史 / 目录追踪 / 终端编码同样按类型隐藏。分隔位置与图标沿用既有 Netcatty 对齐值。
+
+### 3. 会话日志：默认自动记录 + 手动导出并行
+
+- **Netcatty 取证**：`TerminalLayer.tsx` 自动日志开启条件为 `sessionLogsEnabled && sessionLogsDir`；`SettingsSystemTab` 默认 `sessionLogsEnabled=false` 且目录为空，即开箱需用户先开启并选目录（用户本机看到「默认记录」是已开启该设置）。落盘为 `directory/<hostLabel>/<日期>.<txt|raw|html>`，元信息含 `hostLabel` / `startTime` / `timestampsEnabled`；关闭会话时 `stopSessionLog` 收尾；日志页按 `startTime` 倒序分页。
+- **termX 改造**：
+  - 自动录制（asciicast）默认开启：`recording_enabled` 未写入时视为 `true`（`recording_enabled_value` + Rust 单测），前端 `sessionLogs.enabled` 默认值同步为 `true`；用户仍可在设置中心关闭。
+  - 四类会话都接默认录制：SSH 沿用原 `SessionHandle` 录制槽；PTY / 串口 / Telnet 新增 `LogSlots`（挂到 lifecycle session，spawn 前由 `prepare_log_slots` 创建 `.cast`），sink 每个输出块同时写 asciicast + 手动文本日志；`close_resource` / sink Close 双重 `finish()` 保证尾部刷盘。
+  - 手动按钮 = 选保存路径写独立文本日志（txt/raw/html），与默认 `.cast` 两套并行、互不影响；按钮在四类会话均可用，状态由 `session_log_status` 反映。
+  - 日志页沿用 `session_logs` 索引（扫描 `recordings/*.cast`），默认记录关闭标签后即可见，按开始时间倒序；命名取档案/终端标题 + 时间戳。
+
+### 4. 实测验证（debug + CDP，2026-11-05）
+
+- **SSH（129）**：`sessionId=404a94e0-00dc-42a0-8d3b-17bde1384157`；工具栏按钮序列（左→右）= 命令历史 / 系统监控 / 断开连接 / 重新连接当前会话 / 复制主机地址 / 主机关键词高亮 / 打开 SFTP / 打开端口转发 / 撰写栏 / 终端搜索 / 开始记录会话日志 / 运行脚本 / 更多 / 关闭当前窗格；无地球图标、无广播按钮。截图 `evidence/toolbar-ssh-129.png`。
+- **本地 shell**：左组 = 断开 / 重连（无复制主机地址、无历史、无监控）；右组 = 高亮 / 撰写 / 搜索 / 会话日志 / 脚本 / 更多 / 关闭；更多菜单 = 终端设置、开始录制脚本（无历史 / 目录追踪 / 编码）。截图 `evidence/toolbar-local.png`。
+- **串口（COM1）**：左组 = 断开 / 重连 / 复制主机地址（hostname=COM1）；右组同本地；更多菜单 = 终端设置、开始录制脚本。截图 `evidence/toolbar-serial.png`。
+- **Telnet（127.0.0.1:2323）**：左组 = 断开 / 重连 / 复制主机地址；右组同本地；更多菜单 = 终端设置、开始录制脚本、终端编码（当前 UTF-8）。截图 `evidence/toolbar-telnet.png`。
+- **默认日志链路（129）**：连接后自动生成 `129_20261105_134218.cast`，输入 `echo TERMX-AUTO-LOG-129`；手动按钮 `start_manual_session_log` 选路径 `evidence/manual-129.log`，输入 `echo TERMX-MANUAL-LOG-129`；关闭标签后 `.cast` 收尾 2564 B，尾部含手动日志输出与提示符；`manual-129.log` 与终端输出一致。日志页可见 `129 13:42 3s 2.5 KiB`（默认记录，倒序）。截图 `evidence/logs-page-129.png`。
+- **门禁**：`npm run test:run` 52 文件 / 538 用例；`npm run build`；`cargo check --no-default-features`；`cargo test --lib --no-default-features` 934 通过。
+
+### 踩坑
+
+- 154. **Netcatty 的「默认记录」其实是设置项已开启**：源码默认 `sessionLogsEnabled=false` 且必须有 `sessionLogsDir`；照抄默认值会得到「不记录」，与用户观察不符。按用户要求 termX 改为默认开启并内置目录，同时在设置中心保留关闭开关。
+- 155. **非 SSH 会话原本没有录制槽**：`start_session_log` / `start_manual_session_log` 只解析 SSH SessionHandle，直接在工具栏对所有类型开放会报 `session_not_found`。必须给 PTY/串口/Telnet 挂 `LogSlots` 并让命令层回退到 lifecycle record。
+- 156. **只在 sink Close 里 finish 会丢尾部**：前端主动关标签时 sink 的 Close 事件可能晚于 registry 清理；`close_resource` 里也调用 `log_slots.finish()`（幂等，重复调用无副作用）。
+- 157. **删除假按钮要连带快捷键/i18n**：广播模式的 `keyBindings` 条目与 i18n key 分散在 settings 模块，只删 JSX 会留下「设置里能配但界面无功能」的死引用。
+- 158. **非 SSH 会话的「复制主机地址」必须补 hostInfo**：termX 原先只有 SSH 档案会写 `hostInfo`，串口/Telnet 标签里 hostname 为空，按钮虽在但始终 disabled。按 Netcatty（串口 host.hostname = 端口名、Telnet = 目标主机）在非 SSH 分支同步填充后，才能复制。
+- 159. **Telnet 标题里的 `:` 会打断 Windows 自动录制**：`safe_recording_stem` 只替换 `/ \ . 空格`，`Telnet 127.0.0.1:2323` 生成 `..._2323.cast` 时 Windows 直接拒绝路径，错误被 `if let Ok` 吞掉 → 无文件也无提示。已把 `: * ? " < > |` 与控制字符一并替换，并补单测（`settings.rs`）。前端 `safeFileStem` 早已处理，两侧规则此前不一致。
+- 160. **窗口关闭 / 退出走的是 owner 级关闭**：`remove_owned_resources` 只置 Closed、不触发 `close_resource`，而 Pty/Serial/Telnet 的 `ReadySession::close()` 是空操作；急退会丢 `BufWriter` 尾部。已在置 Closed 前收集 `log_slots`，放锁后统一 `finish()`（幂等）。
+- 161. **spawn 失败会留下空 `.cast`**：`prepare_log_slots` 先建文件、`spawn` 才可能失败（串口不存在 / Telnet 拒连必现）。三处（pty / serial / telnet）在错误分支补 `finish()`，不再悬挂文件句柄。
+- 162. **registry 锁内不要刷盘 + headless 尚未接线**：`finish()` 有同步 IO，原实现持 `lifecycle_sessions` 锁执行会阻塞其它会话；已改为先 clone 槽位、放锁后刷盘。`server.rs` 的三类 open 未调用 `prepare_log_slots`，headless 的手动日志目前写空文件（已登记为已知缺口，GUI 路径不受影响）。
+
 ## 2026-11-05 — Vault 工具栏显隐 / 各页左留白 / 主机 distro 探测（schema v46）/ 「主机」节回归修复
 
 ### 1. 顶部连接工具栏按导航显隐

@@ -26,17 +26,28 @@ pub fn serial_open(
         SessionKind::Serial,
         SessionOwner::Window(window.label().to_owned()),
     )?;
+    let log_slots = crate::commands::session_logs::prepare_log_slots(
+        &state,
+        &session_id,
+        &format!("串口 {port}"),
+        80,
+        24,
+    )
+    .unwrap_or_default();
+    let sink_slots = log_slots.clone();
     // Turn transport-agnostic serial output into Tauri events. The headless ws
     // server builds a different sink over the same `serial::open`.
     let sink: serial::SerialSink =
         std::sync::Arc::new(move |id: &str, out: serial::SerialOut| match out {
             serial::SerialOut::Data(b) => {
+                sink_slots.record(&b);
                 let _ = app.emit(
                     &format!("serial:data:{id}"),
                     crate::emitter::b64_payload(&b),
                 );
             }
             serial::SerialOut::Close => {
+                sink_slots.finish();
                 let _ = app.emit(&format!("serial:close:{id}"), ());
             }
             serial::SerialOut::AutoLogin(status) => {
@@ -46,7 +57,14 @@ pub fn serial_open(
                 );
             }
         });
-    let (id, handle) = serial::open(session_id, &port, config, sink)?;
+    let (id, handle) = match serial::open(session_id, &port, config, sink) {
+        Ok(v) => v,
+        Err(error) => {
+            // 端口打不开时槽位已建好文件，立刻收尾，避免留下空 `.cast` 与悬挂句柄。
+            log_slots.finish();
+            return Err(error);
+        }
+    };
     reservation.activate_returned(
         &id,
         crate::commands::lifecycle::ReadySession::Serial(handle),

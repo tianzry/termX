@@ -190,7 +190,16 @@ pub fn recording_dir(state: &AppState) -> std::path::PathBuf {
 /// segments and escape the recordings dir. The write-side mirror of
 /// `is_safe_recording_name`.
 fn safe_recording_stem(profile_name: &str) -> String {
-    profile_name.replace(['/', '\\', '.', ' '], "_")
+    // 含 Windows 保留字符（`: * ? " < > |`）：Telnet 标题形如 `host:port`，
+    // 不替换会导致 create 失败、自动录制静默丢失（见 changelogs 踩坑 159）。
+    profile_name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | '.' | ' ' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect()
 }
 
 /// Best-effort: ensure the recordings dir exists and is owner-only on Unix.
@@ -229,19 +238,24 @@ pub fn build_recording_path(state: &AppState, name: &str) -> std::path::PathBuf 
     path
 }
 
-/// Compute the asciicast recording path for a new SSH session: honors
-/// `recording_enabled`, ensures the fixed recordings dir exists (owner-only on
-/// Unix), and stamps the file with a path-safe profile name + timestamp.
-/// `None` when recording is disabled. The single source of truth for where a
-/// new `.cast` is born — both desktop `ssh_connect` and the headless server
-/// route through here, so they can never build the path differently.
+/// 自动录制开关的判据：未写入时默认开启（对齐 Netcatty 的默认自动记录）。
+fn recording_enabled_value(value: Option<&str>) -> bool {
+    value.map(|v| v == "true").unwrap_or(true)
+}
+
+/// 自动录制路径：`recording_enabled`, ensures the fixed recordings dir exists
+/// (owner-only on Unix), and stamps the file with a path-safe profile name +
+/// timestamp. `None` when recording is disabled. The single source of truth
+/// for where a new `.cast` is born — both desktop `ssh_connect` and the
+/// headless server route through here, so they can never build the path
+/// differently.
 pub fn recording_path_for(
     state: &AppState,
     profile_name: &str,
 ) -> AppResult<Option<std::path::PathBuf>> {
-    let enabled = crate::db::settings::get(&state.db, "recording_enabled")?
-        .map(|v| v == "true")
-        .unwrap_or(false);
+    let enabled = recording_enabled_value(
+        crate::db::settings::get(&state.db, "recording_enabled")?.as_deref(),
+    );
     if !enabled {
         return Ok(None);
     }
@@ -443,8 +457,16 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        build_recording_path, is_safe_recording_name, recording_dir, safe_recording_stem,
+        build_recording_path, is_safe_recording_name, recording_dir, recording_enabled_value,
+        safe_recording_stem,
     };
+
+    #[test]
+    fn recording_defaults_to_enabled_until_user_disables_it() {
+        assert!(recording_enabled_value(None));
+        assert!(recording_enabled_value(Some("true")));
+        assert!(!recording_enabled_value(Some("false")));
+    }
 
     /// AppState without a real Tauri app: enough for path construction.
     fn test_state(data_dir: PathBuf) -> crate::state::AppState {
@@ -549,11 +571,17 @@ mod tests {
             "back\\slash",
             "with space",
             "normal-name",
+            "host:port",
+            "a*b?c\"d<e>f|g",
         ] {
             let name = format!("{}.cast", safe_recording_stem(evil));
             assert!(
                 is_safe_recording_name(&name),
                 "stem escaped for {evil:?}: {name:?}"
+            );
+            assert!(
+                !name.chars().any(|c| matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')),
+                "unsafe filename char survived for {evil:?}: {name:?}"
             );
         }
     }

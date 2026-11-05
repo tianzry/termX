@@ -47,6 +47,9 @@ pub struct SessionRecord {
     pub owner: SessionOwner,
     pub phase: SessionPhase,
     pub parent: Option<String>,
+    /// 会话级录制槽（asciicast 自动记录 + 手动文本日志）。SSH 走
+    /// `SessionHandle` 的同名槽位；其它传输在 spawn 前挂到这里。
+    pub log_slots: crate::terminal::recorder::LogSlots,
 }
 
 #[derive(Clone, Debug)]

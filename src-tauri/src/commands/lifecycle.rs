@@ -708,6 +708,7 @@ pub fn reserve_resource<'a>(
             owner,
             phase: SessionPhase::Pending,
             parent: None,
+            log_slots: Default::default(),
         },
     );
     drop(registry);
@@ -782,6 +783,7 @@ pub fn reserve_sftp_child<'a>(
             owner,
             phase: SessionPhase::Pending,
             parent: Some(parent_id.to_owned()),
+            log_slots: Default::default(),
         },
     );
     drop(registry);
@@ -971,10 +973,15 @@ pub fn close_resource(
         None
     };
     record.phase = SessionPhase::Closed;
+    // 主动关闭时立刻刷盘，避免 sink Close 未抵达导致日志尾部丢失。
+    // 先取槽位、放锁后再 finish：registry 锁内做刷盘 IO 会阻塞其它会话操作。
+    let log_slots = record.log_slots.clone();
     drop(registry);
     if let Some(handle) = removed {
         handle.close();
     }
+    // 让 handle.close() 先触发 sink Close（幂等），再兜底刷盘。
+    log_slots.finish();
     close_waiters_for_resource(state, session_id, expected_owner)?;
     Ok(())
 }
@@ -1094,6 +1101,7 @@ fn remove_owned_resources(
         .collect();
     ids.extend(child_ids);
     let mut removed = Vec::new();
+    let mut log_slots = Vec::new();
     for id in &ids {
         let record = registry.get_mut(id).expect("id came from registry");
         if record.phase == SessionPhase::Ready {
@@ -1105,6 +1113,13 @@ fn remove_owned_resources(
             })?);
         }
         record.phase = SessionPhase::Closed;
+        // 窗口关闭 / 退出 / reconcile 走这条路径，不会触发单个 close_resource，
+        // 必须在这里同步收尾日志，否则 BufWriter 尾部可能丢失。
+        log_slots.push(record.log_slots.clone());
+    }
+    drop(registry);
+    for slots in log_slots {
+        slots.finish();
     }
     Ok((ids.len(), removed))
 }
@@ -2169,6 +2184,7 @@ mod tests {
                 owner: other.clone(),
                 phase: SessionPhase::Ready,
                 parent: None,
+                log_slots: Default::default(),
             },
         );
         let target_error = crate::ai::commands::ai_session_rebind_target_impl(

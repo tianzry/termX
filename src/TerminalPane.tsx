@@ -82,11 +82,11 @@ import {
   createTerminalDecoder,
   loadTerminalEncoding,
   saveTerminalEncoding,
-  supportsEncodingSwitch,
   terminalEncodingLabel,
   type TerminalDecoder,
   type TerminalEncoding,
 } from "./terminal/terminalEncoding";
+import { deriveToolbarCapabilities } from "./terminal/toolbarCapabilities";
 import {
   createZmodemController,
   type ZmodemController,
@@ -313,7 +313,7 @@ export function TerminalPane({
    * 手动会话日志写用户选择的文本文件。断开即清空，并结束脚本录制。
    */
   useEffect(() => {
-    const sid = status === "connected" && isSsh ? sidRef.current : null;
+    const sid = status === "connected" ? sidRef.current : null;
     if (!sid) {
       setSessionLog(null);
       // 断线时 sidRef 已被 notifySession(null) 清空，必须用录制时记下的
@@ -1043,6 +1043,29 @@ export function TerminalPane({
   useEffect(() => {
     if (active) controllerRef.current?.term.focus();
   }, [active]);
+
+  // 非 SSH 会话也填充主机信息：串口用端口名、Telnet 用目标主机。
+  // 对齐 Netcatty 状态栏「复制主机地址」（非本地且 hostname 非空才显示并可复制）。
+  useEffect(() => {
+    const connector = tab.connector;
+    if (connector.kind === "serial") {
+      setHostInfo({
+        label: tab.title,
+        hostname: connector.session.port,
+        port: 0,
+        protocol: "Serial",
+      });
+    } else if (connector.kind === "telnet") {
+      setHostInfo({
+        label: tab.title,
+        hostname: connector.session.host,
+        port: connector.session.port,
+        protocol: "Telnet",
+      });
+    } else if (connector.kind === "pty") {
+      setHostInfo({ label: tab.title, hostname: "", port: 0, protocol: "LOCAL" });
+    }
+  }, [tab.connector, tab.title]);
 
   // 取档案 / 初始凭据 / 可选密钥，供连接弹窗展示与认证重试。
   useEffect(() => {
@@ -1786,45 +1809,28 @@ export function TerminalPane({
 
   const canDisconnect = status === "connected" || status === "connecting";
   const canReconnect = status !== "connecting";
+  const transportKind = tab.connector.kind;
+  const caps = deriveToolbarCapabilities(transportKind);
   // 系统监控只出现在远端 SSH 会话（netcatty isSystemSidebarEligible 排除本地 / 串口 / Telnet）
-  const systemEligible = tab.connector.kind === "ssh";
+  const systemEligible = caps.systemMonitor;
   // 采样接口需要已建立的 SSH 会话 id；按钮只在已连接时启用，其余状态写明原因。
   const monitorSid = systemEligible && status === "connected" ? sidRef.current : null;
-  const monitorDisabledReason = !systemEligible
-    ? "仅 SSH 会话"
-    : status !== "connected"
-      ? "连接后可用"
-      : !monitorSid
-        ? "会话未就绪"
-        : null;
+  const monitorDisabledReason = status !== "connected"
+    ? "连接后可用"
+    : !monitorSid
+      ? "会话未就绪"
+      : null;
   const canMonitor = monitorDisabledReason === null;
 
   /**
    * 「更多」菜单的可用条件与置灰原因（对照 Netcatty TerminalToolbar）：
-   * - 命令历史：SSH 且已连接（Netcatty 排除本地 / 串口 / Telnet）；
-   * - 目录追踪：SSH 且已连接（依赖 OSC 7 + exec 通道）；
-   * - 终端设置：始终可用（设置中心入口）；
-   * - 录制：SSH 且已连接（脚本录制读取 SSH 会话输入）；
-   * - 终端编码：SSH / Telnet 且已连接；串口在连接表单中固定、本地沿用系统编码。
-   * 做不出的项不删除，只置灰并在行内 + 悬停写明原因。
+   * 类型不支持的项目已按 `caps` 直接隐藏，这里只保留「连接后可用」这类状态原因。
    */
-  const transportKind = tab.connector.kind;
-  const moreHistoryReason =
-    transportKind !== "ssh"
-      ? "仅 SSH 会话"
-      : status !== "connected"
-        ? "连接后可用"
-        : null;
-  const moreOsc7Reason = moreHistoryReason;
-  const moreRecordingReason = moreHistoryReason;
-  const moreEncodingReason =
-    !supportsEncodingSwitch(transportKind)
-      ? transportKind === "serial"
-        ? "连接表单内配置"
-        : "沿用系统编码"
-      : status !== "connected"
-        ? "连接后可用"
-        : null;
+  const moreStatusReason = status !== "connected" ? "连接后可用" : null;
+  const moreHistoryReason = moreStatusReason;
+  const moreOsc7Reason = moreStatusReason;
+  const moreRecordingReason = moreStatusReason;
+  const moreEncodingReason = moreStatusReason;
 
   const authValid =
     authUsername.trim().length > 0 &&
@@ -2065,7 +2071,11 @@ export function TerminalPane({
       }}
     >
       {/* 终端顶部工具栏（对照 netcatty TerminalToolbar / TerminalView 状态栏） */}
-      <div className="term-toolbar" data-section="terminal-toolbar">
+      <div
+        className="term-toolbar"
+        data-section="terminal-toolbar"
+        data-session-id={sidRef.current ?? ""}
+      >
         <div className="term-toolbar-left">
           <span className="term-toolbar-title" title={tab.title}>
             {tab.title}
@@ -2086,6 +2096,7 @@ export function TerminalPane({
               REC
             </span>
           )}
+          {caps.history && (
           <div className="term-tool-more">
             <button
               className={`term-tool-btn${historyOpen ? " active" : ""}`}
@@ -2122,6 +2133,7 @@ export function TerminalPane({
               </div>
             )}
           </div>
+          )}
           {systemEligible && (
             <div className="term-monitor-anchor">
               <button
@@ -2162,6 +2174,7 @@ export function TerminalPane({
           >
             <Icon name="refresh" size={12} />
           </button>
+          {caps.copyHost && (
           <button
             className="term-tool-btn"
             title={copyHostTitle}
@@ -2178,13 +2191,7 @@ export function TerminalPane({
           >
             <Icon name="copy" size={12} />
           </button>
-          <button
-            className="term-tool-btn"
-            disabled
-            title="广播模式尚未移植"
-          >
-            <Icon name="radio" size={12} />
-          </button>
+          )}
         </div>
         <div className="term-toolbar-right">
           <div className="term-tool-more">
@@ -2244,6 +2251,7 @@ export function TerminalPane({
               </div>
             )}
           </div>
+          {caps.sftp && (
           <button
             className="term-tool-btn"
             title={
@@ -2254,6 +2262,8 @@ export function TerminalPane({
           >
             <Icon name="folder-input" size={12} />
           </button>
+          )}
+          {caps.forward && (
           <button
             className="term-tool-btn"
             title={onOpenTool ? "打开端口转发" : "端口转发面板不可用"}
@@ -2262,13 +2272,7 @@ export function TerminalPane({
           >
             <Icon name="transfer" size={12} />
           </button>
-          <button
-            className="term-tool-btn"
-            disabled
-            title="主机浏览器（尚未实现）"
-          >
-            <Icon name="globe" size={12} />
-          </button>
+          )}
           <button
             className={`term-tool-btn${composeOpen ? " active" : ""}`}
             title="撰写栏"
@@ -2285,11 +2289,10 @@ export function TerminalPane({
           >
             <Icon name="search" size={12} />
           </button>
-          {/* 后端 start_manual_session_log_impl 目前只接 SSH SessionHandle；
-              pty/local/telnet/serial 尚无文本日志槽，因此保持仅 SSH 可用。 */}
+          {/* 四种传输都挂了文本日志槽：自动录制（.cast）与手动文本日志并行。 */}
           <button
             className={`term-tool-btn${sessionLog ? " recording" : ""}`}
-            disabled={!isSsh || status !== "connected" || logBusy}
+            disabled={status !== "connected" || logBusy}
             title={
               sessionLog
                 ? "停止记录会话日志"
@@ -2351,6 +2354,7 @@ export function TerminalPane({
             </button>
             {moreOpen && (
               <div className="term-tool-menu term-more-menu">
+                {caps.menuHistory && (
                 <button
                   title={moreHistoryReason ?? "命令历史"}
                   disabled={moreHistoryReason !== null}
@@ -2365,6 +2369,8 @@ export function TerminalPane({
                     <span className="term-menu-note">{moreHistoryReason}</span>
                   )}
                 </button>
+                )}
+                {caps.menuOsc7 && (
                 <button
                   title={
                     moreOsc7Reason !== null
@@ -2387,6 +2393,7 @@ export function TerminalPane({
                     cwdTracked && <span className="term-menu-note">已启用</span>
                   )}
                 </button>
+                )}
                 <button
                   title={
                     onOpenSettings
@@ -2424,6 +2431,7 @@ export function TerminalPane({
                     <span className="term-menu-note">{moreRecordingReason}</span>
                   )}
                 </button>
+                {caps.menuEncoding && (
                 <div
                   className={`term-menu-sub${encodingMenuOpen ? " open" : ""}`}
                 >
@@ -2483,6 +2491,7 @@ export function TerminalPane({
                     </div>
                   )}
                 </div>
+                )}
               </div>
             )}
           </div>
@@ -2818,11 +2827,6 @@ export function TerminalPane({
                 )}
               </>
             )}
-            <div className="term-menu-sep" />
-            <button disabled title="主机浏览器（尚未实现）">
-              <Icon name="globe" size={14} />
-              浏览器
-            </button>
             <div className="term-menu-sep" />
             <button
               disabled={!canReconnect}

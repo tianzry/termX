@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
 use crate::error::AppResult;
@@ -289,6 +290,64 @@ impl TextLogRecorder {
 
     pub fn extension(format: TextLogFormat) -> &'static str {
         format.extension()
+    }
+}
+
+/// 一条会话的两套录制槽：asciicast（默认自动落库）+ 手动文本日志。
+/// 两者独立、可并行；非 SSH 传输由命令层在 spawn 前挂到 lifecycle session 上，
+/// SSH 则复用 `SessionHandle` 里的同名槽位。
+#[derive(Clone, Default)]
+pub struct LogSlots {
+    pub rec: Arc<StdMutex<Option<ActiveRecording>>>,
+    pub text: Arc<StdMutex<Option<ActiveTextLog>>>,
+}
+
+impl std::fmt::Debug for LogSlots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LogSlots")
+    }
+}
+
+impl LogSlots {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record(&self, data: &[u8]) {
+        record_cast(&self.rec, data);
+        record_text(&self.text, data);
+    }
+
+    /// 关闭标签 / 连接结束：刷盘并释放两套录制器。
+    pub fn finish(&self) {
+        if let Ok(mut guard) = self.rec.lock() {
+            if let Some(active) = guard.take() {
+                let _ = active.recorder.finish();
+            }
+        }
+        if let Ok(mut guard) = self.text.lock() {
+            if let Some(active) = guard.take() {
+                let _ = active.recorder.finish();
+            }
+        }
+    }
+}
+
+/// 把一段输出写进 asciicast 槽（未录制时无操作）。
+pub fn record_cast(slot: &Arc<StdMutex<Option<ActiveRecording>>>, data: &[u8]) {
+    if let Ok(mut guard) = slot.lock() {
+        if let Some(active) = guard.as_mut() {
+            let _ = active.recorder.record(data);
+        }
+    }
+}
+
+/// 把一段输出写进手动文本日志槽（未录制时无操作）。
+pub fn record_text(slot: &Arc<StdMutex<Option<ActiveTextLog>>>, data: &[u8]) {
+    if let Ok(mut guard) = slot.lock() {
+        if let Some(active) = guard.as_mut() {
+            let _ = active.recorder.record(data);
+        }
     }
 }
 

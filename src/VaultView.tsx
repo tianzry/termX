@@ -5147,7 +5147,7 @@ export function VaultView({
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
         >
           {/* 条目与顺序 1:1 对齐 Netcatty 主机卡片右键菜单：
-              连接 / 打开 SFTP / 打开浏览器 / 编辑 / 复制 / 复制主机地址 /
+              连接 / 打开 SFTP / 编辑 / 复制 / 复制主机地址 /
               复制账密信息 / 置顶·取消置顶 / 删除（无分隔线）。 */}
           <button
             onClick={() => {
@@ -5162,10 +5162,6 @@ export function VaultView({
           <button disabled title="尚未实现">
             <Icon name="columns" size={14} />
             打开 SFTP
-          </button>
-          <button disabled title="尚未实现">
-            <Icon name="globe" size={14} />
-            打开浏览器
           </button>
           <button
             onClick={() => {

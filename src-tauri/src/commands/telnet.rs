@@ -36,9 +36,20 @@ pub async fn telnet_open(
         SessionKind::Telnet,
         SessionOwner::Window(window.label().to_owned()),
     )?;
+    let log_title = format!("Telnet {host}:{port}");
+    let log_slots = crate::commands::session_logs::prepare_log_slots(
+        &state,
+        &session_id,
+        &log_title,
+        u32::from(cols),
+        u32::from(rows),
+    )
+    .unwrap_or_default();
+    let sink_slots = log_slots.clone();
     let sink: telnet::TelnetSink =
         std::sync::Arc::new(move |id: &str, out: telnet::TelnetOut| match out {
             telnet::TelnetOut::Data(b) => {
+                sink_slots.record(&b);
                 let _ = app.emit(
                     &format!("telnet:data:{id}"),
                     crate::emitter::b64_payload(&b),
@@ -54,6 +65,7 @@ pub async fn telnet_open(
                 );
             }
             telnet::TelnetOut::Close => {
+                sink_slots.finish();
                 let _ = app.emit(&format!("telnet:close:{id}"), ());
             }
         });
@@ -78,7 +90,20 @@ pub async fn telnet_open(
             serde_json::json!({ "err": e.to_string() }),
         )
     });
-    let (id, handle) = opened??;
+    let (id, handle) = match opened {
+        Ok(inner) => match inner {
+            Ok(v) => v,
+            Err(error) => {
+                // 连不上时槽位已建好文件，立刻收尾，避免留下空 `.cast` 与悬挂句柄。
+                log_slots.finish();
+                return Err(error);
+            }
+        },
+        Err(error) => {
+            log_slots.finish();
+            return Err(error);
+        }
+    };
     reservation.activate_returned(
         &id,
         crate::commands::lifecycle::ReadySession::Telnet(handle),
