@@ -30,12 +30,29 @@ import {
   classifyAutocompleteData,
   computeAutocompleteAcceptTail,
   computeAutocompleteGhost,
+  computeAutocompletePopupPlacement,
   computeLivePreviewWrite,
   deriveAutocompleteSuggestions,
+  derivePathArgumentHistory,
+  mergeAutocompleteSuggestions,
   moveAutocompleteSelection,
   resolveAutocompleteKey,
   type AutocompleteSuggestion,
 } from "./terminal/autocompleteModel";
+import {
+  PATH_COMPLETION_BUDGET_MS,
+  buildPathSuggestions,
+  createPathDirectoryCache,
+  currentWordOf,
+  filterPathEntries,
+  joinDirectoryPath,
+  replaceCommandWord,
+  resolvePathLookup,
+  shouldCompletePath,
+  sortPathEntries,
+  withPathBudget,
+  type PathEntry,
+} from "./terminal/autocompletePathModel";
 import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import { SessionMonitorPopover } from "./monitor/SessionMonitorPopover";
@@ -170,12 +187,21 @@ interface AutocompleteAnchor {
   fontSize: string;
 }
 
+/** 浮层的子面板（逐级下钻目录）：每级 240 宽。 */
+interface AutocompleteSubPanel {
+  dirPath: string;
+  entries: PathEntry[];
+  selected: number;
+}
+
 interface AutocompleteUiState {
   popup: boolean;
   suggestions: AutocompleteSuggestion[];
   selected: number;
   ghost: string;
   anchor: AutocompleteAnchor;
+  subPanels: AutocompleteSubPanel[];
+  subFocus: number;
 }
 
 type Prompt =
@@ -857,10 +883,13 @@ export function TerminalPane({
    *
    * 与 Netcatty 一致：Tab 在候选可见时放行给 Shell（当前行已被实时预览改写）；
    * → 只接受内联 ghost text；Esc 恢复原行；点击候选同样进入实时预览。
-   * 串口 / Telnet 是网络设备 CLI，Ctrl-U 可能被当作会话终止，仅关闭预览改写。
+   * 串口是网络设备 CLI，Ctrl-U 可能被当作会话终止，关闭预览改写与行替换；
+   * Telnet 与 SSH 同（仍允许预览）。
    */
   const autocompleteLivePreviewAllowed =
-    tab.connector.kind === "ssh" || tab.connector.kind === "pty";
+    tab.connector.kind === "ssh" ||
+    tab.connector.kind === "pty" ||
+    tab.connector.kind === "telnet";
   /** 本地 Shell 在 Windows 下是 PowerShell / cmd，不认 Ctrl-U，用退格清行。 */
   const autocompleteUseBackspaceClear = tab.connector.kind === "pty";
 
@@ -876,6 +905,9 @@ export function TerminalPane({
     ac.suggestions = [];
     ac.selected = -1;
     ac.previewedCommand = null;
+    ac.subPanels = [];
+    ac.subFocus = -1;
+    ac.subVersion += 1;
     setAutocompleteUi(null);
   }
 
@@ -920,7 +952,7 @@ export function TerminalPane({
     const settings = getSettings().terminal;
     const popup = settings.autocompletePopupMenu && ac.suggestions.length > 0;
     const ghost =
-      settings.autocompleteGhostText && ac.selected < 0
+      settings.autocompleteGhostText && ac.selected < 0 && ac.subFocus < 0
         ? computeAutocompleteGhost(ac.typed, ac.suggestions)
         : "";
     if (!popup && !ghost) {
@@ -933,6 +965,8 @@ export function TerminalPane({
       selected: ac.selected,
       ghost,
       anchor,
+      subPanels: ac.subPanels,
+      subFocus: ac.subFocus,
     });
   }
 
@@ -983,6 +1017,84 @@ export function TerminalPane({
     return text.replace(/^.*?[#$>❯]\s/u, "");
   }
 
+  /** 本地 Shell 的路径分隔符：Windows（PowerShell / cmd）用 `\`，其余用 `/`。 */
+  const autocompleteWindowsPaths =
+    tab.connector.kind === "pty" && /Windows/i.test(navigator.userAgent);
+
+  /** 路径补全的 provider 标识：SSH = 当前会话，本地 = fs；串口 / Telnet 不提供。 */
+  function autocompletePathProviderId(): string | null {
+    if (tab.connector.kind === "ssh") {
+      return sidRef.current ? `ssh:${sidRef.current}` : null;
+    }
+    if (tab.connector.kind === "pty") return "local";
+    return null;
+  }
+
+  /** 复用当前 SSH 会话的 SFTP 子系统（不新开连接），失败后丢弃句柄以便下次重试。 */
+  function ensureAutocompleteSftp(): Promise<string> {
+    const sessionId = sidRef.current;
+    if (!sessionId) return Promise.reject(new Error("no session"));
+    const existing = autocompleteSftpRef.current;
+    if (existing && existing.sessionId === sessionId) return existing.promise;
+    const promise = api.sftpConnectSession(sessionId);
+    autocompleteSftpRef.current = { sessionId, promise };
+    promise.catch(() => {
+      if (autocompleteSftpRef.current?.promise === promise) {
+        autocompleteSftpRef.current = null;
+      }
+    });
+    return promise;
+  }
+
+  /** `~` 展开为 home；其它路径原样返回（空路径落到 home）。 */
+  async function expandAutocompleteHome(dir: string): Promise<string> {
+    const raw = dir || "~";
+    if (!raw.startsWith("~")) return raw === "." ? "~" : raw;
+    const rest = raw.slice(1).replace(/^[\\/]+/, "");
+    const providerId = autocompletePathProviderId() ?? "local";
+    let cached = autocompleteHomeRef.current;
+    if (!cached || cached.providerId !== providerId) {
+      const promise =
+        tab.connector.kind === "ssh"
+          ? ensureAutocompleteSftp().then((sftpId) => api.sftpHome(sftpId))
+          : api.localHome();
+      cached = { providerId, promise };
+      autocompleteHomeRef.current = cached;
+      const entry = cached;
+      promise.catch(() => {
+        if (autocompleteHomeRef.current === entry) autocompleteHomeRef.current = null;
+      });
+    }
+    const home = await cached.promise;
+    if (!rest) return home;
+    const separator = home.includes("\\") && !home.startsWith("/") ? "\\" : "/";
+    return `${home.replace(/[\\/]+$/, "")}${separator}${rest.replace(/[\\/]/g, separator)}`;
+  }
+
+  /** 单次目录列举：SSH 走 `sftp_list`，本地走 fs；失败由缓存层静默降级为空结果。 */
+  async function loadAutocompletePathEntries(dir: string): Promise<PathEntry[]> {
+    const expanded = await expandAutocompleteHome(dir);
+    if (tab.connector.kind === "ssh") {
+      const rows = await api.sftpList(await ensureAutocompleteSftp(), expanded);
+      return rows
+        .filter((row) => row.name !== "." && row.name !== "..")
+        .map((row) => ({
+          name: row.name,
+          type: row.is_symlink ? "symlink" : row.is_dir ? "directory" : "file",
+        }));
+    }
+    const rows = await api.localListDir(expanded);
+    return rows
+      .filter((row) => row.name !== "." && row.name !== "..")
+      .map((row) => ({ name: row.name, type: row.kind }));
+  }
+
+  function autocompletePathEntries(providerId: string, dir: string): Promise<PathEntry[]> {
+    return autocompletePathCacheRef.current.get(`${providerId}:${dir}`, () =>
+      loadAutocompletePathEntries(dir),
+    );
+  }
+
   function scheduleAutocompleteSuggestions() {
     const ac = autocompleteRef.current;
     if (ac.timer !== null) window.clearTimeout(ac.timer);
@@ -998,23 +1110,90 @@ export function TerminalPane({
     ) {
       ac.suggestions = [];
       ac.selected = -1;
+      ac.subPanels = [];
+      ac.subFocus = -1;
       publishAutocomplete();
       return;
     }
     ac.timer = window.setTimeout(() => {
       ac.timer = null;
-      const settings = getSettings().terminal;
-      if (!settings.autocompleteEnabled) return;
-      const suggestions = deriveAutocompleteSuggestions({
-        typed: ac.typed,
-        history: readCommandHistory(),
-        scope: settings.autocompleteHistoryScope === "global" ? "global" : "host",
-        hostId: historyHostId,
+      void runAutocompleteQuery();
+    }, AUTOCOMPLETE_DEBOUNCE_MS);
+  }
+
+  /**
+   * 命令候选立即出、路径候选异步补：目录列举有 150ms 软预算，
+   * 到点先用已有结果，迟到结果再回填（同一请求共用 in-flight / 5s 缓存）。
+   */
+  async function runAutocompleteQuery() {
+    const ac = autocompleteRef.current;
+    const settings = getSettings().terminal;
+    if (!settings.autocompleteEnabled) return;
+    const typed = ac.typed;
+    if (!typed.trim()) return;
+
+    const providerId = autocompletePathProviderId();
+    const pathCheck = providerId ? shouldCompletePath(typed) : { complete: false, foldersOnly: false };
+    const historyScope = settings.autocompleteHistoryScope === "global" ? "global" : "host";
+    const history = readCommandHistory();
+    // 路径补全生效时，整行历史让位给当前目录（历史只保留同命令 + 实参前缀的最近 5 条）。
+    const base = pathCheck.complete
+      ? derivePathArgumentHistory({ typed, history, scope: historyScope, hostId: historyHostId })
+      : deriveAutocompleteSuggestions({
+          typed,
+          history,
+          scope: historyScope,
+          hostId: historyHostId,
+        });
+    ac.suggestions = base;
+    ac.selected = -1;
+    ac.subPanels = [];
+    ac.subFocus = -1;
+    ac.subVersion += 1;
+    publishAutocomplete();
+
+    if (!pathCheck.complete || !providerId) return;
+
+    // 本地 Shell 不报 OSC 7，cwd 为空时用 home 兜底：cmd / PowerShell 不展开 `~`，
+    // 直接用 `~` 拼出的候选执行会失败。SSH 远端 shell 会展开 `~`，不必兜底。
+    let cwd = cwdRef.current;
+    if (!cwd && providerId === "local") {
+      cwd = await expandAutocompleteHome("~").catch(() => null);
+    }
+    const lookup = resolvePathLookup({
+      currentWord: currentWordOf(typed),
+      cwd,
+      windows: autocompleteWindowsPaths,
+    });
+    const isCurrent = () => ac.typed === typed && ac.timer === null;
+    const listing = autocompletePathEntries(providerId, lookup.dirToList).then((entries) =>
+      filterPathEntries(sortPathEntries(entries), lookup.filterPrefix),
+    );
+
+    const entries = await withPathBudget(listing, PATH_COMPLETION_BUDGET_MS, (late) => {
+      if (!isCurrent() || ac.subFocus >= 0) return;
+      const lateSuggestions = buildPathSuggestions({
+        line: typed,
+        lookup,
+        entries: late,
+        foldersOnly: pathCheck.foldersOnly,
       });
-      ac.suggestions = suggestions;
+      if (!lateSuggestions.length) return;
+      ac.suggestions = mergeAutocompleteSuggestions(ac.suggestions, lateSuggestions);
       ac.selected = -1;
       publishAutocomplete();
-    }, AUTOCOMPLETE_DEBOUNCE_MS);
+    });
+
+    if (!isCurrent()) return;
+    const pathSuggestions = buildPathSuggestions({
+      line: typed,
+      lookup,
+      entries,
+      foldersOnly: pathCheck.foldersOnly,
+    });
+    if (!pathSuggestions.length) return;
+    ac.suggestions = mergeAutocompleteSuggestions(base, pathSuggestions);
+    publishAutocomplete();
   }
 
   /** 实时预览：把当前行改写成候选（只对 SSH / 本地 Shell 生效）。 */
@@ -1051,9 +1230,124 @@ export function TerminalPane({
     const ac = autocompleteRef.current;
     if (index < 0 || index >= ac.suggestions.length) return;
     ac.selected = index;
+    ac.subPanels = [];
+    ac.subFocus = -1;
+    ac.subVersion += 1;
     previewAutocompleteCandidate(ac.suggestions[index].command);
     publishAutocomplete();
+    void loadAutocompleteSubPanel(ac.suggestions[index], index);
     controllerRef.current?.term.focus();
+  }
+
+  /** 选中目录候选后预列其子目录（子面板每级 240 宽，逐级下钻）。 */
+  async function loadAutocompleteSubPanel(
+    suggestion: AutocompleteSuggestion,
+    index: number,
+  ) {
+    const ac = autocompleteRef.current;
+    if (suggestion.source !== "path" || suggestion.fileType !== "directory" || !suggestion.pathDir) {
+      return;
+    }
+    const providerId = autocompletePathProviderId();
+    if (!providerId) return;
+    const version = ++ac.subVersion;
+    const entries = await autocompletePathEntries(providerId, suggestion.pathDir).then(sortPathEntries);
+    if (version !== ac.subVersion || ac.selected !== index) return;
+    if (!entries.length) return;
+    ac.subPanels = [{ dirPath: suggestion.pathDir, entries, selected: -1 }];
+    ac.subFocus = -1;
+    publishAutocomplete();
+  }
+
+  /** 子面板当前选中的条目。 */
+  function autocompleteSubEntry(level: number): PathEntry | null {
+    const panel = autocompleteRef.current.subPanels[level];
+    if (!panel || panel.selected < 0) return null;
+    return panel.entries[panel.selected] ?? null;
+  }
+
+  /** 子面板条目的完整命令行（把当前词替换成绝对路径）。 */
+  function buildAutocompleteSubCommand(level: number): string | null {
+    const ac = autocompleteRef.current;
+    const panel = ac.subPanels[level];
+    const entry = autocompleteSubEntry(level);
+    if (!panel || !entry) return null;
+    const suffix = entry.type === "directory" ? (autocompleteWindowsPaths ? "\\" : "/") : "";
+    return replaceCommandWord(ac.typed, `${panel.dirPath}${entry.name}${suffix}`);
+  }
+
+  /** 接受子面板条目：写回输入行并关闭浮层（不直接执行，与 Netcatty 一致）。 */
+  function acceptAutocompleteSubEntry(level: number): boolean {
+    const ac = autocompleteRef.current;
+    const command = buildAutocompleteSubCommand(level);
+    if (!command) return false;
+    if (ac.previewedCommand === null) {
+      const tail = computeAutocompleteAcceptTail(ac.typed, command);
+      if (tail) transportRef.current?.write(tail);
+    }
+    ac.typed = command;
+    inputBufferRef.current.line = command;
+    resetAutocomplete();
+    return true;
+  }
+
+  /** 子面板内 ↑/↓：列表两端夹取，不回环。 */
+  function moveAutocompleteSubSelection(delta: 1 | -1) {
+    const ac = autocompleteRef.current;
+    const level = ac.subFocus;
+    const panel = ac.subPanels[level];
+    if (!panel || !panel.entries.length) return;
+    const base = panel.selected < 0 ? (delta === 1 ? 0 : panel.entries.length - 1) : panel.selected;
+    const next = Math.max(0, Math.min(panel.entries.length - 1, base + (panel.selected < 0 ? 0 : delta)));
+    ac.subVersion += 1;
+    ac.subPanels = ac.subPanels.slice(0, level + 1);
+    panel.selected = next;
+    const command = buildAutocompleteSubCommand(level);
+    if (command) previewAutocompleteCandidate(command);
+    publishAutocomplete();
+  }
+
+  /** 点击子面板条目：选中并实时预览（普通 shell 会直接改写当前行）。 */
+  function selectAutocompleteSubIndex(level: number, index: number) {
+    const ac = autocompleteRef.current;
+    const panel = ac.subPanels[level];
+    if (!panel || index < 0 || index >= panel.entries.length) return;
+    ac.subVersion += 1;
+    ac.subFocus = level;
+    ac.subPanels = ac.subPanels.slice(0, level + 1);
+    panel.selected = index;
+    const command = buildAutocompleteSubCommand(level);
+    if (command) previewAutocompleteCandidate(command);
+    publishAutocomplete();
+    controllerRef.current?.term.focus();
+  }
+
+  /** 子面板内 →：目录项展开下一级（尾部 240 面板），文件项直接接受。 */
+  async function expandAutocompleteSubPanel(level: number): Promise<boolean> {
+    const ac = autocompleteRef.current;
+    const entry = autocompleteSubEntry(level);
+    const panel = ac.subPanels[level];
+    if (!entry || !panel) return false;
+    if (entry.type !== "directory") return acceptAutocompleteSubEntry(level);
+
+    const providerId = autocompletePathProviderId();
+    if (!providerId) return false;
+    const dirPath = joinDirectoryPath(
+      panel.dirPath,
+      entry.name,
+      autocompleteWindowsPaths ? "\\" : "/",
+    );
+    const version = ++ac.subVersion;
+    const entries = await autocompletePathEntries(providerId, dirPath).then(sortPathEntries);
+    if (version !== ac.subVersion) return true;
+    if (!entries.length) return true;
+    ac.subPanels = [
+      ...ac.subPanels.slice(0, level + 1),
+      { dirPath, entries, selected: -1 },
+    ];
+    ac.subFocus = level + 1;
+    publishAutocomplete();
+    return true;
   }
 
   /**
@@ -1084,8 +1378,63 @@ export function TerminalPane({
       ac.typed = "";
       ac.suggestions = [];
       ac.selected = -1;
+      ac.subPanels = [];
+      ac.subFocus = -1;
+      ac.subVersion += 1;
       publishAutocomplete();
       return false;
+    }
+
+    // 子面板（逐级下钻目录）：↑/↓ 在面板内移动，→ 展开 / 接受文件，← 退一层，
+    // Enter/Tab 接受当前项，Esc 关闭并回滚到原始输入。
+    if (ac.subFocus >= 0 && ac.subPanels.length > 0) {
+      if (kind === "up" || kind === "down") {
+        moveAutocompleteSubSelection(kind === "down" ? 1 : -1);
+        return true;
+      }
+      if (kind === "right") {
+        void expandAutocompleteSubPanel(ac.subFocus);
+        return true;
+      }
+      if (kind === "left") {
+        ac.subVersion += 1;
+        const level = ac.subFocus - 1;
+        ac.subFocus = level;
+        ac.subPanels = level >= 0 ? ac.subPanels.slice(0, level + 1) : [];
+        const command = level >= 0 ? buildAutocompleteSubCommand(level) : ac.suggestions[ac.selected]?.command;
+        if (command) previewAutocompleteCandidate(command);
+        else restoreAutocompletePreview();
+        publishAutocomplete();
+        return true;
+      }
+      if (kind === "enter" || kind === "tab") {
+        return autocompleteSubEntry(ac.subFocus) ? acceptAutocompleteSubEntry(ac.subFocus) : true;
+      }
+      if (kind === "escape") {
+        restoreAutocompletePreview();
+        resetAutocomplete();
+        return true;
+      }
+      // 继续输入 / 删除：退出子面板，走普通候选刷新。
+      ac.subVersion += 1;
+      ac.subPanels = [];
+      ac.subFocus = -1;
+    }
+
+    // 主列表选中目录时 → 先聚焦子面板（再按 → 继续下钻）。
+    if (
+      kind === "right" &&
+      popupOpen &&
+      ac.selected >= 0 &&
+      ac.suggestions[ac.selected]?.fileType === "directory" &&
+      ac.subPanels.length > 0
+    ) {
+      ac.subFocus = 0;
+      ac.subPanels[0].selected = 0;
+      const command = buildAutocompleteSubCommand(0);
+      if (command) previewAutocompleteCandidate(command);
+      publishAutocomplete();
+      return true;
     }
 
     const action = resolveAutocompleteKey({ kind, popupOpen, ghostVisible });
@@ -1094,8 +1443,14 @@ export function TerminalPane({
       const next = moveAutocompleteSelection(ac.selected, ac.suggestions.length, action.delta);
       if (next === ac.selected) return true;
       ac.selected = next;
+      ac.subPanels = [];
+      ac.subFocus = -1;
+      ac.subVersion += 1;
       if (next === -1) restoreAutocompletePreview();
-      else previewAutocompleteCandidate(ac.suggestions[next].command);
+      else {
+        previewAutocompleteCandidate(ac.suggestions[next].command);
+        void loadAutocompleteSubPanel(ac.suggestions[next], next);
+      }
       publishAutocomplete();
       return true;
     }
@@ -1271,6 +1626,8 @@ export function TerminalPane({
       if (ac.suggestions.length > 0 || ac.previewedCommand !== null) {
         publishAutocomplete();
       }
+      // 来源范围 / 候选浮层等开关切换后重新取数，保证即时生效。
+      if (ac.typed.trim()) scheduleAutocompleteSuggestions();
     });
   }, []);
 
@@ -1460,6 +1817,11 @@ export function TerminalPane({
     selected: number;
     previewedCommand: string | null;
     timer: number | null;
+    /** 子面板（逐级下钻目录）与当前焦点（-1 = 主列表）。 */
+    subPanels: AutocompleteSubPanel[];
+    subFocus: number;
+    /** 子面板请求代数：选中项 / 目录变化后丢弃迟到结果。 */
+    subVersion: number;
   }>({
     typed: "",
     reliable: true,
@@ -1468,7 +1830,20 @@ export function TerminalPane({
     selected: -1,
     previewedCommand: null,
     timer: null,
+    subPanels: [],
+    subFocus: -1,
+    subVersion: 0,
   });
+  /** 路径目录缓存（sessionId + 目录，TTL 5s + in-flight 合并）。 */
+  const autocompletePathCacheRef = useRef(createPathDirectoryCache());
+  /** 自动补全专用的 SFTP 句柄：复用当前 SSH 会话，不在补全时新开连接。 */
+  const autocompleteSftpRef = useRef<{ sessionId: string; promise: Promise<string> } | null>(
+    null,
+  );
+  /** home 路径按 provider 缓存，避免每次 `~` 目录都多打一次远端请求。 */
+  const autocompleteHomeRef = useRef<{ providerId: string; promise: Promise<string> } | null>(
+    null,
+  );
   const transportRef = useRef<TerminalTransport | null>(null);
   /**
    * 写入队列：输入兼容模式会把一次 onData 拆成多段 sshWrite，跨 onData 调用
@@ -1622,6 +1997,12 @@ export function TerminalPane({
     onRegister(paneId, handle);
     return () => {
       onRegister(paneId, null);
+      // 释放自动补全专用的 SFTP 子系统与目录缓存，避免会话切换后悬挂。
+      const sftp = autocompleteSftpRef.current;
+      autocompleteSftpRef.current = null;
+      autocompleteHomeRef.current = null;
+      autocompletePathCacheRef.current.invalidate();
+      void sftp?.promise.then((sftpId) => api.sftpClose(sftpId)).catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paneId, tab.connector.kind]);
@@ -3185,38 +3566,125 @@ export function TerminalPane({
       />
 
       {autocompleteUi?.popup && (() => {
-        const { anchor } = autocompleteUi;
-        const width = Math.min(360, Math.max(220, anchor.paneWidth - 16));
-        const popupHeight = Math.min(220, autocompleteUi.suggestions.length * 26 + 8);
-        const left = Math.max(4, Math.min(anchor.left, anchor.paneWidth - width - 4));
-        const spaceBelow = anchor.paneHeight - (anchor.top + anchor.cellH);
-        const top =
-          spaceBelow >= popupHeight + 4 || anchor.top < popupHeight + 4
-            ? anchor.top + anchor.cellH
-            : anchor.top - popupHeight - 2;
+        const { anchor, suggestions, selected, subPanels, subFocus } = autocompleteUi;
+        const placement = computeAutocompletePopupPlacement({
+          anchorTop: anchor.top,
+          anchorBottom: anchor.top + anchor.cellH,
+          anchorLeft: anchor.left,
+          paneWidth: anchor.paneWidth,
+          paneHeight: anchor.paneHeight,
+          itemCount: suggestions.length,
+          subPanelCount: subPanels.length,
+        });
+        const badgeFor = (suggestion: AutocompleteSuggestion) =>
+          suggestion.source === "history" ? "h" : suggestion.source === "command" ? "c" : null;
         return (
           <div
-            className="term-autocomplete-popup"
-            style={{ left, top, width }}
+            className={`term-autocomplete-popup${placement.renderUpward ? " upward" : ""}`}
+            style={{ left: placement.left, top: placement.top }}
             onMouseDown={(e) => e.preventDefault()}
           >
-            {autocompleteUi.suggestions.map((suggestion, index) => (
-              <button
-                key={suggestion.command}
-                type="button"
-                className={`term-autocomplete-row${
-                  index === autocompleteUi.selected ? " selected" : ""
+            <div
+              className="term-autocomplete-list"
+              style={{ width: placement.width, maxHeight: placement.maxHeight }}
+            >
+              {suggestions.map((suggestion, index) => (
+                <button
+                  key={`${suggestion.source}-${suggestion.command}`}
+                  type="button"
+                  className={`term-autocomplete-row${
+                    index === selected ? " selected" : ""
+                  }`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    selectAutocompleteIndex(index);
+                  }}
+                >
+                  {suggestion.source === "path" ? (
+                    <span
+                      className={`term-autocomplete-icon ${
+                        suggestion.fileType ?? "file"
+                      }`}
+                    >
+                      <Icon
+                        name={
+                          suggestion.fileType === "directory"
+                            ? "folder"
+                            : suggestion.fileType === "symlink"
+                              ? "link"
+                              : "file"
+                        }
+                        size={14}
+                      />
+                    </span>
+                  ) : (
+                    <span
+                      className={`term-autocomplete-badge ${
+                        suggestion.source === "history" ? "history" : "command"
+                      }`}
+                    >
+                      {badgeFor(suggestion)}
+                    </span>
+                  )}
+                  <span className="term-autocomplete-command">
+                    {suggestion.display ?? suggestion.command}
+                  </span>
+                  {suggestion.description ? (
+                    <span className="term-autocomplete-desc">{suggestion.description}</span>
+                  ) : null}
+                  {suggestion.fileType === "directory" ? (
+                    <span className="term-autocomplete-arrow">
+                      <Icon name="chevron-right" size={12} />
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+
+            {subPanels.map((panel, level) => (
+              <div
+                key={`${panel.dirPath}-${level}`}
+                className={`term-autocomplete-list term-autocomplete-sub${
+                  level === subFocus ? " focused" : ""
                 }`}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  selectAutocompleteIndex(index);
-                }}
+                style={{ width: placement.subPanelWidth, maxHeight: placement.maxHeight }}
               >
-                <span className="term-autocomplete-command">{suggestion.command}</span>
-                {suggestion.source === "history" && suggestion.count ? (
-                  <span className="term-autocomplete-meta">×{suggestion.count}</span>
-                ) : null}
-              </button>
+                {panel.entries.map((entry, index) => (
+                  <button
+                    key={entry.name}
+                    type="button"
+                    className={`term-autocomplete-row${
+                      index === panel.selected ? " selected" : ""
+                    }`}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      selectAutocompleteSubIndex(level, index);
+                    }}
+                  >
+                    <span className={`term-autocomplete-icon ${entry.type}`}>
+                      <Icon
+                        name={
+                          entry.type === "directory"
+                            ? "folder"
+                            : entry.type === "symlink"
+                              ? "link"
+                              : "file"
+                        }
+                        size={14}
+                      />
+                    </span>
+                    <span className="term-autocomplete-command">
+                      {entry.name}
+                      {entry.type === "directory" ? "/" : ""}
+                    </span>
+                    {entry.type === "directory" ? (
+                      <span className="term-autocomplete-arrow">
+                        <Icon name="chevron-right" size={12} />
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         );

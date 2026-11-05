@@ -97,11 +97,25 @@ export const COMMON_COMMANDS: readonly string[] = [
   "exit",
 ];
 
+export type AutocompleteSource = "history" | "command" | "path";
+export type AutocompleteFileType = "file" | "directory" | "symlink";
+
 export interface AutocompleteSuggestion {
+  /** 写回输入行的完整文本（路径候选是整条命令行）。 */
   command: string;
-  source: "history" | "command";
+  /** 浮层展示文本；缺省用 command。 */
+  display?: string;
+  /** 右侧灰色描述。 */
+  description?: string;
+  source: AutocompleteSource;
   /** 历史候选的执行次数（用于排序 / 展示）。 */
   count?: number;
+  /** 排序权重：历史 1000+频次、路径 750、系统命令 600。 */
+  score?: number;
+  /** 路径候选的文件类型（目录行显示文件夹图标并可下钻）。 */
+  fileType?: AutocompleteFileType;
+  /** 路径候选为目录时，该目录的绝对路径（子面板列目录用，含尾随分隔符）。 */
+  pathDir?: string;
 }
 
 export function deriveAutocompleteSuggestions(input: {
@@ -127,7 +141,14 @@ export function deriveAutocompleteSuggestions(input: {
     const key = entry.command;
     if (seen.has(key)) continue;
     seen.add(key);
-    historyMatches.push({ command: entry.command, source: "history", count: entry.count });
+    historyMatches.push({
+      command: entry.command,
+      display: entry.command,
+      description: "历史命令",
+      source: "history",
+      count: entry.count,
+      score: 1000 + (entry.count ?? 0),
+    });
   }
   historyMatches.sort(
     (a, b) => (b.count ?? 0) - (a.count ?? 0) || b.command.length - a.command.length,
@@ -140,11 +161,107 @@ export function deriveAutocompleteSuggestions(input: {
       if (!command.startsWith(prefix)) continue;
       if (seen.has(command)) continue;
       seen.add(command);
-      commandMatches.push({ command, source: "command" });
+      commandMatches.push({
+        command,
+        display: command,
+        description: "系统命令",
+        source: "command",
+        score: 600,
+      });
     }
   }
 
   return [...historyMatches, ...commandMatches].slice(0, max);
+}
+
+/**
+ * 路径补全生效时的历史候选（对照 Netcatty `queryRecentHistoryByCommand`）：
+ * 只保留「同命令 + 实参前缀相同」的最近记录，权重 720（低于路径 750），
+ * 避免整行历史压过当前目录的真实路径。
+ */
+export function derivePathArgumentHistory(input: {
+  typed: string;
+  history: readonly CommandHistoryEntry[];
+  scope: AutocompleteHistoryScope;
+  hostId: string;
+  max?: number;
+}): AutocompleteSuggestion[] {
+  const tokens = tokenizeInput(input.typed);
+  const commandName = (tokens[0] ?? "").toLowerCase();
+  const currentWord = tokens[tokens.length - 1] ?? "";
+  if (!commandName || tokens.length < 2) return [];
+  const argumentPrefix = stripQuotes(currentWord).toLowerCase();
+  const max = Math.max(1, input.max ?? 5);
+  const seen = new Set<string>();
+  const out: AutocompleteSuggestion[] = [];
+
+  for (const entry of input.history) {
+    if (input.scope === "host" && entry.hostId !== input.hostId) continue;
+    const entryTokens = tokenizeInput(entry.command);
+    if ((entryTokens[0] ?? "").toLowerCase() !== commandName) continue;
+    if (entryTokens.length < 2) continue;
+    const argument = stripQuotes(entryTokens[entryTokens.length - 1]).toLowerCase();
+    if (!argument.startsWith(argumentPrefix)) continue;
+    if (seen.has(entry.command)) continue;
+    seen.add(entry.command);
+    out.push({
+      command: entry.command,
+      display: entry.command,
+      description: "历史路径",
+      source: "history",
+      count: entry.count,
+      score: 720 - out.length,
+    });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** 极简分词（命令名 + 最后一个实参），仅用于路径历史匹配。 */
+function tokenizeInput(line: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === " ") {
+      tokens.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  tokens.push(current);
+  return tokens;
+}
+
+function stripQuotes(value: string): string {
+  return value.replace(/^['"]|['"]$/g, "");
+}
+
+/** 合并多批候选（命令 + 路径 + 迟到回填）：去重、按权重排序、截断。 */
+export function mergeAutocompleteSuggestions(
+  current: readonly AutocompleteSuggestion[],
+  extra: readonly AutocompleteSuggestion[],
+  max = AUTOCOMPLETE_MAX_SUGGESTIONS,
+): AutocompleteSuggestion[] {
+  const seen = new Set<string>();
+  const merged: AutocompleteSuggestion[] = [];
+  for (const suggestion of [...current, ...extra]) {
+    if (seen.has(suggestion.command)) continue;
+    seen.add(suggestion.command);
+    merged.push(suggestion);
+  }
+  merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  return merged.slice(0, Math.max(1, max));
 }
 
 /** 内联 ghost text：首个候选相对已输入前缀的尾部；无候选返回空串。 */
@@ -281,4 +398,71 @@ export function moveAutocompleteSelection(
   if (next < -1) return -1;
   if (next >= total) return total - 1;
   return next;
+}
+
+// ── 浮层几何（逐项对齐 Netcatty `terminalAutocompleteLayout.ts`） ──────
+
+export const AUTOCOMPLETE_POPUP_WIDTH = 400;
+export const AUTOCOMPLETE_ROW_HEIGHT = 28;
+export const AUTOCOMPLETE_POPUP_MAX_HEIGHT = 240;
+export const AUTOCOMPLETE_ANCHOR_GAP = 8;
+export const AUTOCOMPLETE_VIEWPORT_PADDING = 8;
+export const AUTOCOMPLETE_SUBPANEL_WIDTH = 240;
+export const AUTOCOMPLETE_PANEL_GAP = 4;
+
+export interface AutocompletePopupPlacement {
+  left: number;
+  top: number;
+  width: number;
+  subPanelWidth: number;
+  maxHeight: number;
+  renderUpward: boolean;
+}
+
+/**
+ * 浮层定位：锚点下方放 8px 间距；下方空间不足且上方更宽裕时上翻。
+ * 宽度 400，子面板每级 240，整体贴 pane 右侧夹取（不越出 8px 内边距）。
+ */
+export function computeAutocompletePopupPlacement(input: {
+  anchorTop: number;
+  anchorBottom: number;
+  anchorLeft: number;
+  paneWidth: number;
+  paneHeight: number;
+  itemCount: number;
+  subPanelCount: number;
+}): AutocompletePopupPlacement {
+  const pad = AUTOCOMPLETE_VIEWPORT_PADDING;
+  const gap = AUTOCOMPLETE_ANCHOR_GAP;
+  const width = Math.max(
+    160,
+    Math.min(AUTOCOMPLETE_POPUP_WIDTH, input.paneWidth - pad * 2),
+  );
+  const subPanelWidth = Math.max(
+    120,
+    Math.min(AUTOCOMPLETE_SUBPANEL_WIDTH, input.paneWidth - pad * 2),
+  );
+  const contentHeight = Math.min(
+    AUTOCOMPLETE_POPUP_MAX_HEIGHT,
+    Math.max(AUTOCOMPLETE_ROW_HEIGHT, input.itemCount * AUTOCOMPLETE_ROW_HEIGHT + 8),
+  );
+  const spaceBelow = input.paneHeight - input.anchorBottom - pad - gap;
+  const spaceAbove = input.anchorTop - pad - gap;
+  const renderUpward = spaceBelow < contentHeight && spaceAbove >= spaceBelow;
+  const available = Math.max(64, renderUpward ? spaceAbove : spaceBelow);
+  const maxHeight = Math.max(
+    AUTOCOMPLETE_ROW_HEIGHT,
+    Math.min(contentHeight, available),
+  );
+
+  const totalWidth =
+    width + (input.subPanelCount > 0
+      ? AUTOCOMPLETE_PANEL_GAP + subPanelWidth * input.subPanelCount
+      : 0);
+  const left = Math.max(pad, Math.min(input.anchorLeft, input.paneWidth - pad - totalWidth));
+  const top = renderUpward
+    ? Math.max(pad, input.anchorTop - gap - maxHeight)
+    : Math.min(input.paneHeight - pad - maxHeight, input.anchorBottom + gap);
+
+  return { left, top, width, subPanelWidth, maxHeight, renderUpward };
 }

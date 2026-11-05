@@ -5957,3 +5957,43 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 
 
 
+
+
+## 2026-11-05 — #179 终端自动补全实现（path provider / 多级下钻 / 浮层规格）
+
+实现依据见上一节 #178（Netcatty `components/terminal/autocomplete/*`）。
+
+### 实现
+
+- 新增 `src/terminal/autocompletePathModel.ts`（纯逻辑，无 React/副作用）+ `autocompletePathModel.test.ts`（31 例）：
+  - `shouldCompletePath`：命令白名单（`ls/cd/cat/vim/...` 含 `dir`）、`-` 选项放行、直接输入 `/ ./ ../ ~/ . .. ~ \` 时总补全；`cd/mkdir/rmdir/pushd` 只给目录。
+  - `resolvePathLookup`：`~`、相对 cwd、绝对、Windows 盘符、引号包裹；`joinDirectoryPath` 保留尾随分隔符。
+  - `buildPathSuggestions`：目录补 `/`、`display/description/source/score=750/fileType/pathDir`；`sortPathEntries` 目录→符号链接→文件。
+  - `createPathDirectoryCache`：TTL 5s、30 条 LRU、同 key in-flight 合并、加载失败返回 `[]` 并清 in-flight、`invalidate`。
+  - `withPathBudget`：150ms 先返回，迟到的非空结果回调回填。
+- `autocompleteModel.ts`：新增 `source`（history/command/path）与 `display/description/score/fileType/pathDir`；权重历史 1000+频次、路径实参历史 720、路径 750、系统命令 600；新增 `mergeAutocompleteSuggestions`（按 text 去重 + score 降序 + 截断）与浮层几何常量（400/28/240/8/子面板 240/面板间距 4）。
+- `TerminalPane.tsx`：
+  - provider：SSH 复用当前会话 `sftpConnectSession` + `sftpList`（不新开连接，失败清句柄重试），本地走 `localListDir`；串口 / Telnet 返回 null（无路径候选，静默降级）。
+  - 缓存键 `sessionId + 目录`（SSH）/ `local + 目录`；home 按 provider 缓存；100ms 防抖 → 先 publish 命令候选 → 150ms 预算取路径 → 迟到 `merge` 回填。
+  - 多级下钻：主列表选中目录后预列子目录；每级子面板 240 宽；`→` 聚焦/下钻，`↑↓` 夹取不回环，`Enter` 接受（子面板不直接执行），`Tab` 放行，`Esc` 回滚预览。
+  - 浮层：`computeAutocompletePopupPlacement` 400 宽 / 28 行高 / 240 最高 / 锚点 8 / 视口 8 / 下方不足上翻；来源徽标 h（琥珀）/ c（绿），路径 14px Folder/File/Link 图标，右侧灰色描述。
+  - 串口：`livePreview=false`，不做输入行替换；卸载释放 SFTP 子系统与目录缓存；设置订阅变化时 reset 或就地重算（热更新）。
+- `styles.css`：浮层/子面板/行/徽标/图标/描述/ghost 样式；`ui/icons.tsx` 增 `file`、`link`。
+
+### 实测
+
+- 129（SSH）：`l` → 历史 `ll/lls/ls`（h）+ 系统 `less/ln/lsblk`（c）；`ls ` → 远端目录（SFTP）且目录补 `/`；`↓` 选中 `.cache/` → `→` 两级下钻（400+240+240）；`Enter` 接受后行为 `ls /home/tianzry/.cache/evolution/addressbook/`，再回车输出 `trash` 并回提示符。
+- 本地（CMD）：`l` → 4 条系统命令；`ls ` / `dir ` → 本地目录；`dir ` + `↓` + `→` 预览 `C:\Users\tianzry\.agent-browser\browsers\`，接受 + 回车输出 `chrome-146.0.7680.80`（无「无效开关」）。
+- 修复（本轮实测发现）：
+  1. 本地 Shell 无 OSC 7 时 cwd 为空，路径被拼成 `~/.agent-browser/...`，cmd/PowerShell 不展开 `~` → 查询前用 `localHome` 兜底（只对本地 provider）。
+  2. Windows 本地 cwd 但当前词无分隔符时 `detectSeparator` 返回 `/`，拼出 `C:/Users/...` 被 cmd 当作开关（实测 `无效开关 - Users`）→ 按 cwd 盘符判定为 `\`，补单测「Windows 下空词按 cwd 推断反斜杠分隔符」。
+
+### 未完成 / 说明
+
+- Telnet：本机 `telnet_profiles` 为空且无可用 Telnet 服务端，未做实机；按 Netcatty 语义（非 local 且有 sessionId 才走远端 SFTP，Telnet 无 SFTP 会静默失败）本实现直接返回无路径 provider，命令候选与 SSH 相同。
+- 串口：COM1 仍被占用（沿用 #172），未实机；代码层已关闭 livePreview/行替换且不提供路径。
+- 与 Netcatty 并排截图未做。
+- 设置项：沿用已有 4 项（启用 / ghost / 候选浮层 / 历史范围 host/global），未新增字段；热更新走设置订阅回调（本轮未在 UI 实际点击切换）。
+- 门禁：`npm run test:run` 65 文件 / 726 用例 ✓（首跑一次 worker `Channel closed` 偶发，复跑通过）；`npm run build` ✓；`cargo check` ✓。
+
+证据截图：`shots/ac-44-local-l.png`、`ac-48-local-ls.png`、`ac-50-local-right.png`、`ac-63-ssh-ls.png`、`ac-65-ssh-right.png`、`ac-66-ssh-right2.png`、`ac-68-ssh-accept.png`、`ac-69-ssh-exec.png`、`ac-73-local-right-fixed.png`、`ac-90-right.png`、`ac-92-exec.png`。
