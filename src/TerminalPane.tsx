@@ -2680,15 +2680,6 @@ export function TerminalPane({
               REC
             </span>
           )}
-          {caps.history && (
-          <button
-            className={`term-tool-btn${historyOpen ? " active" : ""}`}
-            title="命令历史"
-            onClick={() => setHistoryOpen((v) => !v)}
-          >
-            <Icon name="clock" size={12} />
-          </button>
-          )}
           {systemEligible && (
             <div className="term-monitor-anchor">
               <button

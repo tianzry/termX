@@ -6,7 +6,6 @@ describe("deriveToolbarCapabilities", () => {
   it("SSH 显示全部能力", () => {
     const caps = deriveToolbarCapabilities("ssh");
     expect(caps).toMatchObject({
-      history: true,
       systemMonitor: true,
       copyHost: true,
       sftp: true,
@@ -17,9 +16,8 @@ describe("deriveToolbarCapabilities", () => {
     });
   });
 
-  it("本地 shell 隐藏 SSH 专属能力（SFTP / 监控 / 目录追踪 / 复制地址），但保留命令历史", () => {
+  it("本地 shell 隐藏 SSH 专属能力（SFTP / 监控 / 目录追踪 / 复制地址），历史命令只在 More 菜单", () => {
     const caps = deriveToolbarCapabilities("pty");
-    expect(caps.history).toBe(true);
     expect(caps.menuHistory).toBe(true);
     expect(caps.systemMonitor).toBe(false);
     expect(caps.sftp).toBe(false);
@@ -31,11 +29,10 @@ describe("deriveToolbarCapabilities", () => {
     expect(caps.scripts).toBe(true);
   });
 
-  it("串口隐藏 SFTP / 编码，但保留命令历史、日志与脚本", () => {
+  it("串口隐藏 SFTP / 编码，但保留命令历史（More 菜单）、日志与脚本", () => {
     const caps = deriveToolbarCapabilities("serial");
     expect(caps.sftp).toBe(false);
     expect(caps.forward).toBe(false);
-    expect(caps.history).toBe(true);
     expect(caps.menuHistory).toBe(true);
     expect(caps.menuEncoding).toBe(false);
     expect(caps.copyHost).toBe(true);
@@ -47,7 +44,6 @@ describe("deriveToolbarCapabilities", () => {
     const caps = deriveToolbarCapabilities("telnet");
     expect(caps.menuEncoding).toBe(true);
     expect(caps.sftp).toBe(false);
-    expect(caps.history).toBe(true);
     expect(caps.menuHistory).toBe(true);
     expect(caps.systemMonitor).toBe(false);
     expect(caps.copyHost).toBe(true);

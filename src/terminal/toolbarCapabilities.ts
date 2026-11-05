@@ -24,8 +24,6 @@ export type TerminalKind = "ssh" | "pty" | "serial" | "telnet";
 export type TerminalStatus = "connecting" | "connected" | "disconnected";
 
 export interface ToolbarCapabilities {
-  /** 左侧：命令历史（四类终端均可用）。 */
-  history: boolean;
   /** 左侧：系统监控（仅 SSH）。 */
   systemMonitor: boolean;
   /** 左侧：复制主机地址（本地终端没有远端主机）。 */
@@ -59,7 +57,6 @@ export interface ToolbarCapabilities {
 export function deriveToolbarCapabilities(kind: TerminalKind): ToolbarCapabilities {
   const ssh = kind === "ssh";
   return {
-    history: true,
     systemMonitor: ssh,
     copyHost: kind !== "pty",
     sftp: ssh,
