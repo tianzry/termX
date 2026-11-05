@@ -1346,6 +1346,25 @@ button {
   text-overflow: ellipsis;
 }
 
+/* 会话标签状态点（对照 Netcatty sessionStatusDot）：8px 圆点 + 2px 半透明外圈；
+   connected=emerald-400 / connecting=amber-400 / 其余（断开、错误）=rose-500。 */
+.nc-tab-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f43f5e;
+  box-shadow: 0 0 0 2px hsl(var(--nc-bg) / 0.6);
+}
+
+.nc-tab-dot.connected {
+  background: #34d399;
+}
+
+.nc-tab-dot.connecting {
+  background: #fbbf24;
+}
+
 .nc-tab-input {
   width: 120px;
   height: 22px;
@@ -1360,14 +1379,14 @@ button {
 }
 
 .nc-tab-close {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 5px;
+  border-radius: 50%;
   background: transparent;
   color: hsl(var(--nc-faint));
   cursor: pointer;
@@ -2397,15 +2416,17 @@ button:disabled {
   outline: none;
 }
 
+/* 会话标签关闭按钮对照 Netcatty：p-1 + X size 12 → 20px、rounded-full、
+ * hover 走 destructive（bg-destructive/10 + text-destructive）。 */
 .nc-tab-close {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 4px;
+  border-radius: 50%;
   background: transparent;
   color: hsl(var(--muted-foreground));
   opacity: 0;
@@ -2417,8 +2438,8 @@ button:disabled {
 }
 
 .nc-tab-close:hover {
-  background: hsl(var(--foreground) / 0.1);
-  color: hsl(var(--foreground));
+  background: hsl(0 70% 52% / 0.1);
+  color: hsl(0 80% 62%);
 }
 
 .nc-tab-new {
@@ -5698,7 +5719,8 @@ button:disabled {
 .term-context-menu {
   position: absolute;
   z-index: 41;
-  width: 200px;
+  width: max-content;
+  min-width: 200px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -5737,6 +5759,14 @@ button:disabled {
 
 .term-context-menu button.danger:hover:not(:disabled) {
   background: hsl(var(--destructive) / 0.12);
+}
+
+/* 右键菜单快捷键提示（对照 Netcatty ContextMenuShortcut）：右对齐、弱对比。 */
+.term-menu-shortcut {
+  margin-left: auto;
+  padding-left: 16px;
+  font-size: 11px;
+  color: hsl(var(--nc-faint));
 }
 
 .term-menu-sep {

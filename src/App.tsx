@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Workspace, type WorkspaceHandle } from "./Workspace";
 import type { PaneHandle } from "./TerminalPane";
 import { newId, type Tab, type Connector } from "./workspaceModel";
+import type { ConnectionStatus } from "./terminal/connectionStatus";
 import { findProfileForHostLink } from "./notes/notesModel";
 import { TopTabs, type RootSurface } from "./TopTabs";
 import { HostSidebar } from "./HostSidebar";
@@ -24,7 +25,6 @@ import { AsidePanel } from "./AsidePanel";
 import { SftpPanel } from "./SftpPanel";
 import { SerialConnectModal } from "./serial/SerialConnectModal";
 import { TelnetConnectModal } from "./telnet/TelnetConnectModal";
-import { ForwardPanel } from "./ForwardPanel";
 import { useForwardSupervisor } from "./forwardSupervisor";
 import { ConnectionManager } from "./ConnectionManager";
 import { SftpView } from "./sftp/SftpView";
@@ -52,11 +52,10 @@ import {
 import type { SerialProfileSnapshot } from "./domain/serialFormConfig";
 import { userVisibleError } from "./domain/sshErrors";
 
-type Tool = "sftp" | "forward" | null;
+type Tool = "sftp" | null;
 
 const TOOL_TITLE: Record<Exclude<Tool, null>, string> = {
   sftp: "文件传输",
-  forward: "端口转发",
 };
 
 const SIDEBAR_KEY = "termx.sidebar.v1";
@@ -147,6 +146,10 @@ export default function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [restorePending, setRestorePending] = useState(false);
+  /** 标签级连接状态（Workspace 按窗格聚合后上报，用于标签状态点）。 */
+  const [tabStatuses, setTabStatuses] = useState<
+    Record<string, ConnectionStatus>
+  >({});
   const onSnapshot = useCallback(
     (next: Tab[], active: string | null, pending: boolean) => {
       setTabs(next);
@@ -520,6 +523,7 @@ export default function App() {
         surface={surface}
         hostTreeOpen={sideOpen}
         status={status}
+        connectionStatuses={tabStatuses}
         onActivate={(id) => {
           setSurface(null);
           workspaceRef.current?.activateTab(id);
@@ -633,6 +637,7 @@ export default function App() {
               onActivePane={onActivePane}
               onStatus={setStatus}
               onSnapshot={onSnapshot}
+              onTabStatuses={setTabStatuses}
               onOpenTool={toggleTool}
               onOpenSettings={() => {
                 // 终端工具栏「终端设置」：对齐 Netcatty 的 theme 侧栏语义，
@@ -653,7 +658,6 @@ export default function App() {
             {tool === "sftp" && (
               <SftpPanel sshSessionId={activeSshSid} terminalCwd={activeCwd} />
             )}
-            {tool === "forward" && <ForwardPanel />}
           </AsidePanel>
         )}
       </div>

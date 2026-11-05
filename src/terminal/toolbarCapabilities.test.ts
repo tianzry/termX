@@ -9,7 +9,6 @@ describe("deriveToolbarCapabilities", () => {
       systemMonitor: true,
       copyHost: true,
       sftp: true,
-      forward: true,
       menuHistory: true,
       menuOsc7: true,
       menuEncoding: true,
@@ -21,7 +20,6 @@ describe("deriveToolbarCapabilities", () => {
     expect(caps.menuHistory).toBe(true);
     expect(caps.systemMonitor).toBe(false);
     expect(caps.sftp).toBe(false);
-    expect(caps.forward).toBe(false);
     expect(caps.copyHost).toBe(false);
     expect(caps.menuOsc7).toBe(false);
     expect(caps.menuEncoding).toBe(false);
@@ -32,7 +30,6 @@ describe("deriveToolbarCapabilities", () => {
   it("串口隐藏 SFTP / 编码，但保留命令历史（More 菜单）、日志与脚本", () => {
     const caps = deriveToolbarCapabilities("serial");
     expect(caps.sftp).toBe(false);
-    expect(caps.forward).toBe(false);
     expect(caps.menuHistory).toBe(true);
     expect(caps.menuEncoding).toBe(false);
     expect(caps.copyHost).toBe(true);

@@ -48,6 +48,7 @@ import {
   snippetWritePlan,
 } from "./snippets/snippetsModel";
 import { parseScriptBlocks, runScriptBlocks } from "./snippets/scriptRunner";
+import { DEFAULT_KEY_BINDINGS, effectiveBinding } from "./settings/keyBindings";
 import { appendScriptTrigger } from "./snippets/scriptTriggerLog";
 import "./snippets/snippets.css";
 import type {
@@ -106,6 +107,15 @@ import {
   type TerminalEncoding,
 } from "./terminal/terminalEncoding";
 import { deriveToolbarCapabilities } from "./terminal/toolbarCapabilities";
+import type { ConnectionStatus } from "./terminal/connectionStatus";
+import {
+  resolveTerminalTitlebarActions,
+  resolveTerminalToolbarActions,
+} from "./terminal/toolbarLayout";
+import {
+  resolveTerminalContextMenu,
+  type TerminalContextMenuAction,
+} from "./terminal/contextMenuLayout";
 import {
   createZmodemController,
   type ZmodemController,
@@ -134,7 +144,20 @@ const SEARCH_OPTIONS = {
   decorations: SEARCH_DECORATIONS,
 } as const;
 
-type PaneStatus = "connecting" | "connected" | "disconnected";
+type PaneStatus = ConnectionStatus;
+
+/** 右键菜单文案（对照 Netcatty i18n `terminal.menu.*`）。 */
+const CONTEXT_MENU_LABELS: Record<TerminalContextMenuAction, string> = {
+  copy: "复制",
+  paste: "粘贴",
+  selectAll: "全选",
+  openSftp: "打开 SFTP",
+  reconnect: "重新连接",
+  splitHorizontal: "水平分屏",
+  splitVertical: "垂直分屏",
+  clearBuffer: "清空缓冲区",
+  closeTerminal: "关闭终端",
+};
 
 /** 自动补全浮层的锚点（相对 pane 的像素坐标 + 单元格 / 字体信息）。 */
 interface AutocompleteAnchor {
@@ -212,8 +235,10 @@ interface Props {
   onActivate: () => void;
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
   onStatus: (text: string) => void;
-  /** 打开右侧工具面板（SFTP / 端口转发）。 */
-  onOpenTool?: (tool: "sftp" | "forward") => void;
+  /** 连接状态变化（供会话标签状态点使用）。 */
+  onConnectionStatus?: (status: PaneStatus) => void;
+  /** 打开右侧工具面板（SFTP）。 */
+  onOpenTool?: (tool: "sftp") => void;
   /** 关闭当前窗格。 */
   onClosePane?: () => void;
   /** 分屏（在当前标签内）。 */
@@ -252,6 +277,7 @@ export function TerminalPane({
   onActivate,
   onRegister,
   onStatus,
+  onConnectionStatus,
   onOpenTool,
   onClosePane,
   onSplit,
@@ -261,6 +287,10 @@ export function TerminalPane({
   const sshProfileId = tab.connector.kind === "ssh" ? tab.connector.profileId : null;
 
   const [status, setStatus] = useState<PaneStatus>("connecting");
+  // 会话标签状态点：把窗格级连接状态上报给 Workspace（对照 Netcatty tab dot）。
+  useEffect(() => {
+    onConnectionStatus?.(status);
+  }, [status, onConnectionStatus]);
   const [error, setError] = useState<string | null>(null);
   const [progressValue, setProgressValue] = useState(CONNECTION_PROGRESS_START);
   const [progressLogs, setProgressLogs] = useState<string[]>([]);
@@ -2390,6 +2420,8 @@ export function TerminalPane({
   const canReconnect = status !== "connecting";
   const transportKind = tab.connector.kind;
   const caps = deriveToolbarCapabilities(transportKind);
+  // 右侧工具栏条目（顺序固定为 Netcatty defaultLayout，见 toolbarLayout.ts）。
+  const toolbarActions = resolveTerminalToolbarActions(transportKind);
   // 系统监控只出现在远端 SSH 会话（netcatty isSystemSidebarEligible 排除本地 / 串口 / Telnet）
   const systemEligible = caps.systemMonitor;
   // 采样接口需要已建立的 SSH 会话 id；按钮只在已连接时启用，其余状态写明原因。
@@ -2488,6 +2520,15 @@ export function TerminalPane({
     } catch {
       // 剪贴板无权限时静默失败（与 Netcatty 一致）。
     }
+  }
+
+  /** 右键菜单快捷键提示（对照 Netcatty ContextMenuShortcut：读实际生效绑定）。 */
+  function menuShortcut(action: string): string {
+    const s = getSettings();
+    const binding = DEFAULT_KEY_BINDINGS.find((b) => b.action === action);
+    if (!binding) return "";
+    const value = effectiveBinding(binding, s, s.hotkeyScheme);
+    return value === "Disabled" ? "" : value;
   }
 
   /** 右键「选择单词」：按 xterm 单元格坐标命中光标词并选中（Netcatty select-word）。 */
@@ -2680,76 +2721,98 @@ export function TerminalPane({
               REC
             </span>
           )}
-          {systemEligible && (
-            <div className="term-monitor-anchor">
-              <button
-                className={`term-tool-btn${monitorOpen ? " active" : ""}`}
-                disabled={!canMonitor}
-                title={
-                  monitorDisabledReason
-                    ? `系统监控（${monitorDisabledReason}）`
-                    : "系统监控"
-                }
-                onClick={() => setMonitorOpen((v) => !v)}
-              >
-                <Icon name="activity" size={12} />
-              </button>
-              {monitorOpen && monitorSid && (
-                <SessionMonitorPopover
-                  sessionId={monitorSid}
-                  onClose={() => setMonitorOpen(false)}
-                />
-              )}
-            </div>
-          )}
-          <button
-            className="term-tool-btn"
-            title="断开连接"
-            disabled={!canDisconnect}
-            onClick={() => disconnect()}
-          >
-            <Icon name="unplug" size={12} />
-          </button>
-          <button
-            className="term-tool-btn"
-            title="重新连接当前会话"
-            disabled={!canReconnect}
-            onClick={() => {
-              void connect();
-            }}
-          >
-            <Icon name="refresh" size={12} />
-          </button>
-          {caps.copyHost && (
-          <button
-            className="term-tool-btn"
-            title={copyHostTitle}
-            disabled={!hostInfo.hostname}
-            onClick={() => {
-              void navigator.clipboard.writeText(hostInfo.hostname).then(() => {
-                setCopyHostTitle("已复制主机地址");
-                window.setTimeout(
-                  () => setCopyHostTitle("复制主机地址"),
-                  2000,
+          {/* 图标集合与顺序来自 toolbarLayout（对照 Netcatty 状态栏）。 */}
+          {resolveTerminalTitlebarActions(transportKind).map((action) => {
+            switch (action) {
+              case "copyHost":
+                return (
+                  <button
+                    key={action}
+                    className="term-tool-btn"
+                    title={copyHostTitle}
+                    disabled={!hostInfo.hostname}
+                    onClick={() => {
+                      void navigator.clipboard.writeText(hostInfo.hostname).then(() => {
+                        setCopyHostTitle("已复制主机地址");
+                        window.setTimeout(
+                          () => setCopyHostTitle("复制主机地址"),
+                          2000,
+                        );
+                      });
+                    }}
+                  >
+                    <Icon name="copy" size={12} />
+                  </button>
                 );
-              });
-            }}
-          >
-            <Icon name="copy" size={12} />
-          </button>
-          )}
-          <button
-            className={`term-tool-btn${showTimestamps ? " active" : ""}`}
-            title={showTimestamps ? "隐藏时间戳" : "显示时间戳"}
-            aria-pressed={showTimestamps}
-            onClick={() => {
-              const next = !showTimestamps;
-              setShowTimestamps(next);
-              persistShowTimestamps(next);
-            }}
-          >
-            <Icon name="clock" size={12} />
-          </button>
+              case "timestamps":
+                return (
+                  <button
+                    key={action}
+                    className={`term-tool-btn${showTimestamps ? " active" : ""}`}
+                    title={showTimestamps ? "隐藏时间戳" : "显示时间戳"}
+                    aria-pressed={showTimestamps}
+                    onClick={() => {
+                      const next = !showTimestamps;
+                      setShowTimestamps(next);
+                      persistShowTimestamps(next);
+                    }}
+                  >
+                    <Icon name="clock" size={12} />
+                  </button>
+                );
+              case "monitor":
+                return systemEligible ? (
+                  <div key={action} className="term-monitor-anchor">
+                    <button
+                      className={`term-tool-btn${monitorOpen ? " active" : ""}`}
+                      disabled={!canMonitor}
+                      title={
+                        monitorDisabledReason
+                          ? `系统监控（${monitorDisabledReason}）`
+                          : "系统监控"
+                      }
+                      onClick={() => setMonitorOpen((v) => !v)}
+                    >
+                      <Icon name="activity" size={12} />
+                    </button>
+                    {monitorOpen && monitorSid && (
+                      <SessionMonitorPopover
+                        sessionId={monitorSid}
+                        onClose={() => setMonitorOpen(false)}
+                      />
+                    )}
+                  </div>
+                ) : null;
+              case "disconnect":
+                return (
+                  <button
+                    key={action}
+                    className="term-tool-btn"
+                    title="断开连接"
+                    disabled={!canDisconnect}
+                    onClick={() => disconnect()}
+                  >
+                    <Icon name="unplug" size={12} />
+                  </button>
+                );
+              case "reconnect":
+                return (
+                  <button
+                    key={action}
+                    className="term-tool-btn"
+                    title="重新连接当前会话"
+                    disabled={!canReconnect}
+                    onClick={() => {
+                      void connect();
+                    }}
+                  >
+                    <Icon name="refresh" size={12} />
+                  </button>
+                );
+              default:
+                return null;
+            }
+          })}
         </div>
         <div className="term-toolbar-right">
           <div className="term-tool-more">
@@ -2809,7 +2872,7 @@ export function TerminalPane({
               </div>
             )}
           </div>
-          {caps.sftp && (
+          {toolbarActions.includes("sftp") && (
           <button
             className="term-tool-btn"
             title={
@@ -2821,16 +2884,6 @@ export function TerminalPane({
             onClick={() => onOpenTool?.("sftp")}
           >
             <Icon name="folder-input" size={12} />
-          </button>
-          )}
-          {caps.forward && (
-          <button
-            className="term-tool-btn"
-            title={onOpenTool ? "打开端口转发" : "端口转发面板不可用"}
-            disabled={!onOpenTool}
-            onClick={() => onOpenTool?.("forward")}
-          >
-            <Icon name="transfer" size={12} />
           </button>
           )}
           <button
@@ -3349,126 +3402,67 @@ export function TerminalPane({
             style={{ left: menu.x, top: menu.y }}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <button
-              disabled={!menu.selection}
-              onClick={() => {
-                void navigator.clipboard.writeText(menu.selection);
+            {/* 菜单项与顺序由 contextMenuLayout 派生（对照 Netcatty TerminalContextMenu）。 */}
+            {resolveTerminalContextMenu({
+              connected: status === "connected",
+              status,
+              hasSelection: menu.selection.length > 0,
+              showSftp: toolbarActions.includes("sftp"),
+              canSplit: Boolean(onSplit),
+              canClosePane: Boolean(onClosePane),
+            }).map((spec) => {
+              if (spec.kind === "separator") {
+                return <div key={spec.id} className="term-menu-sep" />;
+              }
+              const onSelect = () => {
+                switch (spec.action) {
+                  case "copy":
+                    void navigator.clipboard.writeText(menu.selection);
+                    break;
+                  case "paste":
+                    void pasteFromClipboard();
+                    break;
+                  case "selectAll":
+                    controllerRef.current?.term.selectAll();
+                    break;
+                  case "openSftp":
+                    onOpenTool?.("sftp");
+                    break;
+                  case "reconnect":
+                    void connect();
+                    break;
+                  case "splitHorizontal":
+                    onSplit?.("horizontal");
+                    break;
+                  case "splitVertical":
+                    onSplit?.("vertical");
+                    break;
+                  case "clearBuffer":
+                    controllerRef.current?.term.clear();
+                    break;
+                  case "closeTerminal":
+                    onClosePane?.();
+                    break;
+                }
                 closeMenu();
-              }}
-            >
-              <Icon name="copy" size={14} />
-              复制
-            </button>
-            <button
-              onClick={() => {
-                void pasteFromClipboard();
-                closeMenu();
-              }}
-            >
-              <Icon name="clipboard-paste" size={14} />
-              粘贴
-            </button>
-            <button
-              onClick={() => {
-                controllerRef.current?.term.selectAll();
-                closeMenu();
-              }}
-            >
-              <Icon name="terminal" size={14} />
-              全选
-            </button>
-            {snippets.length > 0 && (
-              <>
-                {snippets.some((s) => !isScriptSnippet(s)) && (
-                  <>
-                    <div className="term-menu-sep" />
-                    <div className="term-menu-label">插入片段</div>
-                    <div className="term-snippet-list">
-                      {snippets
-                        .filter((s) => !isScriptSnippet(s))
-                        .map((s) => (
-                          <button
-                            key={s.id || s.name}
-                            disabled={status !== "connected"}
-                            title={s.shortkey ? `快捷键：${s.shortkey}` : s.command}
-                            onClick={() => {
-                              insertSnippet(s);
-                              closeMenu();
-                            }}
-                          >
-                            <Icon name="file-code" size={14} />
-                            {s.name}
-                          </button>
-                        ))}
-                    </div>
-                  </>
-                )}
-                {scriptSnippets.length > 0 && (
-                  <>
-                    <div className="term-menu-sep" />
-                    <div className="term-menu-label">运行脚本</div>
-                    <div className="term-snippet-list">
-                      {scriptSnippets.map((s) => (
-                        <button
-                          key={s.id || s.name}
-                          disabled={status !== "connected"}
-                          title={s.shortkey ? `快捷键：${s.shortkey}` : s.command}
-                          onClick={() => {
-                            insertSnippet(s);
-                            closeMenu();
-                          }}
-                        >
-                          <Icon name="play" size={14} />
-                          {s.name}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-            <div className="term-menu-sep" />
-            <button
-              disabled={!canReconnect}
-              onClick={() => {
-                closeMenu();
-                void connect();
-              }}
-            >
-              <Icon name="refresh" size={14} />
-              重新连接
-            </button>
-            <div className="term-menu-sep" />
-            <button
-              disabled={!onSplit}
-              onClick={() => {
-                closeMenu();
-                onSplit?.("horizontal");
-              }}
-            >
-              <Icon name="columns" size={14} />
-              水平分屏
-            </button>
-            <button
-              disabled={!onSplit}
-              onClick={() => {
-                closeMenu();
-                onSplit?.("vertical");
-              }}
-            >
-              <Icon name="rows" size={14} />
-              垂直分屏
-            </button>
-            <div className="term-menu-sep" />
-            <button
-              onClick={() => {
-                controllerRef.current?.term.clear();
-                closeMenu();
-              }}
-            >
-              <Icon name="trash" size={14} />
-              清空缓冲区
-            </button>
+              };
+              return (
+                <button
+                  key={spec.action}
+                  disabled={spec.disabled}
+                  className={spec.danger ? "danger" : undefined}
+                  onClick={onSelect}
+                >
+                  <Icon name={spec.icon} size={14} />
+                  {CONTEXT_MENU_LABELS[spec.action]}
+                  {spec.shortcutAction && (
+                    <span className="term-menu-shortcut">
+                      {menuShortcut(spec.shortcutAction)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </>
       )}

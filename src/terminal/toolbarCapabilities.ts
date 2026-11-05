@@ -15,7 +15,8 @@
  *   `kind:title` 分桶记录本地 / 串口 / Telnet），与 Netcatty「只记 ssh」的
  *   设计不同；用户明确要求四类终端都能看历史，故不再沿用 Netcatty 的
  *   `history = ssh` 限制（此处为唯一有意偏离）。
- * - SFTP / 端口转发依赖已建立的 SSH 会话（后端 SftpHandle），仅 SSH 显示；
+ * - SFTP 依赖已建立的 SSH 会话（后端 SftpHandle），仅 SSH 显示；端口转发按
+ *   Netcatty 从终端工具栏移除（入口保留在 Vault 页）；
  * - 系统监控与 OSC 7 追踪依赖 SSH exec 通道，仅 SSH 显示；
  * - 终端编码后端只接了 SSH / Telnet 的输入转码，串口编码固定在连接表单。
  */
@@ -30,8 +31,6 @@ export interface ToolbarCapabilities {
   copyHost: boolean;
   /** 右侧：SFTP（termX 仅 SSH 会话可开）。 */
   sftp: boolean;
-  /** 右侧：端口转发（仅 SSH）。 */
-  forward: boolean;
   /** 右侧：关键词高亮（所有类型）。 */
   highlight: boolean;
   /** 右侧：撰写栏（所有类型）。 */
@@ -60,7 +59,6 @@ export function deriveToolbarCapabilities(kind: TerminalKind): ToolbarCapabiliti
     systemMonitor: ssh,
     copyHost: kind !== "pty",
     sftp: ssh,
-    forward: ssh,
     highlight: true,
     compose: true,
     search: true,

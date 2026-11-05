@@ -18,6 +18,10 @@ import {
 } from "react";
 import { TerminalPane, type PaneHandle } from "./TerminalPane";
 import {
+  resolveTabConnectionStatus,
+  type ConnectionStatus,
+} from "./terminal/connectionStatus";
+import {
   collectLeaves,
   defaultTitle,
   firstLeafId,
@@ -62,9 +66,15 @@ interface Props {
   onActivePane: (handle: PaneHandle | null) => void;
   onStatus: (text: string) => void;
   /** 向上发布标签快照，供顶部 TopTabs 渲染（标签状态仍由本组件持有）。 */
-  onSnapshot?: (tabs: Tab[], activeTabId: string | null, restorePending: boolean) => void;
+  onSnapshot?: (
+    tabs: Tab[],
+    activeTabId: string | null,
+    restorePending: boolean,
+  ) => void;
+  /** 标签级连接状态（会话标签状态点）。 */
+  onTabStatuses?: (statuses: Record<string, ConnectionStatus>) => void;
   /** 终端工具栏里打开右侧工具面板。 */
-  onOpenTool?: (tool: "sftp" | "forward") => void;
+  onOpenTool?: (tool: "sftp") => void;
   /** 终端工具栏「终端设置」→ 打开设置中心。 */
   onOpenSettings?: () => void;
   /** 工作区持久化 key；多窗口用独立 key，避免覆盖主窗口布局。 */
@@ -86,8 +96,10 @@ interface LayoutProps {
   onActivate: (paneId: string) => void;
   onRegister: (paneId: string, handle: PaneHandle | null) => void;
   onStatus: (paneId: string, text: string) => void;
+  /** 窗格连接状态（供会话标签状态点，对照 Netcatty）。 */
+  onConnectionStatus: (paneId: string, status: ConnectionStatus) => void;
   onRatio: (splitId: string, ratio: number) => void;
-  onOpenTool?: (tool: "sftp" | "forward") => void;
+  onOpenTool?: (tool: "sftp") => void;
   onOpenSettings?: () => void;
   onClosePane: (paneId: string) => void;
   onSplit: (dir: SplitDir) => void;
@@ -107,6 +119,7 @@ function TabLayout({
   onActivate,
   onRegister,
   onStatus,
+  onConnectionStatus,
   onRatio,
   onOpenTool,
   onOpenSettings,
@@ -168,6 +181,7 @@ function TabLayout({
             onActivate={() => onActivate(paneId)}
             onRegister={onRegister}
             onStatus={(text) => onStatus(paneId, text)}
+            onConnectionStatus={(s) => onConnectionStatus(paneId, s)}
             onOpenTool={onOpenTool}
             onOpenSettings={onOpenSettings}
             onClosePane={() => onClosePane(paneId)}
@@ -203,7 +217,15 @@ function TabLayout({
 
 export const Workspace = forwardRef<WorkspaceHandle, Props>(
   function Workspace(
-    { onActivePane, onStatus, onSnapshot, onOpenTool, onOpenSettings, storageKey },
+    {
+      onActivePane,
+      onStatus,
+      onSnapshot,
+      onTabStatuses,
+      onOpenTool,
+      onOpenSettings,
+      storageKey,
+    },
     ref,
   ) {
     const [tabs, setTabs] = useState<Tab[]>([]);
@@ -214,6 +236,10 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
     const [handles, setHandles] = useState<Record<string, PaneHandle>>({});
     /** 每窗格最近一次状态文案；顶栏只显示活动窗格的，关窗格即清除（F2）。 */
     const [paneStatus, setPaneStatus] = useState<Record<string, string>>({});
+    /** 每窗格连接状态：聚合成标签状态点（per-pane，互不影响）。 */
+    const [paneConnStatus, setPaneConnStatus] = useState<
+      Record<string, ConnectionStatus>
+    >({});
 
     // 启动即读一次；有记录先弹横幅，等用户决定是否恢复。
     const [restore, setRestore] = useState<SavedWorkspace | null>(() =>
@@ -269,6 +295,12 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
             delete rest[paneId];
             return rest;
           });
+          setPaneConnStatus((cur) => {
+            if (!(paneId in cur)) return cur;
+            const rest = { ...cur };
+            delete rest[paneId];
+            return rest;
+          });
         }
       },
       [],
@@ -279,6 +311,15 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
         cur[paneId] === text ? cur : { ...cur, [paneId]: text },
       );
     }, []);
+
+    const reportPaneConnectionStatus = useCallback(
+      (paneId: string, value: ConnectionStatus) => {
+        setPaneConnStatus((cur) =>
+          cur[paneId] === value ? cur : { ...cur, [paneId]: value },
+        );
+      },
+      [],
+    );
 
     const activatePane = useCallback((tabId: string, paneId: string) => {
       setActivePaneByTab((m) => ({ ...m, [tabId]: paneId }));
@@ -506,6 +547,21 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       onStatus(activePaneId ? paneStatus[activePaneId] ?? "就绪" : "就绪");
     }, [activePaneId, paneStatus, onStatus]);
 
+    // 标签状态点：优先活动窗格，其次该标签首个窗格（对照 Netcatty tab dot）。
+    useEffect(() => {
+      if (!onTabStatuses) return;
+      const statuses: Record<string, ConnectionStatus> = {};
+      for (const tab of tabs) {
+        const paneIds = collectLeaves(tab.layout).map((leaf) => leaf.id);
+        statuses[tab.id] = resolveTabConnectionStatus({
+          paneStatuses: paneConnStatus,
+          paneIds,
+          activePaneId,
+        });
+      }
+      onTabStatuses(statuses);
+    }, [tabs, activePaneId, paneConnStatus, onTabStatuses]);
+
     return (
       <div className="ws">
         <div className="tab-view-holder">
@@ -520,6 +576,7 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
                 onActivate={(paneId) => activatePane(tab.id, paneId)}
                 onRegister={registerPane}
                 onStatus={reportPaneStatus}
+                onConnectionStatus={reportPaneConnectionStatus}
                 onRatio={(splitId, ratio) => setRatio(tab.id, splitId, ratio)}
                 onOpenTool={onOpenTool}
                 onOpenSettings={onOpenSettings}

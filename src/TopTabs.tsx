@@ -29,6 +29,10 @@ import type { DiscoveredShell, Group, Profile } from "./backend/client";
 import { isMonochromeShellIcon, shellIconSrc } from "./ui/shellIcons";
 import { DistroAvatar } from "./ui/DistroAvatar";
 import { QuickSwitcher } from "./QuickSwitcher";
+import {
+  resolveConnectionDotClass,
+  type ConnectionStatus,
+} from "./terminal/connectionStatus";
 
 export type RootSurface = "vault" | "sftp" | null;
 
@@ -38,6 +42,8 @@ interface Props {
   surface: RootSurface;
   hostTreeOpen: boolean;
   status: string;
+  /** 各标签的连接状态（对照 Netcatty tab 状态点）。 */
+  connectionStatuses?: Record<string, ConnectionStatus>;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   /** 双击标签行为「复制会话 / 复制标签页」：新建一个同连接标签。 */
@@ -144,6 +150,7 @@ export function TopTabs({
   surface,
   hostTreeOpen,
   status,
+  connectionStatuses,
   onActivate,
   onClose,
   onDuplicateTab,
@@ -279,6 +286,12 @@ export function TopTabs({
               >
                 <TabGlyph tab={tab} profiles={profiles} />
                 <span className="nc-session-tab-title">{tab.title}</span>
+                <span
+                  className={`nc-tab-dot ${resolveConnectionDotClass(
+                    connectionStatuses?.[tab.id],
+                  )}`}
+                  aria-hidden="true"
+                />
                 <button
                   className="nc-tab-close"
                   title="关闭标签"

@@ -5849,5 +5849,22 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - **#173 SFTP 上传/下载往返**：走真实后端 `sftp_connect` → `sftp_upload` → `sftp_stat` → `sftp_download` 到 129（tianzry），1300B / UTF-8 / 多行文件（远端 `/home/tianzry/termx-sftp-proof-1793877252262.txt`）：写入后 size 1300，下载内容 SHA256 与本地一致（`contentMatches: true`）。原生文件对话框（`sftp_pick_*` / `sftp_download_to` / `sftp_upload_from`）标注为待人工。证据 `evidence/sftp-upload-download-129.json`、`sftp-source-129.txt`、`sftp-downloaded-129.txt`。
 - **门禁**：`npm run test:run` 61 文件 / 661 用例 ✓；`npm run build` ✓；`cargo check` ✓（7 warnings）。子 agent code review 高危 2 项（scrollback 满后停止打点、孤立 ESC 吞字符）+ 中危 2 项（reflow 旧行误标、多行粘贴末行软换行覆盖）已全部修复。
 
+---
+
+## 2026-11-05 — 终端 UI 对齐（工具栏 / tab 状态点 / 右键菜单）
+
+- **#174 终端工具栏集合与顺序**（对照 `Netcatty/components/terminal/TerminalToolbar.tsx` 的 `defaultLayout`）：删除「端口转发」内联按钮及 `toolbarCapabilities.forward` 能力位（端口转发入口保留在 Vault 页，快捷键/命令注册同步清理）；删除「命令历史」内联按钮（命令历史只在 More 菜单出现）。新增 `terminal/toolbarLayout.ts` 派生 `resolveTerminalToolbarActions` / `resolveTerminalTitlebarActions`：内联顺序固定为 高亮 → SFTP → 撰写栏 → 搜索 → 会话日志 → 脚本 → 更多，SFTP 仅 SSH；标题行按 复制主机地址(Copy 10) → 时间戳(Clock3 10) → 系统监控(Activity 10) → 断开(Unplug 10) → 重连(RefreshCcw 10) 渲染，本地/串口/Telnet 过滤 copyHost 与系统监控。图标尺寸与 Netcatty 一致：内联 12、菜单 14。
+- **#175 会话标签状态点与关闭按钮**：新增 `terminal/connectionStatus.ts`（`resolveConnectionDotClass` / `resolveTabConnectionStatus`），`TerminalPane → Workspace → App → TopTabs` 上报每标签连接状态（优先活动窗格，否则首个窗格）；点 8px，connected `#34d399` / connecting `#fbbf24` / 其余 `#f43f5e`，外圈 `box-shadow: 0 0 0 2px <bg> 60%`；核对 Netcatty 无第二个「端口状态」点（转发状态点只出现在转发列表项）。关闭按钮改为 20px 圆形（Netcatty `p-1 + X size 12`），hover 走 destructive（`bg-destructive/10 + text-destructive`）。
+- **#176 终端右键菜单四类型对齐**（对照 `Netcatty/components/terminal/TerminalContextMenu.tsx` 385-542）：新增 `terminal/contextMenuLayout.ts` 纯函数派生，顺序为 复制 → 粘贴 → 全选 → ⌁ 打开 SFTP（仅 SSH，未连接置灰）→ ⌁ 重新连接（仅 disconnected）→ ⌁ 水平分屏 / 垂直分屏 → ⌁ 清空缓冲区 → ⌁ 关闭终端（destructive）；分隔线跟随分组存在与否自动收拢，不留悬空线；删除自造的「插入片段 / 运行脚本」分组；快捷键提示按 `DEFAULT_KEY_BINDINGS` + `effectiveBinding` 取当前方案实时渲染。Netcatty 有而 termX 未实现的能力（上传剪贴板图片 / 加入对话 / 粘贴选中文本 / 打开浏览器 / YMODEM / 保存屏幕 / 重命名 / 移出工作区 / 插件菜单）不渲染假按钮，按 Pr3 留空。
+- **验证**（debug + CDP；脚本 `evidence/ui-align-menu-scope.mjs`、`ui-align-states.mjs`、`ui-align-telnet-capture.mjs`）：
+  - SSH 129 已连接：工具栏 13 项（含 复制主机地址 / 系统监控 / 打开 SFTP），右键菜单含「打开 SFTP」，分隔线 4 条。
+  - 本地 pty：工具栏无 复制主机地址 / 系统监控 / 打开 SFTP；菜单无 SFTP 分组。此前「本地菜单含 SFTP」的疑点已复验为探针读到隐藏标签页残留的 `.term-context-menu`，按 pane 作用域取值后不存在。
+  - Telnet（127.0.0.1:23 无服务 → disconnected）：玫瑰点 `rgb(244,63,94)`，菜单 复制/粘贴/全选 → 重新连接 → 分屏 → 清空 → 关闭，无 SFTP；工具栏保留 复制主机地址、无系统监控。
+  - 三态点实测：connected `rgb(52,211,153)`、connecting `rgb(251,191,36)`、disconnected `rgb(244,63,94)`；关闭按钮 `20px / 50%`。
+  - 截图：`shots/context-menu-ssh-scoped.png`、`shots/context-menu-local-scoped.png`、`shots/context-menu-telnet.png`、`shots/tab-status-connected.png`、`shots/tab-status-connecting.png`、`shots/tab-status-disconnected.png`、`shots/telnet-tab.png`、`shots/telnet-connect-modal.png`、`shots/local-toolbar-menu.png`、`shots/local-split.png`。
+  - 串口未实测：本机 COM1 被占用（`serial_open_failed: 拒绝访问`），沿用 #172 结论；代码级派生与本地分支相同（无 SFTP）。
+- **门禁**：`npm run test:run` 64 文件 / 693 用例 ✓；`npm run build` ✓。
+
+
 
 
