@@ -6575,6 +6575,35 @@ button:disabled {
   color: hsl(var(--foreground));
 }
 
+/* 分组 / 标签行：左侧 40px 图标方块 + 字段 + 清除按钮（对齐 Netcatty）。 */
+.host-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.host-icon-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: hsl(var(--secondary) / 0.8);
+  color: hsl(var(--muted-foreground));
+}
+
+.host-icon-row > .host-icon-row-field {
+  flex: 1;
+  min-width: 0;
+  width: auto !important;
+}
+
+.host-icon-row .nc-icon-btn {
+  flex: none;
+}
+
 .host-port-line {
   display: flex;
   align-items: center;
