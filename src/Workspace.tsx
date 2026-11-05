@@ -547,20 +547,27 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       onStatus(activePaneId ? paneStatus[activePaneId] ?? "就绪" : "就绪");
     }, [activePaneId, paneStatus, onStatus]);
 
-    // 标签状态点：优先活动窗格，其次该标签首个窗格（对照 Netcatty tab dot）。
+    // 标签状态点：按标签内全部窗格聚合（任一断开即断开，对照 Netcatty tab dot）。
+    const tabStatusesRef = useRef<Record<string, ConnectionStatus>>({});
     useEffect(() => {
       if (!onTabStatuses) return;
       const statuses: Record<string, ConnectionStatus> = {};
       for (const tab of tabs) {
-        const paneIds = collectLeaves(tab.layout).map((leaf) => leaf.id);
         statuses[tab.id] = resolveTabConnectionStatus({
           paneStatuses: paneConnStatus,
-          paneIds,
-          activePaneId,
+          paneIds: collectLeaves(tab.layout).map((leaf) => leaf.id),
         });
       }
+      // 拖动分屏会每帧改 tabs 引用，内容未变时跳过回调，避免 App 级重复渲染。
+      const prev = tabStatusesRef.current;
+      const keys = Object.keys(statuses);
+      const unchanged =
+        keys.length === Object.keys(prev).length &&
+        keys.every((key) => prev[key] === statuses[key]);
+      if (unchanged) return;
+      tabStatusesRef.current = statuses;
       onTabStatuses(statuses);
-    }, [tabs, activePaneId, paneConnStatus, onTabStatuses]);
+    }, [tabs, paneConnStatus, onTabStatuses]);
 
     return (
       <div className="ws">

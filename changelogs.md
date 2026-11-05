@@ -5865,6 +5865,26 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
   - 串口未实测：本机 COM1 被占用（`serial_open_failed: 拒绝访问`），沿用 #172 结论；代码级派生与本地分支相同（无 SFTP）。
 - **门禁**：`npm run test:run` 64 文件 / 693 用例 ✓；`npm run build` ✓。
 
+---
+
+## 2026-11-05 — #177 code review 修复（8a09b61 批次）
+
+子 agent 审查 `8a09b61`（15 文件 +884/−226）：P0 无，P1 3 项、P2 6 项、P3 6 项。
+
+| 等级 | 问题 | 处理 |
+|---|---|---|
+| P1-1 | `onConnectionStatus` 进 effect 依赖，父组件每次渲染新建箭头函数 → 每渲染一次 setState（拖分屏时每帧 × 窗格数） | 回调改入 `ref`，effect 只依赖 `status` |
+| P1-2 | 标签状态点只取活动窗格：分屏下活动窗格正常会掩盖另一窗格断线；非活动标签还会误用别标签的 activePaneId | `resolveTabConnectionStatus` 改为按标签全部窗格聚合（任一 disconnected → disconnected；未上报/connecting → connecting；全连上才 connected），去掉 `activePaneId`；单测改成分屏聚合用例 |
+| P1-3 | 右键菜单展示了未分发的快捷键（copy/paste/selectAll/clearBuffer/split 全库只定义未绑定），按下去无反应 | 渲染层不再展示快捷键提示（spec 保留字段待后续热键接线），删除 `menuShortcut` 与相关 import |
+| P2-4 | 状态表每帧新建对象，拖分屏触发 App 级重渲染 | effect 内容相等时跳过回调（`tabStatusesRef` 对比） |
+| P2-5 | 未知状态默认值不一致：圆点链路落到 rose，聚合链路落到 connecting | `resolveConnectionDotClass(undefined)` 统一为 connecting（未上报 ≠ 断开） |
+| P2-6 | 菜单加宽后 JS 定位仍按 200px 夹取，右边缘会越界 | 夹取宽度改 240，CSS 加 `max-width: 320px` |
+| P3-9 | `.nc-tab-close` 两份规则（旧 `.nc-tab` 区块已无 TSX 使用） | 删除死区块；hover 改用 `--destructive` token（对照 Netcatty `bg-destructive/10 + text-destructive`） |
+| P2-7/8、P3-10~14、P2-13 | 工具栏 spec 未真正驱动 JSX、菜单 label 三处分裂、暗色外圈、ForwardPanel 死文件等 | 未修：属重构/清理，另开提交；已记入 todo |
+
+- **门禁**：`npm run test:run` 64 文件 / **695 用例** ✓；`npm run build` ✓。
+
+
 
 
 

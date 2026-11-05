@@ -48,7 +48,6 @@ import {
   snippetWritePlan,
 } from "./snippets/snippetsModel";
 import { parseScriptBlocks, runScriptBlocks } from "./snippets/scriptRunner";
-import { DEFAULT_KEY_BINDINGS, effectiveBinding } from "./settings/keyBindings";
 import { appendScriptTrigger } from "./snippets/scriptTriggerLog";
 import "./snippets/snippets.css";
 import type {
@@ -288,9 +287,12 @@ export function TerminalPane({
 
   const [status, setStatus] = useState<PaneStatus>("connecting");
   // 会话标签状态点：把窗格级连接状态上报给 Workspace（对照 Netcatty tab dot）。
+  // 回调用 ref 持有：父组件每次渲染都会新建箭头函数，若进依赖会在每次渲染都 setState。
+  const onConnectionStatusRef = useRef(onConnectionStatus);
+  onConnectionStatusRef.current = onConnectionStatus;
   useEffect(() => {
-    onConnectionStatus?.(status);
-  }, [status, onConnectionStatus]);
+    onConnectionStatusRef.current?.(status);
+  }, [status]);
   const [error, setError] = useState<string | null>(null);
   const [progressValue, setProgressValue] = useState(CONNECTION_PROGRESS_START);
   const [progressLogs, setProgressLogs] = useState<string[]>([]);
@@ -2489,7 +2491,7 @@ export function TerminalPane({
     if (!box) return;
     const s = getSettings();
     const term = controllerRef.current?.term;
-    const menuWidth = 200;
+    const menuWidth = 240; // 与 .term-context-menu 的 min/max-width 对齐（实际宽度随内容）
     const menuHeight = 340;
     setMenu({
       x: Math.max(4, Math.min(clientX - box.left, box.width - menuWidth - 4)),
@@ -2520,15 +2522,6 @@ export function TerminalPane({
     } catch {
       // 剪贴板无权限时静默失败（与 Netcatty 一致）。
     }
-  }
-
-  /** 右键菜单快捷键提示（对照 Netcatty ContextMenuShortcut：读实际生效绑定）。 */
-  function menuShortcut(action: string): string {
-    const s = getSettings();
-    const binding = DEFAULT_KEY_BINDINGS.find((b) => b.action === action);
-    if (!binding) return "";
-    const value = effectiveBinding(binding, s, s.hotkeyScheme);
-    return value === "Disabled" ? "" : value;
   }
 
   /** 右键「选择单词」：按 xterm 单元格坐标命中光标词并选中（Netcatty select-word）。 */
@@ -3455,11 +3448,8 @@ export function TerminalPane({
                 >
                   <Icon name={spec.icon} size={14} />
                   {CONTEXT_MENU_LABELS[spec.action]}
-                  {spec.shortcutAction && (
-                    <span className="term-menu-shortcut">
-                      {menuShortcut(spec.shortcutAction)}
-                    </span>
-                  )}
+                  {/* Netcatty 在此展示快捷键；termX 尚未分发这些绑定（仅列表/设置页展示），
+                      按 Pr3 不渲染不生效的提示，待热键分发接线后恢复。 */}
                 </button>
               );
             })}

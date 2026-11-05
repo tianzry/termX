@@ -1378,31 +1378,6 @@ button {
   outline: none;
 }
 
-.nc-tab-close {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: hsl(var(--nc-faint));
-  cursor: pointer;
-  opacity: 0;
-}
-
-.nc-tab:hover .nc-tab-close,
-.nc-tab.active .nc-tab-close {
-  opacity: 1;
-}
-
-.nc-tab-close:hover {
-  background: hsl(0 70% 52% / 0.16);
-  color: hsl(0 80% 70%);
-}
-
 .nc-tab-new {
   align-self: center;
   margin: 0 6px;
@@ -2438,8 +2413,8 @@ button:disabled {
 }
 
 .nc-tab-close:hover {
-  background: hsl(0 70% 52% / 0.1);
-  color: hsl(0 80% 62%);
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
 }
 
 .nc-tab-new {
@@ -5721,6 +5696,7 @@ button:disabled {
   z-index: 41;
   width: max-content;
   min-width: 200px;
+  max-width: 320px;
   display: flex;
   flex-direction: column;
   gap: 1px;

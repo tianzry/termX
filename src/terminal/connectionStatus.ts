@@ -17,25 +17,26 @@ export function resolveConnectionDotClass(
   status: ConnectionStatus | undefined,
 ): ConnectionStatus {
   if (status === "connected") return "connected";
-  if (status === "connecting") return "connecting";
-  return "disconnected";
+  if (status === "disconnected") return "disconnected";
+  // 未上报 ≠ 已断开：新建标签先显示 connecting（琥珀），避免先红一帧。
+  return "connecting";
 }
 
 /**
- * 计算某个标签的状态：优先取活动窗格的状态，活动窗格不属于该标签时
- * 回落到该标签的第一个窗格；尚无状态时视为 connecting（新建会话的初始态）。
+ * 计算某个标签的状态：取该标签全部窗格的聚合值——
+ * 任一窗格断开 → disconnected（状态点职责是提示异常，分屏不能因活动窗格正常就掩盖断线）；
+ * 否则任一窗格未上报 / 连接中 → connecting；全部连接成功才返回 connected。
  */
 export function resolveTabConnectionStatus({
   paneStatuses,
   paneIds,
-  activePaneId,
 }: {
   paneStatuses: Record<string, ConnectionStatus>;
   paneIds: string[];
-  activePaneId: string | null;
 }): ConnectionStatus {
-  const target =
-    activePaneId && paneIds.includes(activePaneId) ? activePaneId : paneIds[0];
-  if (!target) return "connecting";
-  return paneStatuses[target] ?? "connecting";
+  if (paneIds.length === 0) return "connecting";
+  const statuses = paneIds.map((id) => paneStatuses[id]);
+  if (statuses.some((s) => s === "disconnected")) return "disconnected";
+  if (statuses.some((s) => s === undefined || s === "connecting")) return "connecting";
+  return "connected";
 }
