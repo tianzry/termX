@@ -4223,27 +4223,59 @@ export function VaultView({
                     setComposer({ ...composer, name: e.target.value })
                   }
                 />
-                {/* 对齐 Netcatty：分组 / 标签不带可见 label，仅占位符。 */}
-                <select
-                  value={composer.group_id}
-                  onChange={(e) =>
-                    setComposer({ ...composer, group_id: e.target.value })
-                  }
-                >
-                  <option value="">父级 Group</option>
-                  {groups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  value={composer.tags}
-                  placeholder="Add tags..."
-                  onChange={(e) =>
-                    setComposer({ ...composer, tags: e.target.value })
-                  }
-                />
+                {/* 对齐 Netcatty：分组 / 标签行各带 40px 图标方块 + 清除按钮。 */}
+                <div className="host-icon-row">
+                  <span className="host-icon-box">
+                    <Icon name="folder" size={16} />
+                  </span>
+                  <select
+                    className="host-icon-row-field"
+                    value={composer.group_id}
+                    onChange={(e) =>
+                      setComposer({ ...composer, group_id: e.target.value })
+                    }
+                  >
+                    <option value="">父级 Group</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </select>
+                  {composer.group_id !== "" && (
+                    <button
+                      type="button"
+                      className="nc-icon-btn"
+                      title="清除分组"
+                      onClick={() => setComposer({ ...composer, group_id: "" })}
+                    >
+                      <Icon name="x" size={14} />
+                    </button>
+                  )}
+                </div>
+                <div className="host-icon-row">
+                  <span className="host-icon-box">
+                    <Icon name="tag" size={16} />
+                  </span>
+                  <input
+                    className="host-icon-row-field"
+                    value={composer.tags}
+                    placeholder="Add tags..."
+                    onChange={(e) =>
+                      setComposer({ ...composer, tags: e.target.value })
+                    }
+                  />
+                  {composer.tags !== "" && (
+                    <button
+                      type="button"
+                      className="nc-icon-btn"
+                      title="清除标签"
+                      onClick={() => setComposer({ ...composer, tags: "" })}
+                    >
+                      <Icon name="x" size={14} />
+                    </button>
+                  )}
+                </div>
               </section>
 
               <section className="host-details-section">
@@ -4630,6 +4662,99 @@ export function VaultView({
                 )}
               </section>
 
+              {/* SFTP 设置（对齐 Netcatty HostDetailsSection sftp：文件协议 / sudo / 编码）。 */}
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="folder" size={13} />
+                  <span>SFTP 设置</span>
+                </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">文件协议</span>
+                  <select
+                    value={composer.sftp_protocol}
+                    onChange={(e) => {
+                      const protocol = e.target.value as
+                        | "auto"
+                        | "sftp"
+                        | "scp";
+                      setComposer({
+                        ...composer,
+                        sftp_protocol: protocol,
+                        // SCP 无 sudo 提权路径，清掉冲突标记（同 Netcatty）。
+                        sftp_sudo:
+                          protocol === "scp" ? false : composer.sftp_sudo,
+                      });
+                    }}
+                  >
+                    <option value="auto">自动</option>
+                    <option value="sftp">SFTP</option>
+                    <option value="scp">SCP</option>
+                  </select>
+                </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">sudo 模式</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={composer.sftp_sudo}
+                    disabled={composer.sftp_protocol === "scp"}
+                    className={`host-switch${composer.sftp_sudo ? " on" : ""}`}
+                    onClick={() =>
+                      setComposer({
+                        ...composer,
+                        sftp_sudo: !composer.sftp_sudo,
+                      })
+                    }
+                  >
+                    <span className="host-switch-knob" />
+                  </button>
+                </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">文件名编码</span>
+                  <select
+                    value={composer.sftp_encoding}
+                    onChange={(e) =>
+                      setComposer({
+                        ...composer,
+                        sftp_encoding: e.target.value as
+                          | "auto"
+                          | "utf-8"
+                          | "gb18030",
+                      })
+                    }
+                  >
+                    <option value="auto">自动</option>
+                    <option value="utf-8">UTF-8</option>
+                    <option value="gb18030">GB18030</option>
+                  </select>
+                </div>
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="terminal-square" size={13} />
+                  <span>字符集 / 终端编码</span>
+                </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">终端编码</span>
+                  <select
+                    value={composer.terminal_encoding}
+                    onChange={(e) =>
+                      setComposer({
+                        ...composer,
+                        terminal_encoding: e.target.value as TerminalEncoding,
+                      })
+                    }
+                  >
+                    <option value="utf-8">UTF-8（默认）</option>
+                    <option value="gb18030">GB18030（GBK / GB2312）</option>
+                  </select>
+                </div>
+                <p className="host-setting-hint">
+                  按主机保存在本机，与终端「更多 → 终端编码」共用；输出用对应字符集解码，输入交给后端重新编码。
+                </p>
+              </section>
+
               <section className="host-details-section">
                 <div className="host-details-section-head">
                   <Icon name="network" size={13} />
@@ -4808,31 +4933,6 @@ export function VaultView({
                 </div>
                 <p className="host-setting-hint">
                   能打开这个保险库的人会同时得到验证码和密码。请只在个人设备上使用。
-                </p>
-              </section>
-
-              <section className="host-details-section">
-                <div className="host-details-section-head">
-                  <Icon name="terminal-square" size={13} />
-                  <span>字符集 / 终端编码</span>
-                </div>
-                <div className="host-setting-row">
-                  <span className="host-setting-label">终端编码</span>
-                  <select
-                    value={composer.terminal_encoding}
-                    onChange={(e) =>
-                      setComposer({
-                        ...composer,
-                        terminal_encoding: e.target.value as TerminalEncoding,
-                      })
-                    }
-                  >
-                    <option value="utf-8">UTF-8（默认）</option>
-                    <option value="gb18030">GB18030（GBK / GB2312）</option>
-                  </select>
-                </div>
-                <p className="host-setting-hint">
-                  按主机保存在本机，与终端「更多 → 终端编码」共用；输出用对应字符集解码，输入交给后端重新编码。
                 </p>
               </section>
 

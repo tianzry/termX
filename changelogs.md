@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-11-06 — #196 主机弹窗「通用」分组 / 标签补图标与清除
+
+对齐 #192 差异清单第 6 条：
+- 分组行：左侧 40px 圆角图标方块（folder 图标）+ 下拉，已选分组时右侧出现 X 清除（点一下回到「未分组」）。
+- 标签行：左侧 40px 圆角图标方块（tag 图标）+ 输入框，非空时右侧出现 X 清除。
+- 新增 `.host-icon-row` / `.host-icon-box` 样式；图标方块 40×40、圆角 8、`--secondary/0.8` 底，与 Netcatty `h-10 w-10 rounded-lg bg-secondary/80` 一致。
+- 分组仍用原生 `<select>`（termX 分组为 `Group` 表 id，不支持 Netcatty 的 Combobox 自由创建分组路径），数据写入未变。
+
+## 2026-11-06 — #195 主机弹窗分区顺序：补「SFTP 设置」+ 代理归位
+
+对齐 #192 差异清单第 5 条，只改 `src/VaultView.tsx` 的 composer 呈现，字段沿用既有 `ComposerDraft`（保存逻辑未动）：
+- 新增「SFTP 设置」分区（Netcatty `HostDetailsSection sftp` 的三项）：文件协议（自动 / SFTP / SCP，切到 SCP 时按 Netcatty 规则清空 sudo）、sudo 模式开关（协议为 SCP 时禁用）、文件名编码（自动 / UTF-8 / GB18030）。三项原本已在 draft / 落库链路中，只是此前未暴露。
+- 分区顺序按 Netcatty：通用 → 地址 → 端口与凭据 → SFTP 设置 → 字符集 / 终端编码 → 代理 → 环境变量 → 启动命令 → 高级字段（置灰）。代理从「端口与凭据」之后移到高级分组（Netcatty 中代理在跳板机之后、环境变量之前）。
+
 ## 2026-11-06 — #194 主机弹窗底色 / 圆角 / 输入高度（对齐 Netcatty HostDetailsPanel）
 
 对齐 #192 差异清单第 2–4 条，只改 `src/styles.css`，数据层与保存逻辑未动：
