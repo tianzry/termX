@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-06 — #187 本地终端：侧栏默认收起 + 标题显示 Shell 名（第七轮 P2 · 3/4）
+
+> 取证：Netcatty `terminalHostTreeStore.ts` 的 `isOpen` 是全局持久化开关，默认 `false` → 终端全宽；不是“本地会话专属自动隐藏”。Netcatty 本地会话标签/标题行显示 Shell 名（截图 `Git Bash`）。
+
+- `App.tsx`：
+  - `sideOpen` 默认改为 `false`（`termx.sidebar.v1` 缺省 = 收起），与 Netcatty 默认一致；已有用户持久化值不变。
+  - 移除 `connect()` / `openLocal()` 里的 `setSideOpen(true)`：连接主机不再强制展开侧栏，尊重用户的开关状态。
+  - `openLocal()` 给 pty 会话带 `name`：配置 shell → 发现列表中文名；未配置 → `shellDisplayName(await defaultShell())`（本机为 `CMD`）。
+- 修复既有缺陷：`VaultView.tsx` 两处 `onClick={onLocal}` 会把 React 点击事件当作 `DiscoveredShell` 参数传入，导致本地终端始终拿不到 `shell`/`name`（标题恒为「本地终端 N」）。改为 `onClick={() => onLocal()}`。
+- 证据：`evidence/audit7-termx-local-title-after.png`（无侧栏、终端全宽、标签与标题行「CMD」）、`audit7-termx-local-title-after.json`（fresh：sidebar null / stored "0"；after：tabTitles ["CMD"] / connector `{kind:"pty",name:"CMD"}` / 视口 1200×800）。
+- 门禁：`npm run test:run`、`npm run build`、tauri debug 通过。
+
 ## 2026-11-06 — #186 SSH 终端侧栏宽度与时间戳列核对（第七轮 P2 · 2/4）
 
 > 结论：两项均已与 Netcatty 一致，无需改代码（记录核对过程供后续查证）。

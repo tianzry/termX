@@ -45,6 +45,7 @@ import {
   resolveHostDefaultLocalShell,
   resolveShellSetting,
 } from "./domain/localShellHost";
+import { shellDisplayName } from "./domain/shellName";
 import {
   serialFormFromProfile,
   toSerialConfig,
@@ -137,9 +138,11 @@ export default function App() {
 
   const [sideOpen, setSideOpen] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(SIDEBAR_KEY) !== "0";
+      // 对齐 Netcatty terminalHostTreeStore：主机树默认收起（终端全宽），
+      // 由顶栏按钮切换并持久化。
+      return localStorage.getItem(SIDEBAR_KEY) === "1";
     } catch {
-      return true;
+      return false;
     }
   });
 
@@ -271,7 +274,6 @@ export default function App() {
 
   function openLocal(shellOverride?: DiscoveredShell) {
     setSurface(null);
-    setSideOpen(true);
     setRecentIds((prev) => saveRecent("__local", prev));
     void (async () => {
       if (shellOverride) {
@@ -279,21 +281,28 @@ export default function App() {
           kind: "pty",
           shell: shellOverride.command,
           args: shellOverride.args,
+          name: shellOverride.name,
         });
         return;
       }
       // shell 解析 = 设置 local_shell → 空用后端默认（对齐 Netcatty）。
+      // 标签名跟随 shell 显示名（Netcatty 本地会话标题行显示「Git Bash」）。
       let shell: string | undefined;
       let args: string[] | undefined;
+      let name: string | undefined;
       try {
         const configured = (await api.getSetting("local_shell")) ?? "";
         const resolved = resolveShellSetting(configured, discoveredShells);
         shell = resolved?.command;
         args = resolved?.args;
+        name = configured
+          ? (discoveredShells.find((s) => s.id === configured)?.name ??
+            (resolved ? shellDisplayName(resolved.command) : undefined))
+          : shellDisplayName(resolved?.command ?? (await api.defaultShell()));
       } catch {
         /* 设置读取失败：走后端默认 shell */
       }
-      workspaceRef.current?.newTab({ kind: "pty", shell, args });
+      workspaceRef.current?.newTab({ kind: "pty", shell, args, name });
     })();
   }
 
@@ -329,7 +338,6 @@ export default function App() {
 
   function connect(profile: Profile) {
     setSurface(null);
-    setSideOpen(true);
     setRecentIds((prev) => saveRecent(profile.id, prev));
     if (profile.protocol === "serial") {
       const form = serialFormFromProfile(profile);

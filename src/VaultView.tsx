@@ -3324,7 +3324,7 @@ export function VaultView({
       className={`vault-host-card${compact ? " list" : ""}`}
       role="button"
       tabIndex={0}
-      onClick={onLocal}
+      onClick={() => onLocal()}
       onKeyDown={(e) => {
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault();
@@ -3799,7 +3799,7 @@ export function VaultView({
                 )}
               </div>
 
-              <button className="vault-secondary-btn" onClick={onLocal}>
+              <button className="vault-secondary-btn" onClick={() => onLocal()}>
                 <Icon name="terminal-square" size={14} />
                 终端
               </button>
