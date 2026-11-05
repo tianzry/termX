@@ -26,11 +26,13 @@ import * as api from "./backend/client";
 import { isFindShortcut, linkModifierAllows } from "./terminal/linkActivation";
 import { terminalInsetsStyle } from "./terminal/terminalInsets";
 import {
+  collectTerminalTimestampLines,
   formatTerminalTimestamp,
-  pruneTerminalTimestampLines,
+  normalizeTerminalTimestampStamps,
+  pruneTerminalTimestampStamps,
   resolveTerminalTimestampGutterWidth,
   resolveVisibleTerminalTimestampRows,
-  stampTerminalTimestampLines,
+  type TerminalTimestampStamp,
 } from "./terminal/terminalTimestamps";
 import type { AppSettings } from "./settings/settingsModel";
 import {
@@ -362,8 +364,9 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
   const gutterRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const timestampsRef = useRef<Map<number, string>>(new Map());
+  const timestampsRef = useRef<TerminalTimestampStamp[]>([]);
   const lastTimestampLineRef = useRef<number>(0);
+  const lastTimestampColsRef = useRef<number>(0);
   const timestampRafRef = useRef<number | null>(null);
   const gutterWidthRef = useRef(0);
   const [gutterWidth, setGutterWidth] = useState(0);
@@ -667,7 +670,8 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
     if (!term || !container) return;
     const initial = term.buffer.active;
     lastTimestampLineRef.current = initial.baseY + initial.cursorY;
-    const stamps = new Map<number, string>();
+    lastTimestampColsRef.current = term.cols;
+    const stamps: TerminalTimestampStamp[] = [];
     timestampsRef.current = stamps;
 
     if (!showTimestamps) {
@@ -680,6 +684,17 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       const gutter = gutterRef.current;
       if (!gutter) return;
       const buffer = term.buffer.active;
+      // 字号 / 窗口尺寸变化会触发 xterm reflow：绝对行号被重排。先按 marker
+      // 的实时行号重映射；无 marker 的旧行号在列数变化后不可信，直接丢弃。
+      const cols = term.cols;
+      const colsChanged =
+        lastTimestampColsRef.current > 0 &&
+        cols > 0 &&
+        cols !== lastTimestampColsRef.current;
+      normalizeTerminalTimestampStamps(stamps, {
+        dropUnanchored: colsChanged,
+      });
+      if (cols > 0) lastTimestampColsRef.current = cols;
       const screen = container.querySelector<HTMLElement>(".xterm-screen");
       const rows =
         buffer.type === "alternate" || !screen || term.rows <= 0
@@ -746,14 +761,27 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       if (buffer.type !== "alternate") {
         const current = buffer.baseY + buffer.cursorY;
         if (current >= lastTimestampLineRef.current) {
-          lastTimestampLineRef.current = stampTerminalTimestampLines({
-            stamps,
+          const lines = collectTerminalTimestampLines({
             previousAbsolute: lastTimestampLineRef.current,
             currentAbsolute: current,
-            label: formatTerminalTimestamp(new Date()),
             isWrapped: (line) => buffer.getLine(line)?.isWrapped === true,
           });
-          pruneTerminalTimestampLines(stamps, buffer.baseY - 200);
+          if (lines.length > 0) {
+            const label = formatTerminalTimestamp(new Date());
+            for (const line of lines) {
+              let marker: IMarker | undefined;
+              try {
+                // offset 相对光标行；marker 由 xterm 在 reflow / scrollback
+                // 裁剪时同步更新 line，绘制时以它为准。
+                marker = term.registerMarker(line - current);
+              } catch {
+                marker = undefined;
+              }
+              stamps.push({ line, label, marker });
+            }
+          }
+          lastTimestampLineRef.current = current;
+          pruneTerminalTimestampStamps(stamps, buffer.baseY - 200);
         } else {
           lastTimestampLineRef.current = current;
         }
@@ -777,7 +805,10 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
         cancelAnimationFrame(timestampRafRef.current);
         timestampRafRef.current = null;
       }
-      stamps.clear();
+      stamps.forEach((stamp) => {
+        if (stamp.marker && !stamp.marker.isDisposed) stamp.marker.dispose?.();
+      });
+      stamps.length = 0;
     };
   }, [showTimestamps]);
 
