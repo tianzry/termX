@@ -438,10 +438,20 @@ export function computeAutocompletePopupPlacement(input: {
     160,
     Math.min(AUTOCOMPLETE_POPUP_WIDTH, input.paneWidth - pad * 2),
   );
-  const subPanelWidth = Math.max(
-    120,
-    Math.min(AUTOCOMPLETE_SUBPANEL_WIDTH, input.paneWidth - pad * 2),
-  );
+  const levels = Math.max(0, input.subPanelCount);
+  // 子面板总数不能超出窗口：按剩余宽度均分，避免最后一列溢出 pane。
+  const subPanelWidth =
+    levels > 0
+      ? Math.max(
+          120,
+          Math.min(
+            AUTOCOMPLETE_SUBPANEL_WIDTH,
+            Math.floor(
+              (input.paneWidth - pad * 2 - width - AUTOCOMPLETE_PANEL_GAP * levels) / levels,
+            ),
+          ),
+        )
+      : AUTOCOMPLETE_SUBPANEL_WIDTH;
   const contentHeight = Math.min(
     AUTOCOMPLETE_POPUP_MAX_HEIGHT,
     Math.max(AUTOCOMPLETE_ROW_HEIGHT, input.itemCount * AUTOCOMPLETE_ROW_HEIGHT + 8),

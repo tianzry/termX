@@ -48,8 +48,14 @@ const FOLDER_ONLY_COMMANDS = new Set(["cd", "mkdir", "rmdir", "pushd"]);
 
 export type PathSeparator = "/" | "\\";
 
-/** 按空格切分命令行，保留引号内的空格与空尾 token（`cd ` → ["cd",""]）。 */
-export function tokenizeCommandLine(line: string): string[] {
+/**
+ * 按空格切分命令行，保留引号内的空格与空尾 token（`cd ` → ["cd",""]）。
+ *
+ * `windows=true` 时反斜杠只是路径分隔符，不是转义符：否则
+ * `dir C:\a\b\ ` 的尾随反斜杠会「转义」后面的空格，把两个实参并成一个 token，
+ * 前缀过滤拿到 `" "` 导致路径候选全空。cmd / PowerShell 都不认 `\ `。
+ */
+export function tokenizeCommandLine(line: string, windows = false): string[] {
   const tokens: string[] = [];
   let current = "";
   let inSingleQuote = false;
@@ -62,7 +68,7 @@ export function tokenizeCommandLine(line: string): string[] {
       escaped = false;
       continue;
     }
-    if (ch === "\\") {
+    if (ch === "\\" && !windows) {
       escaped = true;
       current += ch;
       continue;
@@ -89,22 +95,26 @@ export function tokenizeCommandLine(line: string): string[] {
 }
 
 /** 光标所在词（最后一个 token）。 */
-export function currentWordOf(line: string): string {
-  const tokens = tokenizeCommandLine(line);
+export function currentWordOf(line: string, windows = false): string {
+  const tokens = tokenizeCommandLine(line, windows);
   return tokens[tokens.length - 1] ?? "";
 }
 
 /** 当前词之前的命令前缀（含分隔空格），用于拼回完整候选行。 */
-export function commandPrefixOf(line: string): string {
-  const tokens = tokenizeCommandLine(line);
+export function commandPrefixOf(line: string, windows = false): string {
+  const tokens = tokenizeCommandLine(line, windows);
   const wordIndex = tokens.length - 1;
   if (wordIndex <= 0) return "";
   return `${tokens.slice(0, wordIndex).join(" ")} `;
 }
 
 /** 用替换词重拼完整命令行。 */
-export function replaceCommandWord(line: string, replacement: string): string {
-  const tokens = tokenizeCommandLine(line);
+export function replaceCommandWord(
+  line: string,
+  replacement: string,
+  windows = false,
+): string {
+  const tokens = tokenizeCommandLine(line, windows);
   const wordIndex = tokens.length - 1;
   if (wordIndex < 0) return replacement;
   tokens[wordIndex] = replacement;
@@ -127,11 +137,14 @@ function trailingQuote(value: string, quotePrefix: string): string {
 }
 
 /** 当前命令是否处在需要路径补全的位置（对照 `shouldDoPathCompletion`）。 */
-export function shouldCompletePath(line: string): {
+export function shouldCompletePath(
+  line: string,
+  windows = false,
+): {
   complete: boolean;
   foldersOnly: boolean;
 } {
-  const tokens = tokenizeCommandLine(line);
+  const tokens = tokenizeCommandLine(line, windows);
   const wordIndex = tokens.length - 1;
   const currentWord = stripWrappingQuotes(tokens[wordIndex] ?? "");
   const commandName = (tokens[0] ?? "").toLowerCase();
@@ -219,8 +232,11 @@ function resolveDirLookup(
   cwd: string | undefined,
   separator: PathSeparator,
 ): string {
+  if (!token) return cwd ? normalizePath(cwd, separator) : "~";
   const normalizedToken = token.replace(/[\\/]+$/, "");
-  if (!normalizedToken) return cwd ? normalizePath(cwd, separator) : "~";
+  // 只有分隔符（`/`、`\`）表示根目录；盘符根（`C:\`）保留盘符而不是退化成 `C:`。
+  if (!normalizedToken) return "/";
+  if (/^[A-Za-z]:$/.test(normalizedToken)) return `${normalizedToken}${separator}`;
   if (normalizedToken.startsWith("/") || /^[A-Za-z]:/.test(normalizedToken)) {
     return normalizePath(normalizedToken, separator);
   }
@@ -309,9 +325,11 @@ export function sortPathEntries(entries: readonly PathEntry[]): PathEntry[] {
   );
 }
 
-function shellEscape(name: string): string {
+function shellEscape(name: string, quote: "'" | '"' = "'"): string {
   if (/[\\$'"|!<>;#~` ]/.test(name)) {
-    return `'${name.replace(/'/g, "'\\''")}'`;
+    return quote === '"'
+      ? `"${name.replace(/"/g, '\\"')}"`
+      : `'${name.replace(/'/g, "'\\''")}'`;
   }
   return name;
 }
@@ -328,14 +346,16 @@ export function buildPathSuggestions(input: {
 }): AutocompleteSuggestion[] {
   const { line, lookup, entries } = input;
   const foldersOnly = input.foldersOnly === true;
-  const prefix = commandPrefixOf(line);
+  const prefix = commandPrefixOf(line, lookup.separator === "\\");
+  // cmd / PowerShell 不认单引号转义，Windows 下改用双引号。
+  const quote: "'" | '"' = lookup.separator === "\\" ? '"' : "'";
   const suggestions: AutocompleteSuggestion[] = [];
   const seen = new Set<string>();
 
   for (const entry of entries) {
     if (foldersOnly && entry.type !== "directory") continue;
     const suffix = entry.type === "directory" ? lookup.separator : "";
-    const name = lookup.quoted ? entry.name : shellEscape(entry.name);
+    const name = lookup.quoted ? entry.name : shellEscape(entry.name, quote);
     const command = `${prefix}${lookup.pathPrefix}${name}${suffix}${lookup.quoteSuffix}`;
     if (seen.has(command)) continue;
     seen.add(command);

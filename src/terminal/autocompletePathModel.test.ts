@@ -119,6 +119,25 @@ describe("resolvePathLookup", () => {
     expect(lookup.dirToList).toBe("C:\\Users\\u");
   });
 
+  it("根路径与盘符根不回退到 cwd", () => {
+    expect(resolvePathLookup({ currentWord: "/", cwd: "/home/u" }).dirToList).toBe("/");
+    const driveRoot = resolvePathLookup({ currentWord: "C:\\", windows: true, cwd: "C:\\Users\\u" });
+    expect(driveRoot.dirToList).toBe("C:\\");
+  });
+
+  it("Windows 本地带空格目录用双引号，POSIX 用单引号", () => {
+    const win = resolvePathLookup({ currentWord: "", windows: true, cwd: "C:\\Users\\u" });
+    const posix = resolvePathLookup({ currentWord: "", cwd: "/home/u" });
+    expect(
+      buildPathSuggestions({ line: "dir ", lookup: win, entries: [entry("My Docs", "directory")] })[0]
+        .command,
+    ).toBe('dir "My Docs"\\');
+    expect(
+      buildPathSuggestions({ line: "ls ", lookup: posix, entries: [entry("My Docs", "directory")] })[0]
+        .command,
+    ).toBe("ls 'My Docs'/");
+  });
+
   it("保留引号并只替换引号内的路径", () => {
     const lookup = resolvePathLookup({ currentWord: '"My Doc', cwd: "/home/u" });
     expect(lookup.quotePrefix).toBe('"');
@@ -185,6 +204,15 @@ describe("路径候选拼接与排序", () => {
   it("currentWordOf 处理尾随空格（空词）", () => {
     expect(currentWordOf("ls ")).toBe("");
     expect(currentWordOf("cat /etc")).toBe("/etc");
+  });
+
+  it("Windows 尾随反斜杠不是转义符：空格后是新的空实参", () => {
+    const line = "dir C:\\Users\\t\\.agent-browser\\browsers\\ ";
+    expect(currentWordOf(line, true)).toBe("");
+    expect(currentWordOf(line)).toBe("C:\\Users\\t\\.agent-browser\\browsers\\ ");
+    expect(shouldCompletePath(line, true)).toEqual({ complete: true, foldersOnly: false });
+    // POSIX 语义保持不变：`\ ` 仍是转义，空格不切 token（反斜杠字符本身保留）。
+    expect(currentWordOf("cat /tmp/a\\ b")).toBe("/tmp/a\\ b");
   });
 });
 
@@ -385,5 +413,18 @@ describe("mergeAutocompleteSuggestions 与浮层几何", () => {
     });
     expect(placement.subPanelWidth).toBe(240);
     expect(placement.left).toBe(300);
+  });
+
+  it("pane 较窄时压缩子面板宽度，整体不溢出", () => {
+    const placement = computeAutocompletePopupPlacement({
+      anchorTop: 100,
+      anchorBottom: 118,
+      anchorLeft: 8,
+      paneWidth: 820,
+      paneHeight: 600,
+      itemCount: 5,
+      subPanelCount: 3,
+    });
+    expect(placement.width + placement.subPanelWidth * 3 + 12).toBeLessThanOrEqual(820 - 16);
   });
 });

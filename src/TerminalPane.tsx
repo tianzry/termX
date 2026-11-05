@@ -899,6 +899,7 @@ export function TerminalPane({
       window.clearTimeout(ac.timer);
       ac.timer = null;
     }
+    ac.queryVersion += 1;
     ac.typed = "";
     ac.reliable = true;
     ac.unknownLine = false;
@@ -909,6 +910,20 @@ export function TerminalPane({
     ac.subFocus = -1;
     ac.subVersion += 1;
     setAutocompleteUi(null);
+  }
+
+  /** 关闭浮层但保留已输入前缀：Esc / 接受后继续输入仍按原行补全。 */
+  function dismissAutocomplete(options: { restorePreview?: boolean } = {}) {
+    const ac = autocompleteRef.current;
+    if (options.restorePreview) restoreAutocompletePreview();
+    ac.queryVersion += 1;
+    ac.suggestions = [];
+    ac.selected = -1;
+    ac.previewedCommand = null;
+    ac.subPanels = [];
+    ac.subFocus = -1;
+    ac.subVersion += 1;
+    publishAutocomplete();
   }
 
   function computeAutocompleteAnchor(): AutocompleteAnchor | null {
@@ -1036,6 +1051,11 @@ export function TerminalPane({
     if (!sessionId) return Promise.reject(new Error("no session"));
     const existing = autocompleteSftpRef.current;
     if (existing && existing.sessionId === sessionId) return existing.promise;
+    // 会话切换（重连后 sid 变化）：先释放旧 SFTP 子句柄，避免泄漏。
+    if (existing) {
+      autocompleteSftpRef.current = null;
+      void existing.promise.then((old) => api.sftpClose(old)).catch(() => {});
+    }
     const promise = api.sftpConnectSession(sessionId);
     autocompleteSftpRef.current = { sessionId, promise };
     promise.catch(() => {
@@ -1130,10 +1150,13 @@ export function TerminalPane({
     const settings = getSettings().terminal;
     if (!settings.autocompleteEnabled) return;
     const typed = ac.typed;
+    const queryVersion = ++ac.queryVersion;
     if (!typed.trim()) return;
 
     const providerId = autocompletePathProviderId();
-    const pathCheck = providerId ? shouldCompletePath(typed) : { complete: false, foldersOnly: false };
+    const pathCheck = providerId
+      ? shouldCompletePath(typed, autocompleteWindowsPaths)
+      : { complete: false, foldersOnly: false };
     const historyScope = settings.autocompleteHistoryScope === "global" ? "global" : "host";
     const history = readCommandHistory();
     // 路径补全生效时，整行历史让位给当前目录（历史只保留同命令 + 实参前缀的最近 5 条）。
@@ -1161,17 +1184,21 @@ export function TerminalPane({
       cwd = await expandAutocompleteHome("~").catch(() => null);
     }
     const lookup = resolvePathLookup({
-      currentWord: currentWordOf(typed),
+      currentWord: currentWordOf(typed, autocompleteWindowsPaths),
       cwd,
       windows: autocompleteWindowsPaths,
     });
-    const isCurrent = () => ac.typed === typed && ac.timer === null;
+    const isCurrent = () =>
+      ac.typed === typed && ac.timer === null && ac.queryVersion === queryVersion;
     const listing = autocompletePathEntries(providerId, lookup.dirToList).then((entries) =>
       filterPathEntries(sortPathEntries(entries), lookup.filterPrefix),
     );
 
     const entries = await withPathBudget(listing, PATH_COMPLETION_BUDGET_MS, (late) => {
-      if (!isCurrent() || ac.subFocus >= 0) return;
+      // 用户已经选中/预览或进入下钻后，迟到结果不得覆盖当前状态。
+      if (!isCurrent() || ac.subFocus >= 0 || ac.selected >= 0 || ac.previewedCommand !== null) {
+        return;
+      }
       const lateSuggestions = buildPathSuggestions({
         line: typed,
         lookup,
@@ -1185,6 +1212,7 @@ export function TerminalPane({
     });
 
     if (!isCurrent()) return;
+    if (ac.selected >= 0 || ac.previewedCommand !== null) return;
     const pathSuggestions = buildPathSuggestions({
       line: typed,
       lookup,
@@ -1273,7 +1301,11 @@ export function TerminalPane({
     const entry = autocompleteSubEntry(level);
     if (!panel || !entry) return null;
     const suffix = entry.type === "directory" ? (autocompleteWindowsPaths ? "\\" : "/") : "";
-    return replaceCommandWord(ac.typed, `${panel.dirPath}${entry.name}${suffix}`);
+    return replaceCommandWord(
+      ac.typed,
+      `${panel.dirPath}${entry.name}${suffix}`,
+      autocompleteWindowsPaths,
+    );
   }
 
   /** 接受子面板条目：写回输入行并关闭浮层（不直接执行，与 Netcatty 一致）。 */
@@ -1286,8 +1318,9 @@ export function TerminalPane({
       if (tail) transportRef.current?.write(tail);
     }
     ac.typed = command;
+    ac.reliable = true;
     inputBufferRef.current.line = command;
-    resetAutocomplete();
+    dismissAutocomplete();
     return true;
   }
 
@@ -1400,7 +1433,8 @@ export function TerminalPane({
         ac.subVersion += 1;
         const level = ac.subFocus - 1;
         ac.subFocus = level;
-        ac.subPanels = level >= 0 ? ac.subPanels.slice(0, level + 1) : [];
+        // 退回主列表时保留已列好的子面板，再按 → 可直接回到原层级。
+        if (level >= 0) ac.subPanels = ac.subPanels.slice(0, level + 1);
         const command = level >= 0 ? buildAutocompleteSubCommand(level) : ac.suggestions[ac.selected]?.command;
         if (command) previewAutocompleteCandidate(command);
         else restoreAutocompletePreview();
@@ -1408,11 +1442,13 @@ export function TerminalPane({
         return true;
       }
       if (kind === "enter" || kind === "tab") {
-        return autocompleteSubEntry(ac.subFocus) ? acceptAutocompleteSubEntry(ac.subFocus) : true;
+        if (autocompleteSubEntry(ac.subFocus)) return acceptAutocompleteSubEntry(ac.subFocus);
+        // 面板里还没选中条目：按通用语义提交 / 放行，并关闭浮层。
+        dismissAutocomplete();
+        return false;
       }
       if (kind === "escape") {
-        restoreAutocompletePreview();
-        resetAutocomplete();
+        dismissAutocomplete({ restorePreview: true });
         return true;
       }
       // 继续输入 / 删除：退出子面板，走普通候选刷新。
@@ -1470,10 +1506,7 @@ export function TerminalPane({
     }
 
     if (action.kind === "dismiss") {
-      if (action.restore) restoreAutocompletePreview();
-      ac.suggestions = [];
-      ac.selected = -1;
-      publishAutocomplete();
+      dismissAutocomplete({ restorePreview: action.restore });
       return true;
     }
 
@@ -1822,6 +1855,8 @@ export function TerminalPane({
     subFocus: number;
     /** 子面板请求代数：选中项 / 目录变化后丢弃迟到结果。 */
     subVersion: number;
+    /** 查询代数：Esc/关闭浮层后作废在途的预算回调。 */
+    queryVersion: number;
   }>({
     typed: "",
     reliable: true,
@@ -1833,6 +1868,7 @@ export function TerminalPane({
     subPanels: [],
     subFocus: -1,
     subVersion: 0,
+    queryVersion: 0,
   });
   /** 路径目录缓存（sessionId + 目录，TTL 5s + in-flight 合并）。 */
   const autocompletePathCacheRef = useRef(createPathDirectoryCache());
@@ -3647,7 +3683,14 @@ export function TerminalPane({
                 className={`term-autocomplete-list term-autocomplete-sub${
                   level === subFocus ? " focused" : ""
                 }`}
-                style={{ width: placement.subPanelWidth, maxHeight: placement.maxHeight }}
+                style={{
+                  width: placement.subPanelWidth,
+                  // 每级子面板按自身条目数取高度，避免主列表很短时子面板只剩一行。
+                  maxHeight: Math.min(
+                    placement.maxHeight,
+                    Math.max(28, panel.entries.length * 28 + 8),
+                  ),
+                }}
               >
                 {panel.entries.map((entry, index) => (
                   <button
