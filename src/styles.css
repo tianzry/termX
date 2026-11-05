@@ -6753,6 +6753,19 @@ button:disabled {
   min-width: 168px;
 }
 
+/* 不可用入口：置灰 + 行尾「未支持」，完整原因在 title 里。 */
+.host-cred-menu button.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.host-cred-menu-reason {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
 .host-localkey-wrap {
   flex: 1;
   min-width: 0;

@@ -201,7 +201,7 @@ const AUTH_METHODS: Array<{
   {
     value: "certificate",
     label: "证书",
-    hint: "使用选中的 SSH 证书；termX 尚未移植证书认证。",
+    hint: "termX 的主机保存链路暂不支持证书认证，请改用密钥或本地密钥。",
     enabled: false,
   },
 ];
@@ -4529,26 +4529,43 @@ export function VaultView({
                       <div className="vault-view-menu vault-popmenu host-cred-menu">
                         {(
                           [
-                            { v: "key", label: "密钥", icon: "key" },
+                            {
+                              v: "key",
+                              label: "密钥",
+                              icon: "key",
+                              enabled: true,
+                              reason: "",
+                            },
                             {
                               v: "certificate",
                               label: "证书",
                               icon: "shield",
+                              enabled: false,
+                              reason:
+                                "主机保存链路暂不支持证书认证（保存时会拒绝），钥匙串里的证书目前无法用于主机登录。",
                             },
                             {
                               v: "localKeyFile",
                               label: "本地密钥文件",
                               icon: "file-text",
+                              enabled: true,
+                              reason: "",
                             },
                           ] as Array<{
                             v: Exclude<CredPick, null>;
                             label: string;
                             icon: IconName;
+                            enabled: boolean;
+                            reason: string;
                           }>
                         ).map((item) => (
                           <button
                             key={item.v}
+                            disabled={!item.enabled}
+                            title={item.reason || undefined}
+                            className={item.enabled ? undefined : "is-disabled"}
                             onClick={() => {
+                              if (!item.enabled) return;
                               setCredPick(item.v);
                               setCredSearch("");
                               setCredMenu(false);
@@ -4556,6 +4573,11 @@ export function VaultView({
                           >
                             <Icon name={item.icon} size={14} />
                             {item.label}
+                            {!item.enabled && (
+                              <span className="host-cred-menu-reason">
+                                未支持
+                              </span>
+                            )}
                           </button>
                         ))}
                       </div>

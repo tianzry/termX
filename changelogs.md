@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-11-06 — #197 主机弹窗密码区：保存密码开关 + 密钥 / 证书 / 本地密钥入口
+
+对齐 #192 差异清单第 7 条：
+- 「保存密码」开关：确认既有实现即 Netcatty 行为（仅当密码框有内容或已存在掩码口令时出现在密码下方，关掉即保存 `secret=null` 删除已存口令），本轮未改逻辑。
+- 「+ 密钥 / 证书 / 本地密钥」菜单：**密钥**（选 `Credential.type=key`）与**本地密钥文件**（`~/.ssh` 文件列表）接现有数据可用；**证书置灰**并在行尾标「未支持」、`title` 写明原因——后端 `ssh/auth.rs` 虽有 `CredentialType::Certificate` 分支，但 `persistComposerDraft`（`VaultView.tsx`）在 `auth_method === "certificate"` 时直接报错返回，属于保存链路未开放；按要求不动保存逻辑，故只置灰。
+- 新增 `.host-cred-menu button.is-disabled` / `.host-cred-menu-reason` 样式。
+
 ## 2026-11-06 — #196 主机弹窗「通用」分组 / 标签补图标与清除
 
 对齐 #192 差异清单第 6 条：
