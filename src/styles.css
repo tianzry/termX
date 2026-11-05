@@ -9491,14 +9491,15 @@ body {
   padding: 0;
 }
 
-/* SettingRow：48px 条状底色卡片，行间留 6px 间隔，左右内边距 12px。 */
+/* SettingRow：48px 条状底色卡片；单行内容由 min-height 固定为 48px，
+   多行说明 / 文本域按内容自然增高。左右内边距 12px。 */
 .nc-set-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   min-height: 48px;
-  padding: 8px 12px;
+  padding: 2px 12px;
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: hsl(var(--secondary) / 0.4);

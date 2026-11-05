@@ -11,10 +11,11 @@ export type HostKeyPolicy = "default" | "verify" | "skip";
 export const HOST_KEY_POLICIES: Array<{
   value: HostKeyPolicy;
   label: string;
+  desc: string;
 }> = [
-  { value: "default", label: "跟随全局" },
-  { value: "verify", label: "始终校验" },
-  { value: "skip", label: "跳过校验" },
+  { value: "default", label: "跟随全局", desc: "使用设置中心的全局开关" },
+  { value: "verify", label: "始终校验", desc: "忽略全局设置，本主机始终校验" },
+  { value: "skip", label: "跳过校验", desc: "忽略全局设置，该主机不校验（仅可信网络）" },
 ];
 
 /** DB / Profile 里的可空值 → 编辑器枚举；未知值一律回落「跟随全局」。 */

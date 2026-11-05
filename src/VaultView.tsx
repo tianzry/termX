@@ -4770,7 +4770,9 @@ export function VaultView({
                         </div>
                         {filtered.length === 0 ? (
                           <div className="host-key-combo-empty">
-                            {isCert ? "暂无证书凭据" : "暂无密钥"}
+                            {isCert
+                              ? "暂无证书凭据（可在钥匙串导入，或选择下方 ~/.ssh 证书）"
+                              : "暂无密钥"}
                           </div>
                         ) : (
                           filtered.map((c) => (
@@ -4916,7 +4918,11 @@ export function VaultView({
                       >
                         <span>{p.label}</span>
                         <span className="host-key-policy-desc">
-                          {hostKeyPolicyLabel(p.value, settings.verifyHostKeys)}
+                          {p.value === "default"
+                            ? `当前全局：${
+                                settings.verifyHostKeys ? "校验" : "跳过"
+                              }`
+                            : p.desc}
                         </span>
                       </button>
                     ))}
