@@ -29,6 +29,7 @@ export type LinkModifier = "none" | "ctrl" | "alt" | "meta";
 export type LinkBrowser = "netcatty" | "system";
 export type ProxyMode = "system" | "direct" | "custom";
 export type SftpDoubleClickBehavior = "open" | "transfer";
+export type AutocompleteHistoryScope = "host" | "global";
 export type SessionLogFormat = "txt" | "raw" | "html";
 export type HotkeyScheme = "mac" | "pc";
 export type UiLanguage = "zh-CN" | "en";
@@ -100,6 +101,14 @@ export interface TerminalSettings {
   linkBrowser: LinkBrowser;
   /** 终端主题跟随应用主题；关闭后终端固定深色（Netcatty settings.terminal.theme.followApp）。 */
   followAppTheme: boolean;
+  /** 自动补全总开关（Netcatty autocompleteEnabled，默认开启）。 */
+  autocompleteEnabled: boolean;
+  /** 输入时显示内联 ghost text 建议（Netcatty autocompleteGhostText，默认关闭）。 */
+  autocompleteGhostText: boolean;
+  /** 输入时显示候选下拉（Netcatty autocompletePopupMenu，默认开启）。 */
+  autocompletePopupMenu: boolean;
+  /** 候选历史范围：仅本主机 / 全部主机（Netcatty autocompleteHistoryScope）。 */
+  autocompleteHistoryScope: AutocompleteHistoryScope;
   /** 内嵌图片总开关（Netcatty inlineImagesEnabled，默认关闭）。 */
   inlineImagesEnabled: boolean;
   /** Kitty graphics protocol（APC G）；需 inlineImagesEnabled。 */
@@ -250,6 +259,11 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   linkModifier: "none",
   linkBrowser: "netcatty",
   followAppTheme: true,
+  // 对齐 Netcatty terminalSettingsDefaults：补全默认开，ghost 默认关、下拉默认开、范围本主机。
+  autocompleteEnabled: true,
+  autocompleteGhostText: false,
+  autocompletePopupMenu: true,
+  autocompleteHistoryScope: "host",
   // 对齐 Netcatty：图片默认关闭；开启后三类协议默认全开。
   inlineImagesEnabled: false,
   inlineImageKittyEnabled: true,
@@ -466,6 +480,14 @@ function normalizeTerminal(raw: unknown): TerminalSettings {
     ),
     linkBrowser: pickOne(r.linkBrowser, ["netcatty", "system"] as const, d.linkBrowser),
     followAppTheme: pickBool(r.followAppTheme, d.followAppTheme),
+    autocompleteEnabled: pickBool(r.autocompleteEnabled, d.autocompleteEnabled),
+    autocompleteGhostText: pickBool(r.autocompleteGhostText, d.autocompleteGhostText),
+    autocompletePopupMenu: pickBool(r.autocompletePopupMenu, d.autocompletePopupMenu),
+    autocompleteHistoryScope: pickOne(
+      r.autocompleteHistoryScope,
+      ["host", "global"] as const,
+      d.autocompleteHistoryScope,
+    ),
     inlineImagesEnabled: pickBool(r.inlineImagesEnabled, d.inlineImagesEnabled),
     inlineImageKittyEnabled: pickBool(r.inlineImageKittyEnabled, d.inlineImageKittyEnabled),
     inlineImageSixelEnabled: pickBool(r.inlineImageSixelEnabled, d.inlineImageSixelEnabled),

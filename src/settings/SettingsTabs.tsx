@@ -1013,6 +1013,53 @@ export function TerminalTab() {
         </Row>
       </Section>
 
+      <Section title={t("settings.terminal.section.autocomplete")}>
+        <Row
+          title={t("settings.terminal.autocomplete.enabled")}
+          desc={t("settings.terminal.autocomplete.enabled.desc")}
+        >
+          <Toggle
+            checked={term.autocompleteEnabled}
+            onChange={(v) => patch({ autocompleteEnabled: v })}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.autocomplete.ghostText")}
+          desc={t("settings.terminal.autocomplete.ghostText.desc")}
+        >
+          <Toggle
+            disabled={!term.autocompleteEnabled}
+            checked={term.autocompleteGhostText}
+            onChange={(v) => patch({ autocompleteGhostText: v })}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.autocomplete.popupMenu")}
+          desc={t("settings.terminal.autocomplete.popupMenu.desc")}
+        >
+          <Toggle
+            disabled={!term.autocompleteEnabled}
+            checked={term.autocompletePopupMenu}
+            onChange={(v) => patch({ autocompletePopupMenu: v })}
+          />
+        </Row>
+        <Row
+          title={t("settings.terminal.autocomplete.historyScope")}
+          desc={t("settings.terminal.autocomplete.historyScope.desc")}
+        >
+          <Select
+            value={term.autocompleteHistoryScope}
+            onChange={(v) =>
+              patch({ autocompleteHistoryScope: v as typeof term.autocompleteHistoryScope })
+            }
+            options={[
+              { value: "host", label: t("settings.terminal.autocomplete.historyScope.host") },
+              { value: "global", label: t("settings.terminal.autocomplete.historyScope.global") },
+            ]}
+          />
+        </Row>
+      </Section>
+
       <Section title={t("settings.terminal.section.behavior")}>
         <Row title={t("settings.terminal.behavior.autoCloseOnExit")} desc={t("settings.terminal.behavior.autoCloseOnExit.desc")}>
           <Toggle checked={term.autoCloseOnExit} onChange={(v) => patch({ autoCloseOnExit: v })} />

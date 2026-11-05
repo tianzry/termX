@@ -72,6 +72,36 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({ terminal: { followAppTheme: false } }).terminal.followAppTheme).toBe(false);
   });
 
+  it("自动补全设置默认值对齐 Netcatty，输入可覆盖且非法范围回退", () => {
+    const defaults = normalizeSettings(null).terminal;
+    expect(defaults.autocompleteEnabled).toBe(true);
+    expect(defaults.autocompleteGhostText).toBe(false);
+    expect(defaults.autocompletePopupMenu).toBe(true);
+    expect(defaults.autocompleteHistoryScope).toBe("host");
+
+    const custom = normalizeSettings({
+      terminal: {
+        autocompleteEnabled: false,
+        autocompleteGhostText: true,
+        autocompletePopupMenu: false,
+        autocompleteHistoryScope: "global",
+      },
+    }).terminal;
+    expect(custom.autocompleteEnabled).toBe(false);
+    expect(custom.autocompleteGhostText).toBe(true);
+    expect(custom.autocompletePopupMenu).toBe(false);
+    expect(custom.autocompleteHistoryScope).toBe("global");
+
+    expect(
+      normalizeSettings({ terminal: { autocompleteHistoryScope: "unknown" } }).terminal
+        .autocompleteHistoryScope,
+    ).toBe("host");
+    expect(
+      normalizeSettings({ terminal: { autocompleteEnabled: "yes" } }).terminal
+        .autocompleteEnabled,
+    ).toBe(true);
+  });
+
   it("终端字号 clamp 到 [10, 32]（对照 Netcatty MIN/MAX_FONT_SIZE）", () => {
     expect(normalizeSettings({ terminalFontSize: 99 }).terminalFontSize).toBe(32);
     expect(normalizeSettings({ terminalFontSize: 2 }).terminalFontSize).toBe(10);

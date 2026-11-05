@@ -19,6 +19,19 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { ComposeBar } from "./terminal/ComposeBar";
 import { appendComposeHistory, buildComposePayload } from "./terminal/composeBarModel";
+import { CommandHistoryPanel } from "./terminal/CommandHistoryPanel";
+import { readCommandHistory, recordCommandHistory } from "./terminal/commandHistoryModel";
+import {
+  AUTOCOMPLETE_DEBOUNCE_MS,
+  classifyAutocompleteData,
+  computeAutocompleteAcceptTail,
+  computeAutocompleteGhost,
+  computeLivePreviewWrite,
+  deriveAutocompleteSuggestions,
+  moveAutocompleteSelection,
+  resolveAutocompleteKey,
+  type AutocompleteSuggestion,
+} from "./terminal/autocompleteModel";
 import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import { SessionMonitorPopover } from "./monitor/SessionMonitorPopover";
@@ -42,7 +55,7 @@ import type {
   TerminalTransport,
 } from "./backend/client";
 import type { Tab } from "./workspaceModel";
-import { getSettings } from "./settings/settingsStore";
+import { getSettings, subscribeSettings } from "./settings/settingsStore";
 import { readTerminalSelection } from "./Terminal";
 import {
   advanceIndeterminateConnectionProgress,
@@ -119,9 +132,48 @@ const SEARCH_OPTIONS = {
 
 type PaneStatus = "connecting" | "connected" | "disconnected";
 
+/** 自动补全浮层的锚点（相对 pane 的像素坐标 + 单元格 / 字体信息）。 */
+interface AutocompleteAnchor {
+  left: number;
+  top: number;
+  cellW: number;
+  cellH: number;
+  paneWidth: number;
+  paneHeight: number;
+  fontFamily: string;
+  fontSize: string;
+}
+
+interface AutocompleteUiState {
+  popup: boolean;
+  suggestions: AutocompleteSuggestion[];
+  selected: number;
+  ghost: string;
+  anchor: AutocompleteAnchor;
+}
+
 type Prompt =
   | { kind: "auth"; sessionId: string; payload: AuthPrompt }
   | { kind: "passphrase"; sessionId: string; payload: { prompt: string } };
+
+/** 输出行时间戳开关的持久化（应用级，四类终端共用）。 */
+const SHOW_TIMESTAMPS_KEY = "termx.terminal.showTimestamps.v1";
+
+function readShowTimestamps(): boolean {
+  try {
+    return window.localStorage.getItem(SHOW_TIMESTAMPS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistShowTimestamps(value: boolean) {
+  try {
+    window.localStorage.setItem(SHOW_TIMESTAMPS_KEY, value ? "1" : "0");
+  } catch {
+    // 存储不可用时仅本次生效。
+  }
+}
 
 /** 窗格对外的句柄：供工作区切换活动窗格并订阅读话状态。 */
 export interface PaneHandle {
@@ -264,9 +316,16 @@ export function TerminalPane({
   /** 脚本录制（Netcatty `recording`）：记录输入命令，停止后生成脚本片段。 */
   const [scriptRec, setScriptRec] = useState(false);
   const [scriptRecBusy, setScriptRecBusy] = useState(false);
-  /** 本会话已提交的命令（命令历史 popover）。 */
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  /** 命令历史（全局持久化）：面板开关。 */
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** 自动补全浮层（候选下拉 / 内联 ghost text），空闲为 null。 */
+  const [autocompleteUi, setAutocompleteUi] = useState<AutocompleteUiState | null>(null);
+  const historyHostId =
+    tab.connector.kind === "ssh"
+      ? tab.connector.profileId
+      : `${tab.connector.kind}:${tab.title}`;
+  /** 输出行时间戳（工具栏时钟开关；应用级持久化，四类终端共用）。 */
+  const [showTimestamps, setShowTimestamps] = useState(readShowTimestamps);
   /** 撰写栏 / 终端搜索 / 主机关键词高亮。 */
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeText, setComposeText] = useState("");
@@ -759,11 +818,401 @@ export function TerminalPane({
     }
   }
 
+  /**
+   * 自动补全（对照 Netcatty `components/terminal/autocomplete/*`）。
+   *
+   * 与 Netcatty 一致：Tab 在候选可见时放行给 Shell（当前行已被实时预览改写）；
+   * → 只接受内联 ghost text；Esc 恢复原行；点击候选同样进入实时预览。
+   * 串口 / Telnet 是网络设备 CLI，Ctrl-U 可能被当作会话终止，仅关闭预览改写。
+   */
+  const autocompleteLivePreviewAllowed =
+    tab.connector.kind === "ssh" || tab.connector.kind === "pty";
+  /** 本地 Shell 在 Windows 下是 PowerShell / cmd，不认 Ctrl-U，用退格清行。 */
+  const autocompleteUseBackspaceClear = tab.connector.kind === "pty";
+
+  function resetAutocomplete() {
+    const ac = autocompleteRef.current;
+    if (ac.timer !== null) {
+      window.clearTimeout(ac.timer);
+      ac.timer = null;
+    }
+    ac.typed = "";
+    ac.reliable = true;
+    ac.unknownLine = false;
+    ac.suggestions = [];
+    ac.selected = -1;
+    ac.previewedCommand = null;
+    setAutocompleteUi(null);
+  }
+
+  function computeAutocompleteAnchor(): AutocompleteAnchor | null {
+    const pane = paneRef.current;
+    const term = controllerRef.current?.term;
+    const screen = pane?.querySelector<HTMLElement>(".xterm-screen");
+    const rows = pane?.querySelector<HTMLElement>(".xterm-rows");
+    if (!pane || !term || !screen || !rows) return null;
+    const paneBox = pane.getBoundingClientRect();
+    const screenBox = screen.getBoundingClientRect();
+    if (screenBox.width <= 0 || screenBox.height <= 0) return null;
+    const cellW = screenBox.width / Math.max(1, term.cols);
+    const cellH = screenBox.height / Math.max(1, term.rows);
+    const styles = window.getComputedStyle(rows);
+    const buf = term.buffer.active;
+    return {
+      left: screenBox.left - paneBox.left + buf.cursorX * cellW,
+      top: screenBox.top - paneBox.top + buf.cursorY * cellH,
+      cellW,
+      cellH,
+      paneWidth: paneBox.width,
+      paneHeight: paneBox.height,
+      fontFamily: styles.fontFamily,
+      fontSize: styles.fontSize,
+    };
+  }
+
+  /** 把当前 ref 状态同步到浮层；alternate screen（vim / top 等）一律隐藏。 */
+  function publishAutocomplete() {
+    const ac = autocompleteRef.current;
+    const term = controllerRef.current?.term;
+    if (!term || term.buffer.active.type === "alternate") {
+      setAutocompleteUi(null);
+      return;
+    }
+    const anchor = computeAutocompleteAnchor();
+    if (!anchor) {
+      setAutocompleteUi(null);
+      return;
+    }
+    const settings = getSettings().terminal;
+    const popup = settings.autocompletePopupMenu && ac.suggestions.length > 0;
+    const ghost =
+      settings.autocompleteGhostText && ac.selected < 0
+        ? computeAutocompleteGhost(ac.typed, ac.suggestions)
+        : "";
+    if (!popup && !ghost) {
+      setAutocompleteUi(null);
+      return;
+    }
+    setAutocompleteUi({
+      popup,
+      suggestions: ac.suggestions,
+      selected: ac.selected,
+      ghost,
+      anchor,
+    });
+  }
+
+  /** 当前行是否是密码 / 口令输入，避免把敏感内容喂给历史候选。 */
+  function isSensitivePromptLine(term: TerminalController["term"]): boolean {
+    const buf = term.buffer.active;
+    const line = buf.getLine(buf.baseY + buf.cursorY)?.translateToString(true) ?? "";
+    return /password|passwd|密码|口令/i.test(line.slice(0, buf.cursorX + 1));
+  }
+
+  /**
+   * 读取当前行光标左侧的文本，并去掉 shell 提示符前缀。
+   * 方向键 / Shell 原生补全等改动无法靠按键流追踪，Enter 提交前用它校准历史。
+   */
+  function readCurrentCommandLine(): string | null {
+    const term = controllerRef.current?.term;
+    if (!term) return null;
+    const buf = term.buffer.active;
+    if (buf.type === "alternate") return null;
+    const line = buf.getLine(buf.baseY + buf.cursorY);
+    if (!line) return null;
+    const text = line.translateToString(true).slice(0, buf.cursorX);
+    // 去掉提示符（"...$ " / "...# " / "PS C:\> " / zsh "❯ "）后再比对。
+    const stripped = text.replace(/^.*?[#$>❯]\s/u, "");
+    return stripped;
+  }
+
+  function scheduleAutocompleteSuggestions() {
+    const ac = autocompleteRef.current;
+    if (ac.timer !== null) window.clearTimeout(ac.timer);
+    ac.timer = null;
+    const term = controllerRef.current?.term;
+    if (
+      !term ||
+      term.buffer.active.type === "alternate" ||
+      ac.unknownLine ||
+      !ac.reliable ||
+      !ac.typed.trim() ||
+      isSensitivePromptLine(term)
+    ) {
+      ac.suggestions = [];
+      ac.selected = -1;
+      publishAutocomplete();
+      return;
+    }
+    ac.timer = window.setTimeout(() => {
+      ac.timer = null;
+      const settings = getSettings().terminal;
+      if (!settings.autocompleteEnabled) return;
+      const suggestions = deriveAutocompleteSuggestions({
+        typed: ac.typed,
+        history: readCommandHistory(),
+        scope: settings.autocompleteHistoryScope === "global" ? "global" : "host",
+        hostId: historyHostId,
+      });
+      ac.suggestions = suggestions;
+      ac.selected = -1;
+      publishAutocomplete();
+    }, AUTOCOMPLETE_DEBOUNCE_MS);
+  }
+
+  /** 实时预览：把当前行改写成候选（只对 SSH / 本地 Shell 生效）。 */
+  function previewAutocompleteCandidate(candidate: string) {
+    const ac = autocompleteRef.current;
+    if (!autocompleteLivePreviewAllowed) return;
+    const currentLine = ac.previewedCommand ?? ac.typed;
+    const write = computeLivePreviewWrite({
+      currentLine,
+      candidate,
+      useBackspaceClear: autocompleteUseBackspaceClear,
+    });
+    if (write) transportRef.current?.write(write);
+    ac.previewedCommand = candidate;
+  }
+
+  /** 取消预览：把行恢复成用户原始输入。 */
+  function restoreAutocompletePreview() {
+    const ac = autocompleteRef.current;
+    if (ac.previewedCommand === null) return;
+    const currentLine = ac.previewedCommand;
+    const candidate = ac.typed;
+    ac.previewedCommand = null;
+    if (!autocompleteLivePreviewAllowed) return;
+    const write = computeLivePreviewWrite({
+      currentLine,
+      candidate,
+      useBackspaceClear: autocompleteUseBackspaceClear,
+    });
+    if (write) transportRef.current?.write(write);
+  }
+
+  function selectAutocompleteIndex(index: number) {
+    const ac = autocompleteRef.current;
+    if (index < 0 || index >= ac.suggestions.length) return;
+    ac.selected = index;
+    previewAutocompleteCandidate(ac.suggestions[index].command);
+    publishAutocomplete();
+    controllerRef.current?.term.focus();
+  }
+
+  /**
+   * xterm onData 的补全拦截。返回 true 表示这次按键已被补全消费，
+   * 不要再把原始字节写给终端；false 表示照常透传。
+   */
+  function handleAutocompleteInput(data: string): boolean {
+    const settings = getSettings().terminal;
+    const ac = autocompleteRef.current;
+    if (!settings.autocompleteEnabled) {
+      if (ac.timer !== null || ac.suggestions.length > 0) resetAutocomplete();
+      return false;
+    }
+    const transport = transportRef.current;
+    if (status !== "connected" || !transport) return false;
+
+    const kind = classifyAutocompleteData(data);
+    const popupOpen = settings.autocompletePopupMenu && ac.suggestions.length > 0;
+    const ghostVisible =
+      settings.autocompleteGhostText &&
+      ac.selected < 0 &&
+      computeAutocompleteGhost(ac.typed, ac.suggestions) !== "";
+
+    if (kind === "other") {
+      if (ac.previewedCommand !== null) restoreAutocompletePreview();
+      ac.reliable = false;
+      ac.unknownLine = true;
+      ac.typed = "";
+      ac.suggestions = [];
+      ac.selected = -1;
+      publishAutocomplete();
+      return false;
+    }
+
+    const action = resolveAutocompleteKey({ kind, popupOpen, ghostVisible });
+
+    if (action.kind === "navigate") {
+      const next = moveAutocompleteSelection(ac.selected, ac.suggestions.length, action.delta);
+      if (next === ac.selected) return true;
+      ac.selected = next;
+      if (next === -1) restoreAutocompletePreview();
+      else previewAutocompleteCandidate(ac.suggestions[next].command);
+      publishAutocomplete();
+      return true;
+    }
+
+    if (action.kind === "accept-ghost") {
+      const tail = computeAutocompleteGhost(ac.typed, ac.suggestions);
+      if (tail) {
+        transport.write(tail);
+        ac.typed += tail;
+        // 预览 / 接受是直接写 PTY 的，同步脚本录制与命令历史用的行缓冲。
+        inputBufferRef.current.line = ac.typed;
+      }
+      ac.suggestions = [];
+      ac.selected = -1;
+      publishAutocomplete();
+      return true;
+    }
+
+    if (action.kind === "dismiss") {
+      if (action.restore) restoreAutocompletePreview();
+      ac.suggestions = [];
+      ac.selected = -1;
+      publishAutocomplete();
+      return true;
+    }
+
+    if (action.kind === "confirm") {
+      // 实时预览已把候选写进行内，Enter 直接交给 Shell 执行；
+      // 串口 / Telnet 没有预览，这里补写候选尾部。
+      if (ac.selected >= 0 && ac.previewedCommand === null) {
+        const candidate = ac.suggestions[ac.selected]?.command;
+        const tail = candidate ? computeAutocompleteAcceptTail(ac.typed, candidate) : null;
+        if (tail) {
+          transport.write(tail);
+          inputBufferRef.current.line = candidate!;
+        }
+      } else if (ac.previewedCommand !== null) {
+        // 实时预览已把候选写进行内，按 Enter 执行的是候选而不是原始前缀。
+        inputBufferRef.current.line = ac.previewedCommand;
+      }
+      syncSubmittedLineBeforeEnter();
+      ac.previewedCommand = null;
+      resetAutocomplete();
+      return false;
+    }
+
+    if (action.kind === "release") {
+      // Tab：保留行内已预览的候选，让 Shell 的原生补全 / 执行接管。
+      if (ac.selected >= 0) {
+        ac.typed = ac.suggestions[ac.selected].command;
+        inputBufferRef.current.line = ac.typed;
+      }
+      ac.previewedCommand = null;
+      ac.reliable = false;
+      ac.suggestions = [];
+      ac.selected = -1;
+      publishAutocomplete();
+      return false;
+    }
+
+    if (kind === "enter") {
+      syncSubmittedLineBeforeEnter();
+      resetAutocomplete();
+      return false;
+    }
+
+    if (kind === "interrupt" || kind === "line-erase") {
+      resetAutocomplete();
+      return false;
+    }
+
+    if (kind === "word-erase") {
+      if (ac.previewedCommand !== null) restoreAutocompletePreview();
+      ac.typed = "";
+      ac.reliable = false;
+      ac.unknownLine = true;
+      ac.suggestions = [];
+      ac.selected = -1;
+      publishAutocomplete();
+      return false;
+    }
+
+    if (kind === "escape") {
+      resetAutocomplete();
+      return false;
+    }
+
+    if (kind === "backspace" || kind === "print") {
+      if (ac.previewedCommand !== null) restoreAutocompletePreview();
+      // 行内已有方向键 / Shell 补全等无法追踪的改动时，不再基于旧前缀给候选。
+      if (ac.unknownLine) {
+        ac.suggestions = [];
+        ac.selected = -1;
+        publishAutocomplete();
+        return false;
+      }
+      if (kind === "backspace") {
+        ac.typed = ac.typed.slice(0, -1);
+      } else {
+        ac.typed += data;
+        ac.reliable = true;
+      }
+      ac.selected = -1;
+      scheduleAutocompleteSuggestions();
+      return false;
+    }
+
+    if (kind === "tab") {
+      // 放行给 Shell 原生补全后，行内容不再等于 typed，本行停止给候选。
+      ac.reliable = false;
+      ac.unknownLine = true;
+      ac.typed = "";
+      ac.suggestions = [];
+      ac.selected = -1;
+      publishAutocomplete();
+      return false;
+    }
+
+    // ↑/↓（Shell 历史）、←/→（移动光标）等：行内容不再等于 typed，停止补全。
+    if (ac.previewedCommand !== null) restoreAutocompletePreview();
+    ac.reliable = false;
+    ac.unknownLine = true;
+    ac.typed = "";
+    ac.suggestions = [];
+    ac.selected = -1;
+    publishAutocomplete();
+    return false;
+  }
+
+  /**
+   * Enter 提交前用 buffer 校准待记录命令：方向键 / Tab 补全等改动不在按键流里，
+   * 只靠 typed 会记错；密码 / 口令提示行直接跳过记录。
+   */
+  function syncSubmittedLineBeforeEnter() {
+    const term = controllerRef.current?.term;
+    if (!term) return;
+    if (isSensitivePromptLine(term)) {
+      inputBufferRef.current.line = "";
+      return;
+    }
+    const line = readCurrentCommandLine();
+    if (line !== null) inputBufferRef.current.line = line;
+  }
+
+  /** 会话断开 / 未连接时不保留候选浮层（避免点击残留项写入已失效的传输）。 */
+  useEffect(() => {
+    if (status !== "connected") resetAutocomplete();
+  }, [status]);
+
+  /** 设置热更新：关闭补全立即隐藏；切换 ghost / 下拉时刷新现有浮层。 */
+  useEffect(() => {
+    return subscribeSettings(() => {
+      const terminalSettings = getSettings().terminal;
+      if (!terminalSettings.autocompleteEnabled) {
+        resetAutocomplete();
+        return;
+      }
+      const ac = autocompleteRef.current;
+      if (ac.suggestions.length > 0 || ac.previewedCommand !== null) {
+        publishAutocomplete();
+      }
+    });
+  }, []);
+
   /** 终端输入：命令历史 + 脚本录制缓冲。 */
   function handleTerminalInput(data: string) {
     const submitted = appendKeystrokes(inputBufferRef.current, data, Date.now());
     if (submitted) {
-      setCommandHistory((prev) => [...prev, submitted.command].slice(-200));
+      recordCommandHistory({
+        command: submitted.command,
+        hostId: historyHostId,
+        hostLabel: tab.title,
+        id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
     }
     // 未录制时只保留最近 200 条，避免长时间使用会累积到内存。
     if (!scriptRec && inputBufferRef.current.steps.length > 200) {
@@ -782,7 +1231,36 @@ export function TerminalPane({
     // 整段写入：绕过 SSH 输入兼容模式的逐字拆分，避免多字符命令乱序。
     (transportRef.current.writeBulk ?? writeToPane)(payload);
     setComposeHistory((prev) => appendComposeHistory(prev, text));
+    recordCommandHistory({
+      command: text,
+      hostId: historyHostId,
+      hostLabel: tab.title,
+      id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    });
     return true;
+  }
+
+  /** 命令历史「运行」：写入并回车（多行走 bracketed paste，与撰写栏一致）。 */
+  function runHistoryCommand(command: string) {
+    if (status !== "connected" || !transportRef.current) return;
+    const bracketed = Boolean(controllerRef.current?.term.modes.bracketedPasteMode);
+    const payload = buildComposePayload(command, bracketed);
+    (transportRef.current.writeBulk ?? writeToPane)(payload);
+    recordCommandHistory({
+      command,
+      hostId: historyHostId,
+      hostLabel: tab.title,
+      id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    });
+    controllerRef.current?.term.focus();
+  }
+
+  /** 命令历史「插入」：只写入终端，不追加回车（对齐 Netcatty onPasteToTerminal）。 */
+  function pasteHistoryCommand(command: string) {
+    if (status !== "connected" || !transportRef.current) return;
+    const text = command.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    (transportRef.current.writeBulk ?? writeToPane)(text);
+    controllerRef.current?.term.focus();
   }
 
   /** 终端搜索（SearchAddon，对照 Netcatty SEARCH_OPTIONS / SEARCH_DECORATIONS）。 */
@@ -898,6 +1376,28 @@ export function TerminalPane({
 
   const paneRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<TerminalController | null>(null);
+  /**
+   * 自动补全输入状态（不触发 React 重渲染的部分用 ref，保证 onData 同步读取）：
+   * typed 是提示符后已输入内容；previewedCommand 非空代表当前行已被实时预览改写。
+   */
+  const autocompleteRef = useRef<{
+    typed: string;
+    reliable: boolean;
+    /** 行内已有方向键 / 删除词 / Shell 补全等无法追踪的改动：本行不再给候选。 */
+    unknownLine: boolean;
+    suggestions: AutocompleteSuggestion[];
+    selected: number;
+    previewedCommand: string | null;
+    timer: number | null;
+  }>({
+    typed: "",
+    reliable: true,
+    unknownLine: false,
+    suggestions: [],
+    selected: -1,
+    previewedCommand: null,
+    timer: null,
+  });
   const transportRef = useRef<TerminalTransport | null>(null);
   /**
    * 写入队列：输入兼容模式会把一次 onData 拆成多段 sshWrite，跨 onData 调用
@@ -1867,7 +2367,8 @@ export function TerminalPane({
    * 类型不支持的项目已按 `caps` 直接隐藏，这里只保留「连接后可用」这类状态原因。
    */
   const moreStatusReason = status !== "connected" ? "连接后可用" : null;
-  const moreHistoryReason = moreStatusReason;
+  /** 命令历史是本地持久化数据，未连接也可查看（对齐 Netcatty）。 */
+  const moreHistoryReason = null;
   const moreOsc7Reason = moreStatusReason;
   const moreRecordingReason = moreStatusReason;
   const moreEncodingReason = moreStatusReason;
@@ -2141,42 +2642,13 @@ export function TerminalPane({
             </span>
           )}
           {caps.history && (
-          <div className="term-tool-more">
-            <button
-              className={`term-tool-btn${historyOpen ? " active" : ""}`}
-              title="命令历史"
-              disabled={status !== "connected"}
-              onClick={() => setHistoryOpen((v) => !v)}
-            >
-              <Icon name="clock" size={12} />
-            </button>
-            {historyOpen && (
-              <div className="term-tool-menu term-history-menu">
-                <div className="term-menu-label">命令历史</div>
-                {commandHistory.length === 0 ? (
-                  <div className="term-menu-empty">本会话还没有命令</div>
-                ) : (
-                  [...commandHistory]
-                    .reverse()
-                    .slice(0, 30)
-                    .map((cmd, index) => (
-                      <button
-                        key={`${cmd}-${index}`}
-                        title={cmd}
-                        onClick={() => {
-                          writeToPane(cmd);
-                          setHistoryOpen(false);
-                          controllerRef.current?.term.focus();
-                        }}
-                      >
-                        <Icon name="terminal" size={12} />
-                        <span className="term-history-cmd">{cmd}</span>
-                      </button>
-                    ))
-                )}
-              </div>
-            )}
-          </div>
+          <button
+            className={`term-tool-btn${historyOpen ? " active" : ""}`}
+            title="命令历史"
+            onClick={() => setHistoryOpen((v) => !v)}
+          >
+            <Icon name="clock" size={12} />
+          </button>
           )}
           {systemEligible && (
             <div className="term-monitor-anchor">
@@ -2236,6 +2708,18 @@ export function TerminalPane({
             <Icon name="copy" size={12} />
           </button>
           )}
+          <button
+            className={`term-tool-btn${showTimestamps ? " active" : ""}`}
+            title={showTimestamps ? "隐藏时间戳" : "显示时间戳"}
+            aria-pressed={showTimestamps}
+            onClick={() => {
+              const next = !showTimestamps;
+              setShowTimestamps(next);
+              persistShowTimestamps(next);
+            }}
+          >
+            <Icon name="clock" size={12} />
+          </button>
         </div>
         <div className="term-toolbar-right">
           <div className="term-tool-more">
@@ -2299,9 +2783,11 @@ export function TerminalPane({
           <button
             className="term-tool-btn"
             title={
-              onOpenTool ? "打开 SFTP" : "SFTP 面板不可用"
+              status === "connected"
+                ? "打开 SFTP"
+                : "连接 SSH 后可用"
             }
-            disabled={!onOpenTool}
+            disabled={!onOpenTool || status !== "connected"}
             onClick={() => onOpenTool?.("sftp")}
           >
             <Icon name="folder-input" size={12} />
@@ -2596,6 +3082,7 @@ export function TerminalPane({
       )}
 
       <TerminalView
+        showTimestamps={showTimestamps}
         onFindShortcut={() => {
           setSearchOpen(true);
           requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -2613,12 +3100,68 @@ export function TerminalPane({
           }
         }}
         onData={(data) => {
+          const consumedByAutocomplete = handleAutocompleteInput(data);
           handleTerminalInput(data);
-          transportRef.current?.write(data);
+          if (!consumedByAutocomplete) transportRef.current?.write(data);
         }}
         onResize={(cols, rows) => transportRef.current?.resize(cols, rows)}
         onOsc7={handleOsc7}
       />
+
+      {autocompleteUi?.popup && (() => {
+        const { anchor } = autocompleteUi;
+        const width = Math.min(360, Math.max(220, anchor.paneWidth - 16));
+        const popupHeight = Math.min(220, autocompleteUi.suggestions.length * 26 + 8);
+        const left = Math.max(4, Math.min(anchor.left, anchor.paneWidth - width - 4));
+        const spaceBelow = anchor.paneHeight - (anchor.top + anchor.cellH);
+        const top =
+          spaceBelow >= popupHeight + 4 || anchor.top < popupHeight + 4
+            ? anchor.top + anchor.cellH
+            : anchor.top - popupHeight - 2;
+        return (
+          <div
+            className="term-autocomplete-popup"
+            style={{ left, top, width }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            {autocompleteUi.suggestions.map((suggestion, index) => (
+              <button
+                key={suggestion.command}
+                type="button"
+                className={`term-autocomplete-row${
+                  index === autocompleteUi.selected ? " selected" : ""
+                }`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  selectAutocompleteIndex(index);
+                }}
+              >
+                <span className="term-autocomplete-command">{suggestion.command}</span>
+                {suggestion.source === "history" && suggestion.count ? (
+                  <span className="term-autocomplete-meta">×{suggestion.count}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
+
+      {autocompleteUi?.ghost && (
+        <div
+          className="term-autocomplete-ghost"
+          style={{
+            left: autocompleteUi.anchor.left,
+            top: autocompleteUi.anchor.top,
+            height: autocompleteUi.anchor.cellH,
+            lineHeight: `${autocompleteUi.anchor.cellH}px`,
+            fontFamily: autocompleteUi.anchor.fontFamily,
+            fontSize: autocompleteUi.anchor.fontSize,
+          }}
+          aria-hidden
+        >
+          {autocompleteUi.ghost}
+        </div>
+      )}
 
       {composeOpen && (
         <ComposeBar
@@ -2627,6 +3170,8 @@ export function TerminalPane({
           onSend={sendCompose}
           history={composeHistory}
           connected={status === "connected"}
+          snippets={snippets}
+          onRunSnippet={insertSnippet}
           onClose={() => {
             setComposeOpen(false);
             controllerRef.current?.term.focus();
@@ -2896,6 +3441,16 @@ export function TerminalPane({
             </button>
           </div>
         </>
+      )}
+
+      {historyOpen && (
+        <CommandHistoryPanel
+          hostId={historyHostId}
+          hostLabel={tab.title}
+          onClose={() => setHistoryOpen(false)}
+          onRun={runHistoryCommand}
+          onPaste={pasteHistoryCommand}
+        />
       )}
 
       {prompt && (
