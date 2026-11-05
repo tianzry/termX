@@ -760,8 +760,6 @@ export function VaultView({
   const [kcView, setKcView] = useState<"grid" | "list">(readKcView);
   const [kcQuery, setKcQuery] = useState("");
   const [kcNewMenu, setKcNewMenu] = useState(false);
-  // 钥匙串页内子标签：系统密钥（~/.ssh 文件，阶段 A）/ 已存密钥（凭据库）。
-  const [kcTab, setKcTab] = useState<"system" | "stored">("system");
   const [kcViewMenu, setKcViewMenu] = useState(false);
   /** 侧滑面板：null = 关闭；id 仅 view/edit 模式携带。 */
   const [kcPanel, setKcPanel] = useState<{ mode: KcMode; id: string | null } | null>(null);
@@ -4118,22 +4116,10 @@ export function VaultView({
           ) : activeNav === "known-hosts" ? (
             knownHostsPanel()
           ) : activeNav === "keys" ? (
-            <div className="kc-tabbed">
-              <div className="kc-subtabs">
-                <button
-                  className={kcTab === "system" ? "active" : ""}
-                  onClick={() => setKcTab("system")}
-                >
-                  系统密钥
-                </button>
-                <button
-                  className={kcTab === "stored" ? "active" : ""}
-                  onClick={() => setKcTab("stored")}
-                >
-                  已存密钥
-                </button>
-              </div>
-              {kcTab === "system" ? <KeychainView /> : keysPanel()}
+            // 对齐 Netcatty KeychainManager：密钥 / 身份单页分区，无 tab 切换。
+            <div className="kc-tabbed kc-single-page">
+              {keysPanel()}
+              <KeychainView />
             </div>
           ) : activeNav === "sync" ? (
             <SyncView onAfterPull={onDataChanged} />

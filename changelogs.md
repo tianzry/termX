@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-11-06 — #188 钥匙串页单页分区（第七轮 P2 · 4/4）
+
+> 取证：Netcatty `components/KeychainManager.tsx` 是**单页分区**（不是 tab）：顶部动作「新建密钥 / 生成密钥 / 导入证书 / 新建身份」，下方「密钥」「身份」两个 section 同页展示。termX 原本是「系统密钥 / 已存密钥」子 tab。
+
+- `VaultView.tsx`：删除 `kcTab` 状态与 `.kc-subtabs` 切换条；`activeNav === "keys"` 改为单页 `<div className="kc-tabbed kc-single-page">`，顺序为「已存密钥（凭据库，即 Netcatty 密钥 section 的对应物）」→「系统密钥 / SSH Agent / 证书（termX 额外能力）」。
+- `keychain/keychain.css`：新增 `.kc-single-page`（整页滚动、20px 分区间距、系统密钥区顶部 1px 分隔线），删除已无引用的 `.kc-subtabs` 样式。
+- 数据层未改动：凭据库、`~/.ssh` 扫描、SSH Agent、证书相关 API/状态全部复用。
+- 证据：`evidence/audit7-termx-keychain-single-page-after.png`、`audit7-termx-keychain-single-page-after.json`（无 `.kc-subtabs`；`.kc-single-page` 同时包含 `.vault-keychain` 与 `.kc-file-pane`）。
+- 门禁：`npm run test:run`、`npm run build`、tauri debug 通过。
+
 ## 2026-11-06 — #187 本地终端：侧栏默认收起 + 标题显示 Shell 名（第七轮 P2 · 3/4）
 
 > 取证：Netcatty `terminalHostTreeStore.ts` 的 `isOpen` 是全局持久化开关，默认 `false` → 终端全宽；不是“本地会话专属自动隐藏”。Netcatty 本地会话标签/标题行显示 Shell 名（截图 `Git Bash`）。

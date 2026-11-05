@@ -11,25 +11,26 @@
   padding: 12px;
 }
 
-.kc-subtabs {
-  display: flex;
-  gap: 8px;
+/* 单页分区（对齐 Netcatty KeychainManager：密钥 + 身份同页展示，无 tab）。
+   已存密钥（凭据库）在上，系统密钥 / SSH Agent / 证书在下，整页滚动。 */
+.kc-single-page {
+  overflow-y: auto;
+  gap: 20px;
 }
 
-.kc-subtabs button {
-  padding: 4px 14px;
-  border-radius: 6px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font-size: 13px;
+.kc-single-page > .vault-keychain {
+  height: auto;
+  flex: 0 0 auto;
 }
 
-.kc-subtabs button.active {
-  background: #2f6feb;
-  border-color: transparent;
-  color: #fff;
+.kc-single-page > .kc-file-pane {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  padding-top: 16px;
+}
+
+.kc-single-page .kc-file-list {
+  overflow: visible;
 }
 
 .kc-file-pane {
