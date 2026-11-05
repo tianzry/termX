@@ -50,8 +50,8 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 代理页按钮层级 | Netcatty 页头「添加代理」secondary、空态 primary；termX「新建代理」仅 secondary；区块计数文案不同 | P2/P3 | ✅ #191：区块头「代理」+「N 项」；补 64px Globe 空态 + primary 新建代理；页头保持 secondary（与 Netcatty 一致） |
 | 串口弹窗细节 | 弹窗 407 vs 360px、「保存配置」vs「保存为主机」、端口框多一个箭头 | P3 | 待有串口设备时一并调 |
 | SFTP 空态图标 | Netcatty 左 Monitor / 右 HardDrive；termX 左 Monitor / 右 Server | P3 | ✅ #191：右栏改 hard-drive（源码 + 截图证实是硬盘图标，非文件夹） |
-| 设置窗口形态 | Netcatty 独立窗口；termX 全屏 overlay | P3 | 保留（已记录） |
-| 主机新建/编辑弹窗 | 两边均未打开，未做像素对照 | P3 | 下一轮补对照 |
+| 设置窗口形态 | Netcatty 独立 Electron 窗口 980×720（min 820×600，非 modal，隐藏预热）；termX 全屏 overlay | P3 | 调研完成 #192（不改代码）：单窗口模型下改独立 Tauri 窗口需新增路由/跨窗口同步/生命周期，建议单独立项 |
+| 主机新建/编辑弹窗 | 已完成像素对照（Netcatty HostDetailsPanel vs termX composer） | P3 | 调研完成 #192，差异 10 条（卡片底色/圆角/输入高度/分区顺序/SFTP 分区/密钥入口/保存密码/说明文案等）；下一轮单独立项 |
 
 ---
 

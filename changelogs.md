@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-11-06 — #192 调研：设置窗口形态 + 主机弹窗像素对照（无代码）
+
+### 设置窗口形态
+- Netcatty：独立原生窗口（Electron `BrowserWindow`）。`electron/bridges/windowManager/settingsWindow.cjs` 定义 980×720、min 820×600、`modal:false` 且不设 parent、Windows 自绘无边框，按主窗口所在显示器居中；独立路由 `#/settings`；启动时隐藏预热，关闭改为 hide 复用。
+- termX：应用内全屏 overlay（`SettingsDialog.tsx` + `.nc-settings-overlay { position: fixed; inset: 0 }`），无独立 OS 窗口、无独立路由。
+- 结论：形态差异真实存在，但 termX 为单窗口 WebView2 模型，改独立 Tauri `WebviewWindow` 需新增窗口路由、设置跨窗口同步与关闭 / 复用生命周期；当前 overlay 不影响功能与信息架构。本轮不动机；建议 P3 单独立项（980×720 / min 820×600 / `#settings` 路由 / 共享 `set_setting` 事件），需重做入口与生命周期。
+
+### 主机新建 / 编辑弹窗像素对照（termX SSH 主机详情 vs Netcatty HostDetailsPanel）
+证据：`evidence/audit7-nc-host-editor.png`（Netcatty 实机）、`audit7-termx-host-editor-ssh2-after.png`（termX 1200×800）、`audit7-termx-host-editor-after.json`（几何量）。
+
+相同：右侧 aside 形态、56px 页头、左标题「主机详情」+ 右 3 个图标按钮（测试 / 保存 / 关闭）、16px 内容边距、12px 卡片间距、卡片 12px 内边距、12px 分区标题（图标 + 600 字重）、底部通栏主色保存按钮（40px 高）。
+
+差异清单：
+1. 面板宽度：Netcatty 源码 `w-[420px]`；termX 默认 420px、当前记忆值 380px（可拖拽）——默认一致，截图差异来自本地记忆宽度。
+2. 卡片底色：Netcatty 白卡 + 1px 边框（页面浅灰底）；termX `rgba(225,228,234,.35)` 半透明灰卡 + 0.8px 边框——对比方向相反（termX 卡片比页面深，Netcatty 卡片比页面白）。
+3. 圆角：Netcatty 卡片约 12px / 输入 8px / 保存按钮 8px；termX 卡片 10px / 输入 6px / 保存按钮 6px。
+4. 输入高度：Netcatty 约 40px；termX 36px。
+5. 分区顺序：Netcatty 通用 → 地址 → 端口与凭据 → SFTP 设置 → … → 代理；termX 通用 → 地址 → 端口与凭据 → 代理 → 验证器 → 字符集 / 终端编码 → 环境变量 → 启动命令 → 高级字段（置灰）。termX 缺 SFTP 设置分区，代理提前。
+6. 字段装饰：Netcatty 分组行有文件夹图标 + 下拉 + X 清除，标签行有标签图标；termX 无图标、无清除。
+7. 密码区：Netcatty 用户名 + 密码 + 眼睛 +「保存密码」开关 +「+ 密钥 / 证书 / 本地密钥」；termX 未见「保存密码」开关与密钥 / 证书入口。
+8. 说明文案：Netcatty 用 ⓘ tooltip（登录方式 / 优先交互式认证 / 验证器）；termX 把这些说明常驻成段落，面板更啰嗦、纵向更长。
+9. 验证器：Netcatty 是「验证器 (TOTP)」一行 + 右侧「设置...」；termX 是独立分区。
+10. 保存按钮：两边贴底通栏；termX 40px 高 / `rgb(0,136,255)` / 13px 字，仅圆角比 Netcatty 小 2px。
+
+不修改理由：涉及字段增删（密钥入口 / 保存密码）与分区重排，超出本轮 P2 视觉范围；建议下一轮单独立项「主机弹窗对齐」：先补 SFTP 设置分区与密码区，再统一圆角 / 输入高度 / 卡片底色。
+
 ## 2026-11-06 — #191 代理页按钮层级 + SFTP 空态图标（第七轮 P2 · P2 重启第 3/3）
 
 > 取证：Netcatty `components/ProxyProfilesManager.tsx` 页头「添加代理」是 `variant=secondary`（灰底），空态里同一动作是默认 primary（蓝底）；区块头为左「代理」+ 右「N 项」；空态是 64px Globe 图标块 + 标题 + 说明 + primary 按钮。SFTP `components/sftp/SftpPaneEmptyState.tsx`：左栏 Monitor、右栏 HardDrive（不是文件夹），56px rounded-xl 图标块。
