@@ -504,11 +504,11 @@ function hueOf(name: string): number {
   return n;
 }
 
-function avatarStyle(name: string) {
+export function avatarStyle(name: string) {
   return { "--nc-avatar-hue": hueOf(name) } as CSSProperties;
 }
 
-function initial(name: string): string {
+export function initial(name: string): string {
   return (name.trim()[0] ?? "?").toUpperCase();
 }
 

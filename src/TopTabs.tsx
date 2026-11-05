@@ -12,6 +12,8 @@ import { useEffect, useRef, useState } from "react";
 import { useSettings } from "./settings/settingsStore";
 import type { Tab } from "./workspaceModel";
 import { Icon } from "./ui/icons";
+import type { DiscoveredShell, Group, Profile } from "./backend/client";
+import { QuickSwitcher } from "./QuickSwitcher";
 
 export type RootSurface = "vault" | "sftp" | null;
 
@@ -25,7 +27,12 @@ interface Props {
   onClose: (id: string) => void;
   /** 双击标签行为「复制会话 / 复制标签页」：新建一个同连接标签。 */
   onDuplicateTab: (id: string) => void;
-  onNewTab: () => void;
+  /** 快速切换器的数据源与动作。 */
+  profiles: Profile[];
+  groups: Group[];
+  shells: DiscoveredShell[];
+  onConnect: (profile: Profile) => void;
+  onLocalShell: (shell: DiscoveredShell) => void;
   onOpenVault: () => void;
   onOpenSftp: () => void;
   onToggleHostTree: () => void;
@@ -64,7 +71,11 @@ export function TopTabs({
   onActivate,
   onClose,
   onDuplicateTab,
-  onNewTab,
+  profiles,
+  groups,
+  shells,
+  onConnect,
+  onLocalShell,
   onOpenVault,
   onOpenSftp,
   onToggleHostTree,
@@ -86,7 +97,20 @@ export function TopTabs({
   const settings = useSettings();
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [rename, setRename] = useState<{ id: string; value: string } | null>(null);
+  /** 顶部「+」/ Ctrl+J 打开的快速切换器（对齐 Netcatty QuickSwitcher）。 */
+  const [quickOpen, setQuickOpen] = useState(false);
   const dragId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "j" || e.key === "J")) {
+        e.preventDefault();
+        setQuickOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     if (!menu) return;
@@ -103,6 +127,7 @@ export function TopTabs({
   const menuIndex = menu ? tabs.findIndex((t) => t.id === menu.id) : -1;
 
   return (
+    <>
     <header className="nc-topbar" data-section="top-tabs">
       <div className="nc-topbar-row">
         <div className="nc-root-tabs">
@@ -193,7 +218,11 @@ export function TopTabs({
               </div>
             );
           })}
-          <button className="nc-icon-btn nc-tab-new" title="新建本地终端" onClick={onNewTab}>
+          <button
+            className="nc-icon-btn nc-tab-new"
+            title="打开快速切换器 (Ctrl+J)"
+            onClick={() => setQuickOpen(true)}
+          >
             <Icon name="plus" size={14} />
           </button>
         </div>
@@ -363,5 +392,20 @@ export function TopTabs({
         </div>
       )}
     </header>
+    <QuickSwitcher
+      open={quickOpen}
+      profiles={profiles}
+      groups={groups}
+      tabs={tabs}
+      shells={shells}
+      showSftpTab={settings.showSftpTab}
+      onClose={() => setQuickOpen(false)}
+      onOpenVault={onOpenVault}
+      onOpenSftp={onOpenSftp}
+      onActivateTab={onActivate}
+      onConnect={onConnect}
+      onLocalShell={onLocalShell}
+    />
+    </>
   );
 }

@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-11-05 — Vault 顶部「+」改为 Netcatty QuickSwitcher
+
+- **真实实现来源**：Netcatty `components/TopTabs.tsx` 的「+」按钮 `onClick={onOpenQuickSwitcher}`，
+  弹出的是 `components/QuickSwitcher.tsx` 覆盖层（命令面板式），不是小下拉菜单。
+  容器 `fixed inset-x-0 top-12 z-50 flex justify-center pt-2`；面板
+  `w-full max-w-2xl mx-4 rounded-xl shadow-2xl max-h-[520px]`；列表
+  `max-h-[min(360px,calc(100vh-14rem))]`。
+- **新增** `src/QuickSwitcher.tsx`：分区顺序「标签页 → 主机 → 本地 Shell」；
+  标签页含固定项 Vaults / SFTP 与当前已开会话标签（当前项带「当前」徽标）；
+  主机按名称/地址过滤（最多 40 条，右侧显示 `Personal / 分组`）；
+  本地 Shell 显示后端 `discover_shells` 结果并给默认 shell 打「默认」徽标。
+  顶部行「跳转到 Ctrl+J」+「+ 新建工作区」，搜索框 placeholder「搜索主机或标签页」+ Esc 键帽。
+- **置灰项**：Netcatty 的「+ 新建工作区」在 termX 无对应能力（暂无工作区概念），
+  按行内原因置灰：`暂未支持` + title「termX 暂无工作区功能」。
+- **交互**：Ctrl+J 全局开关、「+」打开；↑↓ 移动高亮、Enter 执行、Esc 关闭、点遮罩关闭；
+  主机项走 `onConnect`，本地 Shell 走新增的 `openLocal(shell)` 重载（按 shell 的
+  command/args 新建 pty 标签），Vaults/SFTP 切根视图，会话标签走 `activateTab`。
+- **视觉对齐**：遮罩顶部偏移 56px（top-12 48 + pt-2 8）、面板宽 `min(672px, 100vw-32px)`、
+  圆角 12px、`shadow-2xl`、背景 `--background`、列表上限 360px、进入动画；
+  行 hover `--muted/50`、选中 `--primary/15`（对齐 Netcatty 行状态类）。
+- **验证**：debug 重编 + CDP 实测（`evidence/plus-menu-check.mjs`）几何、分区、键盘、
+  过滤、点外部关闭、本地 Shell 新建标签；截图 `evidence/plus-menu.png` 与
+  `evidence/plus-menu-check.json`（证据文件不入库）。
+
+---
+
 ## 2026-11-05 — P2 收尾状态（门禁 / 打包 / 遗留项）
 
 ### 已完成并验证

@@ -244,11 +244,19 @@ export default function App() {
     return activeHandle.subscribeCwd(setActiveCwd);
   }, [activeHandle]);
 
-  function openLocal() {
+  function openLocal(shellOverride?: DiscoveredShell) {
     setSurface(null);
     setSideOpen(true);
     setRecentIds((prev) => saveRecent("__local", prev));
     void (async () => {
+      if (shellOverride) {
+        workspaceRef.current?.newTab({
+          kind: "pty",
+          shell: shellOverride.command,
+          args: shellOverride.args,
+        });
+        return;
+      }
       // shell 解析 = 设置 local_shell → 空用后端默认（对齐 Netcatty）。
       let shell: string | undefined;
       let args: string[] | undefined;
@@ -461,7 +469,11 @@ export default function App() {
           if (tab) workspaceRef.current?.newTab(tab.connector);
         }}
         onOpenInNewWindow={openTabInNewWindow}
-        onNewTab={openLocal}
+        profiles={profiles}
+        groups={groups}
+        shells={discoveredShells}
+        onConnect={connect}
+        onLocalShell={(shell) => openLocal(shell)}
         onRenameTab={(id, title) => workspaceRef.current?.renameTab(id, title)}
         onCloseOthers={(id) => workspaceRef.current?.closeOthers(id)}
         onCloseLeft={(id) => workspaceRef.current?.closeLeft(id)}

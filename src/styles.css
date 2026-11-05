@@ -2872,6 +2872,14 @@ button:disabled {
   font-size: 16px;
 }
 
+/* 快速切换器主机行：对齐 Netcatty DistroAvatar size="sm" = 24px。 */
+.nc-avatar.sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
 /* 对齐 Netcatty：本地主机 / 本地终端入口为实底蓝 + 白色 glyph */
 .nc-avatar.local {
   color: #ffffff;
@@ -9350,5 +9358,200 @@ html[data-theme="dark"] {
   border: 1px solid #e3e6ea;
   border-radius: 8px;
   background: #f8f9fb;
+}
+
+/* ── 快速切换器（对照 Netcatty QuickSwitcher：顶部居中 672px 面板） ── */
+.qs-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 56px;
+  background: color-mix(in srgb, hsl(var(--background)) 45%, transparent);
+}
+
+.qs-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(672px, calc(100vw - 32px));
+  max-height: 520px;
+  overflow: hidden;
+  color: hsl(var(--popover-foreground));
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  animation: qs-in 0.12s ease-out;
+}
+
+@keyframes qs-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+}
+
+.qs-head {
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  align-items: center;
+  height: 52px;
+  padding: 0 14px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.qs-head-icon {
+  flex-shrink: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+.qs-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.qs-input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.qs-kbd {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+}
+
+.qs-jump {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.qs-jump-label {
+  font-weight: 500;
+}
+
+.qs-workspace {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: auto;
+  padding: 4px 8px;
+  color: hsl(var(--muted-foreground));
+  cursor: not-allowed;
+  opacity: 0.7;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+}
+
+.qs-unavailable {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.qs-list {
+  flex: 1;
+  min-height: 0;
+  max-height: min(360px, calc(100vh - 14rem));
+  overflow-y: auto;
+  padding: 4px 0 6px;
+}
+
+.qs-section {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: hsl(var(--muted-foreground));
+}
+
+.qs-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: calc(100% - 12px);
+  height: 40px;
+  margin: 2px 6px;
+  padding: 0 10px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+}
+
+.qs-row:hover {
+  background: color-mix(in srgb, hsl(var(--muted)) 55%, transparent);
+}
+
+.qs-row.active {
+  background: color-mix(in srgb, hsl(var(--primary)) 16%, transparent);
+}
+
+.qs-row-icon {
+  flex-shrink: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+.qs-row.active .qs-row-icon {
+  color: hsl(var(--primary));
+}
+
+.qs-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qs-row-meta {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qs-badge,
+.qs-current {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+}
+
+.qs-empty {
+  padding: 28px 14px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
 }
 
