@@ -10,6 +10,7 @@ import {
   sessionLogExportName,
   sessionLogItemTitle,
   sortSessionLogs,
+  sortSessionLogsBy,
 } from "./sessionLogsModel";
 
 function log(partial: Partial<SessionLog>): SessionLog {
@@ -159,6 +160,21 @@ describe("sessionLogsModel", () => {
       "cast:c.cast",
       "cast:b.cast",
     ]);
+  });
+
+  it("sortSessionLogsBy 按时间 / 时长 / 大小 / 会话名升降序排列", () => {
+    const logs = [
+      log({ id: "b", host_name: "beta", started_at: 200, duration_ms: 5000, size_bytes: 2048 }),
+      log({ id: "a", host_name: "alpha", started_at: 300, duration_ms: 1000, size_bytes: 1024 }),
+      log({ id: "c", host_name: "gamma", started_at: 100, duration_ms: 3000, size_bytes: 4096 }),
+    ];
+    const ids = (list: SessionLog[]) => list.map((l) => l.id);
+    expect(ids(sortSessionLogsBy(logs, "time", "asc"))).toEqual(["c", "b", "a"]);
+    expect(ids(sortSessionLogsBy(logs, "duration", "desc"))).toEqual(["b", "c", "a"]);
+    expect(ids(sortSessionLogsBy(logs, "size", "asc"))).toEqual(["a", "b", "c"]);
+    expect(ids(sortSessionLogsBy(logs, "name", "asc"))).toEqual(["a", "b", "c"]);
+    expect(ids(sortSessionLogsBy(logs, "name", "desc"))).toEqual(["c", "b", "a"]);
+    expect(ids(logs)).toEqual(["b", "a", "c"]);
   });
 
   it("导出文件名使用 host（或 title）+ started_at 时间戳", () => {

@@ -19,10 +19,12 @@ import {
   filterSessionLogs,
   formatLogDuration,
   formatLogSize,
-  formatLogTime,
   parseAsciicast,
   sessionLogExportName,
   sessionLogItemTitle,
+  sortSessionLogsBy,
+  type SessionLogSortDirection,
+  type SessionLogSortKey,
 } from "./sessionLogsModel";
 import { parseAnsi, type AnsiSpan } from "./ansi";
 import "./sessionLogs.css";
@@ -64,10 +66,44 @@ function formatDateTime(ms: number | null | undefined): string {
   });
 }
 
+/** 表格时间列：日期 + 时刻分两行（对齐 Netcatty 表格 date/time 两行）。 */
+function formatLogDate(ms: number): string {
+  if (!ms) return "—";
+  const date = new Date(ms);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+function formatLogClock(ms: number): string {
+  if (!ms) return "";
+  const date = new Date(ms);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(
+    date.getMinutes(),
+  ).padStart(2, "0")}`;
+}
+
+/** 表头排序箭头：未激活时不占视觉重量。 */
+function SortMark({
+  active,
+  dir,
+}: {
+  active: boolean;
+  dir: SessionLogSortDirection;
+}) {
+  return (
+    <span className={`session-logs-sort-mark${active ? " active" : ""}`}>
+      {active ? (dir === "asc" ? "↑" : "↓") : "↕"}
+    </span>
+  );
+}
+
 export function SessionLogsView() {
   const [logs, setLogs] = useState<SessionLog[]>([]);
   const [query, setQuery] = useState("");
   const [host, setHost] = useState("");
+  const [sortKey, setSortKey] = useState<SessionLogSortKey>("time");
+  const [sortDir, setSortDir] = useState<SessionLogSortDirection>("desc");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SessionLogDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -165,9 +201,23 @@ export function SessionLogsView() {
 
   const hosts = useMemo(() => collectLogHosts(logs), [logs]);
   const visible = useMemo(
-    () => filterSessionLogs(logs, { query, host }),
-    [logs, query, host],
+    () =>
+      sortSessionLogsBy(
+        filterSessionLogs(logs, { query, host }),
+        sortKey,
+        sortDir,
+      ),
+    [logs, query, host, sortKey, sortDir],
   );
+
+  function toggleSort(key: SessionLogSortKey) {
+    if (key === sortKey) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir(key === "name" ? "asc" : "desc");
+  }
   const summary = useMemo(
     () => (detail ? parseAsciicast(detail.content) : null),
     [detail],
@@ -185,106 +235,212 @@ export function SessionLogsView() {
       // 收紧一次，避免列表项冒泡触发浏览器菜单）。
       onContextMenu={(e) => e.preventDefault()}
     >
-      <aside className="session-logs-tree">
-        <div className="session-logs-tree-head">
-          <span>会话日志</span>
-          <button
-            className="session-logs-refresh"
-            title="刷新"
-            disabled={loading}
-            onClick={() => void load()}
-          >
-            <Icon name="refresh" size={14} />
-          </button>
-        </div>
-
-        <div className="session-logs-search">
-          <Icon name="search" size={13} />
-          <input
-            value={query}
-            placeholder="搜索标题 / 主机 / 状态…"
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {query && (
-            <button
-              className="session-logs-clear"
-              title="清空搜索"
-              onClick={() => setQuery("")}
-            >
-              <Icon name="x" size={12} />
-            </button>
-          )}
-        </div>
-
-        <div className="session-logs-filters">
-          <select
-            className="session-logs-select"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-          >
-            <option value="">全部主机</option>
-            {hosts.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {err && <p className="session-logs-message error">{err}</p>}
-
-        <div className="session-logs-list">
-          {visible.length === 0 ? (
-            <div className="session-logs-list-empty">
+      {!activeId && (
+        <>
+          <header className="session-logs-head">
+            <div className="session-logs-head-title">
+              <h2>会话日志</h2>
               <p>
-                {loading
-                  ? "加载中…"
-                  : logs.length
-                    ? "没有匹配的会话日志"
-                    : "暂无会话日志"}
+                {visible.length} 条
+                {visible.length !== logs.length ? ` / 共 ${logs.length} 条` : ""}
               </p>
-              {!loading && !logs.length && (
-                <p>在设置中开启自动保存后，新的会话会记录为 asciicast</p>
+            </div>
+            <div className="session-logs-search">
+              <Icon name="search" size={13} />
+              <input
+                value={query}
+                placeholder="搜索标题 / 主机 / 状态…"
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              {query && (
+                <button
+                  className="session-logs-clear"
+                  title="清空搜索"
+                  onClick={() => setQuery("")}
+                >
+                  <Icon name="x" size={12} />
+                </button>
               )}
             </div>
-          ) : (
-            visible.map((log) => {
-              // 默认记录的 title 由文件名派生，通常与主机名相同；只有自定义标题才单独占一行。
-              const itemTitle = sessionLogItemTitle(log);
-              return (
-                <button
-                  key={log.id}
-                  className={`session-logs-item${
-                    activeId === log.id ? " active" : ""
-                  }`}
-                  onClick={() => void openLog(log)}
-                >
-                  {itemTitle && (
-                    <div className="session-logs-item-title">
-                      <span className="session-logs-item-name">{itemTitle}</span>
-                    </div>
-                  )}
-                  <div className="session-logs-item-meta">
-                    <span>{log.host_name || "—"}</span>
-                    <span>{formatLogTime(log.started_at)}</span>
-                  </div>
-                  <div className="session-logs-item-meta">
-                    <span>{formatLogDuration(log.duration_ms)}</span>
-                    <span>{formatLogSize(log.size_bytes)}</span>
-                  </div>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </aside>
+            <div className="session-logs-filters">
+              <select
+                className="session-logs-select"
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+              >
+                <option value="">全部主机</option>
+                {hosts.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              className="session-logs-refresh"
+              title="刷新"
+              disabled={loading}
+              onClick={() => void load()}
+            >
+              <Icon name="refresh" size={14} />
+            </button>
+          </header>
 
-      <section className="session-logs-detail">
+          {err && <p className="session-logs-message error">{err}</p>}
+
+          <div className="session-logs-table-wrap">
+            {visible.length > 0 && (
+              <div className="session-logs-thead" role="row">
+                <button
+                  className="session-logs-th col-session"
+                  onClick={() => toggleSort("name")}
+                >
+                  会话 / 主机
+                  <SortMark active={sortKey === "name"} dir={sortDir} />
+                </button>
+                <button
+                  className="session-logs-th col-time"
+                  onClick={() => toggleSort("time")}
+                >
+                  时间
+                  <SortMark active={sortKey === "time"} dir={sortDir} />
+                </button>
+                <button
+                  className="session-logs-th col-duration"
+                  onClick={() => toggleSort("duration")}
+                >
+                  时长
+                  <SortMark active={sortKey === "duration"} dir={sortDir} />
+                </button>
+                <button
+                  className="session-logs-th col-size"
+                  onClick={() => toggleSort("size")}
+                >
+                  大小
+                  <SortMark active={sortKey === "size"} dir={sortDir} />
+                </button>
+                <div className="session-logs-th col-actions">操作</div>
+              </div>
+            )}
+
+            <div className="session-logs-table-body">
+              {visible.length === 0 ? (
+                <div className="session-logs-table-empty">
+                  <div className="session-logs-empty-icon">
+                    <Icon name="history" size={28} />
+                  </div>
+                  <h3>
+                    {loading
+                      ? "加载中…"
+                      : logs.length
+                        ? "没有匹配的会话日志"
+                        : "暂无会话日志"}
+                  </h3>
+                  {!loading && !logs.length && (
+                    <p>在设置中开启自动保存后，新的会话会记录为 asciicast</p>
+                  )}
+                  {!loading && logs.length > 0 && (
+                    <p>试试换个关键词，或把主机筛选切回「全部主机」</p>
+                  )}
+                </div>
+              ) : (
+                visible.map((log) => (
+                  <div
+                    key={log.id}
+                    className="session-logs-row"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => void openLog(log)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        void openLog(log);
+                      }
+                    }}
+                  >
+                    <div className="session-logs-cell col-session">
+                      <div className="session-logs-avatar">
+                        <Icon name="server" size={16} />
+                      </div>
+                      <div className="session-logs-cell-main">
+                        <strong title={log.host_name || log.title}>
+                          {log.host_name || log.title || "未命名会话"}
+                        </strong>
+                        <span>
+                          {sessionLogItemTitle(log) ??
+                            `asciicast · ${log.event_count} 事件`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="session-logs-cell col-time session-logs-time">
+                      <strong>{formatLogDate(log.started_at)}</strong>
+                      <span>{formatLogClock(log.started_at)}</span>
+                    </div>
+                    <div className="session-logs-cell col-duration">
+                      {log.ended_at == null
+                        ? "进行中"
+                        : formatLogDuration(log.duration_ms)}
+                    </div>
+                    <div className="session-logs-cell col-size">
+                      {formatLogSize(log.size_bytes)}
+                    </div>
+                    <div className="session-logs-cell col-actions">
+                      <button
+                        className="session-logs-row-action"
+                        title={`导出（默认 ${defaultExportFormat().toUpperCase()}）`}
+                        disabled={exporting}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void exportLog(log, defaultExportFormat());
+                        }}
+                      >
+                        <Icon name="download" size={15} />
+                      </button>
+                      <button
+                        className="session-logs-row-action danger"
+                        title="删除"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteTarget(log);
+                        }}
+                      >
+                        <Icon name="trash" size={15} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      <section
+        className="session-logs-detail"
+        style={{ display: activeId ? "flex" : "none" }}
+      >
         {detailLoading ? (
           <div className="session-logs-empty">加载中…</div>
         ) : detail && summary ? (
           <>
             <header className="session-logs-detail-head">
+              <button
+                className="session-logs-back"
+                title="返回列表"
+                onClick={() => {
+                  setActiveId(null);
+                  setDetail(null);
+                  setExportMenuOpen(false);
+                  setNotice("");
+                }}
+              >
+                <Icon
+                  name="arrow-right"
+                  size={14}
+                  style={{ transform: "rotate(180deg)" }}
+                />
+                返回
+              </button>
               <div className="session-logs-detail-title">
                 <h2>{detail.log.title || detail.log.path}</h2>
                 <p>{detail.log.host_name || "—"}</p>
@@ -406,7 +562,7 @@ export function SessionLogsView() {
         ) : (
           <div className="session-logs-empty">
             <Icon name="history" size={28} />
-            <p>选择左侧日志查看会话内容</p>
+            <p>选择会话查看内容</p>
             {err && <p className="session-logs-message error">{err}</p>}
           </div>
         )}

@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-06 — #190 日志页表格化（第七轮 P2 · P2 重启第 2/3）
+
+> 取证：Netcatty `components/ConnectionLogsManager.tsx` 是整页表格 —— 表头 32px、行 `px-4 py-3`（56px，含 36px 头像）、`hover:bg-secondary/60`、行底 1px 分隔、行操作 hover 出现；点击整行打开独立 LogView 页（`components/LogView.tsx`），不是左列表 + 右详情。
+
+- `src/sessionLogs/SessionLogsView.tsx`：
+  - 移除 300px 左栏列表 + 右侧常驻详情；改为整页表格，列「会话/主机 | 时间 | 时长 | 大小 | 操作」，行高 56px、hover 高亮、行底分隔线、36px 圆角图标（对齐 Netcatty 的 row 形态）。
+  - 表头四个排序列可点击升降序（会话名 / 时间 / 时长 / 大小，默认时间倒序），带 ↕ / ↑ / ↓ 指示。
+  - 行操作：导出（常驻，默认格式）与删除（hover 出现，对齐 Netcatty 的 group-hover 删除）；点击行进入整页详情（保留彩色 / 原文、字号、三格式导出、删除、统计）。
+  - 页头保留搜索、主机筛选、刷新与条数；空态改为居中 64px 图标 + 标题 + 说明（对齐 Netcatty logs 空态）。
+- `src/sessionLogs/sessionLogsModel.ts`：新增 `sortSessionLogsBy(logs, key, direction)`，`sortSessionLogs` 复用默认「时间倒序」；新增单测覆盖四列升降序与入参不变。
+- `src/sessionLogs/sessionLogs.css`：删除左栏 / 列表项样式，新增页头、表格网格（`minmax(0,1.6fr) 140px 84px 84px 88px`）、行 hover、排序箭头、行操作、居中空态、详情返回按钮。
+- 与既有结论的取舍：#183 的「删格式筛选、日志项两行」针对左侧窄栏列表；Netcatty 实机 + 源码确认日志页本体是整页表格，行内「用户 / 主机」本来就是两行（名称 + 副标题），因此恢复两行单元格并升级为表格是向 Netcatty 靠拢；格式筛选仍保持删除（副标题只显示 `asciicast · N 事件`，不再做筛选器）。
+- 证据：`evidence/audit7-termx-logs-table-after.png`（128 行、列宽 `483.2px 140px 84px 84px 88px`、行高 56px、无旧左栏）、`audit7-termx-logs-viewer-after.png`（整页详情 + 返回 + 导出 + 统计）、`audit7-termx-logs-table-after.json`（按时长排序后序列 25m 38s → 12m 07s → 9m 33s…）。
+- 门禁：`npm run test:run` 65 文件 / 731 用例 ✓；`npm run build` ✓；`npm run tauri -- build --debug` ✓。
+
 ## 2026-11-06 — #189 监控页面板化（第七轮 P2 · P2 重启第 1/3）
 
 > 取证：Netcatty `components/vault/MonitorPanels.tsx` 是面板式页头 + 居中空态（图标 + 标题 + 说明 + 主按钮）；运行时每台主机一张指标卡（CPU/内存 + 趋势、磁盘、网络）。termX 原本是「主机勾选控制台 + 开始监控」两段式。

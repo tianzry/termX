@@ -126,11 +126,34 @@ export function collectLogHosts(logs: SessionLog[]): string[] {
   return Array.from(hosts).sort((a, b) => a.localeCompare(b));
 }
 
+/** 表格可排序列：时间 / 时长 / 大小 / 会话名。 */
+export type SessionLogSortKey = "time" | "duration" | "size" | "name";
+export type SessionLogSortDirection = "asc" | "desc";
+
+function logLabel(log: SessionLog): string {
+  return log.host_name.trim() || log.title.trim();
+}
+
+/** 按指定列排序；同值用 id 升序兜底，不修改入参。 */
+export function sortSessionLogsBy(
+  logs: SessionLog[],
+  key: SessionLogSortKey,
+  direction: SessionLogSortDirection,
+): SessionLog[] {
+  const dir = direction === "asc" ? 1 : -1;
+  return [...logs].sort((a, b) => {
+    let cmp = 0;
+    if (key === "duration") cmp = a.duration_ms - b.duration_ms;
+    else if (key === "size") cmp = a.size_bytes - b.size_bytes;
+    else if (key === "name") cmp = logLabel(a).localeCompare(logLabel(b));
+    else cmp = a.started_at - b.started_at;
+    return cmp ? cmp * dir : a.id.localeCompare(b.id);
+  });
+}
+
 /** started_at 倒序，id 升序兜底；不修改入参。 */
 export function sortSessionLogs(logs: SessionLog[]): SessionLog[] {
-  return [...logs].sort(
-    (a, b) => b.started_at - a.started_at || a.id.localeCompare(b.id),
-  );
+  return sortSessionLogsBy(logs, "time", "desc");
 }
 
 function pad(value: number): string {

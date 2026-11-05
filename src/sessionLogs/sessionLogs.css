@@ -5,25 +5,37 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
+  flex-direction: column;
   border-top: 1px solid hsl(var(--nc-border) / 0.45);
 }
 
-.session-logs-tree {
-  display: flex;
-  flex-direction: column;
-  width: 300px;
-  min-width: 240px;
-  min-height: 0;
-  border-right: 1px solid hsl(var(--nc-border) / 0.55);
-}
-
-.session-logs-tree-head {
+/* 页头：标题 + 计数 + 搜索 + 主机筛选 + 刷新（对齐 Netcatty 整页表格上方工具条）。 */
+.session-logs-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px 6px;
-  font-size: 13px;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.45);
+}
+
+.session-logs-head-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.session-logs-head-title h2 {
+  margin: 0;
+  font-size: 15px;
   font-weight: 600;
+}
+
+.session-logs-head-title p {
+  margin: 0;
+  font-size: 11px;
+  color: hsl(var(--nc-muted));
+  white-space: nowrap;
 }
 
 .session-logs-refresh {
@@ -52,7 +64,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 10px 8px;
+  flex: 0 1 260px;
+  min-width: 150px;
   padding: 4px 8px;
   border: 1px solid hsl(var(--nc-border));
   border-radius: 6px;
@@ -81,7 +94,7 @@
 .session-logs-filters {
   display: flex;
   gap: 6px;
-  margin: 0 10px 8px;
+  flex: 0 0 160px;
 }
 
 .session-logs-select {
@@ -97,7 +110,7 @@
 }
 
 .session-logs-message {
-  margin: 0 10px 8px;
+  margin: 6px 16px;
   font-size: 12px;
   color: hsl(var(--nc-muted));
 }
@@ -106,78 +119,227 @@
   color: #e5534b;
 }
 
-.session-logs-list {
+/* 整页表格（对齐 Netcatty ConnectionLogsManager：整页列表 + 表头 + 分隔行）。 */
+.session-logs-table-wrap {
+  display: flex;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 0 8px 10px;
+  flex-direction: column;
 }
 
-.session-logs-list-empty {
-  margin: 18px 6px;
+.session-logs-thead,
+.session-logs-row {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.6fr) 140px 84px 84px 88px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+}
+
+.session-logs-thead {
+  height: 32px;
+  flex: none;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.35);
+  background: hsl(var(--nc-hover) / 0.3);
   color: hsl(var(--nc-muted));
   font-size: 12px;
-  line-height: 1.6;
+  font-weight: 500;
 }
 
-.session-logs-list-empty p {
-  margin: 0 0 6px;
-}
-
-.session-logs-item {
+.session-logs-th {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 6px 10px;
-  margin-bottom: 2px;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
   background: transparent;
   color: inherit;
-  line-height: 1.5;
+  font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.session-logs-item:hover {
+.session-logs-th:hover {
+  color: inherit;
+}
+
+.session-logs-sort-mark {
+  opacity: 0.35;
+  font-size: 10px;
+}
+
+.session-logs-sort-mark.active {
+  opacity: 0.85;
+}
+
+.session-logs-table-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.session-logs-row {
+  min-height: 56px;
+  border-bottom: 1px solid hsl(var(--nc-border) / 0.3);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.session-logs-row:last-child {
+  border-bottom: 0;
+}
+
+.session-logs-row:hover {
   background: hsl(var(--nc-hover) / 0.6);
 }
 
-.session-logs-item.active {
-  border-color: hsl(var(--nc-border));
-  background: hsl(var(--nc-hover) / 0.8);
+.session-logs-row:focus-visible {
+  outline: 2px solid hsl(var(--nc-primary) / 0.55);
+  outline-offset: -2px;
 }
 
-.session-logs-item-title {
+.session-logs-cell {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  min-width: 0;
   font-size: 12px;
-  font-weight: 600;
 }
 
-.session-logs-item-name {
+.session-logs-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 12px;
+  background: hsl(var(--nc-primary));
+  color: #fff;
+}
+
+.session-logs-cell-main {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  line-height: 1.35;
+}
+
+.session-logs-cell-main strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
 }
 
-.session-logs-item-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+.session-logs-cell-main span,
+.session-logs-time span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: hsl(var(--nc-muted));
   font-size: 11px;
+}
+
+.session-logs-time {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  line-height: 1.35;
+}
+
+.session-logs-time strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.session-logs-cell.col-duration,
+.session-logs-cell.col-size {
+  color: hsl(var(--nc-muted));
+  font-variant-numeric: tabular-nums;
+}
+
+.session-logs-cell.col-actions {
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.session-logs-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--nc-muted));
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+/* 导出常驻（对齐 Netcatty 收藏按钮）；删除仅 hover 出现（对齐 group-hover）。 */
+.session-logs-row-action.danger {
+  opacity: 0;
+}
+
+.session-logs-row:hover .session-logs-row-action,
+.session-logs-row-action:focus-visible {
+  opacity: 1;
+}
+
+.session-logs-row-action:hover:not(:disabled) {
+  background: hsl(var(--nc-hover));
+  color: inherit;
+}
+
+.session-logs-row-action.danger:hover:not(:disabled) {
+  color: #e5534b;
+}
+
+.session-logs-row-action:disabled {
+  cursor: default;
+}
+
+.session-logs-table-empty {
+  display: flex;
+  min-height: 320px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 16px;
+  text-align: center;
   color: hsl(var(--nc-muted));
 }
 
-.session-logs-item-meta span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.session-logs-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: hsl(var(--nc-hover) / 0.8);
+  color: hsl(var(--nc-muted));
+}
+
+.session-logs-table-empty h3 {
+  margin: 0;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.session-logs-table-empty p {
+  margin: 0;
+  max-width: 420px;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .session-logs-detail {
@@ -200,6 +362,26 @@
 .session-logs-detail-title {
   flex: 1;
   min-width: 0;
+}
+
+.session-logs-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 26px;
+  padding: 0 8px 0 6px;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--nc-muted));
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.session-logs-back:hover {
+  background: hsl(var(--nc-hover));
+  color: inherit;
 }
 
 .session-logs-detail-title h2 {
