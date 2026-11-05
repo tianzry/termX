@@ -962,6 +962,7 @@ mod tests {
             serial_byte_backspace: None,
             serial_charset: None,
             distro: None,
+            host_key_policy: None,
         }
     }
 

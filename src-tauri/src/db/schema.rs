@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 46;
+const SCHEMA_VERSION: u32 = 47;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -960,6 +960,15 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         }
     }
 
+    if version < 47 && table_exists(conn, "profiles")? {
+        // 主机级 known-host 校验策略（`verify` / `skip`）。
+        // 可空：NULL = 跟随全局 verifyHostKeys；老库升级只加列、不写默认值，
+        // 保证既有主机的连接行为完全不变。
+        if !column_exists(conn, "profiles", "host_key_policy")? {
+            conn.execute_batch("ALTER TABLE profiles ADD COLUMN host_key_policy TEXT;")?;
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1214,6 +1223,36 @@ mod tests {
             .query_row("SELECT distro FROM profiles WHERE id = 'h'", [], |row| {
                 row.get(0)
             })
+            .unwrap();
+        assert_eq!(value, None);
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_47_adds_profile_host_key_policy_column() {
+        // v46 老库：host_key_policy 必须新增且可空，旧行保持 NULL
+        // （= 跟随全局 verifyHostKeys，行为不变）；重复执行幂等。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, distro TEXT);
+             INSERT INTO profiles VALUES ('h', 'legacy', NULL);
+             PRAGMA user_version = 46;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        assert!(column_exists(&conn, "profiles", "host_key_policy").unwrap());
+        let value: Option<String> = conn
+            .query_row(
+                "SELECT host_key_policy FROM profiles WHERE id = 'h'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(value, None);
         let version: u32 = conn

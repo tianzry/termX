@@ -49,6 +49,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         serial_byte_backspace: row.get(39)?,
         serial_charset: row.get(40)?,
         distro: row.get(41)?,
+        host_key_policy: row.get(42)?,
     })
 }
 
@@ -97,7 +98,7 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy";
 
 
 
@@ -172,8 +173,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, \
          protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, \
          proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, \
-         ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42) \
+         ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -193,7 +194,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          serial_local_echo=excluded.serial_local_echo, serial_line_mode=excluded.serial_line_mode, \
          serial_backspace=excluded.serial_backspace, serial_byte_backspace=excluded.serial_byte_backspace, \
          serial_charset=excluded.serial_charset, \
-         distro=COALESCE(excluded.distro, distro)",
+         distro=COALESCE(excluded.distro, distro), \
+         host_key_policy=excluded.host_key_policy",
         params![
             p.id,
             p.name,
@@ -236,7 +238,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.serial_backspace,
             p.serial_byte_backspace,
             p.serial_charset,
-            p.distro
+            p.distro,
+            p.host_key_policy
         ],
     )?;
     Ok(())
@@ -260,7 +263,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
          proxy_profile_id=?28, ssh_input_compatibility=?29, serial_port=?30, serial_baud=?31, serial_data_bits=?32, \
          serial_parity=?33, serial_stop_bits=?34, serial_flow=?35, serial_local_echo=?36, serial_line_mode=?37, \
          serial_backspace=?38, serial_byte_backspace=?39, serial_charset=?40, \
-         distro=COALESCE(?41, distro) WHERE id=?42",
+         distro=COALESCE(?41, distro), host_key_policy=?42 WHERE id=?43",
         params![
             p.name,
             p.host,
@@ -303,6 +306,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.serial_byte_backspace,
             p.serial_charset,
             p.distro,
+            p.host_key_policy,
             p.id
         ],
     )?;
@@ -398,6 +402,7 @@ mod tests {
             serial_byte_backspace: None,
             serial_charset: None,
             distro: None,
+            host_key_policy: None,
         }
     }
 
@@ -471,6 +476,33 @@ mod tests {
         p.distro = None;
         update(&db, &p).unwrap();
         assert_eq!(get(&db, "p1").unwrap().distro.as_deref(), Some("ubuntu"));
+    }
+
+    #[test]
+    fn host_key_policy_roundtrip_and_clear() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = mk("p1", "alpha");
+        assert_eq!(p.host_key_policy, None);
+        insert(&db, &p).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().host_key_policy, None);
+
+        p.host_key_policy = Some("verify".into());
+        update(&db, &p).unwrap();
+        assert_eq!(
+            get(&db, "p1").unwrap().host_key_policy.as_deref(),
+            Some("verify")
+        );
+
+        // 切回「跟随全局」= null 必须能清空，而不是被 COALESCE 保留。
+        p.host_key_policy = Some("skip".into());
+        update(&db, &p).unwrap();
+        assert_eq!(
+            get(&db, "p1").unwrap().host_key_policy.as_deref(),
+            Some("skip")
+        );
+        p.host_key_policy = None;
+        update(&db, &p).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().host_key_policy, None);
     }
 
     #[test]

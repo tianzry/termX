@@ -90,8 +90,22 @@ pub async fn sftp_connect(
         }
         None => None,
     };
+    // 独立 SFTP 也要按主机的 known-host 策略；无档案 id 时跟随全局。
+    let host_key_policy = match profile_id.as_deref() {
+        Some(pid) => crate::db::profile::get(&state.db, pid)?.host_key_policy,
+        None => None,
+    };
     let handle = crate::ssh::client::run_blocking_ssh(move || async move {
-        SftpHandle::connect(host, port, cred, known_hosts_path, timeout_secs, proxy).await
+        SftpHandle::connect(
+            host,
+            port,
+            cred,
+            known_hosts_path,
+            timeout_secs,
+            proxy,
+            host_key_policy,
+        )
+        .await
     })
     .await?;
     reservation.activate(crate::commands::lifecycle::ReadySession::Sftp(Arc::new(
@@ -885,8 +899,15 @@ mod live_tests {
         let cred = Credential { secret, ..cred_row };
 
         let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
-        let handle =
-            SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15, None)
+        let handle = SftpHandle::connect(
+            profile.host,
+            profile.port,
+            cred,
+            known_hosts,
+            15,
+            None,
+            profile.host_key_policy.clone(),
+        )
                 .await
                 .expect("sftp connect");
 
@@ -1035,7 +1056,15 @@ mod live_tests {
 
         let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
         let handle = Arc::new(
-            SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15, None)
+            SftpHandle::connect(
+                profile.host,
+                profile.port,
+                cred,
+                known_hosts,
+                15,
+                None,
+                profile.host_key_policy.clone(),
+            )
                 .await
                 .expect("sftp connect"),
         );
@@ -1248,8 +1277,15 @@ mod live_tests {
             .expect("decrypt credential secret");
         let cred = Credential { secret, ..cred_row };
         let known_hosts = crate::ssh::known_hosts::path_for(&data_dir);
-        let handle =
-            SftpHandle::connect(profile.host, profile.port, cred, known_hosts, 15, None)
+        let handle = SftpHandle::connect(
+            profile.host,
+            profile.port,
+            cred,
+            known_hosts,
+            15,
+            None,
+            profile.host_key_policy.clone(),
+        )
                 .await
                 .expect("sftp connect");
 

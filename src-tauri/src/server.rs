@@ -2234,8 +2234,23 @@ async fn sftp_connect(
         }
         None => None,
     };
+    let host_key_policy = match profile_id.as_deref() {
+        Some(pid) => crate::db::profile::get(&state.db, pid)
+            .map_err(err_value)?
+            .host_key_policy,
+        None => None,
+    };
     let handle = crate::ssh::client::run_blocking_ssh(move || async move {
-        SftpHandle::connect(host, port, cred, known_hosts_path, timeout_secs, proxy).await
+        SftpHandle::connect(
+            host,
+            port,
+            cred,
+            known_hosts_path,
+            timeout_secs,
+            proxy,
+            host_key_policy,
+        )
+        .await
     })
     .await
     .map_err(err_value)?;

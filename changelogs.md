@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-06 — #202 主机级 known-host 校验策略（profile.host_key_policy）
+
+- 数据层：`profiles` 新增可空列 `host_key_policy TEXT`（schema v47，迁移幂等 `column_exists` 守卫）；NULL = 跟随全局 `verifyHostKeys`，老库升级只加列不写默认值，既有主机行为不变。
+- 后端模型 / CRUD 全链路补齐：`Profile.host_key_policy`、`db::profile` SELECT/INSERT/UPSERT/UPDATE 参数；更新语义为直接写值（清回「跟随全局」时必须能把列置 NULL，未用 `COALESCE`）。
+- 连接覆盖：`DialCtx` / `SshHandler` 携带主机策略，`check_server_key` 优先取主机值（`verify` / `skip`），未设置才回落全局；堡垒逐跳、独立 SFTP（含 CLI / server 各入口）均传入所属档案策略。
+- 主机弹窗「端口与凭据」分区新增「主机密钥校验」一行：右侧当前值 +「设置…」，展开三项（跟随全局 / 始终校验 / 跳过校验），默认「跟随全局」并附注全局当前状态；纯前端模型 `src/domain/hostKeyPolicy.ts` 负责 Profile 值与枚举互转。
+- 测试：迁移 v47（老行 NULL + 重复执行）、DB roundtrip / 清空、策略解析单测、前端 model 4 例；`cargo test --lib` 939、`npm run test:run` 735 通过。
+- **未实测**：真实「已知主机密钥变化 → 主机策略 skip 仍连接 / verify 拒绝」的端到端会话（需要可变的 SSH 服务端 host key），当前只覆盖解析与取舍路径。
+
 ## 2026-11-06 — #201 放开证书认证保存链路（ComposerDraft → CredentialType::Certificate）
 
 - `persistComposerDraft` 删除 `auth_method === "certificate"` 的硬拒；`effectiveCredType()` 映射证书 → `CredentialType::Certificate`，`authMethodOfCredential()` 反向映射（编辑既有证书主机可回显）。

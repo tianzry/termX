@@ -53,6 +53,13 @@ import {
   proxyProfileFields,
   type ProxyDraft,
 } from "./domain/proxyForm";
+import {
+  HOST_KEY_POLICIES,
+  hostKeyPolicyFromProfile,
+  hostKeyPolicyLabel,
+  hostKeyPolicyToProfile,
+  type HostKeyPolicy,
+} from "./domain/hostKeyPolicy";
 import { KeychainView } from "./keychain/KeychainView";
 import { SnippetsView } from "./snippets/SnippetsView";
 import type { PaneHandle } from "./TerminalPane";
@@ -249,6 +256,8 @@ type ComposerDraft = {
   agent_forwarding: boolean;
   /** 输入兼容模式：null = 老数据（SSH 视为开启）；新主机默认 false。 */
   ssh_input_compatibility: boolean | null;
+  /** 主机级 known-host 校验策略；default = 跟随全局 verifyHostKeys。 */
+  host_key_policy: HostKeyPolicy;
   // ── Netcatty 1:1 对齐新增（schema v33）──
   sftp_protocol: "auto" | "sftp" | "scp";
   sftp_sudo: boolean;
@@ -732,6 +741,8 @@ export function VaultView({
   }
   /** 当前 composer 主机是否已配置 TOTP（secret 在 SecretStore，不落库）。 */
   const [totpConfigured, setTotpConfigured] = useState(false);
+  /** 主机级 known-host 策略设置面板（「设置…」展开）。 */
+  const [hostKeyPolicyOpen, setHostKeyPolicyOpen] = useState(false);
   const [totpDialog, setTotpDialog] = useState<{
     secret: string;
     autoSubmit: boolean;
@@ -1642,6 +1653,7 @@ export function VaultView({
       init_command: "",
       agent_forwarding: false,
       ssh_input_compatibility: false,
+      host_key_policy: "default",
       sftp_protocol: "auto",
       sftp_sudo: false,
       sftp_encoding: "auto",
@@ -1695,6 +1707,7 @@ export function VaultView({
       init_command: p.init_command ?? "",
       agent_forwarding: p.agent_forwarding ?? false,
       ssh_input_compatibility: p.ssh_input_compatibility ?? null,
+      host_key_policy: hostKeyPolicyFromProfile(p.host_key_policy),
       sftp_protocol:
         p.sftp_protocol === "sftp" || p.sftp_protocol === "scp"
           ? p.sftp_protocol
@@ -1922,6 +1935,7 @@ export function VaultView({
         totp_regex: d.totp_regex.trim() || null,
         agent_forwarding: d.agent_forwarding,
         ssh_input_compatibility: d.ssh_input_compatibility,
+        host_key_policy: hostKeyPolicyToProfile(d.host_key_policy),
         ...proxyProfileFields(d.proxy_profile_id ? EMPTY_PROXY_DRAFT : d.proxy),
         proxy_profile_id: d.proxy_profile_id || null,
       };
@@ -4860,9 +4874,55 @@ export function VaultView({
                     </button>
                   )}
                 </div>
-              </section>
 
-              {/* SFTP 设置（对齐 Netcatty HostDetailsSection sftp：文件协议 / sudo / 编码）。 */}
+                {/* 主机级 known-host 校验：默认继承全局，连接前按主机值覆盖。 */}
+                <div className="host-setting-row">
+                  <span className="host-setting-label">
+                    主机密钥校验
+                    <HostHint text="覆盖设置中心「校验 SSH 主机密钥」；默认跟随全局，老主机保持原行为。" />
+                  </span>
+                  <span className="host-totp-actions">
+                    <span className="host-setting-value">
+                      {hostKeyPolicyLabel(
+                        composer.host_key_policy,
+                        settings.verifyHostKeys,
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="host-link-btn"
+                      onClick={() => setHostKeyPolicyOpen((v) => !v)}
+                    >
+                      设置…
+                    </button>
+                  </span>
+                </div>
+                {hostKeyPolicyOpen && (
+                  <div className="host-key-policy-panel">
+                    {HOST_KEY_POLICIES.map((p) => (
+                      <button
+                        key={p.value}
+                        type="button"
+                        className={`host-key-policy-option${
+                          composer.host_key_policy === p.value ? " is-active" : ""
+                        }`}
+                        onClick={() => {
+                          setComposer({
+                            ...composer,
+                            host_key_policy: p.value,
+                          });
+                          setHostKeyPolicyOpen(false);
+                        }}
+                      >
+                        <span>{p.label}</span>
+                        <span className="host-key-policy-desc">
+                          {hostKeyPolicyLabel(p.value, settings.verifyHostKeys)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
               <section className="host-details-section">
                 <div className="host-details-section-head">
                   <Icon name="folder" size={13} />

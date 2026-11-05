@@ -89,6 +89,11 @@ export interface Profile {
    * null / 缺省 = 老数据，SSH 主机视为开启；新主机表单默认 false。
    */
   ssh_input_compatibility?: boolean | null;
+  /**
+   * 主机级 known-host 校验策略（schema v47）：`verify` / `skip`；
+   * null / 缺省 = 跟随全局 `verifyHostKeys`（老数据行为不变）。
+   */
+  host_key_policy?: "verify" | "skip" | null;
   // ── 串口主机（protocol === "serial"，schema v44）──
   // host 存串口路径、port 固定 0；以下字段是连接弹窗的参数快照。
   serial_port?: string | null;

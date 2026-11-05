@@ -77,6 +77,7 @@ pub fn cmd_ls(conn: &CliCtx, profile: &str, remote_path: Option<&str>) -> AppRes
             t.known_hosts,
             CONNECT_TIMEOUT_SECS,
             t.proxy,
+            t.profile.host_key_policy.clone(),
         )
         .await?;
         h.list_dir(&path).await
@@ -111,6 +112,7 @@ pub fn cmd_get(conn: &CliCtx, profile: &str, remote: &str, local: &str) -> AppRe
             t.known_hosts,
             CONNECT_TIMEOUT_SECS,
             t.proxy,
+            t.profile.host_key_policy.clone(),
         )
         .await?;
         h.download_to_path(&remote, &local_path, u64::MAX).await
@@ -133,6 +135,7 @@ pub fn cmd_put(conn: &CliCtx, profile: &str, local: &str, remote: &str) -> AppRe
             t.known_hosts,
             CONNECT_TIMEOUT_SECS,
             t.proxy,
+            t.profile.host_key_policy.clone(),
         )
         .await?;
         h.upload(&remote, &data).await
@@ -150,6 +153,7 @@ async fn open(t: Target) -> AppResult<SftpHandle> {
         t.known_hosts,
         CONNECT_TIMEOUT_SECS,
         t.proxy,
+        t.profile.host_key_policy.clone(),
     )
     .await
 }

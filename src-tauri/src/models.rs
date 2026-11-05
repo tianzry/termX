@@ -150,6 +150,11 @@ pub struct Profile {
     /// `cisco` …）。NULL = 尚未探测或无法识别，前端回落 Server 图标。
     #[serde(default)]
     pub distro: Option<String>,
+    // ── 主机级 known-host 校验策略（schema v47）──
+    /// `verify` = 始终校验 / `skip` = 跳过校验；None = 跟随全局
+    /// `verifyHostKeys`（老数据保持原行为）。
+    #[serde(default)]
+    pub host_key_policy: Option<String>,
 }
 
 /// 代理库条目（对齐 Netcatty `ProxyProfile` 的 label + config 扁平化）：

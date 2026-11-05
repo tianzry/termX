@@ -29,6 +29,16 @@ fn verify_host_keys_enabled() -> bool {
     VERIFY_HOST_KEYS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// 主机级 `host_key_policy` → 是否校验主机密钥。
+/// `None` = 跟随全局；`verify` / `skip` 为单机覆盖（大小写不敏感）。
+pub fn host_key_policy_verifies(policy: Option<&str>) -> Option<bool> {
+    match policy.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("verify") | Some("enforce") | Some("on") => Some(true),
+        Some("skip") | Some("off") | Some("none") => Some(false),
+        _ => None,
+    }
+}
+
 /// 终端 TERM 类型（设置中心 → 终端 → 字体区「终端标识」）。
 static TERM_TYPE: OnceLock<StdMutex<String>> = OnceLock::new();
 
@@ -250,6 +260,8 @@ pub struct SshHandler {
     /// 本连接是否允许服务端打开 agent 转发通道（取自档案 agent_forwarding）。
     /// 安全边界：false 时一律 reject，服务端即便请求也拿不到本机 agent。
     agent_forwarding: bool,
+    /// 主机级 known-host 校验策略（档案 host_key_policy）；None = 跟随全局。
+    host_key_policy: Option<String>,
 }
 
 impl client::Handler for SshHandler {
@@ -340,8 +352,11 @@ impl client::Handler for SshHandler {
         use russh::keys::known_hosts;
         use russh::keys::HashAlg;
 
-        // 设置关闭校验时跳过 known_hosts 查询（Netcatty verifyHostKeys = false）。
-        let skip_verify = !verify_host_keys_enabled();
+        // 主机级策略优先；未设置时回落到全局设置（Netcatty verifyHostKeys）。
+        let skip_verify = match host_key_policy_verifies(self.host_key_policy.as_deref()) {
+            Some(verify) => !verify,
+            None => !verify_host_keys_enabled(),
+        };
 
         // 同步部分先做完：known_hosts 查询 + 指纹计算。
         // pubkey 跨 await 边界要 Clone（learn 需要它）。
@@ -606,6 +621,8 @@ pub struct DialCtx {
     pub progress: Option<ProgressEmitter>,
     /// 该端点是否接受 agent 转发通道（按档案逐跳设置；堡垒跳默认各自档案决定）。
     pub agent_forwarding: bool,
+    /// 主机级 known-host 校验策略（`verify` / `skip`）；None = 跟随全局。
+    pub host_key_policy: Option<String>,
     /// 主机级连接代理（已解析密码）。None = 直连；目标在 no_proxy 内也会直连。
     pub proxy: Option<crate::ssh::proxy::ProxyConfig>,
     /// 服务端 SSH identification string 截获槽。仅对「目标」跳设置，
@@ -620,6 +637,7 @@ fn new_handler(
     log: LogFn,
     prompt_ctx: Option<AuthCtx>,
     agent_forwarding: bool,
+    host_key_policy: Option<String>,
 ) -> (SshHandler, Arc<StdMutex<bool>>, ForwardedChannelRouter) {
     let mismatch = Arc::new(StdMutex::new(false));
     let fwd_channels: ForwardedChannelRouter = Arc::new(StdMutex::new(Default::default()));
@@ -632,6 +650,7 @@ fn new_handler(
         log,
         prompt_ctx,
         agent_forwarding,
+        host_key_policy,
     };
     (handler, mismatch, fwd_channels)
 }
@@ -713,13 +732,21 @@ async fn establish_connection(
         agent_forwarding,
         proxy,
         banner,
+        host_key_policy,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
         p.emit("connecting", None);
     }
-    let (handler, mismatch, fwd) =
-        new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
+    let (handler, mismatch, fwd) = new_handler(
+        &host,
+        port,
+        known_hosts_path,
+        log,
+        prompt_ctx,
+        agent_forwarding,
+        host_key_policy,
+    );
 
     let result = match proxy.filter(|p| !p.should_bypass(&host, port)) {
         Some(proxy) => {
@@ -832,12 +859,21 @@ where
         agent_forwarding,
         proxy: _,
         banner,
+        host_key_policy,
     } = ctx;
     let connect_timeout = Duration::from_secs(timeout_secs);
     if let Some(p) = &progress {
         p.emit("connecting", None);
     }
-    let (handler, mismatch, fwd) = new_handler(&host, port, known_hosts_path, log, prompt_ctx, agent_forwarding);
+    let (handler, mismatch, fwd) = new_handler(
+        &host,
+        port,
+        known_hosts_path,
+        log,
+        prompt_ctx,
+        agent_forwarding,
+        host_key_policy,
+    );
     let stream = crate::ssh::distro::BannerCaptureStream::new(stream, banner);
     let handle = match timeout(
         connect_timeout,
@@ -1060,6 +1096,7 @@ fn dial_ctx_for_profile(
         prompt_ctx: ctx.cloned(),
         progress,
         agent_forwarding: profile.agent_forwarding,
+        host_key_policy: profile.host_key_policy.clone(),
         proxy,
         banner: None,
     }
@@ -1179,6 +1216,7 @@ mod tests {
                 serial_byte_backspace: None,
                 serial_charset: None,
                 distro: None,
+                host_key_policy: None,
             },
             credential: Credential {
                 id: "credential".into(),
@@ -1269,6 +1307,17 @@ mod tests {
         );
     }
 
+    /// 主机级策略解析：未知 / 空 → None（跟随全局）；verify / skip 生效。
+    #[test]
+    fn host_key_policy_maps_to_verify_override() {
+        assert_eq!(host_key_policy_verifies(None), None);
+        assert_eq!(host_key_policy_verifies(Some("")), None);
+        assert_eq!(host_key_policy_verifies(Some("default")), None);
+        assert_eq!(host_key_policy_verifies(Some("verify")), Some(true));
+        assert_eq!(host_key_policy_verifies(Some(" SKIP ")), Some(false));
+        assert_eq!(host_key_policy_verifies(Some("off")), Some(false));
+    }
+
     /// 无 GUI 验证"SSH 连接"链路（russh connect → 私钥认证 → shell 写/读回显）。
     /// 依赖一个由外部脚本预先拉起的本地 sshd（环境变量注入地址 + 密钥）。
     /// 没有 sshd 时静默跳过，保证普通 `cargo test` 也能全绿。
@@ -1342,6 +1391,7 @@ mod tests {
                 serial_byte_backspace: None,
                 serial_charset: None,
                 distro: None,
+                host_key_policy: None,
             },
             credential: Credential {
                 id: "smoke-credential".into(),
@@ -1494,6 +1544,7 @@ mod tests {
                 serial_byte_backspace: None,
                 serial_charset: None,
                 distro: None,
+                host_key_policy: None,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1609,6 +1660,7 @@ mod tests {
                 serial_byte_backspace: None,
                 serial_charset: None,
                 distro: None,
+                host_key_policy: None,
             },
             credential,
             bastion_chain: Vec::new(),

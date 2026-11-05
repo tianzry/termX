@@ -166,6 +166,7 @@ impl SftpHandle {
         known_hosts_path: PathBuf,
         timeout_secs: u64,
         proxy: Option<crate::ssh::proxy::ProxyConfig>,
+        host_key_policy: Option<String>,
     ) -> AppResult<Self> {
         let dial = client::DialCtx {
             config: crate::ssh::client::default_client_config(),
@@ -178,6 +179,8 @@ impl SftpHandle {
             agent_forwarding: false,
             // 独立连接沿用主机档案的代理配置（终端 / SFTP 一致）。
             proxy,
+            // 主机级 known-host 策略随档案；SFTP 无终端上下文，未知主机默认拒绝。
+            host_key_policy,
             // SFTP 独立连接不做发行版探测，无需 banner 截获。
             banner: None,
         };
