@@ -85,11 +85,11 @@ const TAB_GLYPH_BOX: CSSProperties = {
   color: "hsl(var(--accent))",
 };
 
-/** 串口标签：琥珀底色（与 DistroAvatar 串口头像一致）。 */
+/** 串口标签：amber-500 15% 底 + amber-500 前景（Netcatty SessionTabIcon 串口样式）。 */
 const TAB_GLYPH_SERIAL: CSSProperties = {
   ...TAB_GLYPH_BOX,
-  backgroundColor: "#D97706",
-  color: "#fff",
+  backgroundColor: "rgba(245, 158, 11, 0.15)",
+  color: "#f59e0b",
 };
 
 /** 会话标签图标：SSH → 对应档案的 distro 头像（16px）/ serial → USB / 本地 → shell 图标或终端。 */
@@ -103,8 +103,9 @@ function TabGlyph({ tab, profiles }: { tab: Tab; profiles: Profile[] }) {
     );
   }
   if (connector.kind === "telnet") {
+    // Netcatty 只为串口保留 amber 标识，Telnet 走 accent 15% 图标底。
     return (
-      <div style={TAB_GLYPH_SERIAL}>
+      <div style={TAB_GLYPH_BOX}>
         <Terminal size={10} />
       </div>
     );

@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-11-06 — #244 会话标签聚焦/非聚焦样式 + 关闭按钮对齐 Netcatty
+
+- **问题**：termX 的会话标签关闭按钮默认 `opacity:0`，只有 hover 或标签聚焦时才出现；Netcatty 是常显。且按钮默认内边距把 12px 的 X 横向压成 8×12，视觉上偏小；标签圆角 6px、串口/Telnet 图标底色也与 Netcatty 不一致。
+- **Netcatty 取证**（`components/top-tabs/TopTabItems.tsx` + `topTabActiveStyle.ts` + 运行实例 9336 computed style）：
+  - 标签：高 28（`h-7`）、内边距 `0 8 0 12`（`pl-3 pr-2`）、间距 8、字号 12/600、行高 20；未选中 `background: transparent` + `color: hsl(--muted-foreground)`（实测 rgb(103,111,126)）；选中 `background: hsl(--background)`（rgb(241,244,248)）+ `color: hsl(--foreground)`（rgb(16,25,45)），无边框/阴影（仅有 1px transparent outline）；非选中 hover 为 `background 40%`（实测 rgba(241,244,248,0.4)）+ 前景色。
+  - 圆角：`rounded-t-md` = `calc(var(--radius) - 2px)`；Netcatty `--radius: 0.65rem` → 实测 8.4px。
+  - 关闭按钮：`p-1 rounded-full` + `X size 12` → 外框 20×20、内边距 4、`border-radius:9999px`；**默认 `opacity:1` 常显**；无独立颜色类，继承标签文字色（非聚焦 muted / 聚焦前景）；hover `bg-destructive/10 + text-destructive`，`transition-colors 150ms`。
+  - 状态点：8×8，connected `#34d399` / connecting `#fbbf24` / 其余 `#f43f5e`，外圈 `background/60% 0 0 0 2px`。
+  - 图标：串口 `Usb` 用 `bg-amber-500/15 + text-amber-500`（不是实心琥珀底）；Telnet 无琥珀特例，走 accent 15% 兜底图标底。
+- **改动**：
+  1. `styles.css` `.nc-session-tab` 圆角改为 `calc(var(--radius) - 2px)`（8.4px）。
+  2. `.nc-tab-close` 删除 `opacity:0` 与 `:hover/:active` 显隐规则 → 常显；补 `padding:0`、`color:inherit`、`transition: background-color/color 150ms`；新增 `.nc-tab-close svg { flex-shrink:0 }`，修复 8×12 压扁。hover 保持 `destructive/10` + destructive 前景。
+  3. `TopTabs.tsx` `TAB_GLYPH_SERIAL` 改为 `rgba(245,158,11,0.15)` + `#f59e0b`；Telnet 改用 accent 15% 图标底（不再借用串口琥珀）。无 props/state/i18n 删除项（关闭按钮标题仍是硬编码「关闭标签」）。
+- **验证**（CDP 9222，129 实机 SSH 标签 + 本地 Git Bash + Telnet + 串口四标签）：
+  - 非 hover 态四个标签关闭按钮全部 `opacity:1 / display:flex / 20×20`，X `12×12`；聚焦 129 与聚焦本地两种切换下，非聚焦标签保持 transparent + muted、聚焦标签 background/foreground。
+  - 非聚焦 hover：`rgba(241,244,248,0.4)` + 前景；关闭按钮 hover：`rgba(217,38,38,0.1)` + `rgb(217,38,38)`，与 Netcatty 一致。
+  - 四种协议：SSH 129（绿点）、本地（绿点）、串口（绿点、amber 15% USB）、Telnet（红点、accent 终端）；connecting 沿用 `.connecting` `#fbbf24`（与 Netcatty amber-400 一致）。
+  - 改前/改后 `evidence/fixJ-before-after.png`；聚焦对比 `fixJ-focus-compare.png`；与 Netcatty 同尺寸并排 `fixJ-side-by-side.png`（Netcatty 129 窗口 OS 截图 + termX，均已标注）。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例 ✓；`npm run build` ✓。
+- **踩坑**：① 默认 `<button>` 的 `padding: 1px 6px` 会把 20px 框里的 12px SVG 压成 8px 宽，固定尺寸容器必须同时 `padding:0` + `svg flex-shrink:0`；② termX CDP 截图 1500×1000 对应 CSS 视口 1024×664（dpr≈1.465），按 CSS 坐标裁图会切掉第 4 个标签，合成图须按物理像素换算；③ Netcatty 9336 实例无可见窗口，`Page.captureScreenshot` 会挂起，取样式用 CDP，取图像用 129 可见窗口（PID 20936）的 `CopyFromScreen`。
+
 ## 2026-11-06 — #243 终端工具栏「主机关键字高亮」浮层按 Netcatty 重做
 
 - **问题**：浮层把全局规则与主机规则混在同一列表，可原地编辑名称/正则/颜色、可单独启用停用，与 Netcatty 的逻辑不一致；尺寸与文案也有偏差。

@@ -2501,7 +2501,8 @@ button:disabled {
   gap: 8px;
   padding: 0 8px 0 12px;
   border: none;
-  border-radius: 6px 6px 0 0;
+  /* 对照 Netcatty `rounded-t-md`：calc(var(--radius) - 2px)（当前 8.4px）。 */
+  border-radius: calc(var(--radius) - 2px) calc(var(--radius) - 2px) 0 0;
   color: hsl(var(--muted-foreground));
   font-size: 12px;
   font-weight: 600;
@@ -2552,8 +2553,9 @@ button:disabled {
   outline: none;
 }
 
-/* 会话标签关闭按钮对照 Netcatty：p-1 + X size 12 → 20px、rounded-full、
- * hover 走 destructive（bg-destructive/10 + text-destructive）。 */
+/* 会话标签关闭按钮对照 Netcatty：常显、p-1 + X size 12 → 20×20 圆形；
+ * 颜色继承标签（聚焦标签的 X 为前景色、非聚焦为 muted），hover 走
+ * destructive（bg-destructive/10 + text-destructive），150ms 颜色过渡。 */
 .nc-tab-close {
   width: 20px;
   height: 20px;
@@ -2561,16 +2563,17 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: hsl(var(--muted-foreground));
-  opacity: 0;
+  color: inherit;
+  transition: background-color 150ms ease, color 150ms ease;
 }
 
-.nc-session-tab:hover .nc-tab-close,
-.nc-session-tab.active .nc-tab-close {
-  opacity: 1;
+/* 默认按钮内边距会把 12px 的 X 横向压到 8px，图标不参与收缩。 */
+.nc-tab-close svg {
+  flex-shrink: 0;
 }
 
 .nc-tab-close:hover {
