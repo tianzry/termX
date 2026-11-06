@@ -3844,16 +3844,20 @@ button:disabled {
   padding: 8px 12px;
   border-bottom: 1px solid hsl(var(--border));
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .nc-sftp-bookmark-manage {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
   border: none;
   background: transparent;
   color: hsl(var(--muted-foreground));
   font-size: 11px;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 0 8px;
   border-radius: 4px;
 }
 
@@ -3876,12 +3880,12 @@ button:disabled {
   justify-content: center;
   gap: 6px;
   height: 28px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 4px;
   background: hsl(var(--muted));
   color: hsl(var(--foreground));
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -3894,16 +3898,14 @@ button:disabled {
   background: hsl(var(--accent, var(--muted)));
 }
 
-.nc-sftp-bookmark-action.active {
-  color: #eab308;
-}
-
 .nc-sftp-bookmark-icon.bookmarked {
   color: #eab308;
 }
 
 .nc-sftp-bookmark-global {
   flex-shrink: 0;
+  padding: 0 8px;
+  background: transparent;
   color: hsl(var(--primary));
 }
 
@@ -3925,7 +3927,7 @@ button:disabled {
   align-items: center;
   gap: 4px;
   min-height: 32px;
-  padding: 3px 8px;
+  padding: 6px 8px;
   font-size: 12px;
 }
 
@@ -3958,7 +3960,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
+  gap: 0;
   border: none;
   background: transparent;
   color: inherit;
@@ -3972,6 +3974,8 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .nc-sftp-bookmark-path {
@@ -3980,6 +3984,7 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
+  line-height: 12.5px;
   color: hsl(var(--muted-foreground));
 }
 

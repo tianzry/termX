@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-11-06 — #234 收藏弹层像素校准（对齐 Netcatty 41/45/40 三行高）
+
+- **取证**（Netcatty 运行实例量取 320×136 弹层）：头部 41px（「管理」按钮 24px 高）、动作行 45px（按钮 28px、`0 12px` 内边距、12px 字号；「+Global」透明底 `0 8px`）、列表行 40px（`6px 8px` 内边距，label 12/16、path 10/12.5、无行内 gap）。
+- **实现**：`src/styles.css` 按上述数值校准 `.nc-sftp-bookmark-header/manage/action/global/row/content/label/path`；去掉动作按钮激活态的黄色文字（Netcatty 只有图标黄、文字保持前景色）。
+- **验证**：termX 弹层量得 320×176（含 2 条收藏；单条约 135，与 Netcatty 136 一致），头部 41 / 动作行 45 / 行 41 全部对齐；同尺寸并排截图 `evidence/af-C-bookmark-sidebyside.png`。
+
 ## 2026-11-06 — #233 侧栏「命令历史」点击后整栏关闭
 
 - **问题**：终端右侧栏已打开时，点击页签「命令历史」，整个侧栏直接消失，需要再点工具栏图标重开。
