@@ -482,3 +482,4 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 2026-11-06 | #231 D：补「定位路径到终端」。`resolveSftpLocateCdCommand`（仅绝对路径/`~`，控制字符拒绝，`cd --` 引号语义）；SFTP 工具栏新增 Terminal 图标按钮（不支持时禁用）；`App.locatePathInTerminal` 经活动 SSH 窗格 `sendText`，非 SSH 不显示入口。129 实测执行 `cd -- '/home/tianzry'`。 |
 | 2026-11-06 | #232 E：SFTP 工具栏与侧栏页签图标对齐 Netcatty。全页/侧栏工具栏换 lucide（Bookmark/SquareTerminal/Terminal/ClipboardCopy/ListTree/List/Rows3/Search/FolderPlus/FilePlus/Eye/EyeOff/RefreshCw/MoreVertical）；侧栏页签 FolderTree/Play/History/NotebookText；129 实测目视核对 + build 通过。 |
 | 2026-11-06 | #233 F：侧栏「命令历史」点击后整栏关闭。根因 `changeSidePanelTool` 每次新建 notesOpenTabs 触发同步 effect，history 不在白名单被置 null；改为值未变复用 prev + 白名单补 history，工具页常驻（笔记仍按标签记忆）。129 实测历史切换不关栏。 |
+| 2026-11-06 | #235 移除顶栏「锁定」「快捷设置」图标。TopTabs 删除 Lock / SlidersHorizontal 两个快捷入口及 props，App 删除对应回调；设置中心与云同步入口保留。实机截图 + build 通过。 |

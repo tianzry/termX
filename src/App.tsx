@@ -645,15 +645,6 @@ export default function App() {
           setSettingsOpen(true);
         }}
         onOpenSync={openVaultSync}
-        onOpenLock={() => {
-          // 应用锁在设置中心「系统」tab（无独立「应用」tab）。
-          setSettingsTab("system");
-          setSettingsOpen(true);
-        }}
-        onOpenAppearance={() => {
-          setSettingsTab("appearance");
-          setSettingsOpen(true);
-        }}
       />
       {settingsOpen && (
         <SettingsDialog

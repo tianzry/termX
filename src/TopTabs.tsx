@@ -13,11 +13,9 @@ import {
   Cloud,
   Folder,
   FolderLock,
-  Lock,
   Plus,
   Server,
   Settings,
-  SlidersHorizontal,
   Sparkles,
   Terminal,
   Usb,
@@ -60,10 +58,6 @@ interface Props {
   onOpenSettings: () => void;
   /** 右侧快捷入口：云端同步跳 Vault「同步」页。 */
   onOpenSync: () => void;
-  /** 右侧快捷入口：应用锁（设置中心「系统」tab）。 */
-  onOpenLock: () => void;
-  /** 右侧快捷入口：外观与窗口（设置中心「外观」tab）。 */
-  onOpenAppearance: () => void;
   /** 标签右键菜单：重命名 / 复制标签 / 重连 / 批量关闭 / 拖拽排序（对齐 Netcatty 会话标签菜单）。 */
   onRenameTab: (id: string, title: string) => void;
   /** 用同连接参数在独立窗口打开（后端 `open_tab_in_new_window`）。 */
@@ -171,8 +165,6 @@ export function TopTabs({
   onToggleHostTree,
   onOpenSettings,
   onOpenSync,
-  onOpenLock,
-  onOpenAppearance,
   onRenameTab,
   onOpenInNewWindow,
   onCloseOthers,
@@ -336,20 +328,6 @@ export function TopTabs({
             onClick={onOpenSync}
           >
             <Cloud size={16} />
-          </button>
-          <button
-            className="nc-icon-btn nc-utility-btn"
-            title="应用锁"
-            onClick={onOpenLock}
-          >
-            <Lock size={16} />
-          </button>
-          <button
-            className="nc-icon-btn nc-utility-btn"
-            title="外观与窗口"
-            onClick={onOpenAppearance}
-          >
-            <SlidersHorizontal size={16} />
           </button>
           <button
             className="nc-icon-btn nc-utility-btn"
