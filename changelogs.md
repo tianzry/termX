@@ -4,6 +4,40 @@
 
 ---
 
+## 2026-11-06 — #227 终端侧栏 SFTP 面板照抄 Netcatty（红圈 5 项排除 / 复用 SSH 会话通道）
+
+- **对照图逐项取证（红圈项不移植）**：对照图 `attachments/5b27d2db-…/image.png` 红圈共 **5 项**，均不移植：
+  1. **Browser 页签**（globe）：termX 无内嵌浏览器面板（Netcatty 的 browser 依赖 Electron webview / 内嵌页面，Tauri WebView2 无等价原语）；
+  2. **Theme 页签**（palette）：termX 主题/字体统一在设置中心「外观」，侧栏再放入口会出现第二份主题状态源；
+  3. **System 页签**（activity 波形）：termX 系统监控是独立 Vault 监控页（多主机、多面板），单会话侧栏承载语义不符；
+  4. **Save layout as default**（floppy）：termX 无「工作区默认布局」概念，侧栏宽度单独持久化，没有可保存的布局快照；
+  5. **Change position**（dock）：termX 侧栏固定右侧（为终端保留最小宽度），不提供左右停靠切换。
+  未红圈的 **sftp / scripts / history / notes 四个页签** 与工具条、右侧放大 / 上下分屏 / 左右分屏 / 关闭全部复刻。
+- **Netcatty 源码取证（逐项记录，不凭记忆）**：
+  - 外壳 `components/terminalLayer/TerminalLayerSidePanelSection.tsx`：tab 顺序 `sftp → browser → scripts → history → theme → system → notes → ai`；右侧动作 maximize / split(row) / split(column) / save / dock / close。
+  - SFTP 页 `components/SftpSidePanel.tsx`：**复用当前已连接的 SSH 会话**（`resolveBrowseSourceSessionId` 仅当 `activeSessionId` 对应会话 `status === "connected"` 时复用，否则才回落到传输源/专用连接），渲染与全页同一个 `components/sftp/SftpPaneView`。
+  - 运行实例（CDP 9336）量测：面板 CSS rect `{x:0,y:72,w:419,h:594}`；工具条 36px / padding `4px 6px` / gap 4；工具按钮 25×28 / radius 8 / active `primary 24%`；面包屑 28 / 动作行 28 / 列头 33 / 行 44（padding 8px 16px）/ 状态栏 36；5 列 `minmax(140px,50fr) minmax(0px,24fr) minmax(52px,7fr) minmax(64px,9fr) minmax(56px,10fr)`、gap 0；行图标容器 28×28 radius 8 `primary/10`；目录尺寸 `--`；OWNER / KIND 右对齐、未知 `--`。以上数值与运行时抓取一并写入 `evidence/sftp-panel/assert-sidepanel.json`。
+- **实现**：
+  - `src/domain/terminalSidePanel.ts`（新，纯函数）：`SIDE_PANEL_TOOLS = ["sftp","scripts","history","notes"]`（注释写明 3 个红圈页签的排除理由）；默认宽 420 / 最小 280 / 最大 1200 / 终端保留 320；`clampSidePanelWidth`、`getSidePanelMaxWidth`、`resolveSidePanelToolTabs`（宽度不足时前 N 个内联、其余进「更多」）、`parseStoredSidePanelWidth`；存储键 `termx.terminalSidePanel.width.v1`；新增 5 例单测。
+  - `src/terminal/TerminalSidePanel.tsx`（新，外壳）：36px 工具条 + 溢出「更多」+ 右侧放大 / 上下分屏 / 左右分屏 / 关闭；左缘 6px 热区拖拽。宽度拆成「期望宽度 + 视口宽度」两段：窗口临时变窄只夹取显示宽度，变宽后自动还原期望值（实测 700→1200 回到 420）。放大 = 取 `getSidePanelMaxWidth`；分屏克隆焦点 pane（row / column），单 pane 时关闭 = 关侧栏；`data-section="terminal-side-panel"` / `terminal-side-panel-tabs` / `terminal-side-panel-pane`。
+  - `src/sftp/SftpSidePane.tsx`（新）：`sftpConnectSession(sshSessionId)` 复用该 SSH 连接上的 SFTP 子系统（**不新建 TCP、不二次认证**）；起始目录优先终端 OSC 7 绝对路径（可列出才用）否则 `sftpHome`；attempt 代次守卫丢弃过期异步结果；会话切换/卸载主动 `sftpClose`；跟随开关 `sftpFollowTerminalCwd` 时把终端 cwd 作为 `externalPath` 下发（同路径不重复导航）。
+  - `src/sftp/SftpPaneView.tsx`：新增 `variant="side"`，与全页共享全部行为（列表 / 排序 / 右键 / 上传下载 / 编辑 / 冲突 / 队列），只改呈现：根 class 改 `nc-sftp-sidepanel`（避免与全页 `.nc-sftp-side` 冲突）；侧栏工具行顺序 bookmark → 跳到终端目录 → 复制路径 → 视图 → 密度 → 过滤 → 新建文件夹 → 新建文件 → 显示隐藏 → 刷新 → 更多；「..」行 type 为空、owner `--`；目录尺寸显示 `--`；owner 取 `row.user ?? row.group ?? "--"`（OWNER 列右对齐）。
+  - 后端 `src-tauri/src/ssh/sftp.rs`：`RemoteEntry` 增 `user` / `group`（russh `FileAttributes`），空值 `skip_serializing_if`；`src/backend/client.ts` 同步类型。多数 OpenSSH 不返回该属性 → UI 显示 `--`（不伪造）。
+  - `src/terminal/ScriptsSidePanel.tsx` 导出侧栏形态 `ScriptsSidePane`；History 页复用 `CommandHistoryPanel`（运行 / 粘贴写回活动终端）；Notes 页复用 `NotesPanel`。
+  - `src/TerminalPane.tsx`：`PaneHandle` 增 `sendText(text)`（`transport.write`），供历史运行与「在终端打开路径」（`cd "<path>"`）。
+  - `src/App.tsx`：`toggleTool` / `changeSidePanelTool` / `closeTool` + 渲染 `TerminalSidePanel`（`activeSshSid` / `activeCwd` / `activeHandle`）；SFTP 未连接时提示「SFTP 需要已连接的 SSH 会话」。
+  - `src/styles.css`：`.nc-side-panel*`（36px 条 / 28×28 radius 8 / active primary 24% / 溢出菜单 / 分屏分隔线）+ `.nc-sftp-sidepanel*`（5 列 fr / gap 0 / 列头 33 / 行 44（dense 30）/ 状态栏 36 / 行图标 28×28 primary-10 / owner·KIND 右对齐 / KIND capitalize）。
+- **129 实机验证**（`tianzry@192.168.126.129`，debug + CDP 9222）：
+  - 终端右键「打开 SFTP」→ 面板 420px、列出 14 行、起始 `/home/tianzry`（`evidence/termx-sidepanel-129-sftp.png`）；
+  - 下钻 `Documents` 4 行（`termx-sidepanel-drill.png`），面包屑返回上一级恢复 14 行；
+  - 双击 `termx-sftp-proof-*.txt` 打开编辑器，1284 字符 UTF-8 中文正常（`termx-sidepanel-file-open.png`）；
+  - 下载：UI 项走**原生保存对话框**（CDP 无法捕获），改为从侧栏 `SftpPaneView` 的 connection 取出**同一个 `sftp_id`** 执行 `sftp_transfer_enqueue(direction=download)`，落盘 1300 B 且内容匹配（`evidence/download-check-termx.txt`）—— 传输链路真实，仅原生对话框交互未自动化。
+  - 窄窗：1200 / 900 / 760 → 面板 420、700 → 380，`overflowX=false`；上下分屏 2 pane 无溢出、关闭回 1；700→1200 宽度自动回 420。
+  - 并排对照 `evidence/sftp-panel/sbs-sidepanel.png`（同尺寸裁切，左 Netcatty / 右 termX）；量测与断言汇总 `evidence/sftp-panel/assert-sidepanel.json`。
+- **已知差异（如实记录）**：列名中文（本地化）；滚动条占位导致列位相对 Netcatty（overlay 滚动条）偏移约 10–30px；面包屑右侧刷新按钮为 termX 全页既有；OWNER 依赖服务端 `FileAttributes`，多数返回空 → `--`；Netcatty 动作行疑似多一枚刷新图标，未复刻（避免与既有刷新重复）。
+- **踩坑**：① 宽度状态初版混用显示宽度，窗口变窄后持久化会把期望值压小 → 拆成 `desiredWidth` + `viewportWidth`；② CSS 初版 `2fr/1fr + gap 8` 导致「修改时间」列折行、类型与 owner 黏连 → 改 Netcatty 精确 5 列 fr + gap 0；③ `invoke` 包装拦截记录为空（Tauri 内部走 WebView2 私有通道）→ 改从 React fiber 的 `memoizedProps.connection.sftpId` 取通道 id 完成真实下载验证；④ HMR 后应用回到 Vault 并弹恢复提示，probe 找不到 SSH xterm → 先「忽略并清空」再点 129 主机卡；⑤ 截图裁切未乘 DPR 1.25 导致面板错位；⑥ `ScriptsSidePanel` 实际导出名是 `ScriptsSidePane`，import 需对齐；App.tsx CRLF 混入导致多行 Edit 匹配失败，改单行 Edit。
+- **门禁**：`npm run test:run` 777 通过（71 文件）、`npm run build` 通过、`cargo check` 通过、`cargo test --lib` 960 通过。
+
 ## 2026-11-06 — #226 文档收口（README / AGENTS / rename 实际落地 / todo 完成度）
 
 - **新增 `README.md`**（仓库原先没有）：项目定位、环境要求、`npm run tauri dev` / `npm run dev` 运行方式、`npm run tauri -- build` 产出 NSIS+MSI 路径、数据目录 `~/.termX` 与旧 `~/.rssh` 迁移策略、卸载保留用户数据、门禁命令与当前基线、已知边界（AI 未移植/更新置灰/MSI 需管理员/人工确认项）。

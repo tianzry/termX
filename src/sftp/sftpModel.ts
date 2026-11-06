@@ -778,3 +778,30 @@ export function canExtractArchive(connection: PaneConnection, name: string): boo
 export function canExtractLocalArchive(connection: PaneConnection, name: string): boolean {
   return connection.kind === "local" && isExtractableArchive(name);
 }
+
+// ── 侧栏书签 ───────────────────────────────────────────
+
+/** 侧栏 SFTP 书签（本地持久化路径列表，对齐 Netcatty bookmark 弹层的数据面）。 */
+export const SFTP_BOOKMARKS_STORAGE_KEY = "termx.sftp.bookmarks.v1";
+
+/** 解析书签 JSON：非法 / 非数组 / 非字符串项一律丢弃。 */
+export function parseSftpBookmarks(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is string => typeof item === "string" && item.length > 0,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** 加入 / 移除书签（同一路径只保留一份，保持加入顺序）。 */
+export function toggleSftpBookmark(bookmarks: readonly string[], path: string): string[] {
+  return bookmarks.includes(path)
+    ? bookmarks.filter((item) => item !== path)
+    : [...bookmarks, path];
+}
+

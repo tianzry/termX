@@ -244,6 +244,8 @@ export interface PaneHandle {
   connected: () => boolean;
   /** 运行片段 / 脚本：复用终端右键插入同一发送链路；未连接返回 false。 */
   runSnippet: (snippet: api.Snippet) => boolean;
+  /** 直接向终端写入文本（侧栏「在终端中打开当前路径」）；未连接返回 false。 */
+  sendText: (text: string) => boolean;
   /** 停止脚本：发送 Ctrl-C（SIGINT）并清空逐行待发送队列。 */
   interrupt: () => boolean;
   /** 暂停：发送 Ctrl-Z（SIGTSTP），仅对被 Ctrl-Z 挂起的前台任务有意义。 */
@@ -2183,6 +2185,11 @@ export function TerminalPane({
       },
       connected: () => transportRef.current !== null,
       runSnippet: (snippet) => runSnippetRef.current(snippet),
+      sendText: (text) => {
+        if (!transportRef.current) return false;
+        transportRef.current.write(text);
+        return true;
+      },
       interrupt: () => {
         if (!transportRef.current) return false;
         clearPendingWrites();

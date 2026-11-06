@@ -163,6 +163,9 @@ export interface RemoteEntry {
   size: number;
   /** unix epoch seconds；0 = 服务端未提供 mtime */
   mtime: number;
+  /** 远端所有者（侧栏 SFTP 5 列布局展示；服务器未返回时缺省）。 */
+  user?: string | null;
+  group?: string | null;
 }
 
 export interface FileStat {

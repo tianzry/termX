@@ -54,6 +54,7 @@ export type IconName =
   | "palette"
   | "languages"
   | "more-vertical"
+  | "more-horizontal"
   | "unplug"
   | "copy"
   | "clipboard-paste"
@@ -99,7 +100,16 @@ export type IconName =
   | "newspaper"
   | "arrow-up-circle"
   | "ban"
-  | "rotate-ccw";
+  | "rotate-ccw"
+  | "folder-tree"
+  | "notebook"
+  | "bookmark"
+  | "folder-plus"
+  | "file-plus"
+  | "list-tree"
+  | "maximize"
+  | "split-vertical"
+  | "split-horizontal";
 
 const paths: Record<IconName, ReactElement> = {
   terminal: (
@@ -435,6 +445,13 @@ const paths: Record<IconName, ReactElement> = {
       <circle cx="12" cy="19" r="1" fill="currentColor" />
     </>
   ),
+  "more-horizontal": (
+    <>
+      <circle cx="5" cy="12" r="1" fill="currentColor" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" />
+      <circle cx="19" cy="12" r="1" fill="currentColor" />
+    </>
+  ),
   unplug: (
     <>
       <path d="m19 5 3-3" />
@@ -698,6 +715,71 @@ const paths: Record<IconName, ReactElement> = {
     <>
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
       <path d="M3 3v5h5" />
+    </>
+  ),
+  "folder-tree": (
+    <>
+      <path d="M6 4h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+      <path d="M8 12h4v4" />
+      <path d="M12 14h4" />
+    </>
+  ),
+  notebook: (
+    <>
+      <rect width="16" height="20" x="4" y="2" rx="2" />
+      <path d="M8 6h.01" />
+      <path d="M8 10h.01" />
+      <path d="M8 14h.01" />
+      <path d="M8 18h.01" />
+      <path d="M12 6h4" />
+      <path d="M12 10h4" />
+    </>
+  ),
+  bookmark: (
+    <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />
+  ),
+  "folder-plus": (
+    <>
+      <path d="M6 4h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+      <path d="M12 11v4" />
+      <path d="M10 13h4" />
+    </>
+  ),
+  "file-plus": (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+      <path d="M12 12v6" />
+      <path d="M9 15h6" />
+    </>
+  ),
+  "list-tree": (
+    <>
+      <path d="M21 12h-8" />
+      <path d="M21 6h-8" />
+      <path d="M21 18h-8" />
+      <path d="M3 6v4c0 1.1.9 2 2 2h3" />
+      <path d="M3 10v6c0 1.1.9 2 2 2h3" />
+    </>
+  ),
+  maximize: (
+    <>
+      <path d="M15 3h6v6" />
+      <path d="M9 21H3v-6" />
+      <path d="m21 3-7 7" />
+      <path d="m3 21 7-7" />
+    </>
+  ),
+  "split-vertical": (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M12 3v18" />
+    </>
+  ),
+  "split-horizontal": (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M3 12h18" />
     </>
   ),
 };

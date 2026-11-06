@@ -21,6 +21,7 @@ import {
   octalToMode,
   osFromUname,
   osIconName,
+  parseSftpBookmarks,
   parseSftpDragPayload,
   pathRoot,
   permsFromMode,
@@ -33,6 +34,7 @@ import {
   SFTP_DRAG_MIME,
   sftpDragSideMime,
   sortSftpRows,
+  toggleSftpBookmark,
   type ConnectedHostEntry,
   type PaneConnection,
   type PickerSection,
@@ -578,5 +580,24 @@ describe("planSftpOpenFromHost（右键打开 SFTP 定位）", () => {
     expect(plan.connectLeft).toBe(true);
     expect(plan.rightTabId).toBeNull();
     expect(plan.connectRight).toBe(true);
+  });
+});
+
+describe("侧栏 SFTP 书签", () => {
+  it("解析非法 JSON / 非数组 / 空串一律回空", () => {
+    expect(parseSftpBookmarks(null)).toEqual([]);
+    expect(parseSftpBookmarks("not json")).toEqual([]);
+    expect(parseSftpBookmarks('{"a":1}')).toEqual([]);
+    expect(parseSftpBookmarks('["/etc","",42,"/root"]')).toEqual(["/etc", "/root"]);
+  });
+
+  it("toggle 加入后保持顺序，再次调用移除", () => {
+    expect(toggleSftpBookmark([], "/etc")).toEqual(["/etc"]);
+    expect(toggleSftpBookmark(["/etc"], "/root")).toEqual(["/etc", "/root"]);
+    expect(toggleSftpBookmark(["/etc", "/root"], "/etc")).toEqual(["/root"]);
+  });
+
+  it("同一路径不会重复加入", () => {
+    expect(toggleSftpBookmark(["/etc"], "/etc")).toEqual([]);
   });
 });

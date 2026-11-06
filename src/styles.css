@@ -11874,3 +11874,487 @@ html[data-theme="dark"] .nc-shell-icon.mono {
   pointer-events: none;
   white-space: pre;
 }
+
+/* ── 终端侧栏（对齐 Netcatty TerminalLayerSidePanelSection 实测值）── */
+
+.nc-side-panel {
+  position: relative;
+  flex-shrink: 0;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid hsl(var(--border) / 0.7);
+  background: hsl(var(--background));
+  overflow: hidden;
+}
+
+/* 左缘拖拽热区：向左拖 = 面板变宽（Netcatty 宽 2px，热区 6px）。 */
+.nc-side-panel-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  z-index: 20;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.nc-side-panel-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.nc-side-panel-resizer:hover::after {
+  background: hsl(var(--primary) / 0.5);
+}
+
+/* 工具条：h-9（36px）+ px-1.5 py-1 + gap-1（Netcatty 实测）。 */
+.nc-side-panel-tabs {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid hsl(var(--border) / 0.7);
+  background: hsl(var(--nc-bg-elev) / 0.5);
+}
+
+.nc-side-panel-tools,
+.nc-side-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nc-side-panel-actions {
+  margin-left: auto;
+}
+
+/* 工具按钮：25×28 / radius 8 / active = primary 24% + foreground。 */
+.nc-side-panel-tool {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.nc-side-panel-tool:hover {
+  background: hsl(var(--muted) / 0.6);
+  color: hsl(var(--foreground));
+}
+
+.nc-side-panel-tool.active {
+  background: hsl(var(--primary) / 0.24);
+  color: hsl(var(--foreground));
+}
+
+.nc-side-panel-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.nc-side-panel-tool:disabled:hover {
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 溢出「更多」菜单（默认宽 420 时全部内联，窄窗才出现）。 */
+.nc-side-panel-more {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 6px;
+  z-index: 60;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
+}
+
+.nc-side-panel-more-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nc-side-panel-more-item:hover,
+.nc-side-panel-more-item.active {
+  background: hsl(var(--secondary));
+}
+
+/* 面板区：单 pane / 上下 / 左右分屏。 */
+.nc-side-panel-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.nc-side-panel-body.row {
+  flex-direction: column;
+}
+
+.nc-side-panel-body.column {
+  flex-direction: row;
+}
+
+.nc-side-panel-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.nc-side-panel-body.row > .nc-side-panel-pane + .nc-side-panel-pane {
+  border-top: 1px solid hsl(var(--border) / 0.7);
+}
+
+.nc-side-panel-body.column > .nc-side-panel-pane + .nc-side-panel-pane {
+  border-left: 1px solid hsl(var(--border) / 0.7);
+}
+
+.nc-side-panel-body:not(.single) > .nc-side-panel-pane.focused {
+  box-shadow: inset 2px 0 0 hsl(var(--primary) / 0.55);
+}
+
+.nc-side-panel-pane-header {
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  font-size: 11px;
+  color: hsl(var(--foreground));
+  user-select: none;
+}
+
+.nc-side-panel-pane-spacer {
+  flex: 1;
+}
+
+.nc-side-panel-pane-close {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.nc-side-panel-pane-close:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.nc-side-panel-pane-content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.nc-side-panel-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* ── 侧栏 SFTP 变体（Netcatty SftpSidePanel 实测：5 列 / 44px 行 / 36px 状态栏）── */
+
+.nc-sftp-sidepanel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.nc-sftp-actions-side {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nc-sftp-actions-side::-webkit-scrollbar {
+  display: none;
+}
+
+.nc-sftp-sidepanel .nc-sftp-cols {
+  height: 33px;
+  grid-template-columns:
+    minmax(140px, 50fr) minmax(0px, 24fr) minmax(52px, 7fr)
+    minmax(64px, 9fr) minmax(56px, 10fr);
+  gap: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+  background: hsl(var(--secondary) / 0.1);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-sidepanel .nc-sftp-col {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.nc-sftp-col-owner {
+  justify-content: flex-start;
+  cursor: default;
+}
+
+.nc-sftp-sidepanel .nc-sftp-pane-list {
+  padding: 0;
+}
+
+.nc-sftp-sidepanel .nc-sftp-pane-row {
+  grid-template-columns:
+    minmax(140px, 50fr) minmax(0px, 24fr) minmax(52px, 7fr)
+    minmax(64px, 9fr) minmax(56px, 10fr);
+  gap: 0;
+  min-height: 44px;
+  padding: 8px 16px;
+  font-size: 14px;
+}
+
+.nc-sftp-sidepanel .nc-sftp-pane-row-cell-name {
+  gap: 12px;
+}
+
+.nc-sftp-sidepanel .nc-sftp-pane-row-cell-num:nth-of-type(3),
+.nc-sftp-sidepanel .nc-sftp-pane-row-cell-num:nth-of-type(4) {
+  text-align: right;
+}
+
+.nc-sftp-sidepanel .nc-sftp-pane-row-cell-num:nth-of-type(4) {
+  text-transform: capitalize;
+}
+
+.nc-sftp-sidepanel .nc-sftp-cols .nc-sftp-col:nth-child(4),
+.nc-sftp-sidepanel .nc-sftp-cols .nc-sftp-col:nth-child(5) {
+  justify-content: flex-end;
+}
+
+.nc-sftp-sidepanel .nc-sftp-pane-row:hover {
+  background: hsl(var(--accent) / 0.5);
+}
+
+.nc-sftp-sidepanel-dense .nc-sftp-pane-row {
+  min-height: 30px;
+  padding: 2px 16px;
+  font-size: 12.5px;
+}
+
+.nc-sftp-sidepanel .nc-sftp-pane-row-cell-num {
+  font-size: 12px;
+}
+
+.nc-sftp-pane-row-cell-owner {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* 行首图标容器：28×28 / radius 8 / bg primary 10%（Netcatty 实测）。 */
+.nc-sftp-row-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+}
+
+.nc-sftp-row-icon.file {
+  background: hsl(var(--muted) / 0.6);
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-row-icon.archive {
+  background: hsl(38 90% 55% / 0.16);
+  color: hsl(38 90% 55%);
+}
+
+.nc-sftp-tree-toggle {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.nc-sftp-tree-toggle:hover {
+  color: hsl(var(--foreground));
+}
+
+.nc-sftp-tree-toggle-spacer {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.nc-sftp-sidepanel .nc-sftp-statusbar {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 11px;
+}
+
+.nc-sftp-sidepanel .nc-sftp-statusbar-path {
+  max-width: 55%;
+}
+
+/* ── 侧栏脚本页（ScriptsSidePanel 的 termX 紧凑形态）────────── */
+
+.nc-scripts-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.nc-scripts-toolbar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  white-space: nowrap;
+}
+
+.nc-scripts-count {
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  font-size: 10.5px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--border) / 0.55);
+}
+
+.nc-scripts-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.nc-scripts-group-row {
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nc-scripts-group-row:hover {
+  background: hsl(var(--muted) / 0.5);
+}
+
+.nc-scripts-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.nc-scripts-row {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 26px;
+  font-size: 12.5px;
+  cursor: default;
+}
+
+.nc-scripts-row:hover {
+  background: hsl(var(--accent) / 0.4);
+}
+
+.nc-scripts-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-scripts-run {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.nc-scripts-row:hover .nc-scripts-run,
+.nc-scripts-row:focus-within .nc-scripts-run {
+  opacity: 1;
+}

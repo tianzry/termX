@@ -24,6 +24,11 @@ pub struct RemoteEntry {
     pub size: u64,
     /// unix epoch seconds; 0 means the server did not provide the mtime
     pub mtime: u64,
+    /// 远端所有者（侧栏 SFTP 5 列布局展示；服务器未返回时缺省）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -240,6 +245,8 @@ impl SftpHandle {
                     is_symlink: ft.is_symlink(),
                     size: meta.size.unwrap_or(0),
                     mtime: meta.mtime.map(u64::from).unwrap_or(0),
+                    user: meta.user.clone(),
+                    group: meta.group.clone(),
                 }
             })
             .collect();

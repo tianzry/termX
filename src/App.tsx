@@ -18,12 +18,12 @@ import type { PaneHandle } from "./TerminalPane";
 import { newId, type Tab, type Connector } from "./workspaceModel";
 import type { ConnectionStatus } from "./terminal/connectionStatus";
 import { findProfileForHostLink } from "./notes/notesModel";
-import { NotesPanel } from "./notes/NotesPanel";
+
 import { TopTabs, type RootSurface } from "./TopTabs";
 import { HostSidebar } from "./HostSidebar";
 import { VaultView } from "./VaultView";
-import { AsidePanel } from "./AsidePanel";
-import { SftpPanel } from "./SftpPanel";
+import { TerminalSidePanel } from "./terminal/TerminalSidePanel";
+import type { SidePanelTool } from "./domain/terminalSidePanel";
 import { SerialConnectModal } from "./serial/SerialConnectModal";
 import { TelnetConnectModal } from "./telnet/TelnetConnectModal";
 import { useForwardSupervisor } from "./forwardSupervisor";
@@ -57,18 +57,7 @@ import {
   isTelnetProfile,
   telnetSessionFromProfile,
 } from "./domain/hostProtocol";
-type Tool = "sftp" | "notes" | null;
-
-const TOOL_TITLE: Record<Exclude<Tool, null>, string> = {
-  sftp: "文件传输",
-  notes: "笔记",
-};
-
-/** 笔记面板宽度对齐 Netcatty 侧栏默认 420px（SFTP 沿用 380px）。 */
-const TOOL_WIDTH: Record<Exclude<Tool, null>, number> = {
-  sftp: 380,
-  notes: 420,
-};
+type Tool = SidePanelTool | null;
 
 const SIDEBAR_KEY = "termx.sidebar.v1";
 /** 最近连接记录（v1: { id, ts }[]），仅前端保存。 */
@@ -494,7 +483,7 @@ export default function App() {
     setShowTelnetModal(true);
   }
 
-  function toggleTool(next: Exclude<Tool, null>) {
+  function toggleTool(next: SidePanelTool) {
     // 笔记面板按标签记忆：只切换当前标签的开关，切标签时由 effect 恢复。
     if (next === "notes") {
       if (!activeTabId) return;
@@ -515,6 +504,17 @@ export default function App() {
     setTool(next);
   }
 
+  /** 侧栏内部切换页签：同步 App 的 tool 与「笔记按标签记忆」。 */
+  function changeSidePanelTool(next: SidePanelTool) {
+    setTool(next);
+    if (activeTabId) {
+      setNotesOpenTabs((prev) => ({
+        ...prev,
+        [activeTabId]: next === "notes",
+      }));
+    }
+  }
+
   function closeTool() {
     if (tool === "notes" && activeTabId) {
       setNotesOpenTabs((prev) => ({ ...prev, [activeTabId]: false }));
@@ -525,7 +525,11 @@ export default function App() {
   useEffect(() => {
     if (!activeTabId) return;
     setTool((current) =>
-      current === "sftp" ? current : notesOpenTabs[activeTabId] ? "notes" : null,
+      current === "sftp" || current === "scripts"
+        ? current
+        : notesOpenTabs[activeTabId]
+          ? "notes"
+          : null,
     );
   }, [activeTabId, notesOpenTabs]);
 
@@ -715,19 +719,26 @@ export default function App() {
         </div>
 
         {tool && (
-          <AsidePanel
-            title={TOOL_TITLE[tool]}
-            subtitle="工具面板"
-            width={TOOL_WIDTH[tool]}
+          <TerminalSidePanel
+            tool={tool}
+            onToolChange={changeSidePanelTool}
+            sessionLabel={activeTab?.title ?? "终端会话"}
+            sessionMeta="复用当前终端会话"
+            hostId={
+              activeTab?.connector.kind === "ssh"
+                ? activeTab.connector.profileId
+                : undefined
+            }
+            profiles={profiles}
+            onOpenHost={connect}
+            activeHandle={activeHandle}
+            onRevealInTerminal={(path) =>
+              activeHandle?.sendText(`cd ${JSON.stringify(path)}\r`)
+            }
+            sshSessionId={activeSshSid}
+            terminalCwd={activeCwd}
             onClose={closeTool}
-          >
-            {tool === "sftp" && (
-              <SftpPanel sshSessionId={activeSshSid} terminalCwd={activeCwd} />
-            )}
-            {tool === "notes" && (
-              <NotesPanel profiles={profiles} onOpenHost={connect} />
-            )}
-          </AsidePanel>
+          />
         )}
       </div>
 
