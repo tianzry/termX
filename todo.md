@@ -483,3 +483,4 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 2026-11-06 | #232 E：SFTP 工具栏与侧栏页签图标对齐 Netcatty。全页/侧栏工具栏换 lucide（Bookmark/SquareTerminal/Terminal/ClipboardCopy/ListTree/List/Rows3/Search/FolderPlus/FilePlus/Eye/EyeOff/RefreshCw/MoreVertical）；侧栏页签 FolderTree/Play/History/NotebookText；129 实测目视核对 + build 通过。 |
 | 2026-11-06 | #233 F：侧栏「命令历史」点击后整栏关闭。根因 `changeSidePanelTool` 每次新建 notesOpenTabs 触发同步 effect，history 不在白名单被置 null；改为值未变复用 prev + 白名单补 history，工具页常驻（笔记仍按标签记忆）。129 实测历史切换不关栏。 |
 | 2026-11-06 | #235 移除顶栏「锁定」「快捷设置」图标。TopTabs 删除 Lock / SlidersHorizontal 两个快捷入口及 props，App 删除对应回调；设置中心与云同步入口保留。实机截图 + build 通过。 |
+| 2026-11-06 | #236 终端「展开主机右侧栏」按钮（与左侧栏成对）+ 默认视图按协议 + 按标签记忆。工具栏 notes→panel（PanelRight 与顶栏 PanelLeft 成对）；`sidePanelTabs: Record<tabId, SidePanelTool>` 对齐 Netcatty map 语义，无记录即关闭；SSH 默认 SFTP、本地/串口/Telnet 默认脚本。129 实测开合/默认视图/两标签记忆/880 窄窗分屏无溢出。 |

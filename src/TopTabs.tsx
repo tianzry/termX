@@ -13,6 +13,7 @@ import {
   Cloud,
   Folder,
   FolderLock,
+  PanelLeft,
   Plus,
   Server,
   Settings,
@@ -238,7 +239,7 @@ export function TopTabs({
             title={hostTreeOpen ? "收起主机侧栏" : "展开主机侧栏"}
             onClick={onToggleHostTree}
           >
-            <Icon name="menu" size={14} />
+            <PanelLeft size={14} />
           </button>
         )}
 

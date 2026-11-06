@@ -28,8 +28,8 @@ export const TERMINAL_TOOLBAR_ACTIONS = [
   "search",
   "sessionLog",
   "scripts",
-  // Netcatty 的笔记入口在侧栏工具 rail；termX 没有 rail，落在工具栏末尾（唯一新增项）。
-  "notes",
+  // Netcatty 的右侧栏开关与左侧栏成对；termX 没有侧栏 rail，落在工具栏末尾。
+  "panel",
 ] as const;
 
 export type TerminalToolbarAction = (typeof TERMINAL_TOOLBAR_ACTIONS)[number];
@@ -57,7 +57,7 @@ const TOOLBAR_CAPABILITY_OF: Record<TerminalToolbarAction, keyof ToolbarCapabili
   search: "search",
   sessionLog: "sessionLog",
   scripts: "scripts",
-  notes: "notes",
+  panel: "panel",
 };
 
 export function resolveTerminalToolbarActions(

@@ -23,7 +23,7 @@ export const TERMINAL_TOOLBAR_TEXT: Record<TerminalToolbarAction, TerminalAction
   search: { label: "终端搜索", title: "终端搜索" },
   sessionLog: { label: "会话日志", title: "记录会话日志" },
   scripts: { label: "运行脚本", title: "运行脚本（发送到当前会话）" },
-  notes: { label: "笔记", title: "笔记面板" },
+  panel: { label: "展开主机右侧栏", title: "展开主机右侧栏" },
 };
 
 /** More（⋮）菜单条目。 */

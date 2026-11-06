@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { PanelRight } from "lucide-react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { ComposeBar } from "./terminal/ComposeBar";
@@ -263,8 +264,11 @@ interface Props {
   onStatus: (text: string) => void;
   /** 连接状态变化（供会话标签状态点使用）。 */
   onConnectionStatus?: (status: PaneStatus) => void;
-  /** 打开右侧工具面板（SFTP）。 */
-  onOpenTool?: (tool: "sftp" | "notes") => void;
+  /** 打开右侧工具面板（SFTP / 脚本）。 */
+  onOpenTool?: (tool: "sftp" | "scripts" | "notes") => void;
+  /** 展开 / 收起主机右侧栏（与左侧栏开关成对）。 */
+  sidePanelOpen?: boolean;
+  onToggleSidePanel?: () => void;
   /** 关闭当前窗格。 */
   onClosePane?: () => void;
   /** 分屏（在当前标签内）。 */
@@ -305,6 +309,8 @@ export function TerminalPane({
   onStatus,
   onConnectionStatus,
   onOpenTool,
+  sidePanelOpen,
+  onToggleSidePanel,
   onClosePane,
   onSplit,
   onOpenSettings,
@@ -3654,16 +3660,21 @@ export function TerminalPane({
                     <Icon name="folder-input" size={12} />
                   </button>
                 );
-              case "notes":
+              case "panel":
                 return (
                   <button
                     key={action}
-                    className="term-tool-btn"
-                    title={TERMINAL_TOOLBAR_TEXT.notes.title}
-                    disabled={!onOpenTool}
-                    onClick={() => onOpenTool?.("notes")}
+                    className={`term-tool-btn${sidePanelOpen ? " active" : ""}`}
+                    title={
+                      sidePanelOpen
+                        ? "收起主机右侧栏"
+                        : TERMINAL_TOOLBAR_TEXT.panel.title
+                    }
+                    aria-pressed={sidePanelOpen}
+                    disabled={!onToggleSidePanel}
+                    onClick={() => onToggleSidePanel?.()}
                   >
-                    <Icon name="file-text" size={12} />
+                    <PanelRight size={12} />
                   </button>
                 );
               case "compose":

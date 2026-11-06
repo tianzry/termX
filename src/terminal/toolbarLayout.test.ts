@@ -16,8 +16,8 @@ describe("toolbarLayout", () => {
       "search",
       "sessionLog",
       "scripts",
-      // termX 唯一新增：笔记面板入口（Netcatty 在侧栏工具 rail）
-      "notes",
+      // 与左侧栏开关成对：展开主机右侧栏（SSH 默认 SFTP，其余默认脚本）
+      "panel",
     ]);
     expect((TERMINAL_TOOLBAR_ACTIONS as readonly string[]).includes("forward")).toBe(
       false,
@@ -27,7 +27,7 @@ describe("toolbarLayout", () => {
     );
   });
 
-  it("SSH 内联显示 SFTP（紧随 highlight）与笔记入口", () => {
+  it("SSH 内联显示 SFTP（紧随 highlight）与右侧栏开关", () => {
     expect(resolveTerminalToolbarActions("ssh")).toEqual([
       "highlight",
       "sftp",
@@ -35,11 +35,11 @@ describe("toolbarLayout", () => {
       "search",
       "sessionLog",
       "scripts",
-      "notes",
+      "panel",
     ]);
   });
 
-  it("本地 / 串口 / Telnet 无 SFTP / 笔记，其余顺序不变", () => {
+  it("本地 / 串口 / Telnet 无 SFTP，其余顺序不变（保留右侧栏开关）", () => {
     for (const kind of ["pty", "serial", "telnet"] as const) {
       expect(resolveTerminalToolbarActions(kind)).toEqual([
         "highlight",
@@ -47,6 +47,7 @@ describe("toolbarLayout", () => {
         "search",
         "sessionLog",
         "scripts",
+        "panel",
       ]);
     }
   });

@@ -123,8 +123,13 @@ export default function App() {
   );
   const sftpOpenSeqRef = useRef(0);
   const [tool, setTool] = useState<Tool>(null);
-  /** #205：笔记面板开关按标签记忆（切换标签后各标签恢复自己的开关状态）。 */
-  const [notesOpenTabs, setNotesOpenTabs] = useState<Record<string, boolean>>({});
+  /**
+   * 右侧栏的开启状态与工具页按标签记忆（对齐 Netcatty `sidePanelOpenTabs`：
+   * Map<tabId, tool>，无记录即关闭）。切换标签后各标签恢复自己的视图。
+   */
+  const [sidePanelTabs, setSidePanelTabs] = useState<
+    Record<string, SidePanelTool>
+  >({});
   const [showManager, setShowManager] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 设置中心打开时定位的 tab（终端工具栏「终端设置」→ 外观）。 */
@@ -487,60 +492,67 @@ export default function App() {
     setShowTelnetModal(true);
   }
 
-  function toggleTool(next: SidePanelTool) {
-    // 笔记面板按标签记忆：只切换当前标签的开关，切标签时由 effect 恢复。
-    if (next === "notes") {
-      if (!activeTabId) return;
-      const open = !notesOpenTabs[activeTabId];
-      setNotesOpenTabs((prev) => ({ ...prev, [activeTabId]: open }));
-      setTool(open ? "notes" : null);
-      return;
-    }
-    if (tool === next) {
+  /** 记录当前标签的侧栏视图；null 表示关闭（无记录）。 */
+  function markSidePanelTool(next: SidePanelTool | null) {
+    if (!activeTabId) return;
+    setSidePanelTabs((prev) => {
+      if (next === null) {
+        if (!(activeTabId in prev)) return prev;
+        const rest = { ...prev };
+        delete rest[activeTabId];
+        return rest;
+      }
+      if (prev[activeTabId] === next) return prev;
+      return { ...prev, [activeTabId]: next };
+    });
+  }
+
+  /** 侧栏默认视图：SSH 会话优先 SFTP，其余（本地 / 串口 / Telnet）脚本。 */
+  function defaultSidePanelView(): SidePanelTool {
+    return activeTab?.connector.kind === "ssh" ? "sftp" : "scripts";
+  }
+
+  function toggleSidePanel() {
+    if (tool !== null) {
       setTool(null);
+      markSidePanelTool(null);
       return;
     }
+    const next = defaultSidePanelView();
+    setTool(next);
+    markSidePanelTool(next);
+  }
+
+  function toggleTool(next: SidePanelTool) {
     // SFTP 侧栏复用当前 SSH 会话（对齐 Netcatty：未连接时不可用）。
     if (next === "sftp" && !activeSshSid) {
       setStatus("SFTP 需要已连接的 SSH 会话");
       return;
     }
     setTool(next);
+    markSidePanelTool(next);
   }
 
-  /** 侧栏内部切换页签：同步 App 的 tool 与「笔记按标签记忆」。 */
+  /** 侧栏内部切换页签：同步 App 的 tool 与「侧栏视图按标签记忆」。 */
   function changeSidePanelTool(next: SidePanelTool) {
     setTool(next);
-    if (activeTabId) {
-      // 值未变时复用对象：避免 notesOpenTabs 抖动触发下面的同步 effect，
-      // 把「历史」等非笔记工具页误判成需要关闭侧栏（对齐 Netcatty 页签常驻）。
-      setNotesOpenTabs((prev) => {
-        const nextNotesOpen = next === "notes";
-        if (prev[activeTabId] === nextNotesOpen) return prev;
-        return { ...prev, [activeTabId]: nextNotesOpen };
-      });
-    }
+    markSidePanelTool(next);
   }
 
   function closeTool() {
-    if (tool === "notes" && activeTabId) {
-      setNotesOpenTabs((prev) => ({ ...prev, [activeTabId]: false }));
-    }
     setTool(null);
+    markSidePanelTool(null);
   }
 
   useEffect(() => {
-    if (!activeTabId) return;
-    setTool((current) =>
-      // 工具页常驻（对齐 Netcatty 侧栏）：切换标签 / 点击其它工具页都不关闭；
-      // 只有「笔记」按标签记忆，未打开笔记的新标签才回落关闭。
-      current === "sftp" || current === "scripts" || current === "history"
-        ? current
-        : notesOpenTabs[activeTabId]
-          ? "notes"
-          : null,
-    );
-  }, [activeTabId, notesOpenTabs]);
+    if (!activeTabId) {
+      setTool(null);
+      return;
+    }
+    // 按标签记忆：该标签上次打开过的视图就恢复，无记录则关闭；
+    // 视图只在首次打开时按协议选默认（toggleSidePanel），这里不覆盖。
+    setTool(sidePanelTabs[activeTabId] ?? null);
+  }, [activeTabId, sidePanelTabs]);
 
   const terminalActive = surface === null;
 
@@ -725,6 +737,8 @@ export default function App() {
               onSnapshot={onSnapshot}
               onTabStatuses={setTabStatuses}
               onOpenTool={toggleTool}
+              sidePanelOpen={tool !== null}
+              onToggleSidePanel={toggleSidePanel}
               onOpenSettings={() => {
                 // 终端工具栏「终端设置」：对齐 Netcatty 的 theme 侧栏语义，
                 // termX 对应设置中心的外观 tab（主题 / 字体 / 图标）。

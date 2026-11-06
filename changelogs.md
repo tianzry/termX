@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-06 — #236 终端「展开主机右侧栏」按钮（与左侧栏成对）+ 默认视图按协议 + 按标签记忆
+
+- **问题**：终端工具栏最右的图标是「笔记面板」，与顶栏左侧栏开关不是一对；点击后只能开笔记，且侧栏开关的按标签记忆在切换标签后不可靠（新标签会继承上一个标签的开启状态）。
+- **Netcatty 取证**：
+  - 顶栏左侧栏开关为 lucide `PanelLeft`，终端侧栏入口为 `PanelRight`（同一套 18×18 面板图标，方向成对）；
+  - `application/state/useTerminalSidePanelLayoutState.ts`：`sidePanelOpenTabs: Map<tabId, SidePanelTool>`，**无记录即关闭**，每个标签各自保存工具页与分屏布局；新建 / 切换标签不会复用其它标签的布局；
+  - 侧栏默认视图由会话协议决定：SSH 可复用会话通道 → SFTP；本地 / 串口 / Telnet 无 SFTP → 脚本。
+- **实现**：
+  - `src/terminal/toolbarCapabilities.ts`：`notes: ssh` 改为 `panel: true`（本地 / 串口 / Telnet 也显示右侧栏开关）；`toolbarLayout.ts` 内联顺序末项 `notes` → `panel`；`terminalActionText.ts` 文案「展开主机右侧栏」；
+  - `src/TerminalPane.tsx` 渲染 `PanelRight size={12}` 按钮：`aria-pressed={sidePanelOpen}`，激活态 `.active`，title 在开启时切换为「收起主机右侧栏」；新增 `sidePanelOpen` / `onToggleSidePanel` props；
+  - `src/Workspace.tsx` / `src/App.tsx` 两级透传；
+  - `src/App.tsx`：`notesOpenTabs: Record<string, boolean>` 改为 `sidePanelTabs: Record<string, SidePanelTool>`（对齐 Netcatty 的 map 语义）；`toggleSidePanel` 未开时按协议选默认视图、已开时关闭；`toggleTool` / `changeSidePanelTool` / `closeTool` 写入或删除当前标签记录；同步 effect 只按 `sidePanelTabs[activeTabId]` 恢复，无记录即关闭（不再让其它标签的开启状态泄漏到新标签）；
+  - `src/TopTabs.tsx` 左侧栏开关图标由字符 `menu` 换成 lucide `PanelLeft`（与 `PanelRight` 成对）。
+- **验证**（129 实机 `tianzry@192.168.126.129`，CDP 9222）：
+  - SSH 129：点「展开主机右侧栏」→ 侧栏打开且 `data-active-tool=sftp`、按钮 `aria-pressed=true` / title「收起主机右侧栏」；再点一次 → 侧栏卸载、按钮恢复未激活；重新打开仍为 SFTP；
+  - 新建本地 Git Bash 标签 → 侧栏默认关闭（不再继承 129 的开启状态）；点开 → `data-active-tool=scripts`；
+  - 129 ↔ Git Bash 来回切换：129 记忆 SFTP、本地记忆脚本，各自保持；
+  - 窄窗 880×668 + 上下分屏：面板宽 514 ≤ 上限（880−320），两 pane 正常堆叠、`scrollWidth == clientWidth` 无横向溢出；
+  - 图标成对取证：左侧栏 `svg path M9 3v18`（PanelLeft）、右侧栏 `M15 3v18`（PanelRight）。
+  - 截图：`evidence/b23-panel-open.png`（SSH 默认 SFTP）、`evidence/b23-narrow-split.png`（880 窄窗 + 分屏）。
+- **门禁**：`npx tsc --noEmit` ✓；`npx vitest run src/terminal/toolbarLayout.test.ts src/terminal/toolbarCapabilities.test.ts` 8 passed。
+
 ## 2026-11-06 — #235 移除顶栏「锁定」「快捷设置」两个图标
 
 - **改动**：`src/TopTabs.tsx` 删除「应用锁」（Lock）与「外观与窗口」（SlidersHorizontal）两个快捷入口按钮及其 `onOpenLock` / `onOpenAppearance` props；`src/App.tsx` 同步删除对应回调（设置中心与云端同步入口保留）。

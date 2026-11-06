@@ -76,7 +76,11 @@ interface Props {
   /** 标签级连接状态（会话标签状态点）。 */
   onTabStatuses?: (statuses: Record<string, ConnectionStatus>) => void;
   /** 终端工具栏里打开右侧工具面板。 */
-  onOpenTool?: (tool: "sftp" | "notes") => void;
+  onOpenTool?: (tool: "sftp" | "scripts" | "notes") => void;
+  /** 右侧栏是否打开（工具栏开关激活态）。 */
+  sidePanelOpen?: boolean;
+  /** 展开 / 收起主机右侧栏。 */
+  onToggleSidePanel?: () => void;
   /** 终端工具栏「终端设置」→ 打开设置中心。 */
   onOpenSettings?: () => void;
   /** 工作区持久化 key；多窗口用独立 key，避免覆盖主窗口布局。 */
@@ -101,7 +105,9 @@ interface LayoutProps {
   /** 窗格连接状态（供会话标签状态点，对照 Netcatty）。 */
   onConnectionStatus: (paneId: string, status: ConnectionStatus) => void;
   onRatio: (splitId: string, ratio: number) => void;
-  onOpenTool?: (tool: "sftp" | "notes") => void;
+  onOpenTool?: (tool: "sftp" | "scripts" | "notes") => void;
+  sidePanelOpen?: boolean;
+  onToggleSidePanel?: () => void;
   onOpenSettings?: () => void;
   onClosePane: (paneId: string) => void;
   onSplit: (dir: SplitDir) => void;
@@ -124,6 +130,8 @@ function TabLayout({
   onConnectionStatus,
   onRatio,
   onOpenTool,
+  sidePanelOpen,
+  onToggleSidePanel,
   onOpenSettings,
   onClosePane,
   onSplit,
@@ -185,6 +193,8 @@ function TabLayout({
             onStatus={(text) => onStatus(paneId, text)}
             onConnectionStatus={(s) => onConnectionStatus(paneId, s)}
             onOpenTool={onOpenTool}
+            sidePanelOpen={sidePanelOpen}
+            onToggleSidePanel={onToggleSidePanel}
             onOpenSettings={onOpenSettings}
             onClosePane={() => onClosePane(paneId)}
             onSplit={onSplit}
@@ -225,6 +235,8 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       onSnapshot,
       onTabStatuses,
       onOpenTool,
+      sidePanelOpen,
+      onToggleSidePanel,
       onOpenSettings,
       storageKey,
     },
@@ -616,6 +628,8 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
                 onConnectionStatus={reportPaneConnectionStatus}
                 onRatio={(splitId, ratio) => setRatio(tab.id, splitId, ratio)}
                 onOpenTool={onOpenTool}
+                sidePanelOpen={sidePanelOpen}
+                onToggleSidePanel={onToggleSidePanel}
                 onOpenSettings={onOpenSettings}
                 onClosePane={(paneId) => closePane(tab.id, paneId)}
                 onSplit={splitActive}
