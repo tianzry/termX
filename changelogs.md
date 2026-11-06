@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-06 — #219 设置页样式按 Netcatty 运行实例取证照抄（字体随包 / 令牌化 / 明暗两套）
+
+- **取证方式（本轮新增能力）**：Netcatty 无调试端口，改为把 portable 目录复制到 `evidence/nc-app-copy`，以 `--remote-debugging-port=9336` + 独立 `--user-data-dir` 启动第二个实例（必须 `run_in_background` + `$p.WaitForExit()` 保活，否则 shell 结束即被回收）；CDP 设 `Emulation 980×720` 后逐个 tab 采集 8×明暗 共 16 张基准图（`evidence/nc-settings2-*.png`）与量测 `nc-settings-style2.json`。另用 `PrintWindow(PW_RENDERFULLCONTENT=2)` 抓真实设置窗口客户区（`nc-settings-window-980x720.png`），与 CDP 图交叉校验。
+- **踩坑**：① Radix Tabs 用 `element.click()` 无效，必须完整 pointerdown/mousedown/pointerup/mouseup/click；② Netcatty 主题是 JS 注入的 `document.documentElement.style` 内联 HSL 三元组，`classList.add('dark')` 无效，须点「Appearance → Light/Dark」；③ termX 侧 `documentElement.dataset.theme` 会被应用重置，须点外观 tab 的主题卡片；④ 125% 缩放下 Chrome 把 1px 边框报成 0.8px（插桩 div 证实），不是缩放错误；`--radius:0.65rem`=10.4px、`rounded-md`=8.4px。
+- **实测 → 落地（`styles.css` 设置页令牌，未引入 Tailwind runtime）**：
+  - 字体：随包 **Mona Sans**（latin/latin-ext/vietnamese × 400/500/600/700，12 个 woff2）+ **Noto Color Emoji Flags**（`src/assets/fonts/`，13 条 `@font-face` 含 fontsource unicode-range）；`uiFonts.ts` 的 `mona-sans` family 改为与 Netcatty `--font-sans` 完全一致的完整栈（含 `Microsoft YaHei UI`、结尾 `Segoe UI Emoji/Symbol`）。CJK 仍走系统回退（Netcatty 同）。
+  - 主题 token：设置页内 Snow（`--background 216 33% 96%`、`--card 0 0% 100%`、`--primary 208 100% 50%`、`--border/input 220 16% 82%`…）与 `html[data-theme="dark"]` 下的 Midnight（`220 28% 10%` / `220 22% 12%` / `200 100% 61%` / `220 22% 18%`），仅作用于 `.nc-settings-overlay`，不影响其他页面。
+  - 尺寸：header 61px（标题 18/600/28、top 22）；nav 224px / padding 12 / gap 4 / border-right；搜索框 36h / mb 8 / radius 8.4 / `--input` 边框；tab 36h / padding 0 12 / gap 8 / radius 8.4 / 14/500/20，选中 `--background` + `0 1px 3px rgba(0,0,0,.1), 0 1px 2px -1px rgba(0,0,0,.1)`；内容 padding 24、底色 `--background`（删除原 `muted/10`）；分区间距 24、标题 14/600/20 + 12；卡片 `--card` + 1px `--border` + radius 10.4 + padding 0 16 + `divide-y`；行 `padding 12 0`、透明底、无边框、`border-bottom` 分隔（末行无线）；行标题 14/500/20、说明 12/400/16 + mt 2；hint 12/16 + mt 12；select/input/textarea/stepper 36h / radius 8.4 / padding 0 12；开关 36×20；预设胶囊 `padding 4 10` / radius 8.4 / 12/16；主题卡 radius 10.4、子卡 8.4 + 新 shadow；色板改 `flex wrap` 右对齐 gap 8、swatch 24（删除 12 列 grid 与 max-width 560）。
+- **改前 → 改后关键差异**：行模型从「分散灰条（secondary/40 + 边框 + 圆角 + 行间 gap 6、min-height 48）」变为「白卡 + 分隔线（padding 12 0）」；内容底色 `muted/10` → `--background`；section gap 8 → 24；header 57 → 61；控件圆角 6 → 8.4；搜索框边框蓝 `--ring` → `--input`；字体从系统栈 → 随包 Mona Sans；暗色从 termX 自有配色 → Midnight。
+- **验证**：`npm run tauri -- build --debug --no-bundle` 重建后 CDP 采 980×720 明暗 8 tab（`tx-settings-after-980-*.png` / `.json`）与 720 窄窗（`tx-settings-after-720-*`，`docScrollW == innerWidth`，无横向溢出）；字体非回退证明：`document.fonts` 中 4 个 Mona Sans woff2 状态 loaded（从打包产物 `assets/*.woff2` 实际加载、有 transferSize），同串文字 Mona Sans 宽 200.51px vs `Segoe UI` 189.05px（度量不同即真实生效）；三段对照图 `evidence/cmp-{light,dark}-{01..08}-*.png`（Netcatty / 改前 / 改后，均 980×720 同尺寸拼接），实窗 PrintWindow 对照 `cmp-printwindow-light-terminal.png`。
+- **已知差异（保留）**：① 继承基准字号 termX 13px vs Netcatty 16px（所有可见文本均已显式定字号，无实际影响）；② termX 内容区滚动条占 15px，Netcatty 为 overlay 滚动条，卡片宽度差约 15px；③ 关闭按钮图标形态（Netcatty 红底 X 方块）未复刻，属图标资产差异；④ 设置页仍是应用内 overlay（#212 已决策不做独立窗口）。
+- **门禁**：`npm run test:run` 754 通过、`npm run build` 通过、`cargo test --lib` 通过、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #218 rssh → termX 系统性改名（代码 / 数据迁移 / 文档）
 
 - **改名映射（实际落地）**：

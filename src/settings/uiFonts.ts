@@ -27,7 +27,13 @@ export function withUiCjkFallback(family: string): string {
 }
 
 const BASE_UI_FONTS: Array<Omit<UIFont, "family"> & { family: string }> = [
-  { id: "mona-sans", name: "Mona Sans", family: '"Mona Sans", system-ui' },
+  {
+    id: "mona-sans",
+    name: "Mona Sans",
+    // 与 Netcatty index.css 的 --font-sans 完全一致：旗帜 emoji → Mona Sans → 系统 → CJK。
+    family:
+      '"Noto Color Emoji Flags", "Mona Sans", system-ui, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif, "Segoe UI Emoji", "Segoe UI Symbol"',
+  },
   { id: "space-grotesk", name: "Space Grotesk", family: '"Space Grotesk", system-ui' },
   {
     id: "system-ui",
