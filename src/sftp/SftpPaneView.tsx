@@ -1304,10 +1304,7 @@ export function SftpPaneView({
             title={viewMode === "tree" ? "切换到列表视图" : "切换到树视图"}
             onClick={() => setViewMode((v) => (v === "tree" ? "list" : "tree"))}
           >
-            <Icon
-              name={viewMode === "tree" ? "list-tree" : "list"}
-              size={13}
-            />
+            {viewMode === "tree" ? <ListTree size={14} /> : <List size={14} />}
           </button>
           <button
             className={
@@ -1317,7 +1314,7 @@ export function SftpPaneView({
             title={compact ? "切换到标准行高" : "切换到紧凑行高"}
             onClick={() => setCompact((v) => !v)}
           >
-            <Icon name="rows" size={13} />
+            <Rows3 size={14} />
           </button>
           <button
             className={
@@ -1327,7 +1324,7 @@ export function SftpPaneView({
             title="按名称过滤"
             onClick={() => setShowFilter((v) => !v)}
           >
-            <Icon name="search" size={13} />
+            <Search size={14} />
           </button>
           <button
             className="nc-sftp-toolbar-btn"
@@ -1338,7 +1335,7 @@ export function SftpPaneView({
               setDialog({ type: "mkdir" });
             }}
           >
-            <Icon name="folder-plus" size={13} />
+            <FolderPlus size={14} />
           </button>
           <button
             className="nc-sftp-toolbar-btn"
@@ -1349,7 +1346,7 @@ export function SftpPaneView({
               setDialog({ type: "newFile" });
             }}
           >
-            <Icon name="file-plus" size={13} />
+            <FilePlus size={14} />
           </button>
           <button
             className={
@@ -1361,7 +1358,7 @@ export function SftpPaneView({
             title={showHidden ? "隐藏隐藏文件" : "显示隐藏文件"}
             onClick={() => setShowHidden((v) => !v)}
           >
-            <Icon name={showHidden ? "eye-off" : "eye"} size={13} />
+            {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
           <div className="nc-sftp-toolbar-spacer" />
           <button
@@ -1371,7 +1368,7 @@ export function SftpPaneView({
             onClick={() => void load(path)}
             disabled={busy}
           >
-            <Icon name="refresh" size={13} />
+            <RefreshCw size={14} />
           </button>
           <button
             className="nc-sftp-toolbar-btn"
@@ -1381,7 +1378,7 @@ export function SftpPaneView({
               setOverflowMenu({ x: e.clientX, y: e.clientY })
             }
           >
-            <Icon name="more-vertical" size={13} />
+            <MoreVertical size={14} />
           </button>
         </div>
       ) : (
@@ -1391,7 +1388,7 @@ export function SftpPaneView({
             title="复制当前路径"
             onClick={() => void copyCurrentPath()}
           >
-            <Icon name="copy" size={13} />
+            <ClipboardCopy size={14} />
           </button>
           <button
             className={
@@ -1400,7 +1397,7 @@ export function SftpPaneView({
             title="按名称过滤"
             onClick={() => setShowFilter((v) => !v)}
           >
-            <Icon name="search" size={13} />
+            <Search size={14} />
           </button>
           <button
             className="nc-sftp-toolbar-btn"
@@ -1410,7 +1407,7 @@ export function SftpPaneView({
               setDialog({ type: "mkdir" });
             }}
           >
-            <Icon name="folder" size={13} />
+            <FolderPlus size={14} />
           </button>
           <button
             className="nc-sftp-toolbar-btn"
@@ -1420,7 +1417,7 @@ export function SftpPaneView({
               setDialog({ type: "newFile" });
             }}
           >
-            <Icon name="file-text" size={13} />
+            <FilePlus size={14} />
           </button>
           <button
             className={
@@ -1431,7 +1428,7 @@ export function SftpPaneView({
             title={showHidden ? "隐藏隐藏文件" : "显示隐藏文件"}
             onClick={() => setShowHidden((v) => !v)}
           >
-            <Icon name={showHidden ? "eye-off" : "eye"} size={13} />
+            {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
           <div className="nc-sftp-toolbar-spacer" />
           <button
@@ -1441,7 +1438,7 @@ export function SftpPaneView({
             onClick={() => void load(path)}
             disabled={busy}
           >
-            <Icon name="refresh" size={13} />
+            <RefreshCw size={14} />
           </button>
         </div>
       )}

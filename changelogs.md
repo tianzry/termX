@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-11-06 — #232 SFTP 工具栏与侧栏页签图标对齐 Netcatty（lucide 同套图标）
+
+- **Netcatty 取证**（`components/sftp/SftpPaneToolbar.tsx`、`TerminalSidePanel.tsx`）：工具栏依次使用 `Bookmark`（已收藏实心黄）、`SquareTerminal`（跳到终端目录）、`Terminal`（定位路径到终端）、`ClipboardCopy`（复制路径）、`ListTree/List`（视图切换）、`Rows3`（行密度）、`Search`（过滤）、`FolderPlus`（新建目录）、`FilePlus`（新建文件）、`Eye/EyeOff`（隐藏文件）、`RefreshCw`（刷新）、`MoreVertical`（更多）；侧栏页签为 `FolderTree` / `Play` / `History` / `NotebookText`。
+- **实现**：
+  - `src/sftp/SftpPaneView.tsx` 全页与侧栏共用工具栏图标全部换成上述 lucide 组件（14px），删除旧的字符/自绘 Icon 名称；
+  - `src/terminal/TerminalSidePanel.tsx` 页签 `TOOL_META` 改存 lucide 组件（15px 页签、13px 分屏标题、12px 分屏 pane 标题），移除 `Icon` 字符串映射。
+- **验证**：129 实机侧栏页签与 SFTP 工具栏逐个目视核对（文件夹树/播放/历史/笔记 + 收藏/终端目录/定位/复制/树/密度/搜索/新建/隐藏/刷新/更多）；`npm run build` 通过；截图 `evidence/af-E-sidepanel-icons.png`。
+
 ## 2026-11-06 — #231 补齐「定位路径到终端」（SFTP → 活动 SSH 终端）
 
 - **Netcatty 取证**：`handleLocatePathInTerminal` 取当前 SFTP 路径 → `resolveInteractiveTerminalCdIntent`，仅接受绝对路径 / `~` / `~/...`，含控制字符拒绝，命令形如 `cd -- '/var/log'`（`~/x` 展开为 `cd -- ~/'x'`）；非 SSH 协议（本地 / 串口 / Telnet）不显示该入口。

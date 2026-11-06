@@ -36,17 +36,25 @@ import { NotesPanel } from "../notes/NotesPanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { SftpSidePane } from "../sftp/SftpSidePane";
 import type { PaneHandle } from "../TerminalPane";
-import { Icon, type IconName } from "../ui/icons";
+import { Icon } from "../ui/icons";
+import {
+  FolderTree,
+  History,
+  NotebookText,
+  Play,
+  type LucideIcon,
+} from "lucide-react";
 import { ScriptsSidePane } from "./ScriptsSidePanel";
 
+/** 图标与 Netcatty TerminalLayerSidePanelSection 的 tab 图标一一对应。 */
 const TOOL_META: Record<
   SidePanelTool,
-  { icon: IconName; label: string }
+  { icon: LucideIcon; label: string }
 > = {
-  sftp: { icon: "folder-tree", label: "SFTP" },
-  scripts: { icon: "play", label: "脚本" },
-  history: { icon: "history", label: "历史" },
-  notes: { icon: "notebook", label: "笔记" },
+  sftp: { icon: FolderTree, label: "SFTP" },
+  scripts: { icon: Play, label: "脚本" },
+  history: { icon: History, label: "历史" },
+  notes: { icon: NotebookText, label: "笔记" },
 };
 
 type Layout = "single" | "row" | "column";
@@ -286,7 +294,7 @@ export function TerminalSidePanel({
                 aria-pressed={active}
                 onClick={() => selectTool(name)}
               >
-                <Icon name={meta.icon} size={15} />
+                <meta.icon size={15} />
               </button>
             );
           })}
@@ -358,7 +366,7 @@ export function TerminalSidePanel({
                     setMoreMenu(false);
                   }}
                 >
-                  <Icon name={meta.icon} size={13} />
+                  <meta.icon size={13} />
                   <span>{meta.label}</span>
                 </button>
               );
@@ -382,7 +390,10 @@ export function TerminalSidePanel({
           >
             {panes.length > 1 && (
               <div className="nc-side-panel-pane-header">
-                <Icon name={TOOL_META[pane.tool].icon} size={12} />
+                {(() => {
+                  const PaneIcon = TOOL_META[pane.tool].icon;
+                  return <PaneIcon size={12} />;
+                })()}
                 <span>{TOOL_META[pane.tool].label}</span>
                 <div className="nc-side-panel-pane-spacer" />
                 <button

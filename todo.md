@@ -480,3 +480,4 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 2026-11-06 | #229 B：SFTP 工具栏「更多」菜单贴右缘被裁切。SftpContextMenu 用 useLayoutEffect 量 rect 后按视口夹取（右溢出翻到左侧、下溢出上翻、仍溢出贴边）+ `.nc-sftp-ctx` max-height/overflow-y；行右键与更多菜单共用。129 实机三项完整 + Netcatty 同尺寸并排。 |
 | 2026-11-06 | #230 C：SFTP 收藏按 Netcatty 复刻。数据模型 SftpBookmark（local/global 两套 localStorage，旧键迁移）；按钮态（已收藏黄实心 / 有收藏主色 / 无收藏直加）；弹层（收藏路径 / 管理完成 / 收藏此路径 / +全局 / 列表分组线 / Globe / 悬停删除）；管理态拖拽（同 scope）、上移下移、行内改名、删除确认；129 实测 + Netcatty 并排。 |
 | 2026-11-06 | #231 D：补「定位路径到终端」。`resolveSftpLocateCdCommand`（仅绝对路径/`~`，控制字符拒绝，`cd --` 引号语义）；SFTP 工具栏新增 Terminal 图标按钮（不支持时禁用）；`App.locatePathInTerminal` 经活动 SSH 窗格 `sendText`，非 SSH 不显示入口。129 实测执行 `cd -- '/home/tianzry'`。 |
+| 2026-11-06 | #232 E：SFTP 工具栏与侧栏页签图标对齐 Netcatty。全页/侧栏工具栏换 lucide（Bookmark/SquareTerminal/Terminal/ClipboardCopy/ListTree/List/Rows3/Search/FolderPlus/FilePlus/Eye/EyeOff/RefreshCw/MoreVertical）；侧栏页签 FolderTree/Play/History/NotebookText；129 实测目视核对 + build 通过。 |
