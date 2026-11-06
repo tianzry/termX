@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-06 — #224 收尾全应用最终回归（浅/深双主题 + 四类终端 + Netcatty 同尺寸对照）
+
+- **范围**：改名后的 `termx.exe` 实跑（debug 内嵌 dist，CDP 9222），浅色/深色各走 Vault 9 导航页 + SFTP 根面 + 设置 8 tab + SSH(129)/本地 shell/Telnet/串口四类终端，共 44 张截图；断言汇总 `evidence/final-regression.json`。
+- **页面结果**：主机/监控/钥匙串/代理/端口转发/脚本/笔记/已知主机/日志、SFTP 空态、设置 8 tab 全部渲染正常；AI tab `disabled=true` 点击不切换（既有有意差异）；串口 `serial_list_ports` 枚举 COM1、`serial_open` 成功、tab 绿点，但无对端设备故无回显（不伪造）。
+- **串口踩坑**：上一实例未释放 COM1 句柄时 `serial_open` 报「拒绝访问」；重启 `termx.exe` 后恢复。自动化双击连接时第二下会落到刚挂载的 xterm 造成选区假象，改为「单击连接命中则不再双击」，并记录 `selectionBands=0`。
+- **Netcatty 对照（同尺寸 PrintWindow 裁切 + compose-sbs）**：Vault 主机、SFTP、设置 8 tab 并排见 `evidence/pair/*-sbs.png`；设置 tab 真实点击断言 `pair/settings-pairs.json`。一致项：布局/控件/空态/主题三段/字号/快捷键；有意差异：AI 未移植、更新下载安装置灰、同步入口在 Vault「同步」页（已实测为真实页面）、中文界面与「传输」等文案。**P1 = 0**。
+- **文档**：新增 `docs/final-regression.md`（覆盖清单、对照表、P1=0、仍未人工验证项）。
+- **门禁**：`npm run test:run` 769 通过（70 文件）、`npm run build` 通过、`cargo test --lib` 960 通过、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #223 P3 收尾（More 菜单录制文案单一来源 + OSC 7 对话框 Esc + 假入口审计）
 
 - **#216 遗留 P3 闭环**：
