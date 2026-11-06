@@ -180,6 +180,11 @@ interface Props {
   terminalCwd?: string | null;
   /** 在终端中打开路径（缺省隐藏该入口）。 */
   onRevealInTerminal?: (path: string) => void;
+  /**
+   * 「定位路径到终端」：把 SFTP 当前路径作为终端工作目录（`cd -- '<path>'`）。
+   * 缺省（本地 / 串口 / Telnet 等无 SSH 终端）时不渲染按钮。
+   */
+  onLocatePathInTerminal?: (path: string) => void;
   /** 外部触发导航（跟随终端目录）；key 变化时跳到 path。 */
   externalPath?: { path: string; key: number } | null;
 }
@@ -192,6 +197,7 @@ export function SftpPaneView({
   variant = "full",
   terminalCwd = null,
   onRevealInTerminal,
+  onLocatePathInTerminal,
   externalPath = null,
 }: Props) {
   const settings = useSettings();
@@ -433,6 +439,8 @@ export function SftpPaneView({
   const atRoot = isPathRoot(path);
   const parent =
     connection.kind === "local" ? localParent(path) : remoteParent(path);
+  /** 「定位路径到终端」的 cd 命令；null = 当前路径不可注入（按钮禁用）。 */
+  const locateTarget = resolveSftpLocateCdCommand(path);
 
   // ── 传输（入队到全局队列，进度在 SftpQueuePanel 展示） ──
 
@@ -1259,15 +1267,32 @@ export function SftpPaneView({
               if (terminalCwd) void load(terminalCwd);
             }}
           >
-            <Icon name="folder-input" size={13} />
+            <TerminalSquare size={14} />
           </button>
+          {onLocatePathInTerminal && (
+            <button
+              className="nc-sftp-toolbar-btn"
+              aria-label="定位路径到终端"
+              title={
+                locateTarget
+                  ? `在终端中 cd 到 ${path}`
+                  : "当前路径不支持定位到终端"
+              }
+              disabled={!locateTarget}
+              onClick={() => {
+                if (locateTarget) onLocatePathInTerminal(path);
+              }}
+            >
+              <TerminalIcon size={14} />
+            </button>
+          )}
           <button
             className="nc-sftp-toolbar-btn"
             aria-label="复制当前路径"
             title="复制当前路径"
             onClick={() => void copyCurrentPath()}
           >
-            <Icon name="copy" size={13} />
+            <ClipboardCopy size={14} />
           </button>
           <button
             className={

@@ -30,6 +30,8 @@ interface Props {
   hostId?: string;
   /** 「在终端中打开当前路径」（发送 cd）；缺省隐藏入口。 */
   onRevealInTerminal?: (path: string) => void;
+  /** 「定位路径到终端」（SFTP 当前路径 → 终端 cd）；缺省隐藏按钮。 */
+  onLocatePathInTerminal?: (path: string) => void;
 }
 
 export function SftpSidePane({
@@ -39,6 +41,7 @@ export function SftpSidePane({
   meta,
   hostId,
   onRevealInTerminal,
+  onLocatePathInTerminal,
 }: Props) {
   const [connection, setConnection] = useState<RemoteConnection | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -158,6 +161,7 @@ export function SftpSidePane({
         pathRef.current = next;
       }}
       onRevealInTerminal={onRevealInTerminal}
+      onLocatePathInTerminal={onLocatePathInTerminal}
       externalPath={externalPath}
     />
   );

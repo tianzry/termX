@@ -29,7 +29,11 @@ import { TelnetConnectModal } from "./telnet/TelnetConnectModal";
 import { useForwardSupervisor } from "./forwardSupervisor";
 import { ConnectionManager } from "./ConnectionManager";
 import { SftpView } from "./sftp/SftpView";
-import type { ConnectedHostEntry, SftpOpenRequest } from "./sftp/sftpModel";
+import {
+  resolveSftpLocateCdCommand,
+  type ConnectedHostEntry,
+  type SftpOpenRequest,
+} from "./sftp/sftpModel";
 import * as api from "./backend/client";
 import {
   SettingsDialog,
@@ -551,6 +555,23 @@ export default function App() {
       ]
     : [];
 
+  /**
+   * 「定位路径到终端」：把 SFTP 当前路径写进活动 SSH 终端（Netcatty
+   * resolveInteractiveTerminalCdIntent 语义：仅绝对路径 / ~，`cd -- '<path>'`）。
+   */
+  const locatePathInTerminal = (path: string) => {
+    const command = resolveSftpLocateCdCommand(path);
+    if (!command) {
+      setStatus("当前路径不支持定位到终端");
+      return;
+    }
+    if (!activeHandle) {
+      setStatus("终端未就绪，无法定位路径");
+      return;
+    }
+    activeHandle.sendText(`${command}\r`);
+  };
+
   /** 主机右键「打开 SFTP」：打开 SFTP 视图，左本地 + 右该主机（可复用已有会话）。 */
   function openSftpForHost(profile: Profile) {
     if (!settings.showSftpTab) {
@@ -732,8 +753,15 @@ export default function App() {
             profiles={profiles}
             onOpenHost={connect}
             activeHandle={activeHandle}
-            onRevealInTerminal={(path) =>
-              activeHandle?.sendText(`cd ${JSON.stringify(path)}\r`)
+            onRevealInTerminal={
+              activeTab?.connector.kind === "ssh"
+                ? locatePathInTerminal
+                : undefined
+            }
+            onLocatePathInTerminal={
+              activeTab?.connector.kind === "ssh"
+                ? locatePathInTerminal
+                : undefined
             }
             sshSessionId={activeSshSid}
             terminalCwd={activeCwd}

@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-06 — #231 补齐「定位路径到终端」（SFTP → 活动 SSH 终端）
+
+- **Netcatty 取证**：`handleLocatePathInTerminal` 取当前 SFTP 路径 → `resolveInteractiveTerminalCdIntent`，仅接受绝对路径 / `~` / `~/...`，含控制字符拒绝，命令形如 `cd -- '/var/log'`（`~/x` 展开为 `cd -- ~/'x'`）；非 SSH 协议（本地 / 串口 / Telnet）不显示该入口。
+- **实现**：
+  - `src/sftp/sftpModel.ts` 新增 `resolveSftpLocateCdCommand` / `quoteShellPath` / `pathHasInteractiveControlBytes`（`cd --` 语义、单引号转义、拒绝控制字节）；
+  - `src/sftp/SftpPaneView.tsx` 工具栏在「跳到终端目录」后新增「定位路径到终端」按钮（lucide `Terminal`，不支持路径时禁用并给 title）；
+  - `src/App.tsx` 新增 `locatePathInTerminal`：命令解析失败 / 终端未就绪时写状态栏提示，否则 `activeHandle.sendText(command + "\r")`；`onLocatePathInTerminal` 仅在 `activeTab.connector.kind === "ssh"` 时下发（同时把「跳到终端目录」统一到同一实现）。
+- **验证**：129 实机 SFTP 侧栏点击「定位路径到终端」→ 终端真实执行 `cd -- '/home/tianzry'` 并落到目标目录（截图 `evidence/af-D-locate-path.png`）；`src/sftp/sftpModel.test.ts` 定位命令 3 组用例通过。
+
 ## 2026-11-06 — #230 SFTP 收藏（书签）按 Netcatty 复刻：选中态 / 弹层 / 管理 / 持久化
 
 - **Netcatty 取证**：

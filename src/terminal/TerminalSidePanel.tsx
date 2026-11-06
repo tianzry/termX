@@ -74,6 +74,8 @@ interface Props {
   /** 活动窗格（脚本运行 / 在终端打开路径）。 */
   activeHandle: PaneHandle | null;
   onRevealInTerminal?: (path: string) => void;
+  /** 「定位路径到终端」（SFTP 当前路径 → 终端 `cd`）；非 SSH 会话不传。 */
+  onLocatePathInTerminal?: (path: string) => void;
 }
 
 /** 读取持久化宽度并夹取到当前窗口。 */
@@ -103,6 +105,7 @@ export function TerminalSidePanel({
   onOpenHost,
   activeHandle,
   onRevealInTerminal,
+  onLocatePathInTerminal,
 }: Props) {
   const [desiredWidth, setDesiredWidth] = useState(initialWidth);
   const [maximized, setMaximized] = useState(false);
@@ -225,6 +228,7 @@ export function TerminalSidePanel({
           meta={sessionMeta}
           hostId={hostId}
           onRevealInTerminal={onRevealInTerminal}
+          onLocatePathInTerminal={onLocatePathInTerminal}
         />
       );
     }
