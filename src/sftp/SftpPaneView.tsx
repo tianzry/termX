@@ -1,5 +1,5 @@
 /**
- * 已连接面板：标签头 + 面包屑（可点路径段 / 回根 / 回主目录）+ 工具行
+ * 已连接面板：面包屑（可点路径段 / 回根 / 回主目录）+ 工具行
  * （复制路径 / 新建文件夹 / 显示隐藏文件 / 刷新）+ 列头排序 + 条目列表 + 文件操作。
  * 交互基准为 Netcatty SftpPaneToolbar / SftpBreadcrumb / SftpPaneFileList 的
  * termX 范围子集：
@@ -31,7 +31,6 @@ import {
   FolderPlus,
   List,
   ListTree,
-  MoreVertical,
   RefreshCw,
   Rows3,
   Search,
@@ -178,8 +177,6 @@ interface Props {
   variant?: "full" | "side";
   /** 终端当前目录（侧栏「跳到终端目录」目标）。 */
   terminalCwd?: string | null;
-  /** 在终端中打开路径（缺省隐藏该入口）。 */
-  onRevealInTerminal?: (path: string) => void;
   /**
    * 「定位路径到终端」：把 SFTP 当前路径作为终端工作目录（`cd -- '<path>'`）。
    * 缺省（本地 / 串口 / Telnet 等无 SSH 终端）时不渲染按钮。
@@ -196,7 +193,6 @@ export function SftpPaneView({
   refreshKey = 0,
   variant = "full",
   terminalCwd = null,
-  onRevealInTerminal,
   onLocatePathInTerminal,
   externalPath = null,
 }: Props) {
@@ -242,9 +238,6 @@ export function SftpPaneView({
   );
   const [pendingBookmarkRemoval, setPendingBookmarkRemoval] =
     useState<SftpBookmark | null>(null);
-  const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(
-    null,
-  );
   /** 树视图：已展开目录与其子项（按绝对路径索引）。 */
   const [treeExpanded, setTreeExpanded] = useState<Set<string>>(new Set());
   const [treeChildren, setTreeChildren] = useState<Record<string, Row[]>>({});
@@ -1155,16 +1148,6 @@ export function SftpPaneView({
         .filter(Boolean)
         .join(" ")}
     >
-      {!side && (
-        <div className="nc-sftp-pane-header">
-          <Icon
-            name={connection.kind === "local" ? "monitor" : "server"}
-            size={13}
-          />
-          <span className="nc-sftp-pane-label">{connection.label}</span>
-        </div>
-      )}
-
       {/* 面包屑行：回主目录 / 回根 / 可点路径段（超长折叠中间段进省略号） */}
       <div className="nc-sftp-toolbar">
         <button
@@ -1231,7 +1214,7 @@ export function SftpPaneView({
       </div>
 
       {/* 动作行（侧栏顺序对齐 Netcatty：书签 / 跳到终端目录 / 复制路径 /
-          视图 / 密度 / 过滤 / 新建文件夹 / 新建文件 / 隐藏 / 刷新 / 更多） */}
+          视图 / 密度 / 过滤 / 新建文件夹 / 新建文件 / 隐藏 / 刷新） */}
       {side ? (
         <div className="nc-sftp-toolbar nc-sftp-actions-side">
           <button
@@ -1369,16 +1352,6 @@ export function SftpPaneView({
             disabled={busy}
           >
             <RefreshCw size={14} />
-          </button>
-          <button
-            className="nc-sftp-toolbar-btn"
-            aria-label="更多操作"
-            title="更多操作"
-            onClick={(e) =>
-              setOverflowMenu({ x: e.clientX, y: e.clientY })
-            }
-          >
-            <MoreVertical size={14} />
           </button>
         </div>
       ) : (
@@ -1609,26 +1582,6 @@ export function SftpPaneView({
             setPendingBookmarkRemoval(null);
           }}
           onClose={() => setPendingBookmarkRemoval(null)}
-        />
-      )}
-
-      {overflowMenu && (
-        <SftpContextMenu
-          x={overflowMenu.x}
-          y={overflowMenu.y}
-          items={[
-            ...(onRevealInTerminal
-              ? [
-                  {
-                    label: "在终端中打开当前路径",
-                    onClick: () => onRevealInTerminal(path),
-                  },
-                ]
-              : []),
-            { label: "复制当前路径", onClick: () => void copyCurrentPath() },
-            { label: "刷新", onClick: () => void load(path) },
-          ]}
-          onClose={() => setOverflowMenu(null)}
         />
       )}
 

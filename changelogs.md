@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-11-06 — #240 SFTP 面板删除重复的连接名标题行（对齐 Netcatty SftpPaneView）
+
+- **问题**：全页 SFTP 每个面板在标签栏下面还有一行「图标 + 连接名」（本地 / 129-覆盖主机），与上方标签重复，白占 34px 垂直空间。
+- **取证**：Netcatty `SftpPaneView` 面板内部没有标题行，连接身份只由 `SftpTabBar` 承担；termX 的 `.nc-sftp-pane-header` 是移植时多加的一层。终端侧栏（`variant="side"`）本来就条件渲染跳过该行，因此只有全页受影响。
+- **改动**：删除 `SftpPaneView` 的 `.nc-sftp-pane-header` 块（含 `connection.label` 展示），同步删除不再使用的 `.nc-sftp-pane-header` / `.nc-sftp-pane-label` 样式；无关联 props / state / i18n 文案（标签为硬编码，props 仍在别处使用）。全页与侧栏现在结构一致。
+- **验证**（129 实机）：全页 SFTP 右栏 129，`headerRows=0`，面包屑行紧接标签栏、工具行 top 68px（原 102px），列表正常上移无空洞；880×700 窄窗 `scrollWidth-clientWidth=0`。改前/改后并排见 `evidence/fixA-before-after.png`，改后全图 `fixA-full-after.png`、窄窗 `fixA-full-narrow.png`。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例 ✓；`npm run build` ✓。
+
 ## 2026-11-06 — #239 SFTP 传输进度条不显示 + 传输队列高度可拖拽（对齐 Netcatty SftpTransferQueue）
 
 - **需求**：定位「SFTP 传输进度条不显示」的真实原因（后端没发 / 前端没订阅 / 渲染被裁），修完后同一文件在 129 上截 0% / 中间 / 100% 三态；再把传输队列面板做成 Netcatty 的高度可拖拽视图。

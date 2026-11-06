@@ -3748,22 +3748,6 @@ button:disabled {
   flex-direction: column;
 }
 
-.nc-sftp-pane-header {
-  height: 34px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border-bottom: 1px solid hsl(var(--border) / 0.6);
-  font-size: 12px;
-}
-
-.nc-sftp-pane-label {
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
 /* 工具行（面包屑行 / 动作行共用；对齐 Netcatty 两行 h-7 布局） */
 .nc-sftp-toolbar {
   height: 28px;
