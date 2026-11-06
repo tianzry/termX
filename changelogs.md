@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-06 — #241 终端侧栏 SFTP：删除多余「更多」按钮，刷新移到图标行末位
+
+- **问题**：侧栏 SFTP 工具行末尾的 ⋮「更多操作」弹层三项（在终端中打开当前路径 / 复制当前路径 / 刷新）在前面图标里都有，纯冗余。
+- **逐项核对（无功能丢失）**：
+  1. 「在终端中打开当前路径」→ 与工具行 `Terminal` 图标「定位路径到终端」是同一个回调（App 层 `locatePathInTerminal` 同时传给 `onRevealInTerminal` 与 `onLocatePathInTerminal`），保留图标按钮即可；
+  2. 「复制当前路径」→ `ClipboardCopy` 图标已有；
+  3. 「刷新」→ `RefreshCw` 图标已有。
+  因此无独有项需要迁移，直接整块删除按钮 + 弹层。
+- **改动**：`SftpPaneView` 删除 `MoreVertical` 引入、`overflowMenu` state、⋮ 按钮与 `SftpContextMenu` 溢出弹层；连带清理只被该弹层使用的 `onRevealInTerminal` 属性链（`SftpPaneView` → `SftpSidePane` → `TerminalSidePanel` → App），无快捷键、无 i18n key（文案为硬编码）。刷新按钮保留在 spacer 之后、成为图标行最末位。
+- **验证**（129 实机侧栏）：按钮数 11，最后一项 `aria-label="刷新"`，无「更多操作」、无溢出菜单；窄窗 880×700 工具栏/面板/行 `scrollWidth-clientWidth=0`。改前/改后并排 `evidence/fixGH-before-after.png`，改后 `fixGH-side-after.png`、窄窗 `fixGH-side-narrow.png`。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例 ✓；`npm run build` ✓。
+
 ## 2026-11-06 — #240 SFTP 面板删除重复的连接名标题行（对齐 Netcatty SftpPaneView）
 
 - **问题**：全页 SFTP 每个面板在标签栏下面还有一行「图标 + 连接名」（本地 / 129-覆盖主机），与上方标签重复，白占 34px 垂直空间。

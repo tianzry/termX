@@ -763,11 +763,6 @@ export default function App() {
             profiles={profiles}
             onOpenHost={connect}
             activeHandle={activeHandle}
-            onRevealInTerminal={
-              activeTab?.connector.kind === "ssh"
-                ? locatePathInTerminal
-                : undefined
-            }
             onLocatePathInTerminal={
               activeTab?.connector.kind === "ssh"
                 ? locatePathInTerminal

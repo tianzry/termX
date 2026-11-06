@@ -79,9 +79,8 @@ interface Props {
   hostId?: string;
   profiles: Profile[];
   onOpenHost: (profile: Profile) => void;
-  /** 活动窗格（脚本运行 / 在终端打开路径）。 */
+  /** 活动窗格（脚本运行 / 定位路径到终端）。 */
   activeHandle: PaneHandle | null;
-  onRevealInTerminal?: (path: string) => void;
   /** 「定位路径到终端」（SFTP 当前路径 → 终端 `cd`）；非 SSH 会话不传。 */
   onLocatePathInTerminal?: (path: string) => void;
 }
@@ -112,7 +111,6 @@ export function TerminalSidePanel({
   profiles,
   onOpenHost,
   activeHandle,
-  onRevealInTerminal,
   onLocatePathInTerminal,
 }: Props) {
   const [desiredWidth, setDesiredWidth] = useState(initialWidth);
@@ -244,7 +242,6 @@ export function TerminalSidePanel({
           label={sessionLabel}
           meta={sessionMeta}
           hostId={hostId}
-          onRevealInTerminal={onRevealInTerminal}
           onLocatePathInTerminal={onLocatePathInTerminal}
         />
       );
