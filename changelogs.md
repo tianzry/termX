@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-06 — #215 第二轮全应用比对（debug 实跑 + 逐页复核）
+
+- **比对方式**：`npm run tauri -- build --debug --no-bundle` 生成 debug 版并实跑（dist 内嵌，改前端必须重建才生效），WebView2 CDP 9222 逐页截图 + 量测，脚本 `evidence/audit15-compare.mjs`、`evidence/audit15-final-serial.mjs`；Netcatty 侧用运行实例 PrintWindow 截图 + 源码静态比对（其运行实例未开 CDP，无法逐页自动化）。
+- **覆盖范围**：Vault 首页/主机、串口弹窗（含勾选保存配置两态）、笔记页、会话日志、脚本页、主机监控、本地终端工具栏 / More 菜单 / 右键菜单。
+- **P1（严重回归）**：未发现。
+- **P2（低风险，已修）**：串口弹窗「取消」按钮缺 outline 边框，与 Netcatty `DialogFooter` 的 outline 取消按钮不一致 → `.serial-cancel` 补 `1px solid #e2e8f0` + `padding: 0 16px`，重建后实测 computed `0.8px solid rgb(226,232,240)`、高度 36px 不变。
+- **P3（已知能力差异，不入本轮修复）**：
+  - Netcatty 工具栏独有 `browser` / `ymodemSend` / `ymodemReceive` / `openSessionLog`，termX 按既定范围不移植（已在 todo「不移植」节登记）；
+  - Netcatty 右键菜单另有「上传/下载」「Paste Selection」「保存屏幕」「插件菜单」等项，属能力差异；
+  - Netcatty 支持插件贡献菜单，termX 无插件宿主。
+- **回归核对（本轮改动直接相关项，均正常）**：本地终端工具栏顺序 `关键词高亮 / 撰写栏 / 终端搜索 / 记录会话日志 / 运行脚本 / 更多 / 关闭当前窗格`（SFTP、笔记按类型隐藏）；More 为 `命令历史 / 终端设置 / 开始录制`（本地无 OSC7 / 编码）；右键为 `复制 / 粘贴 / 全选 / 水平分屏 / 垂直分屏 / 清空缓冲区 / 关闭终端`；日志表格行高 48px、表头存在；脚本页行高 56px；笔记页正常渲染；串口弹窗 448px 宽、文案与图标对齐 Netcatty。
+- **截图**：`evidence/audit15-00-netcatty-window.png`、`audit15-00b-netcatty-terminal.png`、`audit15-01-vault.png`、`audit15-02-serial.png`、`audit15-02b-serial-save.png`、`audit15-02c-serial-final.png`、`audit15-03-notes.png`、`audit15-04-logs.png`、`audit15-05-snippets.png`、`audit15-06-monitor.png`、`audit15-06b-hosts.png`、`audit15-07-terminal.png`、`audit15-08-more.png`、`audit15-09-context.png`；数据 `evidence/audit15-findings.json`、`evidence/audit15-serial-final.json`。
+- **未验证项与原因**：Netcatty 全应用逐页像素对齐未自动化（运行实例无 CDP，只能截当前窗口，无法切页）；SSH 真机 129 的工具栏/右键在四类终端全矩阵未逐类复测（本轮只实跑本地 PTY，SSH 侧靠 `deriveToolbarCapabilities` 单测与类型矩阵保证）；主机弹窗、设置页仅静态对照，未做像素量测。
+- 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 947 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #211 设置独立窗口可行性立项（只调研 + 方案，不写代码）
 
 - **Netcatty 现状（Electron，只读对照）**：`electron/bridges/windowManager/settingsWindow.cjs` 创建 `BrowserWindow`：`980×720`、`minWidth 820 / minHeight 600`、`modal:false`、**不设 parent**（mac 拖屏不可见 / Windows 关设置连带关主窗）、`show:false` 加载完再显示；关闭时 `preventDefault + hide()` 复用；每次打开按主窗口所在显示器的 `workArea` 居中；路由为 `#/settings`；Windows 下无边框自定义 chrome + `restoreWindowInputFocus`（`setAlwaysOnTop(true→focus→false)` 闪现抢焦点）。
