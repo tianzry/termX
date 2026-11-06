@@ -125,13 +125,16 @@ import {
 import { deriveToolbarCapabilities } from "./terminal/toolbarCapabilities";
 import type { ConnectionStatus } from "./terminal/connectionStatus";
 import {
+  resolveTerminalMoreActions,
   resolveTerminalTitlebarActions,
   resolveTerminalToolbarActions,
 } from "./terminal/toolbarLayout";
 import {
-  resolveTerminalContextMenu,
-  type TerminalContextMenuAction,
-} from "./terminal/contextMenuLayout";
+  TERMINAL_CONTEXT_MENU_TEXT,
+  TERMINAL_MORE_TEXT,
+  TERMINAL_TOOLBAR_TEXT,
+} from "./terminal/terminalActionText";
+import { resolveTerminalContextMenu } from "./terminal/contextMenuLayout";
 import {
   createZmodemController,
   type ZmodemController,
@@ -161,19 +164,6 @@ const SEARCH_OPTIONS = {
 } as const;
 
 type PaneStatus = ConnectionStatus;
-
-/** 右键菜单文案（对照 Netcatty i18n `terminal.menu.*`）。 */
-const CONTEXT_MENU_LABELS: Record<TerminalContextMenuAction, string> = {
-  copy: "复制",
-  paste: "粘贴",
-  selectAll: "全选",
-  openSftp: "打开 SFTP",
-  reconnect: "重新连接",
-  splitHorizontal: "水平分屏",
-  splitVertical: "垂直分屏",
-  clearBuffer: "清空缓冲区",
-  closeTerminal: "关闭终端",
-};
 
 /** 自动补全浮层的锚点（相对 pane 的像素坐标 + 单元格 / 字体信息）。 */
 interface AutocompleteAnchor {
@@ -2848,8 +2838,9 @@ export function TerminalPane({
   const canReconnect = status !== "connecting";
   const transportKind = tab.connector.kind;
   const caps = deriveToolbarCapabilities(transportKind);
-  // 右侧工具栏条目（顺序固定为 Netcatty defaultLayout，见 toolbarLayout.ts）。
+  // 右侧工具栏 / More 菜单条目均由 toolbarLayout 的 spec 派生（顺序与可见性唯一来源）。
   const toolbarActions = resolveTerminalToolbarActions(transportKind);
+  const moreActions = resolveTerminalMoreActions(transportKind);
   // 系统监控只出现在远端 SSH 会话（netcatty isSystemSidebarEligible 排除本地 / 串口 / Telnet）
   const systemEligible = caps.systemMonitor;
   // 采样接口需要已建立的 SSH 会话 id；按钮只在已连接时启用，其余状态写明原因。
@@ -3234,152 +3225,181 @@ export function TerminalPane({
           })}
         </div>
         <div className="term-toolbar-right">
-          <div className="term-tool-more">
-            <button
-              className={`term-tool-btn${highlightOpen || highlightRules.length > 0 ? " active" : ""}`}
-              title="主机关键词高亮"
-              onClick={() => setHighlightOpen((v) => !v)}
-            >
-              <Icon name="highlighter" size={12} />
-            </button>
-            {highlightOpen && (
-              <div className="term-tool-menu term-highlight-menu">
-                <div className="term-menu-label">关键词高亮</div>
-                <div className="term-highlight-form">
-                  <input
-                    autoFocus
-                    value={highlightDraft}
-                    placeholder="输入关键词后回车"
-                    onChange={(e) => setHighlightDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && highlightDraft.trim()) {
-                        setHighlightRules((prev) => [
-                          ...prev,
-                          {
-                            id: `${Date.now().toString(36)}-${prev.length}`,
-                            keyword: highlightDraft.trim(),
-                            color: "#f6e05e",
-                          },
-                        ]);
-                        setHighlightDraft("");
-                      }
-                    }}
-                  />
-                </div>
-                {highlightRules.length === 0 ? (
-                  <div className="term-menu-empty">尚无高亮规则</div>
-                ) : (
-                  highlightRules.map((rule) => (
+          {/* 顺序与可见性全部来自 resolveTerminalToolbarActions，JSX 只按 id 渲染。 */}
+          {toolbarActions.map((action) => {
+            switch (action) {
+              case "highlight":
+                return (
+                  <div key={action} className="term-tool-more">
                     <button
-                      key={rule.id}
-                      title="点击移除该规则"
-                      onClick={() =>
-                        setHighlightRules((prev) =>
-                          prev.filter((r) => r.id !== rule.id),
-                        )
-                      }
+                      className={`term-tool-btn${highlightOpen || highlightRules.length > 0 ? " active" : ""}`}
+                      title={TERMINAL_TOOLBAR_TEXT.highlight.title}
+                      onClick={() => setHighlightOpen((v) => !v)}
                     >
-                      <span
-                        className="term-highlight-dot"
-                        style={{ background: rule.color }}
-                      />
-                      <span className="term-history-cmd">{rule.keyword}</span>
-                      <Icon name="x" size={12} className="term-menu-caret" />
+                      <Icon name="highlighter" size={12} />
                     </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-          {toolbarActions.includes("sftp") && (
-          <button
-            className="term-tool-btn"
-            title={
-              status === "connected"
-                ? "打开 SFTP"
-                : "连接 SSH 后可用"
-            }
-            disabled={!onOpenTool || status !== "connected"}
-            onClick={() => onOpenTool?.("sftp")}
-          >
-            <Icon name="folder-input" size={12} />
-          </button>
-          )}
-          {toolbarActions.includes("notes") && (
-          <button
-            className="term-tool-btn"
-            title="笔记面板"
-            disabled={!onOpenTool}
-            onClick={() => onOpenTool?.("notes")}
-          >
-            <Icon name="file-text" size={12} />
-          </button>
-          )}
-          <button
-            className={`term-tool-btn${composeOpen ? " active" : ""}`}
-            title="撰写栏"
-            aria-pressed={composeOpen}
-            onClick={() => setComposeOpen((v) => !v)}
-          >
-            <Icon name="text-cursor" size={12} />
-          </button>
-          <button
-            className={`term-tool-btn${searchOpen ? " active" : ""}`}
-            title="终端搜索"
-            disabled={status !== "connected"}
-            onClick={() => setSearchOpen((v) => !v)}
-          >
-            <Icon name="search" size={12} />
-          </button>
-          {/* 四种传输都挂了文本日志槽：自动录制（.cast）与手动文本日志并行。 */}
-          <button
-            className={`term-tool-btn${sessionLog ? " recording" : ""}`}
-            disabled={status !== "connected" || logBusy}
-            title={
-              sessionLog
-                ? "停止记录会话日志"
-                : "开始记录会话日志"
-            }
-            aria-label={
-              sessionLog ? "停止记录会话日志" : "开始记录会话日志"
-            }
-            onClick={() => void toggleManualSessionLog()}
-          >
-            <Icon name="file-text" size={12} />
-          </button>
-          <div className="term-tool-more">
-            <button
-              className="term-tool-btn"
-              title={
-                scriptSnippets.length > 0
-                  ? "运行脚本（发送到当前会话）"
-                  : "暂无脚本（到「脚本」页新建，类型选脚本）"
-              }
-              disabled={scriptSnippets.length === 0}
-              onClick={() => setScriptMenuOpen((v) => !v)}
-            >
-              <Icon name="zap" size={12} />
-            </button>
-            {scriptMenuOpen && (
-              <div className="term-tool-menu term-snippet-menu">
-                <div className="term-menu-label">运行脚本</div>
-                {scriptSnippets.map((s) => (
+                    {highlightOpen && (
+                      <div className="term-tool-menu term-highlight-menu">
+                        <div className="term-menu-label">
+                          {TERMINAL_TOOLBAR_TEXT.highlight.label}
+                        </div>
+                        <div className="term-highlight-form">
+                          <input
+                            autoFocus
+                            value={highlightDraft}
+                            placeholder="输入关键词后回车"
+                            onChange={(e) => setHighlightDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && highlightDraft.trim()) {
+                                setHighlightRules((prev) => [
+                                  ...prev,
+                                  {
+                                    id: `${Date.now().toString(36)}-${prev.length}`,
+                                    keyword: highlightDraft.trim(),
+                                    color: "#f6e05e",
+                                  },
+                                ]);
+                                setHighlightDraft("");
+                              }
+                            }}
+                          />
+                        </div>
+                        {highlightRules.length === 0 ? (
+                          <div className="term-menu-empty">尚无高亮规则</div>
+                        ) : (
+                          highlightRules.map((rule) => (
+                            <button
+                              key={rule.id}
+                              title="点击移除该规则"
+                              onClick={() =>
+                                setHighlightRules((prev) =>
+                                  prev.filter((r) => r.id !== rule.id),
+                                )
+                              }
+                            >
+                              <span
+                                className="term-highlight-dot"
+                                style={{ background: rule.color }}
+                              />
+                              <span className="term-history-cmd">{rule.keyword}</span>
+                              <Icon name="x" size={12} className="term-menu-caret" />
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              case "sftp":
+                return (
                   <button
-                    key={s.id || s.name}
-                    title={s.description || s.command.split(/\r?\n/)[0]}
-                    disabled={status !== "connected"}
-                    onClick={() => {
-                      insertSnippet(s);
-                      setScriptMenuOpen(false);
-                    }}
+                    key={action}
+                    className="term-tool-btn"
+                    title={
+                      status === "connected"
+                        ? TERMINAL_TOOLBAR_TEXT.sftp.title
+                        : "连接 SSH 后可用"
+                    }
+                    disabled={!onOpenTool || status !== "connected"}
+                    onClick={() => onOpenTool?.("sftp")}
                   >
-                    <Icon name="play" size={12} />
-                    {s.name}
+                    <Icon name="folder-input" size={12} />
                   </button>
-                ))}
-              </div>
-            )}
-          </div>
+                );
+              case "notes":
+                return (
+                  <button
+                    key={action}
+                    className="term-tool-btn"
+                    title={TERMINAL_TOOLBAR_TEXT.notes.title}
+                    disabled={!onOpenTool}
+                    onClick={() => onOpenTool?.("notes")}
+                  >
+                    <Icon name="file-text" size={12} />
+                  </button>
+                );
+              case "compose":
+                return (
+                  <button
+                    key={action}
+                    className={`term-tool-btn${composeOpen ? " active" : ""}`}
+                    title={TERMINAL_TOOLBAR_TEXT.compose.title}
+                    aria-pressed={composeOpen}
+                    onClick={() => setComposeOpen((v) => !v)}
+                  >
+                    <Icon name="text-cursor" size={12} />
+                  </button>
+                );
+              case "search":
+                return (
+                  <button
+                    key={action}
+                    className={`term-tool-btn${searchOpen ? " active" : ""}`}
+                    title={TERMINAL_TOOLBAR_TEXT.search.title}
+                    disabled={status !== "connected"}
+                    onClick={() => setSearchOpen((v) => !v)}
+                  >
+                    <Icon name="search" size={12} />
+                  </button>
+                );
+              case "sessionLog": {
+                const title = `${sessionLog ? "停止" : "开始"}${TERMINAL_TOOLBAR_TEXT.sessionLog.title}`;
+                return (
+                  // 四种传输都挂了文本日志槽：自动录制（.cast）与手动文本日志并行。
+                  <button
+                    key={action}
+                    className={`term-tool-btn${sessionLog ? " recording" : ""}`}
+                    disabled={status !== "connected" || logBusy}
+                    title={title}
+                    aria-label={title}
+                    onClick={() => void toggleManualSessionLog()}
+                  >
+                    <Icon name="file-text" size={12} />
+                  </button>
+                );
+              }
+              case "scripts":
+                return (
+                  <div key={action} className="term-tool-more">
+                    <button
+                      className="term-tool-btn"
+                      title={
+                        scriptSnippets.length > 0
+                          ? TERMINAL_TOOLBAR_TEXT.scripts.title
+                          : "暂无脚本（到「脚本」页新建，类型选脚本）"
+                      }
+                      disabled={scriptSnippets.length === 0}
+                      onClick={() => setScriptMenuOpen((v) => !v)}
+                    >
+                      <Icon name="zap" size={12} />
+                    </button>
+                    {scriptMenuOpen && (
+                      <div className="term-tool-menu term-snippet-menu">
+                        <div className="term-menu-label">
+                          {TERMINAL_TOOLBAR_TEXT.scripts.label}
+                        </div>
+                        {scriptSnippets.map((s) => (
+                          <button
+                            key={s.id || s.name}
+                            title={s.description || s.command.split(/\r?\n/)[0]}
+                            disabled={status !== "connected"}
+                            onClick={() => {
+                              insertSnippet(s);
+                              setScriptMenuOpen(false);
+                            }}
+                          >
+                            <Icon name="play" size={12} />
+                            {s.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              default:
+                return null;
+            }
+          })}
           <div className="term-tool-more">
             <button
               className="term-tool-btn"
@@ -3396,144 +3416,171 @@ export function TerminalPane({
             </button>
             {moreOpen && (
               <div className="term-tool-menu term-more-menu">
-                {caps.menuHistory && (
-                <button
-                  title={moreHistoryReason ?? "命令历史"}
-                  disabled={moreHistoryReason !== null}
-                  onClick={() => {
-                    setMoreOpen(false);
-                    setHistoryOpen(true);
-                  }}
-                >
-                  <Icon name="history" size={12} />
-                  <span className="term-menu-text">命令历史</span>
-                  {moreHistoryReason !== null && (
-                    <span className="term-menu-note">{moreHistoryReason}</span>
-                  )}
-                </button>
-                )}
-                {caps.menuOsc7 && (
-                <button
-                  title={
-                    moreOsc7Reason !== null
-                      ? `配置目录追踪 · ${moreOsc7Reason}`
-                      : cwdTracked
-                        ? `配置目录追踪（已启用：${cwd ?? "未知目录"}）`
-                        : "配置目录追踪"
-                  }
-                  disabled={moreOsc7Reason !== null}
-                  onClick={() => {
-                    setOsc7DialogOpen(true);
-                    setMoreOpen(false);
-                  }}
-                >
-                  <Icon name="folder-sync" size={12} />
-                  <span className="term-menu-text">配置目录追踪</span>
-                  {moreOsc7Reason !== null ? (
-                    <span className="term-menu-note">{moreOsc7Reason}</span>
-                  ) : (
-                    cwdTracked && <span className="term-menu-note">已启用</span>
-                  )}
-                </button>
-                )}
-                <button
-                  title={
-                    onOpenSettings
-                      ? "终端设置（外观 / 字体 / 行为）"
-                      : "终端设置暂不可用"
-                  }
-                  disabled={!onOpenSettings}
-                  onClick={() => {
-                    setMoreOpen(false);
-                    onOpenSettings?.();
-                  }}
-                >
-                  <Icon name="palette" size={12} />
-                  <span className="term-menu-text">终端设置</span>
-                </button>
-                <button
-                  title={
-                    moreRecordingReason ??
-                    (scriptRec ? "停止录制并保存到脚本库" : "开始录制脚本")
-                  }
-                  disabled={
-                    moreRecordingReason !== null || scriptRecBusy
-                  }
-                  className={scriptRec ? "is-recording" : undefined}
-                  onClick={() => {
-                    setMoreOpen(false);
-                    void toggleScriptRecording();
-                  }}
-                >
-                  <Icon name="circle" size={12} className="term-record-dot" />
-                  <span className="term-menu-text">
-                    {scriptRec ? "停止录制" : "开始录制"}
-                  </span>
-                  {moreRecordingReason !== null && (
-                    <span className="term-menu-note">{moreRecordingReason}</span>
-                  )}
-                </button>
-                {caps.menuEncoding && (
-                <div
-                  className={`term-menu-sub${encodingMenuOpen ? " open" : ""}`}
-                >
-                  <button
-                    title={
-                      moreEncodingReason !== null
-                        ? `终端编码 · ${moreEncodingReason}`
-                        : `终端编码（当前 ${terminalEncodingLabel(encoding)}）`
-                    }
-                    disabled={moreEncodingReason !== null}
-                    className={encodingMenuOpen ? "open" : undefined}
-                    onClick={() => setEncodingMenuOpen((v) => !v)}
-                  >
-                    <Icon name="languages" size={12} />
-                    <span className="term-menu-text">终端编码</span>
-                    {moreEncodingReason !== null ? (
-                      <span className="term-menu-note">{moreEncodingReason}</span>
-                    ) : (
-                      <span className="term-menu-note">
-                        {encoding === "utf-8" ? "UTF-8" : "GB18030"}
-                      </span>
-                    )}
-                    {moreEncodingReason === null && (
-                      <Icon
-                        name={encodingMenuOpen ? "chevron-down" : "chevron-right"}
-                        size={12}
-                        className="term-menu-caret"
-                      />
-                    )}
-                  </button>
-                  {encodingMenuOpen && moreEncodingReason === null && (
-                    <div className="term-menu-sub-list">
-                      {(["utf-8", "gb18030"] as TerminalEncoding[]).map((value) => (
+                {/* 顺序与可见性由 resolveTerminalMoreActions 派生。 */}
+                {moreActions.map((action) => {
+                  switch (action) {
+                    case "history":
+                      return (
                         <button
-                          key={value}
-                          className={encoding === value ? "active" : undefined}
-                          title={
-                            value === "utf-8"
-                              ? "UTF-8（默认）"
-                              : "GB18030（GBK / GB2312 兼容）"
-                          }
+                          key={action}
+                          title={moreHistoryReason ?? TERMINAL_MORE_TEXT.history.title}
+                          disabled={moreHistoryReason !== null}
                           onClick={() => {
-                            setEncoding(value);
-                            setEncodingMenuOpen(false);
                             setMoreOpen(false);
-                            controllerRef.current?.term.focus();
+                            setHistoryOpen(true);
                           }}
                         >
-                          <span className="term-menu-check">
-                            {encoding === value && <Icon name="check" size={12} />}
-                          </span>
+                          <Icon name="history" size={12} />
                           <span className="term-menu-text">
-                            {value === "utf-8" ? "UTF-8" : "GB18030"}
+                            {TERMINAL_MORE_TEXT.history.label}
+                          </span>
+                          {moreHistoryReason !== null && (
+                            <span className="term-menu-note">{moreHistoryReason}</span>
+                          )}
+                        </button>
+                      );
+                    case "osc7":
+                      return (
+                        <button
+                          key={action}
+                          title={
+                            moreOsc7Reason !== null
+                              ? `${TERMINAL_MORE_TEXT.osc7.title} · ${moreOsc7Reason}`
+                              : cwdTracked
+                                ? `${TERMINAL_MORE_TEXT.osc7.title}（已启用：${cwd ?? "未知目录"}）`
+                                : TERMINAL_MORE_TEXT.osc7.title
+                          }
+                          disabled={moreOsc7Reason !== null}
+                          onClick={() => {
+                            setOsc7DialogOpen(true);
+                            setMoreOpen(false);
+                          }}
+                        >
+                          <Icon name="folder-sync" size={12} />
+                          <span className="term-menu-text">
+                            {TERMINAL_MORE_TEXT.osc7.label}
+                          </span>
+                          {moreOsc7Reason !== null ? (
+                            <span className="term-menu-note">{moreOsc7Reason}</span>
+                          ) : (
+                            cwdTracked && <span className="term-menu-note">已启用</span>
+                          )}
+                        </button>
+                      );
+                    case "terminalSettings":
+                      return (
+                        <button
+                          key={action}
+                          title={
+                            onOpenSettings
+                              ? TERMINAL_MORE_TEXT.terminalSettings.title
+                              : "终端设置暂不可用"
+                          }
+                          disabled={!onOpenSettings}
+                          onClick={() => {
+                            setMoreOpen(false);
+                            onOpenSettings?.();
+                          }}
+                        >
+                          <Icon name="palette" size={12} />
+                          <span className="term-menu-text">
+                            {TERMINAL_MORE_TEXT.terminalSettings.label}
                           </span>
                         </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                )}
+                      );
+                    case "recording":
+                      return (
+                        <button
+                          key={action}
+                          title={
+                            moreRecordingReason ??
+                            (scriptRec ? "停止录制并保存到脚本库" : "开始录制脚本")
+                          }
+                          disabled={moreRecordingReason !== null || scriptRecBusy}
+                          className={scriptRec ? "is-recording" : undefined}
+                          onClick={() => {
+                            setMoreOpen(false);
+                            void toggleScriptRecording();
+                          }}
+                        >
+                          <Icon name="circle" size={12} className="term-record-dot" />
+                          <span className="term-menu-text">
+                            {scriptRec ? "停止录制" : "开始录制"}
+                          </span>
+                          {moreRecordingReason !== null && (
+                            <span className="term-menu-note">{moreRecordingReason}</span>
+                          )}
+                        </button>
+                      );
+                    case "encoding":
+                      return (
+                        <div
+                          key={action}
+                          className={`term-menu-sub${encodingMenuOpen ? " open" : ""}`}
+                        >
+                          <button
+                            title={
+                              moreEncodingReason !== null
+                                ? `${TERMINAL_MORE_TEXT.encoding.title} · ${moreEncodingReason}`
+                                : `${TERMINAL_MORE_TEXT.encoding.title}（当前 ${terminalEncodingLabel(encoding)}）`
+                            }
+                            disabled={moreEncodingReason !== null}
+                            className={encodingMenuOpen ? "open" : undefined}
+                            onClick={() => setEncodingMenuOpen((v) => !v)}
+                          >
+                            <Icon name="languages" size={12} />
+                            <span className="term-menu-text">
+                              {TERMINAL_MORE_TEXT.encoding.label}
+                            </span>
+                            {moreEncodingReason !== null ? (
+                              <span className="term-menu-note">{moreEncodingReason}</span>
+                            ) : (
+                              <span className="term-menu-note">
+                                {encoding === "utf-8" ? "UTF-8" : "GB18030"}
+                              </span>
+                            )}
+                            {moreEncodingReason === null && (
+                              <Icon
+                                name={encodingMenuOpen ? "chevron-down" : "chevron-right"}
+                                size={12}
+                                className="term-menu-caret"
+                              />
+                            )}
+                          </button>
+                          {encodingMenuOpen && moreEncodingReason === null && (
+                            <div className="term-menu-sub-list">
+                              {(["utf-8", "gb18030"] as TerminalEncoding[]).map((value) => (
+                                <button
+                                  key={value}
+                                  className={encoding === value ? "active" : undefined}
+                                  title={
+                                    value === "utf-8"
+                                      ? "UTF-8（默认）"
+                                      : "GB18030（GBK / GB2312 兼容）"
+                                  }
+                                  onClick={() => {
+                                    setEncoding(value);
+                                    setEncodingMenuOpen(false);
+                                    setMoreOpen(false);
+                                    controllerRef.current?.term.focus();
+                                  }}
+                                >
+                                  <span className="term-menu-check">
+                                    {encoding === value && <Icon name="check" size={12} />}
+                                  </span>
+                                  <span className="term-menu-text">
+                                    {value === "utf-8" ? "UTF-8" : "GB18030"}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    default:
+                      return null;
+                  }
+                })}
               </div>
             )}
           </div>
@@ -3977,7 +4024,7 @@ export function TerminalPane({
                   onClick={onSelect}
                 >
                   <Icon name={spec.icon} size={14} />
-                  {CONTEXT_MENU_LABELS[spec.action]}
+                  {TERMINAL_CONTEXT_MENU_TEXT[spec.action]}
                   {/* Netcatty 在此展示快捷键；termX 尚未分发这些绑定（仅列表/设置页展示），
                       按 Pr3 不渲染不生效的提示，待热键分发接线后恢复。 */}
                 </button>

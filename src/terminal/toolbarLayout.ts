@@ -14,7 +14,11 @@
  *   复制主机地址 → 时间戳 Clock3 → 系统监控 Activity → 断开 Unplug → 重连 RefreshCcw。
  */
 
-import { deriveToolbarCapabilities, type TerminalKind } from "./toolbarCapabilities";
+import {
+  deriveToolbarCapabilities,
+  type TerminalKind,
+  type ToolbarCapabilities,
+} from "./toolbarCapabilities";
 
 /** 右侧主工具栏的内联条目顺序（Netcatty placement=show 的那些）。 */
 export const TERMINAL_TOOLBAR_ACTIONS = [
@@ -43,17 +47,49 @@ export type TerminalTitlebarAction = (typeof TERMINAL_TITLEBAR_ACTIONS)[number];
 
 /**
  * 按终端类型过滤右侧工具栏条目（保持 Netcatty 顺序）。
- * 目前唯一受类型影响的是 SFTP（Netcatty 的 hidesSftp = serial/plugin）。
+ * 现在所有内联项都经能力表过滤，JSX 不再自己判断类型。
  */
+/** 工具栏动作 → 能力字段（JSX 不再各自判断，统一走这张表）。 */
+const TOOLBAR_CAPABILITY_OF: Record<TerminalToolbarAction, keyof ToolbarCapabilities> = {
+  highlight: "highlight",
+  sftp: "sftp",
+  compose: "compose",
+  search: "search",
+  sessionLog: "sessionLog",
+  scripts: "scripts",
+  notes: "notes",
+};
+
 export function resolveTerminalToolbarActions(
   kind: TerminalKind,
 ): TerminalToolbarAction[] {
   const caps = deriveToolbarCapabilities(kind);
-  return TERMINAL_TOOLBAR_ACTIONS.filter((action) => {
-    if (action === "sftp") return caps.sftp;
-    if (action === "notes") return caps.notes;
-    return true;
-  });
+  return TERMINAL_TOOLBAR_ACTIONS.filter((action) => caps[TOOLBAR_CAPABILITY_OF[action]]);
+}
+
+/** More（⋮）菜单条目顺序（Netcatty 折叠项）。 */
+export const TERMINAL_MORE_ACTIONS = [
+  "history",
+  "osc7",
+  "terminalSettings",
+  "recording",
+  "encoding",
+] as const;
+
+export type TerminalMoreAction = (typeof TERMINAL_MORE_ACTIONS)[number];
+
+const MORE_CAPABILITY_OF: Record<TerminalMoreAction, keyof ToolbarCapabilities> = {
+  history: "menuHistory",
+  osc7: "menuOsc7",
+  terminalSettings: "menuTerminalSettings",
+  recording: "menuRecording",
+  encoding: "menuEncoding",
+};
+
+/** 按终端类型过滤 More 菜单条目（顺序固定）。 */
+export function resolveTerminalMoreActions(kind: TerminalKind): TerminalMoreAction[] {
+  const caps = deriveToolbarCapabilities(kind);
+  return TERMINAL_MORE_ACTIONS.filter((action) => caps[MORE_CAPABILITY_OF[action]]);
 }
 
 /** 按终端类型过滤标题行条目（保持 Netcatty 顺序）。 */
