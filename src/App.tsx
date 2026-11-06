@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Workspace, type WorkspaceHandle } from "./Workspace";
 import type { PaneHandle } from "./TerminalPane";
 import { newId, type Tab, type Connector } from "./workspaceModel";
+import { resolveCommandHistoryHostId } from "./terminal/commandHistoryModel";
 import type { ConnectionStatus } from "./terminal/connectionStatus";
 import { findProfileForHostLink } from "./notes/notesModel";
 
@@ -759,6 +760,9 @@ export default function App() {
               activeTab?.connector.kind === "ssh"
                 ? activeTab.connector.profileId
                 : undefined
+            }
+            historyHostId={
+              activeTab ? resolveCommandHistoryHostId(activeTab.connector) : ""
             }
             profiles={profiles}
             onOpenHost={connect}

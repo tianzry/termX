@@ -76,7 +76,7 @@ interface Props {
   /** 标签级连接状态（会话标签状态点）。 */
   onTabStatuses?: (statuses: Record<string, ConnectionStatus>) => void;
   /** 终端工具栏里打开右侧工具面板。 */
-  onOpenTool?: (tool: "sftp" | "scripts" | "notes") => void;
+  onOpenTool?: (tool: "sftp" | "scripts" | "history" | "notes") => void;
   /** 右侧栏是否打开（工具栏开关激活态）。 */
   sidePanelOpen?: boolean;
   /** 展开 / 收起主机右侧栏。 */
@@ -105,7 +105,7 @@ interface LayoutProps {
   /** 窗格连接状态（供会话标签状态点，对照 Netcatty）。 */
   onConnectionStatus: (paneId: string, status: ConnectionStatus) => void;
   onRatio: (splitId: string, ratio: number) => void;
-  onOpenTool?: (tool: "sftp" | "scripts" | "notes") => void;
+  onOpenTool?: (tool: "sftp" | "scripts" | "history" | "notes") => void;
   sidePanelOpen?: boolean;
   onToggleSidePanel?: () => void;
   onOpenSettings?: () => void;

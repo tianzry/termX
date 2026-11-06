@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-11-06 — #246 命令历史入口改走右侧栏 + 侧栏视图按 Netcatty 重做（L）
+
+- **问题**：终端顶部工具栏「更多 → 命令历史」打开的是一个悬浮面板（`.term-history-menu` 绝对定位 + 阴影 + 自带标题/关闭按钮），与右侧栏其它视图（SFTP/脚本/笔记）不是同一容器，开关与按标签记忆也不一致；视图内部尺寸/结构与 Netcatty `components/HistorySidePanel.tsx` 有差异。
+- **改动**：
+  1. 入口：`TerminalPane` 的「更多」菜单 history 项改为 `onOpenTool?.("history")`，与 SFTP/脚本/笔记共用同一套右侧栏开关；已在该视图时再次点击保持打开（对齐 Netcatty `handleSwitchSidePanelTab` 不对同视图做关闭）。`onOpenTool` 类型扩为四工具联合。
+  2. 删除悬浮面板：移除 `CommandHistoryPanel` 原弹窗实现里的 `onClose`、标题行、关闭按钮、`historyOpen` state 与渲染块；`TerminalPane` 不再自行弹层。`styles.css` 整段旧 `.term-history-*`（absolute/宽 min(520px,…)/阴影/标题/工具条）换成侧栏版本，并删除已无引用的 `.term-history-menu`、`.term-history-cmd`。
+  3. 侧栏视图重排（逐项对齐 Netcatty）：头部 `h-8`（32px，`px-2`、`gap-1.5`、下边框 50%）只放搜索框 + 右侧一个操作按钮；搜索框 `h-6`、左内嵌 `Search` 12、`bg-muted/30`、无边框、字号 12；范围行 `min-h-28`（固定 28px，`px-3`）左侧「主机（TerminalIcon 10 + 主机名 max-w 9rem）/ 全局（Globe 10）」两个 tab、右侧「N 条」；列表行主机范围 36px 仅命令、全局范围 46px 追加一行主机名（10px），命令 `mono 11px/16px` 单行截断；行内操作默认 `opacity:0`，hover / `focus-within` 显示（运行 Play / 粘贴 Clipboard / 删除 Trash2，12px、24×24），展开详情内常显；点击行只展开内联详情（命令最多 3 行 + 主机名 + 时间），不执行命令。
+  4. `TerminalSidePanel` 新增 `historyHostId` prop（`App.tsx` 用 `resolveCommandHistoryHostId(activeTab.connector)` 传入），主机范围对本地/串口/Telnet 也能命中对应分桶（此前仅 SSH 传 hostId，非 SSH 会显示 0 条）。
+- **行为**：运行 = 写入终端并回车（`sendText(cmd + "\r")`），粘贴 = 只写入；主机范围头部按钮 = 重新读取本地历史，全局范围头部按钮 = 清空全部（沿用「再点一次确认」，termX 无 Netcatty 的通用 ConfirmDialog）。
+- **termX 差异（未伪造）**：① Netcatty 主机范围读远端 shell history（`SUPPORTED_PROTOCOLS = ssh/mosh/et`），termX 是本地全局记录按主机过滤，因此「刷新」只重读本地、且本地/串口/Telnet 也有主机历史；② Netcatty 的「保存为片段」未移植（termX 无该入口/事件）；③ 删除在 termX 两种范围都可用，Netcatty 仅全局可删。
+- **验证**（CDP 9222 + 129 实机 SSH）：
+  - 点击顶栏「更多 → 命令历史」后右侧栏打开且停在 history，`role=dialog`/旧弹窗元素为 0，无标题与关闭按钮；再次点击保持打开；「更多」菜单项仍保留。
+  - 量测：头部 32、范围行 28、行高主机 36 / 全局 46、详情 62、头部操作 24×24；`scrollWidth == clientWidth`（面板与列表均无横向溢出）。
+  - 点击行不改变终端文本（仅展开）；hover 操作 `opacity 1`；窄窗 900px 下文档与面板无横向溢出；侧栏工具条 4 个工具齐全无「更多」溢出。
+  - 证据：`L-before-after.png`（改前悬浮窗 / 改后侧栏）、`L-sbs-netcatty-vs-termx.png`（Netcatty 实机 vs termX 同尺寸并排）、`L-final-narrow.png`、`L-after-clean.png`；断言 `L-final2.json`。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例 ✓；`npm run build` ✓。
+- **踩坑**：① 侧栏范围行若用 `padding: 12px + 按钮 20px + 边框` 计算会成 33px，必须改为固定 `height: 28px; padding: 0 12px` 才与 Netcatty `min-h-[28px]` 一致。② 行内操作最初把 `.expanded` 也作为显示条件，Netcatty 只在 `group-hover` / `focus-within` 显示（展开详情内那组才常显），容易多出视觉噪音。③ 非 SSH 终端历史分桶 id 由连接参数派生，侧栏不能复用 SFTP 的 `hostId`，需单独传 `historyHostId`。
+
 ## 2026-11-06 — #245 终端顶部工具栏与右侧栏顶部工具栏尺寸统一（K）
 
 - **问题**：终端顶部工具栏 28px 高、24×24 按钮、12px 图标；右侧栏顶部工具栏 36px 高、28×28 按钮、15px 图标，两组视觉尺寸不一致。

@@ -20,7 +20,6 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { ComposeBar } from "./terminal/ComposeBar";
 import { appendComposeHistory, buildComposePayload, buildPastePayload } from "./terminal/composeBarModel";
-import { CommandHistoryPanel } from "./terminal/CommandHistoryPanel";
 import {
   readCommandHistory,
   recordCommandHistory,
@@ -264,8 +263,8 @@ interface Props {
   onStatus: (text: string) => void;
   /** 连接状态变化（供会话标签状态点使用）。 */
   onConnectionStatus?: (status: PaneStatus) => void;
-  /** 打开右侧工具面板（SFTP / 脚本）。 */
-  onOpenTool?: (tool: "sftp" | "scripts" | "notes") => void;
+  /** 打开右侧工具面板（SFTP / 脚本 / 历史 / 笔记）。 */
+  onOpenTool?: (tool: "sftp" | "scripts" | "history" | "notes") => void;
   /** 展开 / 收起主机右侧栏（与左侧栏开关成对）。 */
   sidePanelOpen?: boolean;
   onToggleSidePanel?: () => void;
@@ -394,8 +393,6 @@ export function TerminalPane({
   /** 脚本录制（Netcatty `recording`）：记录输入命令，停止后生成脚本片段。 */
   const [scriptRec, setScriptRec] = useState(false);
   const [scriptRecBusy, setScriptRecBusy] = useState(false);
-  /** 命令历史（全局持久化）：面板开关。 */
-  const [historyOpen, setHistoryOpen] = useState(false);
   /** 自动补全浮层（候选下拉 / 内联 ghost text），空闲为 null。 */
   const [autocompleteUi, setAutocompleteUi] = useState<AutocompleteUiState | null>(null);
   /** 历史分桶 id：非 SSH 终端按连接参数（端口 / 主机 / shell）区分，不随标签标题变化。 */
@@ -1780,29 +1777,6 @@ export function TerminalPane({
       id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     });
     return true;
-  }
-
-  /** 命令历史「运行」：写入并回车（多行走 bracketed paste，与撰写栏一致）。 */
-  function runHistoryCommand(command: string) {
-    if (status !== "connected" || !transportRef.current) return;
-    const bracketed = Boolean(controllerRef.current?.term.modes.bracketedPasteMode);
-    const payload = buildComposePayload(command, bracketed);
-    (transportRef.current.writeBulk ?? writeToPane)(payload);
-    recordCommandHistory({
-      command,
-      hostId: historyHostId,
-      hostLabel: tab.title,
-      id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    });
-    controllerRef.current?.term.focus();
-  }
-
-  /** 命令历史「插入」：只写入终端，不追加回车（对齐 Netcatty onPasteToTerminal）。 */
-  function pasteHistoryCommand(command: string) {
-    if (status !== "connected" || !transportRef.current) return;
-    const text = command.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    (transportRef.current.writeBulk ?? writeToPane)(text);
-    controllerRef.current?.term.focus();
   }
 
   /** 终端搜索（SearchAddon，对照 Netcatty SEARCH_OPTIONS / SEARCH_DECORATIONS）。 */
@@ -3751,7 +3725,9 @@ export function TerminalPane({
                           disabled={moreHistoryReason !== null}
                           onClick={() => {
                             setMoreOpen(false);
-                            setHistoryOpen(true);
+                            // 对齐 Netcatty handleOpenHistory：直接打开右侧栏 history 视图，
+                            // 不再弹悬浮窗；已在该视图时保持打开（不关闭）。
+                            onOpenTool?.("history");
                           }}
                         >
                           <Icon name="history" size={12} />
@@ -4353,16 +4329,6 @@ export function TerminalPane({
             })}
           </div>
         </>
-      )}
-
-      {historyOpen && (
-        <CommandHistoryPanel
-          hostId={historyHostId}
-          hostLabel={tab.title}
-          onClose={() => setHistoryOpen(false)}
-          onRun={runHistoryCommand}
-          onPaste={pasteHistoryCommand}
-        />
       )}
 
       {prompt && (

@@ -76,6 +76,8 @@ interface Props {
   sessionLabel: string;
   sessionMeta: string;
   hostId?: string;
+  /** 命令历史分桶 id（四类终端都有；SFTP 用的 hostId 只对 SSH 有意义）。 */
+  historyHostId: string;
   profiles: Profile[];
   onOpenHost: (profile: Profile) => void;
   /** 活动窗格（脚本运行 / 定位路径到终端）。 */
@@ -107,6 +109,7 @@ export function TerminalSidePanel({
   sessionLabel,
   sessionMeta,
   hostId,
+  historyHostId,
   profiles,
   onOpenHost,
   activeHandle,
@@ -251,9 +254,8 @@ export function TerminalSidePanel({
     if (pane.tool === "history") {
       return (
         <CommandHistoryPanel
-          hostId={hostId ?? ""}
+          hostId={historyHostId}
           hostLabel={sessionLabel}
-          onClose={onClose}
           onRun={(command) => activeHandle?.sendText(`${command}\r`)}
           onPaste={(command) => activeHandle?.sendText(command)}
         />
