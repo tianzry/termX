@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-11-06 — #222 设置页剩差清理（内容区滚动条 overlay 观感 + 基准字号核对）
+
+- **滚动条取证与选型**：WebView2 实测 `overflow-y: overlay` 的 computed 仍为 `auto`（滚动条继续占 14–15px），即不支持真 overlay。改用 **8px 自绘滚动条 + `scrollbar-gutter: stable` + `padding-right 24→31`** 补偿 15/14→8 的差值：透明轨道 + `muted-foreground/35%` 圆角滑块（hover 50%），视觉接近 overlay，且不改变卡片几何。
+- **量测（同一 build 注入改前 CSS 做 A/B，980×720 dsf=1）**：改前 `scrollbarWidth 14 / gutter auto / padding 24 / card 693.6 / cardRight 941.6`，有滚动时 `clientWidth 742`、无滚动 `756`（切 tab 横跳 14px）；改后 `scrollbarWidth 8 / gutter stable / padding 31 / card 693 / cardRight 941`，两种状态 `clientWidth` 恒为 748（横跳 0）。卡片宽度差 0.6px（亚像素舍入）。
+- **基准字号核对**：设置页全部可见文本均有显式字号（普查结果 18px×1、14px×161、12px×59），把 `body/html` 基准 13px 临时改为 16px 后重跑普查，三档计数完全一致 → **基准 13 vs 16 无观感影响**；保留 13px 以免牵动应用全局排印。同时把残留的 `13px` 显式取值按 Netcatty 映射修正为 14px：`.nc-set-value`（只读值/滑块值 = `text-sm`）、`.nc-set-stepper button`（对应 14px Minus/Plus 图标）、`.nc-set-link-btn`（Button 默认 `text-sm`）、`.nc-set-app-status`（更新状态 `text-sm`）。
+- **验证**：同 build A/B 截图 `evidence/set-scroll-{before,after}-980.png`、滚动条局部 `set-scroll-after-thumb.png`、还原后 `set-scroll-after-restored-980.png`；重新打包后复测 `http://tauri.localhost/`：8px / stable / 31px / card 693（`set-scroll-after-built-980.png`）。断言汇总 `evidence/settings-scroll-verify.json`。
+- **门禁**：`npm run test:run` 767 通过（69 文件）、`npm run build` 通过、`cargo test --lib` 960 通过、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #221 主机级关键字高亮（Profile 字段 + schema v50 + 主机浮层/主机编辑器 + 断开回落）
 
 - **Netcatty 模型取证**：主机级 `host.keywordHighlightEnabled?` / `host.keywordHighlightRules?: KeywordHighlightRule[]`；与全局是**追加**语义（全局先匹配、主机规则补充），总开关 `globalEnabled || hostEnabled`；主机 popover 可增删规则 / 切 enabled / 清空（清空 = disabled + []）；关闭开关**保留**规则。**取代 #220「范围决策」中「主机级覆盖未实现」的记录**。

@@ -9914,14 +9914,37 @@ html[data-theme="dark"] .nc-settings-overlay {
   cursor: not-allowed;
 }
 
-/* 内容区对照 Netcatty：flex-1 overflow-y-auto p-6，无额外底色（沿用窗口 background）。 */
+/* 内容区对照 Netcatty：flex-1 overflow-y-auto p-6，无额外底色（沿用窗口 background）。
+   滚动条：Netcatty 为 overlay 滚动条（不占布局）；WebView2 实测 `overflow: overlay`
+   被解析为 auto（仍占 15px），故改用 8px 自绘滚动条 + `scrollbar-gutter: stable`，
+   右内距 24→31 补偿 15→8 的差值，卡片宽度与改前一致（693 vs 692.8），且无滚动时
+   仍保留 8px gutter，切 tab 不产生横向跳动。 */
 .nc-settings-content {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 24px;
+  padding: 24px 31px 24px 24px;
+  scrollbar-gutter: stable;
   background: hsl(var(--background));
+}
+
+.nc-settings-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.nc-settings-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nc-settings-content::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  background: hsl(var(--muted-foreground) / 0.35);
+}
+
+.nc-settings-content::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
 }
 
 /* Tab 根容器：Netcatty SettingsTabContent 的 space-y-6（24px 分区间距） */
@@ -10010,8 +10033,9 @@ html[data-theme="dark"] .nc-settings-overlay {
   color: hsl(var(--muted-foreground));
 }
 
+/* 只读值 / 滑块值：Netcatty 对应 `text-sm`（14px），不依赖页面基准字号。 */
 .nc-set-value {
-  font-size: 13px;
+  font-size: 14px;
   color: hsl(var(--muted-foreground));
 }
 
@@ -10241,7 +10265,8 @@ html[data-theme="dark"] .nc-settings-overlay {
   background: transparent;
   color: hsl(var(--foreground));
   cursor: pointer;
-  font-size: 13px;
+  /* Netcatty 用 14px 的 Minus/Plus 图标，此处以字符呈现，字号对齐图标尺寸。 */
+  font-size: 14px;
   padding: 0 4px;
 }
 
@@ -10852,7 +10877,8 @@ html[data-theme="dark"] .nc-settings-overlay {
   border-radius: 8.4px;
   background: transparent;
   color: hsl(var(--muted-foreground));
-  font-size: 13px;
+  /* Netcatty Button 默认 `text-sm`（14px）。 */
+  font-size: 14px;
   cursor: pointer;
   transition: color 0.15s, background-color 0.15s;
 }
@@ -11141,7 +11167,8 @@ html[data-theme="dark"] .nc-settings-overlay {
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
   background: hsl(var(--card));
-  font-size: 13px;
+  /* Netcatty 更新状态为 `text-sm`（14px）。 */
+  font-size: 14px;
   color: hsl(var(--muted-foreground));
 }
 
