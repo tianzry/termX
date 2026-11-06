@@ -127,14 +127,23 @@ export function TerminalSidePanel({
   const [moreMenu, setMoreMenu] = useState(false);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
-  // 外部工具页变化（App 打开 SFTP / 笔记）：同步到焦点 pane。
+  // 外部工具页变化（App 打开 SFTP / 笔记）：只同步到「当时的」焦点 pane。
+  // 不能把 focusedPaneId 放进依赖：focus 切换本身不应改写各 pane 已选视图，
+  // 否则上分屏选笔记、再点下分屏 SFTP 时会被 App 的全局 tool 反向覆盖（串台）。
+  const focusedPaneRef = useRef(focusedPaneId);
   useEffect(() => {
+    focusedPaneRef.current = focusedPaneId;
+  }, [focusedPaneId]);
+  const lastExternalTool = useRef(tool);
+  useEffect(() => {
+    if (lastExternalTool.current === tool) return;
+    lastExternalTool.current = tool;
     setPanes((prev) =>
       prev.map((pane) =>
-        pane.id === focusedPaneId ? { ...pane, tool } : pane,
+        pane.id === focusedPaneRef.current ? { ...pane, tool } : pane,
       ),
     );
-  }, [tool, focusedPaneId]);
+  }, [tool]);
 
   // 窗口缩放：仅更新可用宽度，期望宽度保留（窗口变宽后自动还原）。
   useEffect(() => {

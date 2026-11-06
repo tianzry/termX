@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-11-06 — #237 终端右侧栏分屏视图串台（上选笔记、下点 SFTP 被改回笔记）
+
+- **问题**：右侧栏开上下分屏后，上分屏选「笔记」，再点下分屏的「SFTP」页签，下分屏会被强制切回「笔记」，两个槽位无法各保持不同视图。
+- **根因**（静态确认 + 实机复现）：`src/terminal/TerminalSidePanel.tsx` 的外部工具同步 effect 依赖 `[tool, focusedPaneId]`。App 的 `tool` 只在「工具栏 / 父级入口打开侧栏」时更新，反映的是上一次外部打开的工具页；一旦分屏焦点变化，effect 因 `focusedPaneId` 变化重新执行，把这份全局 `tool` 写进**新获得焦点的 pane**，覆盖该 pane 已选视图（pane 自己的 `selectTool` 结果被冲掉）。
+- **修复**：
+  - 焦点 id 改为 `focusedPaneRef` 保存，effect 依赖只保留 `[tool]`：单纯切换焦点不再重写任何 pane 的视图；
+  - 增加 `lastExternalTool`，仅在 `tool` 真正发生变化（外部打开 / 切换工具页）时才同步，且只写入「变化那一刻」的焦点 pane；
+  - pane 内点击页签仍走 `selectTool` 只改自身槽位。
+- **验证**（129 SSH 会话右侧栏，上下分屏，CDP 9222 逐步断言 `data-pane-tool`）：
+  1. 上 pane 选「笔记」→ `[notes, sftp]` 前置态；
+  2. 下 pane 选「SFTP」→ `[notes, sftp]`，上分屏未被改写；
+  3. 点回上 pane（仅换焦点）→ 仍 `[notes, sftp]`；
+  4. 上 pane 改「历史」→ `[history, sftp]`，只影响上；
+  5. 下 pane 改「笔记」→ `[history, notes]`，只影响下；
+  6. 关闭上 pane → 剩余单 pane 仍为 `notes`，视图保留。
+  - 截图：`evidence/b24-split-views.png`（关闭上分屏后剩余笔记视图）。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 786 用例全过。
+
 ## 2026-11-06 — #236 终端「展开主机右侧栏」按钮（与左侧栏成对）+ 默认视图按协议 + 按标签记忆
 
 - **问题**：终端工具栏最右的图标是「笔记面板」，与顶栏左侧栏开关不是一对；点击后只能开笔记，且侧栏开关的按标签记忆在切换标签后不可靠（新标签会继承上一个标签的开启状态）。
