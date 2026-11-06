@@ -104,6 +104,358 @@ export function SftpContextMenu({
   );
 }
 
+/**
+ * 收藏弹层（对齐 Netcatty SftpBookmarkPopoverBody）：
+ * 头部「收藏路径」+ 管理/完成；动作行收藏/取消收藏 + 「+全局」；
+ * 列表支持点击跳转、悬停删除、管理态上移/下移/改名/拖拽排序。
+ * 列表按「全局在前、本机在后」合并，跨 scope 插入时显示分组分隔线。
+ */
+export function SftpBookmarkPopover({
+  x,
+  y,
+  bookmarks,
+  currentPath,
+  isCurrentPathBookmarked,
+  isCurrentPathGlobalBookmarked,
+  onToggle,
+  onAddGlobal,
+  onNavigate,
+  onRequestDelete,
+  onReorder,
+  onRename,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  bookmarks: SftpBookmark[];
+  currentPath: string;
+  isCurrentPathBookmarked: boolean;
+  isCurrentPathGlobalBookmarked: boolean;
+  onToggle: () => void;
+  onAddGlobal: () => void;
+  onNavigate: (path: string) => void;
+  onRequestDelete: (bookmark: SftpBookmark) => void;
+  onReorder: (from: SftpBookmark, to: SftpBookmark) => void;
+  onRename: (bookmark: SftpBookmark, label: string) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [managing, setManaging] = useState(false);
+  const [dragging, setDragging] = useState<SftpBookmark | null>(null);
+  const [renaming, setRenaming] = useState<SftpBookmark | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [pos, setPos] = useState({ left: x, top: y });
+
+  // 贴边夹取（对齐 Netcatty Popover avoidCollisions + 8px padding）。
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const pad = 8;
+    const rect = el.getBoundingClientRect();
+    const left = Math.max(
+      pad,
+      Math.min(x, window.innerWidth - pad - rect.width),
+    );
+    const top = Math.max(
+      pad,
+      Math.min(y, window.innerHeight - pad - rect.height),
+    );
+    setPos({ left, top });
+  }, [x, y, bookmarks.length]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  const runThenClose = (action: () => void) => {
+    action();
+    onClose();
+  };
+
+  return (
+    <div
+      ref={ref}
+      className="nc-sftp-bookmark-popover"
+      style={pos}
+      data-section="sftp-bookmark-popover"
+    >
+      <div className="nc-sftp-bookmark-header">
+        <span>收藏路径</span>
+        {bookmarks.length > 0 && (
+          <button
+            className="nc-sftp-bookmark-manage"
+            onClick={() => setManaging((v) => !v)}
+          >
+            {managing ? "完成" : "管理"}
+          </button>
+        )}
+      </div>
+      <div className="nc-sftp-bookmark-actions">
+        <button
+          className={
+            isCurrentPathBookmarked
+              ? "nc-sftp-bookmark-action active"
+              : "nc-sftp-bookmark-action"
+          }
+          aria-label={isCurrentPathBookmarked ? "取消收藏" : "收藏此路径"}
+          onClick={() => runThenClose(onToggle)}
+        >
+          <Bookmark
+            size={12}
+            fill={isCurrentPathBookmarked ? "currentColor" : "none"}
+            className={
+              isCurrentPathBookmarked
+                ? "nc-sftp-bookmark-icon bookmarked"
+                : "nc-sftp-bookmark-icon"
+            }
+          />
+          {isCurrentPathBookmarked ? "取消收藏" : "收藏此路径"}
+        </button>
+        {currentPath && !isCurrentPathGlobalBookmarked && (
+          <button
+            className="nc-sftp-bookmark-global"
+            title="保存为全局收藏（所有主机共享）"
+            onClick={() => runThenClose(onAddGlobal)}
+          >
+            +全局
+          </button>
+        )}
+      </div>
+      {bookmarks.length === 0 ? (
+        <div className="nc-sftp-bookmark-empty">暂无收藏路径</div>
+      ) : (
+        <div className="nc-sftp-bookmark-list">
+          {bookmarks.map((bm, index) => {
+            const identity = getSftpBookmarkIdentity(bm);
+            const startsHostGroup =
+              index > 0 && !!bookmarks[index - 1]?.global && !bm.global;
+            const targets = getSftpBookmarkMoveTargets(bookmarks, bm);
+            const isDragging =
+              !!dragging &&
+              dragging.id === bm.id &&
+              !!dragging.global === !!bm.global;
+            const isRenaming =
+              !!renaming &&
+              renaming.id === bm.id &&
+              !!renaming.global === !!bm.global;
+            const content = (
+              <>
+                <div className="nc-sftp-bookmark-label">{bm.label}</div>
+                <div className="nc-sftp-bookmark-path">{bm.path}</div>
+              </>
+            );
+            return (
+              <div
+                key={identity}
+                className={
+                  "nc-sftp-bookmark-row" +
+                  (startsHostGroup ? " host-group" : "") +
+                  (isDragging ? " dragging" : "")
+                }
+                data-bookmark-scope={bm.global ? "global" : "location"}
+                draggable={managing && !isRenaming}
+                onDragStart={(event) => {
+                  if (!managing) return;
+                  setDragging(bm);
+                  event.dataTransfer.setData(
+                    "text/termx-sftp-bookmark",
+                    identity,
+                  );
+                  event.dataTransfer.effectAllowed = "move";
+                }}
+                onDragOver={(event) => {
+                  if (
+                    !managing ||
+                    !dragging ||
+                    (dragging.id === bm.id &&
+                      !!dragging.global === !!bm.global) ||
+                    !canReorderSftpBookmark(dragging, bm)
+                  ) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const transferred = event.dataTransfer.getData(
+                    "text/termx-sftp-bookmark",
+                  );
+                  const source =
+                    bookmarks.find(
+                      (candidate) =>
+                        getSftpBookmarkIdentity(candidate) === transferred,
+                    ) ?? dragging;
+                  setDragging(null);
+                  if (
+                    source &&
+                    (source.id !== bm.id ||
+                      !!source.global !== !!bm.global) &&
+                    canReorderSftpBookmark(source, bm)
+                  ) {
+                    onReorder(source, bm);
+                  }
+                }}
+                onDragEnd={() => setDragging(null)}
+              >
+                {managing && (
+                  <GripVertical
+                    size={12}
+                    className="nc-sftp-bookmark-grip"
+                    aria-hidden="true"
+                  />
+                )}
+                {bm.global && (
+                  <Globe size={10} className="nc-sftp-bookmark-globe" />
+                )}
+                {managing && isRenaming ? (
+                  <input
+                    autoFocus
+                    value={renameDraft}
+                    aria-label="重命名收藏"
+                    className="nc-sftp-bookmark-rename-input"
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.nativeEvent.isComposing) return;
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        onRename(bm, renameDraft);
+                        setRenaming(null);
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        setRenaming(null);
+                      }
+                    }}
+                    onBlur={() => {
+                      onRename(bm, renameDraft);
+                      setRenaming(null);
+                    }}
+                  />
+                ) : managing ? (
+                  <div className="nc-sftp-bookmark-content">{content}</div>
+                ) : (
+                  <button
+                    className="nc-sftp-bookmark-content"
+                    onClick={() => runThenClose(() => onNavigate(bm.path))}
+                  >
+                    {content}
+                  </button>
+                )}
+                {managing && (
+                  <>
+                    <button
+                      className="nc-sftp-bookmark-row-btn"
+                      aria-label={`上移 ${bm.label}`}
+                      disabled={!targets.previous}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (targets.previous) onReorder(bm, targets.previous);
+                      }}
+                    >
+                      <ArrowUp size={10} />
+                    </button>
+                    <button
+                      className="nc-sftp-bookmark-row-btn"
+                      aria-label={`下移 ${bm.label}`}
+                      disabled={!targets.next}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (targets.next) onReorder(bm, targets.next);
+                      }}
+                    >
+                      <ArrowDown size={10} />
+                    </button>
+                  </>
+                )}
+                {managing && !isRenaming && (
+                  <button
+                    className="nc-sftp-bookmark-row-btn"
+                    aria-label="重命名收藏"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setRenaming(bm);
+                      setRenameDraft(bm.label);
+                    }}
+                  >
+                    <Pencil size={10} />
+                  </button>
+                )}
+                <button
+                  className={
+                    managing
+                      ? "nc-sftp-bookmark-row-btn remove always"
+                      : "nc-sftp-bookmark-row-btn remove"
+                  }
+                  aria-label="删除收藏"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    runThenClose(() => onRequestDelete(bm));
+                  }}
+                >
+                  <Trash2 size={10} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 删除收藏确认（对齐 Netcatty ConfirmDialog destructive）。 */
+export function SftpBookmarkDeleteDialog({
+  bookmark,
+  onConfirm,
+  onClose,
+}: {
+  bookmark: SftpBookmark;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      className="nc-sftp-dialog-backdrop"
+      role="dialog"
+      aria-label="取消收藏"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="nc-sftp-dialog">
+        <h3>取消收藏</h3>
+        <p className="nc-sftp-dialog-text">删除收藏 {bookmark.path}？</p>
+        <div className="nc-sftp-dialog-actions">
+          <button onClick={onClose}>取消</button>
+          <button className="primary danger-bg" onClick={onConfirm}>
+            取消收藏
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DialogShell({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div

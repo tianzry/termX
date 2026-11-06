@@ -3,6 +3,15 @@ import type { Profile } from "../backend/client";
 import {
   breadcrumbSegments,
   buildDropTransferTasks,
+  canReorderSftpBookmark,
+  createSftpBookmark,
+  getSftpBookmarkLabel,
+  getSftpBookmarkMoveTargets,
+  hasSftpBookmarkPath,
+  moveSftpBookmark,
+  renameSftpBookmark,
+  shouldToggleSftpBookmarkFromButton,
+  toggleLocalSftpBookmark,
   buildPickerSections,
   connectBranch,
   dropTargetPath,
@@ -30,12 +39,13 @@ import {
   planSftpOpenFromHost,
   remoteParent,
   resolveBreadcrumbVisibleParts,
+  resolveSftpLocateCdCommand,
   rowTypeLabel,
   SFTP_DRAG_MIME,
   sftpDragSideMime,
   sortSftpRows,
-  toggleSftpBookmark,
   type ConnectedHostEntry,
+  type SftpBookmark,
   type PaneConnection,
   type PickerSection,
   type SftpDragPayload,
@@ -583,21 +593,119 @@ describe("planSftpOpenFromHost（右键打开 SFTP 定位）", () => {
   });
 });
 
+describe("定位路径到终端（cd 命令生成）", () => {
+  it("绝对路径与 home 路径生成 Netcatty 同款命令", () => {
+    expect(resolveSftpLocateCdCommand("/var/log")).toBe("cd -- '/var/log'");
+    expect(resolveSftpLocateCdCommand("~")).toBe("cd -- ~");
+    expect(resolveSftpLocateCdCommand("~/work space")).toBe(
+      "cd -- ~/'work space'",
+    );
+  });
+
+  it("单引号按 POSIX 规则转义", () => {
+    expect(resolveSftpLocateCdCommand("/tmp/it's")).toBe(
+      "cd -- '/tmp/it'\\''s'",
+    );
+  });
+
+  it("空值 / 相对路径 / Windows 盘符 / 控制字符返回 null", () => {
+    expect(resolveSftpLocateCdCommand(null)).toBeNull();
+    expect(resolveSftpLocateCdCommand("  ")).toBeNull();
+    expect(resolveSftpLocateCdCommand("relative/path")).toBeNull();
+    expect(resolveSftpLocateCdCommand("C:\\Users")).toBeNull();
+    expect(resolveSftpLocateCdCommand("/tmp/a\tb")).toBeNull();
+  });
+});
+
 describe("侧栏 SFTP 书签", () => {
-  it("解析非法 JSON / 非数组 / 空串一律回空", () => {
+  const bm = (path: string, global = false): SftpBookmark => ({
+    id: `${global ? "g" : "l"}-${path}`,
+    path,
+    label: getSftpBookmarkLabel(path),
+    ...(global ? { global: true } : {}),
+  });
+
+  it("解析非法 JSON / 非数组 / 缺 path 一律丢弃", () => {
     expect(parseSftpBookmarks(null)).toEqual([]);
     expect(parseSftpBookmarks("not json")).toEqual([]);
     expect(parseSftpBookmarks('{"a":1}')).toEqual([]);
-    expect(parseSftpBookmarks('["/etc","",42,"/root"]')).toEqual(["/etc", "/root"]);
+    expect(parseSftpBookmarks('["/etc","",42,"/root"]')).toHaveLength(2);
   });
 
-  it("toggle 加入后保持顺序，再次调用移除", () => {
-    expect(toggleSftpBookmark([], "/etc")).toEqual(["/etc"]);
-    expect(toggleSftpBookmark(["/etc"], "/root")).toEqual(["/etc", "/root"]);
-    expect(toggleSftpBookmark(["/etc", "/root"], "/etc")).toEqual(["/root"]);
+  it("旧版纯路径数组自动迁移为书签对象", () => {
+    const parsed = parseSftpBookmarks('["/etc","/root/home"]');
+    expect(parsed.map((item) => item.path)).toEqual(["/etc", "/root/home"]);
+    expect(parsed[1].label).toBe("home");
+    expect(parsed.every((item) => item.id.length > 0)).toBe(true);
   });
 
-  it("同一路径不会重复加入", () => {
-    expect(toggleSftpBookmark(["/etc"], "/etc")).toEqual([]);
+  it("书签标签取末段，根路径保留", () => {
+    expect(getSftpBookmarkLabel("/")).toBe("/");
+    expect(getSftpBookmarkLabel("/var/log")).toBe("log");
+    expect(getSftpBookmarkLabel("/var/log/")).toBe("log");
+    expect(getSftpBookmarkLabel("C:\\Users\\me")).toBe("me");
+  });
+
+  it("toggle 本地收藏：加入后保持顺序，再次调用移除", () => {
+    const first = toggleLocalSftpBookmark([], "/etc");
+    expect(first.map((item) => item.path)).toEqual(["/etc"]);
+    const second = toggleLocalSftpBookmark(first, "/root");
+    expect(second.map((item) => item.path)).toEqual(["/etc", "/root"]);
+    expect(
+      toggleLocalSftpBookmark(second, "/etc").map((item) => item.path),
+    ).toEqual(["/root"]);
+  });
+
+  it("无收藏且当前路径未收藏时按钮直加，否则弹层", () => {
+    expect(
+      shouldToggleSftpBookmarkFromButton({
+        bookmarkCount: 0,
+        isCurrentPathBookmarked: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldToggleSftpBookmarkFromButton({
+        bookmarkCount: 1,
+        isCurrentPathBookmarked: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldToggleSftpBookmarkFromButton({
+        bookmarkCount: 0,
+        isCurrentPathBookmarked: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("全局收藏带 global 标记，路径去重判断覆盖两套列表", () => {
+    const global = createSftpBookmark("/srv", { global: true });
+    expect(global.global).toBe(true);
+    expect(global.id.startsWith("gbm-")).toBe(true);
+    expect(hasSftpBookmarkPath([global], "/srv")).toBe(true);
+    expect(hasSftpBookmarkPath([global], "/tmp")).toBe(false);
+  });
+
+  it("只在同 scope 内可排序，上移下移跳过另一 scope", () => {
+    const list = [bm("/g1", true), bm("/g2", true), bm("/l1"), bm("/l2")];
+    expect(canReorderSftpBookmark(list[0], list[1])).toBe(true);
+    expect(canReorderSftpBookmark(list[1], list[2])).toBe(false);
+    expect(getSftpBookmarkMoveTargets(list, list[0])).toEqual({
+      previous: null,
+      next: list[1],
+    });
+    expect(getSftpBookmarkMoveTargets(list, list[2])).toEqual({
+      previous: null,
+      next: list[3],
+    });
+    expect(moveSftpBookmark(list, list[0].id, list[1].id).map((i) => i.path))
+      .toEqual(["/g2", "/g1", "/l1", "/l2"]);
+  });
+
+  it("改名 trim，空名保持原样", () => {
+    const list = [bm("/etc")];
+    expect(renameSftpBookmark(list, list[0].id, "  系统配置 ")[0].label).toBe(
+      "系统配置",
+    );
+    expect(renameSftpBookmark(list, list[0].id, "   ")[0].label).toBe("etc");
   });
 });

@@ -779,29 +779,223 @@ export function canExtractLocalArchive(connection: PaneConnection, name: string)
   return connection.kind === "local" && isExtractableArchive(name);
 }
 
-// ── 侧栏书签 ───────────────────────────────────────────
+// ── 定位路径到终端（对齐 Netcatty resolveInteractiveTerminalCdIntent）──
 
-/** 侧栏 SFTP 书签（本地持久化路径列表，对齐 Netcatty bookmark 弹层的数据面）。 */
-export const SFTP_BOOKMARKS_STORAGE_KEY = "termx.sftp.bookmarks.v1";
+/** POSIX 单引号转义。 */
+function quoteShellPath(path: string): string {
+  return `'${path.replace(/'/g, "'\\''")}'`;
+}
 
-/** 解析书签 JSON：非法 / 非数组 / 非字符串项一律丢弃。 */
-export function parseSftpBookmarks(raw: string | null): string[] {
+/** `~` / `~/...` 保留波浪号前缀，其余整体单引号。 */
+function quoteShellCwdArgument(cwd: string): string {
+  if (cwd === "~") return "~";
+  if (cwd.startsWith("~/")) {
+    const suffix = cwd.slice(2);
+    return suffix ? `~/${quoteShellPath(suffix)}` : "~";
+  }
+  return quoteShellPath(cwd);
+}
+
+/** 含 C0 / DEL 的路径会被 readline 当作按键，直接拒绝注入。 */
+function pathHasInteractiveControlBytes(path: string): boolean {
+  for (let i = 0; i < path.length; i += 1) {
+    const code = path.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
+ * 生成「定位路径到终端」的 cd 命令：
+ * - 仅接受绝对路径 / `~` / `~/...`（Windows 盘符路径不支持）；
+ * - 含控制字符的路径拒绝；
+ * - 形如 `cd -- '/var/log'`，与 Netcatty 完全一致。
+ */
+export function resolveSftpLocateCdCommand(
+  path: string | null | undefined,
+): string | null {
+  if (!path) return null;
+  const trimmed = path.trim();
+  if (!trimmed) return null;
+  if (/^[A-Za-z]:[\\/]/.test(trimmed)) return null;
+  if (!(trimmed.startsWith("/") || trimmed === "~" || trimmed.startsWith("~/"))) {
+    return null;
+  }
+  if (pathHasInteractiveControlBytes(path)) return null;
+  return `cd -- ${quoteShellCwdArgument(path)}`;
+}
+
+// ── 侧栏书签（对齐 Netcatty SftpBookmark 数据模型）─────────
+
+/** 书签条目（Netcatty `domain/models/connection.ts` 的 SftpBookmark）。 */
+export interface SftpBookmark {
+  id: string;
+  path: string;
+  label: string;
+  /** true = 全局收藏（所有主机共享，列表置顶并显示地球图标）。 */
+  global?: boolean;
+}
+
+/** 当前主机 / 本地收藏（Netcatty 的 location bookmarks 落 localStorage）。 */
+export const SFTP_LOCAL_BOOKMARKS_STORAGE_KEY = "termx.sftp.localBookmarks.v1";
+/** 全局收藏（Netcatty `netcatty_sftp_global_bookmarks_v1` 的 termX 命名空间）。 */
+export const SFTP_GLOBAL_BOOKMARKS_STORAGE_KEY = "termx.sftp.globalBookmarks.v1";
+/** 旧版纯路径书签键（读取时迁移为 SftpBookmark）。 */
+export const SFTP_LEGACY_BOOKMARKS_STORAGE_KEY = "termx.sftp.bookmarks.v1";
+
+const ROOT_PATH_RE = /^[A-Za-z]:[\\/]?$/;
+
+/** 书签显示名：根路径保留原样，其余取最后一段（Netcatty `getSftpBookmarkLabel`）。 */
+export function getSftpBookmarkLabel(path: string): string {
+  const trimmed = path.trim();
+  if (trimmed === "/" || ROOT_PATH_RE.test(trimmed)) return trimmed;
+  return trimmed.split(/[\\/]/).filter(Boolean).pop() || trimmed;
+}
+
+/** 新建书签（id 前缀 gbm / bm，与 Netcatty 一致）。 */
+export function createSftpBookmark(
+  path: string,
+  options: { global?: boolean } = {},
+): SftpBookmark {
+  const global = options.global === true;
+  const idPrefix = global ? "gbm" : "bm";
+  return {
+    id: `${idPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    path,
+    label: getSftpBookmarkLabel(path),
+    ...(global ? { global: true } : {}),
+  };
+}
+
+/**
+ * 解析书签 JSON：
+ * - 兼容旧版纯路径字符串数组（自动包装为 { id, path, label }）；
+ * - 非法 / 非数组 / 缺 path 的条目一律丢弃。
+ */
+export function parseSftpBookmarks(raw: string | null): SftpBookmark[] {
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (item): item is string => typeof item === "string" && item.length > 0,
-    );
+    return parsed.flatMap((item) => {
+      if (typeof item === "string") {
+        if (!item) return [];
+        return [{ id: `bm-legacy-${item}`, path: item, label: getSftpBookmarkLabel(item) }];
+      }
+      if (!item || typeof item !== "object") return [];
+      const record = item as Record<string, unknown>;
+      if (typeof record.path !== "string" || !record.path) return [];
+      const path = record.path;
+      return [{
+        id: typeof record.id === "string" && record.id ? record.id : `bm-${path}`,
+        path,
+        label:
+          typeof record.label === "string" && record.label
+            ? record.label
+            : getSftpBookmarkLabel(path),
+        ...(record.global === true ? { global: true as const } : {}),
+      }];
+    });
   } catch {
     return [];
   }
 }
 
-/** 加入 / 移除书签（同一路径只保留一份，保持加入顺序）。 */
-export function toggleSftpBookmark(bookmarks: readonly string[], path: string): string[] {
-  return bookmarks.includes(path)
-    ? bookmarks.filter((item) => item !== path)
-    : [...bookmarks, path];
+/** 书签身份（区分本地 / 全局，防止同名 id 冲突）。 */
+export function getSftpBookmarkIdentity(bookmark: SftpBookmark): string {
+  return `${bookmark.global ? "global" : "location"}:${bookmark.id}`;
+}
+
+/** 路径是否已在给定书签列表中。 */
+export function hasSftpBookmarkPath(
+  bookmarks: readonly SftpBookmark[],
+  path: string,
+): boolean {
+  return bookmarks.some((bookmark) => bookmark.path === path);
+}
+
+/** 按钮直点切收藏的判定：无书签且当前路径未收藏时才直加，否则打开弹层。 */
+export function shouldToggleSftpBookmarkFromButton({
+  bookmarkCount,
+  isCurrentPathBookmarked,
+}: {
+  bookmarkCount: number;
+  isCurrentPathBookmarked: boolean;
+}): boolean {
+  return !isCurrentPathBookmarked && bookmarkCount === 0;
+}
+
+/** 加入 / 移除本地书签（同路径只保留一份，保持顺序）。 */
+export function toggleLocalSftpBookmark(
+  bookmarks: readonly SftpBookmark[],
+  path: string,
+): SftpBookmark[] {
+  return hasSftpBookmarkPath(bookmarks, path)
+    ? bookmarks.filter((bookmark) => bookmark.path !== path)
+    : [...bookmarks, createSftpBookmark(path)];
+}
+
+/** 拖拽 / 上移下移：仅在相同 scope（全局 or 本机）内可排序。 */
+export function canReorderSftpBookmark(
+  source: SftpBookmark | undefined,
+  target: SftpBookmark | undefined,
+): boolean {
+  return !!source && !!target && !!source.global === !!target.global;
+}
+
+/** 上移 / 下移目标：跳过另一 scope 的条目（Netcatty `getSftpBookmarkMoveTargets`）。 */
+export function getSftpBookmarkMoveTargets(
+  bookmarks: readonly SftpBookmark[],
+  bookmark: SftpBookmark,
+): { previous: SftpBookmark | null; next: SftpBookmark | null } {
+  const index = bookmarks.findIndex(
+    (candidate) =>
+      candidate.id === bookmark.id && !!candidate.global === !!bookmark.global,
+  );
+  if (index < 0) return { previous: null, next: null };
+  const isGlobal = !!bookmarks[index]?.global;
+  let previous: SftpBookmark | null = null;
+  let next: SftpBookmark | null = null;
+  for (let i = index - 1; i >= 0; i -= 1) {
+    if (!!bookmarks[i]?.global === isGlobal) {
+      previous = bookmarks[i]!;
+      break;
+    }
+  }
+  for (let i = index + 1; i < bookmarks.length; i += 1) {
+    if (!!bookmarks[i]?.global === isGlobal) {
+      next = bookmarks[i]!;
+      break;
+    }
+  }
+  return { previous, next };
+}
+
+/** 按 id 交换位置（调用方已限定同一 scope）。 */
+export function moveSftpBookmark<T extends { id: string }>(
+  bookmarks: T[],
+  fromId: string,
+  toId: string,
+): T[] {
+  const from = bookmarks.findIndex((bookmark) => bookmark.id === fromId);
+  const to = bookmarks.findIndex((bookmark) => bookmark.id === toId);
+  if (from < 0 || to < 0 || from === to) return bookmarks;
+  const next = bookmarks.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+/** 改名（trim 后为空则原样返回）。 */
+export function renameSftpBookmark<T extends { id: string; label: string }>(
+  bookmarks: T[],
+  id: string,
+  label: string,
+): T[] {
+  const nextLabel = label.trim();
+  if (!nextLabel) return bookmarks;
+  return bookmarks.map((bookmark) =>
+    bookmark.id === id ? { ...bookmark, label: nextLabel } : bookmark,
+  );
 }
 

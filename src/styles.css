@@ -3812,6 +3812,226 @@ button:disabled {
   color: hsl(var(--foreground));
 }
 
+/* 收藏按钮：当前路径已收藏 = 黄色实心；有收藏但当前路径未收藏 = 主色描边。 */
+.nc-sftp-toolbar-btn.bookmarked {
+  color: #eab308;
+}
+
+.nc-sftp-toolbar-btn.has-bookmarks {
+  color: hsl(var(--primary));
+}
+
+/* ── 收藏弹层（对齐 Netcatty w-80 弹层） ── */
+.nc-sftp-bookmark-popover {
+  position: fixed;
+  z-index: 90;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  background: hsl(var(--popover, var(--card)));
+  color: hsl(var(--popover-foreground, var(--foreground)));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  padding: 0;
+  overflow: hidden;
+}
+
+.nc-sftp-bookmark-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--border));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nc-sftp-bookmark-manage {
+  border: none;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.nc-sftp-bookmark-manage:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+}
+
+.nc-sftp-bookmark-actions {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.nc-sftp-bookmark-action,
+.nc-sftp-bookmark-global {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nc-sftp-bookmark-action {
+  flex: 1;
+}
+
+.nc-sftp-bookmark-action:hover,
+.nc-sftp-bookmark-global:hover {
+  background: hsl(var(--accent, var(--muted)));
+}
+
+.nc-sftp-bookmark-action.active {
+  color: #eab308;
+}
+
+.nc-sftp-bookmark-icon.bookmarked {
+  color: #eab308;
+}
+
+.nc-sftp-bookmark-global {
+  flex-shrink: 0;
+  color: hsl(var(--primary));
+}
+
+.nc-sftp-bookmark-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-bookmark-list {
+  max-height: 256px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.nc-sftp-bookmark-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.nc-sftp-bookmark-row:hover {
+  background: hsl(var(--muted));
+}
+
+.nc-sftp-bookmark-row.host-group {
+  border-top: 1px solid hsl(var(--border));
+}
+
+.nc-sftp-bookmark-row.dragging {
+  opacity: 0.5;
+}
+
+.nc-sftp-bookmark-grip {
+  color: hsl(var(--muted-foreground));
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.nc-sftp-bookmark-globe {
+  color: hsl(var(--primary));
+  flex-shrink: 0;
+}
+
+.nc-sftp-bookmark-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.nc-sftp-bookmark-label {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-sftp-bookmark-path {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-sftp-bookmark-row-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.nc-sftp-bookmark-row-btn:hover:not(:disabled) {
+  background: hsl(var(--accent, var(--muted)));
+  color: hsl(var(--foreground));
+}
+
+.nc-sftp-bookmark-row-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.nc-sftp-bookmark-row-btn.remove {
+  opacity: 0;
+}
+
+.nc-sftp-bookmark-row:hover .nc-sftp-bookmark-row-btn.remove,
+.nc-sftp-bookmark-row-btn.remove.always {
+  opacity: 1;
+}
+
+.nc-sftp-bookmark-row-btn.remove:hover {
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-bookmark-rename-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid hsl(var(--ring));
+  border-radius: 4px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+}
+
 /* 根按钮（"/" 或 "C:\"）：文本形态，禁用 = 已在根 */
 .nc-sftp-toolbar-root {
   padding: 0 6px;

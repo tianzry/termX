@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-06 — #230 SFTP 收藏（书签）按 Netcatty 复刻：选中态 / 弹层 / 管理 / 持久化
+
+- **Netcatty 取证**：
+  - 数据面 `application/state/sftp/{local,global}SftpBookmarks.ts` + `bookmarkHelpers.ts`：`SftpBookmark { id, path, label, global? }`；本机收藏落 `netcatty_sftp_local_bookmarks_v1`、全局收藏落 `netcatty_sftp_global_bookmarks_v1`（均为 localStorage），全局列表在前、本机在后，跨分组显示分隔线；
+  - 视窗 `components/sftp/SftpPaneToolbar.tsx` `SftpBookmarkPopoverBody`：宽 320（w-80）；头部「收藏路径」+ 有收藏时的「管理/完成」；动作行「收藏此路径 / 取消收藏」+（当前路径未全局收藏时）「+全局」；列表项显示 label + 等宽路径，全局项带 Globe 图标，非管理态悬停出现删除；
+  - 按钮态：当前路径已收藏 → `text-yellow-500` + Bookmark 实心；有收藏但当前路径未收藏 → `text-primary`；无收藏且当前路径未收藏 → 点按钮直接加入本机收藏（不开弹层），否则开合弹层；
+  - 管理态：每行 Grip 拖拽（仅同 scope 可换位）、ArrowUp/Down（跳过另一 scope）、Pencil 行内改名（Enter 提交 / Esc 取消）、Trash 常显；删除前出确认弹窗；
+  - `toggleBookmark`：当前路径仅存在于全局 → 删除全局；否则切换本机收藏；「取消收藏」选第一条非全局同名项，没有则取全局项。
+- **termX 实现**：
+  - `src/sftp/sftpModel.ts` 新增 `SftpBookmark` 与 `parseSftpBookmarks`（兼容旧版纯路径数组自动迁移）、`getSftpBookmarkLabel`、`createSftpBookmark`（`bm-` / `gbm-` 前缀）、`toggleLocalSftpBookmark`、`hasSftpBookmarkPath`、`shouldToggleSftpBookmarkFromButton`、`getSftpBookmarkMoveTargets` / `canReorderSftpBookmark` / `moveSftpBookmark` / `renameSftpBookmark`；
+  - 存储键 `termx.sftp.localBookmarks.v1` / `termx.sftp.globalBookmarks.v1`，首次读取时从旧键 `termx.sftp.bookmarks.v1` 迁移；
+  - `src/sftp/SftpPaneDialogs.tsx` 新增 `SftpBookmarkPopover`（结构、分组线、管理态、拖拽/上移下移/改名/删除、视口夹取、Esc/点外关闭）与 `SftpBookmarkDeleteDialog`（Esc / 遮罩 / 取消关闭）；
+  - `src/sftp/SftpPaneView.tsx` 侧栏按钮换为 lucide `Bookmark`（已收藏实心黄色，有收藏主色），接入两套存储与上述管理逻辑。
+- **验证**：129 实机创建本机 + 全局收藏、按钮态黄/主色切换、列表跳转、改名、上下移动、拖拽、删除确认与刷新后持久化；本机与全局键写入正确；与 Netcatty 同尺寸并排截图（`evidence/af-bookmark-*.png`）。回归 `src/sftp/sftpModel.test.ts` 书签 8 组用例通过。
+
 ## 2026-11-06 — #229 SFTP 工具栏「更多」菜单贴边被裁切
 
 - **问题**：截图 `attachments/362c25ea-…/image.png` 中，侧栏 SFTP 工具栏最右侧「更多」弹出的菜单只露出左半截（「在…/复…/刷…」），右半截被窗口边缘裁掉。

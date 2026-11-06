@@ -22,6 +22,22 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
 } from "react";
+import {
+  Bookmark as BookmarkIcon,
+  ClipboardCopy,
+  Eye,
+  EyeOff,
+  FilePlus,
+  FolderPlus,
+  List,
+  ListTree,
+  MoreVertical,
+  RefreshCw,
+  Rows3,
+  Search,
+  Terminal as TerminalIcon,
+  TerminalSquare,
+} from "lucide-react";
 import * as api from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import { SftpEditorDialog } from "../editor/EditorDialog";
@@ -48,18 +64,30 @@ import {
   remoteParent,
   resolveBreadcrumbVisibleParts,
   rowTypeLabel,
-  SFTP_BOOKMARKS_STORAGE_KEY,
   SFTP_DRAG_MIME,
+  SFTP_GLOBAL_BOOKMARKS_STORAGE_KEY,
+  SFTP_LEGACY_BOOKMARKS_STORAGE_KEY,
+  SFTP_LOCAL_BOOKMARKS_STORAGE_KEY,
   sftpDragSideMime,
   sortSftpRows,
-  toggleSftpBookmark,
+  canReorderSftpBookmark,
+  createSftpBookmark,
+  hasSftpBookmarkPath,
+  moveSftpBookmark,
+  renameSftpBookmark,
+  resolveSftpLocateCdCommand,
+  shouldToggleSftpBookmarkFromButton,
+  toggleLocalSftpBookmark,
   type DropTransferTask,
   type PaneConnection,
+  type SftpBookmark,
   type SftpDragPayload,
   type SftpSortField,
   type SftpSortOrder,
 } from "./sftpModel";
 import {
+  SftpBookmarkDeleteDialog,
+  SftpBookmarkPopover,
   SftpContextMenu,
   SftpDeleteDialog,
   SftpPermissionsDialog,
@@ -104,24 +132,29 @@ function baseName(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
-/** 读取侧栏书签（存储不可用时按空列表）。 */
-function readSftpBookmarks(): string[] {
+/** 读取书签存储（存储不可用时按空列表；含旧版纯路径数据迁移）。 */
+function readSftpBookmarks(key: string, legacyKey?: string): SftpBookmark[] {
   try {
-    return parseSftpBookmarks(
-      window.localStorage.getItem(SFTP_BOOKMARKS_STORAGE_KEY),
-    );
+    const raw = window.localStorage.getItem(key);
+    if (raw) return parseSftpBookmarks(raw);
+    if (legacyKey) {
+      const legacy = window.localStorage.getItem(legacyKey);
+      if (legacy) {
+        const migrated = parseSftpBookmarks(legacy);
+        persistSftpBookmarks(key, migrated);
+        return migrated;
+      }
+    }
+    return [];
   } catch {
     return [];
   }
 }
 
-/** 写回侧栏书签（失败静默，仅本次生效）。 */
-function persistSftpBookmarks(bookmarks: string[]): void {
+/** 写回书签（失败静默，仅本次生效）。 */
+function persistSftpBookmarks(key: string, bookmarks: SftpBookmark[]): void {
   try {
-    window.localStorage.setItem(
-      SFTP_BOOKMARKS_STORAGE_KEY,
-      JSON.stringify(bookmarks),
-    );
+    window.localStorage.setItem(key, JSON.stringify(bookmarks));
   } catch {
     // 存储不可用时仅本次生效。
   }
@@ -187,11 +220,22 @@ export function SftpPaneView({
   const [viewMode, setViewMode] = useState<"list" | "tree">("list");
   /** 侧栏形态：紧凑行高（对齐 Netcatty listDensity）。 */
   const [compact, setCompact] = useState(false);
-  /** 侧栏书签（本地持久化，路径列表）。 */
-  const [bookmarks, setBookmarks] = useState<string[]>(readSftpBookmarks);
+  /** 侧栏书签：本机 + 全局（对齐 Netcatty 的 location / global 两套存储）。 */
+  const [localBookmarks, setLocalBookmarks] = useState<SftpBookmark[]>(() =>
+    readSftpBookmarks(
+      SFTP_LOCAL_BOOKMARKS_STORAGE_KEY,
+      SFTP_LEGACY_BOOKMARKS_STORAGE_KEY,
+    ),
+  );
+  const [globalBookmarks, setGlobalBookmarks] = useState<SftpBookmark[]>(() =>
+    readSftpBookmarks(SFTP_GLOBAL_BOOKMARKS_STORAGE_KEY),
+  );
+  /** 收藏弹层锚点（按钮 rect）与待确认删除的收藏。 */
   const [bookmarkMenu, setBookmarkMenu] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const [pendingBookmarkRemoval, setPendingBookmarkRemoval] =
+    useState<SftpBookmark | null>(null);
   const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(
     null,
   );
@@ -870,31 +914,95 @@ export function SftpPaneView({
 
   // ── 渲染 ───────────────────────────────────────────────
 
-  /** 侧栏书签：无书签时直接收藏当前路径，否则弹出书签菜单。 */
-  const handleBookmarkClick = (e: ReactMouseEvent<HTMLButtonElement>) => {
-    if (bookmarks.length === 0 && !bookmarks.includes(path)) {
-      const next = toggleSftpBookmark(bookmarks, path);
-      setBookmarks(next);
-      persistSftpBookmarks(next);
-      return;
-    }
-    setBookmarkMenu({ x: e.clientX, y: e.clientY });
+  // ── 收藏（对齐 Netcatty SftpPaneView 的 toggle / addGlobal / 管理逻辑）──
+
+  /** 合并列表：全局在前、本机在后。 */
+  const mergedBookmarks = useMemo(
+    () => [...globalBookmarks, ...localBookmarks],
+    [globalBookmarks, localBookmarks],
+  );
+  const isCurrentPathBookmarked = hasSftpBookmarkPath(mergedBookmarks, path);
+  const isCurrentPathGlobalBookmarked = hasSftpBookmarkPath(
+    globalBookmarks,
+    path,
+  );
+
+  const updateLocalBookmarks = (next: SftpBookmark[]) => {
+    setLocalBookmarks(next);
+    persistSftpBookmarks(SFTP_LOCAL_BOOKMARKS_STORAGE_KEY, next);
+  };
+  const updateGlobalBookmarks = (next: SftpBookmark[]) => {
+    setGlobalBookmarks(next);
+    persistSftpBookmarks(SFTP_GLOBAL_BOOKMARKS_STORAGE_KEY, next);
   };
 
-  const bookmarkItems: MenuItem[] = [
-    ...bookmarks.map((bookmark) => ({
-      label: bookmark,
-      onClick: () => void load(bookmark),
-    })),
-    {
-      label: bookmarks.includes(path) ? "移除当前路径" : "收藏当前路径",
-      onClick: () => {
-        const next = toggleSftpBookmark(bookmarks, path);
-        setBookmarks(next);
-        persistSftpBookmarks(next);
-      },
-    },
-  ];
+  /** 顶部动作：全局独有 → 删除全局；否则切换本地收藏（Netcatty toggleBookmark）。 */
+  const toggleBookmark = () => {
+    if (isCurrentPathGlobalBookmarked && !hasSftpBookmarkPath(localBookmarks, path)) {
+      const bookmark = globalBookmarks.find((item) => item.path === path);
+      if (bookmark) setPendingBookmarkRemoval(bookmark);
+      return;
+    }
+    updateLocalBookmarks(toggleLocalSftpBookmark(localBookmarks, path));
+  };
+
+  const addGlobalBookmark = () => {
+    if (isCurrentPathGlobalBookmarked) return;
+    updateGlobalBookmarks([
+      ...globalBookmarks,
+      createSftpBookmark(path, { global: true }),
+    ]);
+  };
+
+  const deleteBookmark = (bookmark: SftpBookmark) => {
+    if (bookmark.global) {
+      updateGlobalBookmarks(
+        globalBookmarks.filter((item) => item.id !== bookmark.id),
+      );
+    } else {
+      updateLocalBookmarks(
+        localBookmarks.filter((item) => item.id !== bookmark.id),
+      );
+    }
+  };
+
+  const reorderBookmark = (from: SftpBookmark, to: SftpBookmark) => {
+    if (!canReorderSftpBookmark(from, to)) return;
+    if (from.global) {
+      updateGlobalBookmarks(moveSftpBookmark(globalBookmarks, from.id, to.id));
+    } else {
+      updateLocalBookmarks(moveSftpBookmark(localBookmarks, from.id, to.id));
+    }
+  };
+
+  const renameBookmark = (bookmark: SftpBookmark, label: string) => {
+    if (bookmark.global) {
+      updateGlobalBookmarks(
+        renameSftpBookmark(globalBookmarks, bookmark.id, label),
+      );
+    } else {
+      updateLocalBookmarks(renameSftpBookmark(localBookmarks, bookmark.id, label));
+    }
+  };
+
+  /** 侧栏书签按钮：无收藏时直加当前路径，否则开合收藏弹层（对齐 Netcatty）。 */
+  const handleBookmarkClick = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    if (bookmarkMenu) {
+      setBookmarkMenu(null);
+      return;
+    }
+    if (
+      shouldToggleSftpBookmarkFromButton({
+        bookmarkCount: mergedBookmarks.length,
+        isCurrentPathBookmarked,
+      })
+    ) {
+      updateLocalBookmarks(toggleLocalSftpBookmark(localBookmarks, path));
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setBookmarkMenu({ x: rect.left, y: rect.bottom + 4 });
+  };
 
   /** 树视图展开 / 收起目录（首次展开时才拉子项）。 */
   async function toggleTreeDir(dir: string) {
@@ -1120,15 +1228,23 @@ export function SftpPaneView({
         <div className="nc-sftp-toolbar nc-sftp-actions-side">
           <button
             className={
-              bookmarks.includes(path)
-                ? "nc-sftp-toolbar-btn active"
-                : "nc-sftp-toolbar-btn"
+              "nc-sftp-toolbar-btn" +
+              (isCurrentPathBookmarked ? " bookmarked" : "") +
+              (mergedBookmarks.length > 0 && !isCurrentPathBookmarked
+                ? " has-bookmarks"
+                : "")
             }
-            aria-label="书签"
-            title="书签"
+            aria-label="收藏"
+            title={
+              isCurrentPathBookmarked ? "取消收藏当前路径" : "收藏当前路径"
+            }
+            aria-pressed={isCurrentPathBookmarked}
             onClick={handleBookmarkClick}
           >
-            <Icon name="bookmark" size={13} />
+            <BookmarkIcon
+              size={14}
+              fill={isCurrentPathBookmarked ? "currentColor" : "none"}
+            />
           </button>
           <button
             className="nc-sftp-toolbar-btn"
@@ -1446,11 +1562,31 @@ export function SftpPaneView({
       )}
 
       {bookmarkMenu && (
-        <SftpContextMenu
+        <SftpBookmarkPopover
           x={bookmarkMenu.x}
           y={bookmarkMenu.y}
-          items={bookmarkItems}
+          bookmarks={mergedBookmarks}
+          currentPath={path}
+          isCurrentPathBookmarked={isCurrentPathBookmarked}
+          isCurrentPathGlobalBookmarked={isCurrentPathGlobalBookmarked}
+          onToggle={toggleBookmark}
+          onAddGlobal={addGlobalBookmark}
+          onNavigate={(target) => void load(target)}
+          onRequestDelete={(bookmark) => setPendingBookmarkRemoval(bookmark)}
+          onReorder={reorderBookmark}
+          onRename={renameBookmark}
           onClose={() => setBookmarkMenu(null)}
+        />
+      )}
+
+      {pendingBookmarkRemoval && (
+        <SftpBookmarkDeleteDialog
+          bookmark={pendingBookmarkRemoval}
+          onConfirm={() => {
+            deleteBookmark(pendingBookmarkRemoval);
+            setPendingBookmarkRemoval(null);
+          }}
+          onClose={() => setPendingBookmarkRemoval(null)}
         />
       )}
 
