@@ -1666,6 +1666,7 @@ export function TerminalTab() {
         </Row>
         <Row title={t("settings.terminal.sidePanel.autoOpenPane")} desc={t("settings.terminal.sidePanel.autoOpenPane.desc")}>
           <Select
+            disabled={!s.sidePanelAutoOpen}
             value={s.sidePanelAutoOpenPane}
             onChange={(v) => updateSettings({ sidePanelAutoOpenPane: v })}
             options={["sftp", "scripts", "history", "theme", "system", "notes", "ai", "browser"].map((p) => ({

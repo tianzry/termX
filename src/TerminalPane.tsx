@@ -254,6 +254,14 @@ export interface PaneHandle {
   resume: () => boolean;
 }
 
+/** 自动打开侧栏时可落地的视图；Netcatty 的 theme/system/ai/browser 在 termX 未移植，忽略。 */
+const AUTO_OPEN_SIDE_PANEL_PANES: Record<string, "sftp" | "scripts" | "history" | "notes"> = {
+  sftp: "sftp",
+  scripts: "scripts",
+  history: "history",
+  notes: "notes",
+};
+
 interface Props {
   tab: Tab;
   paneId: string;
@@ -2475,11 +2483,15 @@ export function TerminalPane({
     void runOnConnectScripts();
   }
 
-  /** 连接成功后按设置自动打开侧边栏（termX 目前仅支持 SFTP 面板）。 */
+  /** 连接成功后按设置自动打开侧边栏（支持 SFTP / 脚本 / 历史 / 笔记）。 */
   function maybeAutoOpenSidePanel() {
     const s = getSettings();
     if (!s.sidePanelAutoOpen) return;
-    if (s.sidePanelAutoOpenPane === "sftp") onOpenTool?.("sftp");
+    const pane = AUTO_OPEN_SIDE_PANEL_PANES[s.sidePanelAutoOpenPane];
+    if (!pane) return;
+    // SFTP 侧栏复用 SSH 通道，非 SSH 会话不打开（对齐 Netcatty sftpAvailable）。
+    if (pane === "sftp" && tab.connector.kind !== "ssh") return;
+    onOpenTool?.(pane);
   }
 
   // 每次渲染都刷新引用，句柄里的 reconnect 永远调用最新闭包。

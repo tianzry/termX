@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-06 — #249 严格验收（第三轮：设置项逐条）3 处偏差修复
+
+- **取证方式**：CDP 9222 实机，逐项改控件 → 立即读 DOM 状态 → 读后端 `settings.center.v1` → 真实连接验证行为（不只看代码）。设置快照是**顶层字段**（`sidePanelAutoOpen` / `sidePanelAutoOpenPane`），不是 `terminal.` 嵌套；此前探针按 `s.terminal.sidePanelAutoOpen` 读取会得到 undefined，已修正。
+- **P2-2：自动打开侧栏只支持 SFTP**。`TerminalPane.maybeAutoOpenSidePanel()` 只处理 `sftp`，选 `scripts`/`history`/`notes` 时连接成功不打开；Netcatty `resolveTerminalSidePanelAutoOpen` 支持全部可用页签。新增 `AUTO_OPEN_SIDE_PANEL_PANES` 映射四种视图，SFTP 仍限 SSH（对齐 `sftpAvailable`），theme/system/ai/browser 未移植直接忽略并保留设置项说明。
+- **P3-1：开关关闭时页签下拉仍可编辑**。对齐 Netcatty `SettingsTerminalTab` 的 `disabled={!terminalSidePanelAutoOpen}`，`SettingsTabs.tsx` 的 pane Select 增加禁用态。
+- **P3-2：本地 Shell 组说明与事实不符**。原文案称「termX 不提供本地 Shell 会话（仅有 SSH/串口/Telnet）」，实际 termX 有 CMD/Git Bash/Telnet 入口；改为「本地 Shell 目前没有侧栏文件面板，该组禁用；保留以对齐 Netcatty」（zh/en 同步）。
+- **实测**：
+  - 开关关闭：pane select `disabled=true`；点击开关后 `disabled=false`，开关 `aria-checked=true`。
+  - 写盘：后端快照 `sidePanelAutoOpen=true`、`sidePanelAutoOpenPane="scripts"`；再次关闭后 `sidePanelAutoOpen=false`，下拉回到 `disabled=true`。
+  - 行为：本地启动 Telnet 回显服务（127.0.0.1:2324）后，Telnet 会话重连成功，右侧栏立即打开且 `data-active-tool=scripts`、`data-pane-tool=scripts`（此前同主机因服务未起报「目标计算机积极拒绝」，错误浮层可读，未误触发自动打开）。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例 ✓；`npm run build` ✓。
+- **踩坑**：① 探针用 `Input.dispatchMouseEvent` 关闭会话标签、点 Pane 内「重连」按钮才生效；② Telnet 主机卡单击即连接（`先选中再连接` 关闭），但 2324 端口默认没有服务，需先起回显服务，否则只会看到错误浮层；③ 设置快照字段是顶层而非 `terminal.*`，读错路径会误判「未写盘」。
+
 ## 2026-11-06 — #248 严格验收（第二轮：功能 + 性能）无新增 P1/P2
 
 - **功能取证**（CDP 9222 + 129 实机）：

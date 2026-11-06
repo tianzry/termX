@@ -65,7 +65,7 @@
 ### 覆盖边界（未实测项，均为环境限制）
 
 - 物理串口：无对端设备，只核对入口与协议选项存在，不伪造收发结果。
-- Telnet：环境内无可用 Telnet 服务端，只核对入口与弹窗字段。
+- Telnet：本机临时回显服务（127.0.0.1:2324）已实测连接、握手横幅、回显与断线错误浮层；无真实业务 Telnet 服务端，未做认证/协商细节。
 - 原生文件对话框「确定」路径：会话日志写入、SFTP 上传/下载、导入/导出；无人值守只能验证取消与复位。
 - 本地 PTY 与 SSH 已在实际会话中交互验证；串口/Telnet 的连接弹窗与标签样式在前序轮次（#236/#244）已核对。
 
@@ -75,3 +75,20 @@
 - 未修复：无（排除清单与外部条件项除外）。
 - 回归：改后 Vault 九页、设置八 tab、终端工具栏、侧栏切换逐项复测通过；129 实机会话保持连接，侧栏切回后恢复 history 视图。
 - 门禁：`npx tsc --noEmit`、`npm run test:run`、`npm run build` 见本轮 commit 说明。
+
+## 7. 第三轮：设置项逐条（#249）
+
+- **方法**：CDP 9222 实机逐项操作 → 立即读 DOM → 读后端 `settings.center.v1` → 真实连接验证行为。确认设置快照字段是**顶层**（`sidePanelAutoOpen` / `sidePanelAutoOpenPane`），不是 `terminal.*` 嵌套。
+- **P2-2 自动打开侧栏只支持 SFTP（已修）**：`maybeAutoOpenSidePanel()` 只处理 `sftp`，选 scripts/history/notes 连接成功不打开。新增 `AUTO_OPEN_SIDE_PANEL_PANES` 映射四视图；SFTP 仍仅 SSH（对齐 Netcatty `sftpAvailable`）；theme/system/ai/browser 未移植，忽略且保留设置项说明。
+- **P3-1 开关关闭时页签下拉仍可编辑（已修）**：补 `disabled={!s.sidePanelAutoOpen}`，对齐 Netcatty `SettingsTerminalTab`。
+- **P3-2 本地 Shell 组说明与事实不符（已修）**：原文案称 termX 无本地 Shell，实际有 CMD/Git Bash/Telnet 会话；改为「本地 Shell 没有侧栏文件面板，该组禁用」，zh/en 同步。
+- **实测结果**：开关关 → pane select `disabled=true`；点击开关后 `disabled=false`、`aria-checked=true`；后端快照写入 `sidePanelAutoOpen=true`、`sidePanelAutoOpenPane="scripts"`；本机 Telnet 回显服务下重连成功，右侧栏自动打开且 `data-active-tool=scripts`；随后关闭开关，快照回到 `false`、下拉恢复禁用。
+- **错误边界顺带取证**：2324 端口未监听时，Telnet 连接失败浮层显示「连接 Telnet 127.0.0.1:2324 失败：由于目标计算机积极拒绝，无法连接。 (os error 1006)」，可读且未误触发自动打开。
+
+### 仍待覆盖（下一阶段）
+
+- 设置其余 tab 的开关/下拉/数字框（即时生效、写盘、重启保持、失效说明）逐条。
+- 数据类页面：钥匙串、代理、端口转发、监控、同步、脚本、笔记、日志。
+- SFTP 深路径：冲突 replace/skip/rename + applyToAll、暂停/恢复/取消、并发上限、递归、符号链接、权限位、异常编码文件名、断线重连队列。
+- 多标签/多窗口：工作区恢复、标签记忆、分屏状态重启后正确性。
+- 性能补测：万级目录列举与滚动、并发传输 UI、30 分钟以上会话日志/内存曲线。
