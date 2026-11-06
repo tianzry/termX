@@ -141,6 +141,7 @@ import {
   TERMINAL_CONTEXT_MENU_TEXT,
   TERMINAL_MORE_TEXT,
   TERMINAL_TOOLBAR_TEXT,
+  terminalRecordingText,
 } from "./terminal/terminalActionText";
 import { resolveTerminalContextMenu } from "./terminal/contextMenuLayout";
 import {
@@ -607,6 +608,18 @@ export function TerminalPane({
       setOsc7Busy(false);
     }
   }
+
+  /** 目录追踪配置对话框：Esc 关闭（与其它模态一致）。 */
+  useEffect(() => {
+    if (!osc7DialogOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOsc7DialogOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [osc7DialogOpen]);
 
   /** 屏幕等待 / 自动触发：终端缓冲全文（xterm buffer translateToString）。 */
   function termBufferText(): string {
@@ -3816,14 +3829,12 @@ export function TerminalPane({
                           </span>
                         </button>
                       );
-                    case "recording":
+                    case "recording": {
+                      const recordingText = terminalRecordingText(scriptRec);
                       return (
                         <button
                           key={action}
-                          title={
-                            moreRecordingReason ??
-                            (scriptRec ? "停止录制并保存到脚本库" : "开始录制脚本")
-                          }
+                          title={moreRecordingReason ?? recordingText.title}
                           disabled={moreRecordingReason !== null || scriptRecBusy}
                           className={scriptRec ? "is-recording" : undefined}
                           onClick={() => {
@@ -3832,14 +3843,13 @@ export function TerminalPane({
                           }}
                         >
                           <Icon name="circle" size={12} className="term-record-dot" />
-                          <span className="term-menu-text">
-                            {scriptRec ? "停止录制" : "开始录制"}
-                          </span>
+                          <span className="term-menu-text">{recordingText.label}</span>
                           {moreRecordingReason !== null && (
                             <span className="term-menu-note">{moreRecordingReason}</span>
                           )}
                         </button>
                       );
+                    }
                     case "encoding":
                       return (
                         <div

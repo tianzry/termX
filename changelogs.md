@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-06 — #223 P3 收尾（More 菜单录制文案单一来源 + OSC 7 对话框 Esc + 假入口审计）
+
+- **#216 遗留 P3 闭环**：
+  1. More 菜单「开始录制 / 停止录制」文案从 JSX 内联迁移到 `terminalActionText.ts` 的 `terminalRecordingText(active)`（label + title 一并返回），删除已无引用的 `TERMINAL_MORE_TEXT.recording`；新增 `terminalActionText.test.ts` 2 例（开始/停止两态）。
+  2. OSC 7 配置对话框补 Esc 关闭：`osc7DialogOpen` 期间在 window capture 阶段监听 `keydown`，命中 Escape 时 `stopPropagation` 并关闭，与 `SettingsDialog` / `SerialConnectModal` 等既有模态一致。
+- **实机验证（129，debug 内嵌 dist + CDP 9222）**：
+  - More 菜单 5 项：命令历史 / 配置目录追踪（已启用：`/home/tianzry`）/ 终端设置 / 开始录制 / 终端编码（当前 UTF-8）；录制项 `text=开始录制`、`title=开始录制脚本`（来自 `terminalActionText`），截图 `evidence/p3-more-recording-source.png`。
+  - OSC 7 对话框打开后可见标题、说明、目标文件（`~/.bashrc` / zshrc / fish）、将执行命令、取消/执行配置；按 Esc 后对话框与 `modal-mask` 均消失、终端保持 connected；再按一次 Esc 无副作用（`p3-osc7-dialog-open.png` / `p3-osc7-after-esc.png`，断言 `evidence/p3-leftovers-verify.json`）。
+- **假入口审计（`evidence/p3-placeholder-audit.json`）**：设置 8 个 tab 中仅「AI」为 `disabled=true`，点击不激活（activeTab 仍为「应用」）；全局文本扫描「即将推出 / 敬请期待 / 暂不可用 / coming soon / TODO / 占位」命中 0。P2 #27/#28/#29/#30/#38 仍按 plan 暂缓且无 UI 入口；P3 的 Netcatty 独有能力（browser / ymodem / openSessionLog / 插件菜单 / 右键上传下载 / Paste Selection / 保存屏幕）不移植，属能力差异，未造入口。
+- **门禁**：`npm run test:run` 769 通过（70 文件）、`npm run build` 通过、`cargo test --lib` 960 通过、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #222 设置页剩差清理（内容区滚动条 overlay 观感 + 基准字号核对）
 
 - **滚动条取证与选型**：WebView2 实测 `overflow-y: overlay` 的 computed 仍为 `auto`（滚动条继续占 14–15px），即不支持真 overlay。改用 **8px 自绘滚动条 + `scrollbar-gutter: stable` + `padding-right 24→31`** 补偿 15/14→8 的差值：透明轨道 + `muted-foreground/35%` 圆角滑块（hover 50%），视觉接近 overlay，且不改变卡片几何。

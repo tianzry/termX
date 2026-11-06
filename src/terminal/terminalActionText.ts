@@ -31,9 +31,15 @@ export const TERMINAL_MORE_TEXT = {
   history: { label: "命令历史", title: "命令历史" },
   osc7: { label: "配置目录追踪", title: "配置目录追踪" },
   terminalSettings: { label: "终端设置", title: "终端设置（外观 / 字体 / 行为）" },
-  recording: { label: "录制脚本", title: "录制脚本" },
   encoding: { label: "终端编码", title: "终端编码" },
 } as const;
+
+/** 「录制脚本」随录制状态切换文案（开始 / 停止），仍收敛在本文件。 */
+export function terminalRecordingText(active: boolean): TerminalActionText {
+  return active
+    ? { label: "停止录制", title: "停止录制并保存到脚本库" }
+    : { label: "开始录制", title: "开始录制脚本" };
+}
 
 /** 右键菜单文案（对照 Netcatty i18n `terminal.menu.*`）。 */
 export const TERMINAL_CONTEXT_MENU_TEXT: Record<TerminalContextMenuAction, string> = {
