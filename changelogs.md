@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-11-06 — #226 文档收口（README / AGENTS / rename 实际落地 / todo 完成度）
+
+- **新增 `README.md`**（仓库原先没有）：项目定位、环境要求、`npm run tauri dev` / `npm run dev` 运行方式、`npm run tauri -- build` 产出 NSIS+MSI 路径、数据目录 `~/.termX` 与旧 `~/.rssh` 迁移策略、卸载保留用户数据、门禁命令与当前基线、已知边界（AI 未移植/更新置灰/MSI 需管理员/人工确认项）。
+- **AGENTS.md 同步现状**：项目定位补改名完成状态；R5 错误前缀改 `__termx_err__`（前端双前缀兼容）；R7 `SCHEMA_VERSION` 32 → 50；构建命令补 `termx-cli` / `termx-server` / debug 打包门禁；「测试现状」补 2026-11-06 门禁基线（769/70、960、build/server/debug）与 plugin exec 偶发超时说明；P1 坑位改为“仅兼容性旧字面量保留”。
+- **`docs/rename-rssh-termx.md` 新增 §7「实际落地」**：标识/构建/安装包实际结果、数据目录迁移规则与实测（migrated/rename/23 表/334 行/旧目录已清理）、keychain/master key/env/错误前缀/远端备份等兼容回退、与盘点方案的偏差（提交合并、MSI per-machine 权限阻塞）、验证结论。
+- **todo.md**：已完成表补「收尾文档收口」行；最终回归与安装包验证行保持 ✅。
+- **仍需人工确认项**：真实 CA 证书握手、Windows ssh-agent 转发、真实串口设备回环、原生文件对话框、MSI 管理员安装/卸载与升级路径。
+- **门禁**：`npm run test:run` 769 通过（70 文件）、`npm run build` 通过、`cargo test --lib` 960 通过（首跑 1 例 plugin exec 超时 flake，单跑与全量重跑均通过）、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
+## 2026-11-06 — #225 安装包验证（NSIS 全链路 + MSI 构建/权限阻塞）
+
+- **产物**：release `npm run tauri -- build` 同时产出 `nsis/termX_0.0.1_x64-setup.exe`（12,025,955 B）与 `msi/termX_0.0.1_x64_en-US.msi`（17,338,368 B），NSIS 与 WiX 编译均无错误。
+- **NSIS（per-user）**：`/S` 安装 exit 0，落 `%LOCALAPPDATA%\termX`（`termx.exe` 42,654,720 B、`uninstall.exe`、`bin/`），自动创建开始菜单 `termX.lnk` 与桌面 `termX.lnk`，HKCU 卸载项 termX 0.0.1；`/S` 卸载 exit 0，快捷方式与注册表项均移除。卸载残留 `termx.exe.WebView2`（165 文件 / 10,496,963 B，WebView2 用户数据目录），记录后手工清理。`~/.termX` 保留（策略：用户数据不随卸载删除）。
+- **迁移（隔离副本，未动真实数据）**：真实 `~/.termX` 原子 hold，用副本 `~/.rssh/rssh.db` 测首启迁移 → report `status=migrated`、mode `rename`、tables 23/23、rows 334/334、`old_dir_removed=true`；设置-系统展示迁移文案；测后恢复真实目录，数据完整。
+- **MSI（per-machine）**：构建通过；`msiexec /i … /qn` exit 1603（Error 1925 权限不足），per-user 覆盖 `ALLUSERS=2 MSIINSTALLPERUSER=1` 仍 1603（Error 1406 写 HKLM `Software\Classes\ssh`）。当前会话非管理员且不做自动 UAC 提权 → **MSI 安装/卸载未实跑**；`msiexec /a` 解包 exit 0，payload 与 NSIS 一致（`termx.exe` / `html2md.dll` / `bin/`），静态核对 Shortcut / Registry / Property 表（ProductCode `{7099B5A9-A13C-4635-8519-67B893692239}`）。
+- **文档**：新增 `docs/installer-verification.md`（产物、NSIS 全链路、迁移、残留、MSI 阻塞原因与未验证项）。
+- **门禁**：`npm run test:run` 769 通过（70 文件）、`npm run build` 通过、`cargo test --lib` 960 通过、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #224 收尾全应用最终回归（浅/深双主题 + 四类终端 + Netcatty 同尺寸对照）
 
 - **范围**：改名后的 `termx.exe` 实跑（debug 内嵌 dist，CDP 9222），浅色/深色各走 Vault 9 导航页 + SFTP 根面 + 设置 8 tab + SSH(129)/本地 shell/Telnet/串口四类终端，共 44 张截图；断言汇总 `evidence/final-regression.json`。

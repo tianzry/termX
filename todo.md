@@ -61,6 +61,8 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 能力 | 状态 | 位置 |
 |---|---|---|
 | 收尾全应用最终回归（浅/深 + 四类终端 + 设置 8 tab，P1=0） | ✅ | `docs/final-regression.md`、`evidence/final-regression.json` |
+| 收尾安装包验证（NSIS 安装/快捷方式/迁移/卸载残留；MSI 构建 + 权限阻塞说明） | ✅ | `docs/installer-verification.md` |
+| 收尾文档收口（README / AGENTS 门禁基线 / 改名实际落地 / 人工确认项） | ✅ | `README.md`、`AGENTS.md`、`docs/rename-rssh-termx.md` §7 |
 | SSH 会话（密码 / 私钥 / keyboard-interactive） | ✅ | `src/App.tsx`、`src-tauri/src/commands/ssh.rs` |
 | 本地 PTY 终端 | ✅ | `src/Terminal.tsx`、`commands/terminal.rs` |
 | SFTP 基础 + 流式 + 递归 + 进度 + 取消 | ✅ | `src/SftpPanel.tsx`、`commands/sftp.rs` |
