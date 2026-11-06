@@ -750,7 +750,7 @@ export default function App() {
           </div>
         </div>
 
-        {tool && (
+        {terminalActive && tool && (
           <TerminalSidePanel
             tool={tool}
             onToolChange={changeSidePanelTool}
