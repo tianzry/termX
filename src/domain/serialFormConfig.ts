@@ -135,9 +135,11 @@ export const SERIAL_TEXT = {
   autoLoginPassword: "密码",
   autoLoginUsernamePlaceholder: "留空则不启用",
   autoLoginPasswordPlaceholder: "可为空（空密码设备）",
-  saveHost: "保存为主机",
-  saveHostDesc: "将当前串口配置保存到 Vault，之后可从主机列表直接打开",
-  hostName: "主机名称",
+  saveHost: "保存配置",
+  saveHostDesc: "将此串口配置保存到主机列表以便快速访问",
+  hostName: "配置名称",
+  hostNamePlaceholder: "例如 Arduino Uno",
+  connectAndSave: "连接并保存",
 } as const;
 
 /** 12 档常用波特率，可自定义任意正整数。 */

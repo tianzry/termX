@@ -26,6 +26,13 @@
 - **结论（已决策）**：**不做独立窗口，保留现有应用内 overlay（`SettingsDialog`）形态**。技术上可行（spike 已验证 `WebviewWindow("settings")` + `#/settings` hash 路由在 dev 下可达、980×720 尺寸与 workArea 居中生效、min 820×600 由 `WM_GETMINMAXINFO` 保证），但独立窗口带来的双 WebView2 常驻内存、跨窗同步与 AppLock 联动复杂度不值得为设置页付出；该方案关闭，不再排期。
 - 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 947 项（首跑 1 项已知偶发超时，单跑通过）、`npm run tauri -- build --debug --no-bundle` 通过。
 
+## 2026-11-06 — #213 串口弹窗文案与按钮图标对齐 Netcatty
+
+- 文案改用 Netcatty `zh-CN` 原文：`保存配置`（原「保存为主机」）、`将此串口配置保存到主机列表以便快速访问`、`配置名称`（原「主机名称」）、占位 `例如 Arduino Uno`；勾选时不再自动填充名称，空名仍回落后端默认 `串口 <port>`。
+- 主按钮随勾选切换：未勾选 `连接` + Cpu 图标，勾选 `连接并保存` + Save 图标（新增 `cpu` 图标）。
+- 弹窗宽度已是 Netcatty `max-w-md` 对应的 448px，本轮不改；字段顺序、`space-y-4` 间距与按钮高度（36px）保持一致。
+- 门禁：`npm run test:run` 751 通过、`npm run build` 通过。
+
 ## 2026-11-06 — #212 设置独立窗口方案关闭（保留 overlay）
 
 - **决策**：用户确认设置继续使用应用内全屏 overlay（`SettingsDialog` + `.nc-settings-overlay`），不改为独立 `WebviewWindow`。`todo.md` 对应项已关闭，后续不再捡起。

@@ -84,6 +84,7 @@ export type IconName =
   | "download"
   | "badge-check"
   | "save"
+  | "cpu"
   | "keyboard"
   | "hard-drive"
   | "file-type"
@@ -568,6 +569,13 @@ const paths: Record<IconName, ReactElement> = {
       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
       <polyline points="17 21 17 13 7 13 7 21" />
       <polyline points="7 3 7 8 15 8" />
+    </>
+  ),
+  cpu: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" />
     </>
   ),
   user: (

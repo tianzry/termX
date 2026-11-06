@@ -462,13 +462,7 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
                 type="checkbox"
                 id="serial-save-host"
                 checked={saveHost}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setSaveHost(checked);
-                  if (checked && !hostName.trim()) {
-                    setHostName(`串口 ${form.port.trim()}`);
-                  }
-                }}
+                onChange={(e) => setSaveHost(e.target.checked)}
               />
             </div>
             {saveHost && (
@@ -477,7 +471,7 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
                 <input
                   id="serial-host-name"
                   type="text"
-                  placeholder={`串口 ${form.port.trim()}`}
+                  placeholder={SERIAL_TEXT.hostNamePlaceholder}
                   value={hostName}
                   onChange={(e) => setHostName(e.target.value)}
                   autoComplete="off"
@@ -500,8 +494,8 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
             disabled={connectDisabled}
             onClick={commit}
           >
-            <Icon name="usb" size={14} />
-            {SERIAL_TEXT.connect}
+            <Icon name={saveHost ? "save" : "cpu"} size={14} />
+            {saveHost ? SERIAL_TEXT.connectAndSave : SERIAL_TEXT.connect}
           </button>
         </footer>
       </div>
