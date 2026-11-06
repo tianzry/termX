@@ -4042,6 +4042,8 @@ button:disabled {
   position: fixed;
   z-index: 80;
   min-width: 160px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 4px;
   background: hsl(var(--popover));
   border: 1px solid hsl(var(--border));

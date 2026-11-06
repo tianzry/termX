@@ -7,13 +7,26 @@
  * - 权限弹窗 3×3 复选 + 实时八进制展示（仅远端侧使用）。
  */
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
+  Bookmark,
+  Globe,
+  GripVertical,
+  Pencil,
+  Trash2,
+} from "lucide-react";
+import {
+  canReorderSftpBookmark,
+  getSftpBookmarkIdentity,
+  getSftpBookmarkMoveTargets,
   permsFromMode,
   permsToOctal,
   type PermGroup,
   type PermMatrix,
+  type SftpBookmark,
 } from "./sftpModel";
 
 export interface MenuItem {
@@ -35,6 +48,28 @@ export function SftpContextMenu({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  /** 视口内夹取后的落点（对齐 Netcatty Popover 的 avoidCollisions + 8px padding）。 */
+  const [pos, setPos] = useState({ left: x, top: y });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const pad = 8;
+    const rect = el.getBoundingClientRect();
+    let left = x;
+    let top = y;
+    // 右侧放不下 → 翻到锚点左侧；仍超出则贴右边。
+    if (left + rect.width > window.innerWidth - pad) {
+      left = Math.max(pad, x - rect.width);
+      if (left + rect.width > window.innerWidth - pad) {
+        left = Math.max(pad, window.innerWidth - pad - rect.width);
+      }
+    }
+    // 下方放不下 → 向上翻；仍超出则贴底（配合 max-height 内部滚动）。
+    if (top + rect.height > window.innerHeight - pad) {
+      top = Math.max(pad, window.innerHeight - pad - rect.height);
+    }
+    setPos({ left, top });
+  }, [x, y, items]);
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
@@ -50,7 +85,7 @@ export function SftpContextMenu({
     };
   }, [onClose]);
   return (
-    <div ref={ref} className="nc-sftp-ctx" style={{ left: x, top: y }}>
+    <div ref={ref} className="nc-sftp-ctx" style={pos}>
       {items.map((it) => (
         <button
           key={it.label}

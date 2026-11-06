@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-11-06 — #229 SFTP 工具栏「更多」菜单贴边被裁切
+
+- **问题**：截图 `attachments/362c25ea-…/image.png` 中，侧栏 SFTP 工具栏最右侧「更多」弹出的菜单只露出左半截（「在…/复…/刷…」），右半截被窗口边缘裁掉。
+- **定位**：`src/sftp/SftpPaneDialogs.tsx` `SftpContextMenu` 以点击点 `x/y` 直接 `position: fixed` 定位，没有任何视口夹取；菜单宽 160+，点击靠近右缘时必然溢出窗口。Netcatty 对应弹层走 Radix `PopoverContent`（`avoidCollisions` + `collisionPadding=8`，空间不足自动翻转到左侧/上方）。
+- **实现**：`SftpContextMenu` 改用 `useLayoutEffect` 量取实际 `rect` 后夹取落点——右侧放不下翻到锚点左侧、仍超出则贴右；下方放不下向上翻、仍超出贴底。CSS `.nc-sftp-ctx` 增加 `max-height: calc(100vh - 16px)` + `overflow-y: auto`，超高菜单在菜单内滚动。行右键菜单与「更多」菜单共用该组件，一并修复。
+- **验证**：129 实机侧栏最右「更多」完整显示三项（不再截断），并与 Netcatty 同尺寸并排截图；行右键在窗口右下角同样完整。
+
 ## 2026-11-06 — #228 SFTP 重命名为空名/原名视为取消（全页 + 侧栏）
 
 - **问题**：重命名对话框保留原名直接确认时，前端仍发 `sftp_rename(old, new)`；old == new 时 OpenSSH 返回 Failure，界面弹出「SFTP 操作失败 (rename)：Failure: Failure」。
