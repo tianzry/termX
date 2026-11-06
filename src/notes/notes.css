@@ -9,6 +9,9 @@
   min-height: 0;
   overflow: hidden;
   border-top: 1px solid hsl(var(--nc-border) / 0.45);
+  /* 供窄容器（分屏 / 侧栏占位）下的自适应规则使用，见文件底部 @container。 */
+  container-type: inline-size;
+  container-name: notes-page;
 }
 
 /* ── 左侧树 ─────────────────────────────────────────── */
@@ -768,6 +771,10 @@
 .notes-panel {
   display: flex;
   flex-direction: column;
+  /* 侧栏内容容器是横向 flex（.nc-side-panel-pane-content）；不加 flex:1 时
+     笔记面板会按内容收缩成窄列，编辑态只占左侧一小块。 */
+  flex: 1;
+  min-width: 0;
   height: 100%;
   min-height: 0;
   background: hsl(var(--nc-bg));
@@ -980,4 +987,37 @@
 
 .notes-panel-error {
   color: hsl(var(--destructive));
+}
+
+/* 窄容器（窗口分屏 / 侧栏占位导致笔记页只剩几百 px）：树可收缩、工具行换行，
+   避免编辑器被固定宽度工具行撑出横向滚动，或正文被压成竖排窄列。 */
+@container notes-page (max-width: 720px) {
+  .np-tree {
+    width: auto;
+    flex: 0 1 200px;
+    min-width: 160px;
+  }
+  .np-outline {
+    display: none;
+  }
+  .np-gutter {
+    display: none;
+  }
+  .np-toolbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 38px;
+    padding: 4px 8px;
+    row-gap: 2px;
+  }
+  .np-title-row {
+    flex-wrap: wrap;
+    padding: 16px 16px 4px;
+  }
+  .np-title {
+    flex: 1 1 120px;
+  }
+  .np-meta {
+    padding: 2px 16px 8px;
+  }
 }
