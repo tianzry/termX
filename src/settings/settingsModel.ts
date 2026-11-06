@@ -51,6 +51,121 @@ export const APP_ICON_VARIANTS = [
 ] as const;
 export type AppIconVariant = (typeof APP_ICON_VARIANTS)[number];
 
+/** 关键字高亮规则（1:1 对齐 Netcatty domain/models/terminal.ts KeywordHighlightRule）。 */
+export interface KeywordHighlightRule {
+  id: string;
+  /** 展示名（Netcatty：Error / Warning / OK …）。 */
+  label: string;
+  /** 逐条正则；按行匹配、忽略大小写。 */
+  patterns: string[];
+  /** #RRGGBB。 */
+  color: string;
+  enabled: boolean;
+}
+
+const STRICT_IPV4_OCTET_PATTERN = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
+const URL_HIGHLIGHT_PATTERN =
+  "(?:\\bhttps?:\\/\\/\\[[0-9A-Fa-f:.]+\\](?::\\d+)?(?:[/?#][^\\s<>\"'`]*)?(?<![.,;:!?\\)}]))|\\b(?:https?:\\/\\/|www\\.)[^\\s<>\"'`]+(?<![.,;:!?\\])}])";
+const IPV4_HIGHLIGHT_PATTERN = `(?<![\\w.])(?<!\\bver\\s)(?<!\\bversion\\s)(?:${STRICT_IPV4_OCTET_PATTERN}\\.){3}${STRICT_IPV4_OCTET_PATTERN}(?![\\w.])`;
+const IPV6_HIGHLIGHT_PATTERN =
+  "(?<![\\w:.])" +
+  "(?:" +
+  "(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}" +
+  "|(?:[0-9A-Fa-f]{1,4}:){1,7}:" +
+  "|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}" +
+  "|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}" +
+  "|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}" +
+  "|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}" +
+  "|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}" +
+  "|[0-9A-Fa-f]{1,4}:(?::[0-9A-Fa-f]{1,4}){1,6}" +
+  "|::(?:[0-9A-Fa-f]{1,4}:){0,6}[0-9A-Fa-f]{1,4}" +
+  ")" +
+  "(?![\\w:.])";
+const MAC_ADDRESS_HIGHLIGHT_PATTERN = "\\b([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\\b";
+const UNIX_PATH_HIGHLIGHT_PATTERN =
+  "(?<=\")(?:/|~/)[^\"\\r\\n]+(?=\")|(?<=')(?:/|~/)[^'\\r\\n]+(?=')|(?<![\\w.:/\"'\\u0080-\\uFFFF])(?:/|~/)[^\\s\"']+";
+
+/** 内置规则（与 Netcatty DEFAULT_KEYWORD_HIGHLIGHT_RULES 同 id / 同 pattern / 同色）。 */
+export const DEFAULT_KEYWORD_HIGHLIGHT_RULES: KeywordHighlightRule[] = [
+  {
+    id: "error",
+    label: "Error",
+    patterns: ["\\[error\\]", "\\[err\\]", "\\berror\\b", "\\bfail(ed)?\\b", "\\bfatal\\b", "\\bcritical\\b", "\\bexception\\b"],
+    color: "#F87171",
+    enabled: true,
+  },
+  {
+    id: "warning",
+    label: "Warning",
+    patterns: ["\\[warn(ing)?\\]", "\\bwarn(ing)?\\b", "\\bcaution\\b", "\\bdeprecated\\b"],
+    color: "#FBBF24",
+    enabled: true,
+  },
+  {
+    id: "ok",
+    label: "OK",
+    patterns: ["\\[ok\\]", "\\bok\\b", "\\bsuccess(ful)?\\b", "\\bpassed\\b", "\\bcompleted\\b", "\\bdone\\b"],
+    color: "#34D399",
+    enabled: true,
+  },
+  {
+    id: "info",
+    label: "Info",
+    patterns: ["\\[info\\]", "\\[notice\\]", "\\[note\\]", "\\bnotice\\b", "\\bnote\\b"],
+    color: "#3B82F6",
+    enabled: true,
+  },
+  {
+    id: "debug",
+    label: "Debug",
+    patterns: ["\\[debug\\]", "\\[trace\\]", "\\[verbose\\]", "\\bdebug\\b", "\\btrace\\b", "\\bverbose\\b"],
+    color: "#A78BFA",
+    enabled: true,
+  },
+  {
+    id: "ip-mac",
+    label: "URL, IP & MAC",
+    patterns: [URL_HIGHLIGHT_PATTERN, IPV4_HIGHLIGHT_PATTERN, IPV6_HIGHLIGHT_PATTERN, MAC_ADDRESS_HIGHLIGHT_PATTERN],
+    color: "#EC4899",
+    enabled: true,
+  },
+  { id: "unix-path", label: "Unix paths", patterns: [UNIX_PATH_HIGHLIGHT_PATTERN], color: "#A78BFA", enabled: true },
+];
+
+export const MAX_KEYWORD_HIGHLIGHT_RULES = 30;
+const MAX_KEYWORD_PATTERNS_PER_RULE = 16;
+const MAX_KEYWORD_PATTERN_LENGTH = 2000;
+
+export function cloneKeywordHighlightRules(rules: KeywordHighlightRule[]): KeywordHighlightRule[] {
+  return rules.map((rule) => ({ ...rule, patterns: [...rule.patterns] }));
+}
+
+/** 规则清洗：丢弃非法条目、限制数量与长度；全空则回落内置规则（对齐 Netcatty normalize）。 */
+export function normalizeKeywordHighlightRules(raw: unknown): KeywordHighlightRule[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return cloneKeywordHighlightRules(DEFAULT_KEYWORD_HIGHLIGHT_RULES);
+  }
+  const out: KeywordHighlightRule[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rule = item as Record<string, unknown>;
+    const id = typeof rule.id === "string" ? rule.id.trim() : "";
+    const label = typeof rule.label === "string" ? rule.label.trim() : "";
+    const color = typeof rule.color === "string" && /^#[0-9a-fA-F]{6}$/.test(rule.color) ? rule.color.toUpperCase() : "";
+    const patterns = Array.isArray(rule.patterns)
+      ? rule.patterns
+          .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+          .slice(0, MAX_KEYWORD_PATTERNS_PER_RULE)
+          .map((p) => p.slice(0, MAX_KEYWORD_PATTERN_LENGTH))
+      : [];
+    if (!id || !label || !color || patterns.length === 0) continue;
+    if (out.some((r) => r.id === id)) continue;
+    out.push({ id, label, patterns, color, enabled: rule.enabled !== false });
+    if (out.length >= MAX_KEYWORD_HIGHLIGHT_RULES) break;
+  }
+  return out.length > 0 ? out : cloneKeywordHighlightRules(DEFAULT_KEYWORD_HIGHLIGHT_RULES);
+}
+
 /** 终端行为设置（字段名对齐 Netcatty domain/models/terminal.ts TerminalSettings）。 */
 export interface TerminalSettings {
   scrollback: number;
@@ -66,6 +181,10 @@ export interface TerminalSettings {
   cursorBlink: boolean;
   cursorBarWidth: number;
   highlightCursorLine: boolean;
+  /** 关键字高亮总开关（Netcatty keywordHighlightEnabled，默认开）。 */
+  keywordHighlightEnabled: boolean;
+  /** 关键字高亮规则（设置页与终端工具栏浮层共享同一份，改后已开终端即时生效）。 */
+  keywordHighlightRules: KeywordHighlightRule[];
   altAsMeta: boolean;
   /** macOS：Option+←/→ 发送 Meta-b / Meta-f，让 Shell 按单词跳转。 */
   optionArrowWordJump: boolean;
@@ -226,6 +345,8 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   cursorBlink: true,
   cursorBarWidth: 2,
   highlightCursorLine: false,
+  keywordHighlightEnabled: true,
+  keywordHighlightRules: cloneKeywordHighlightRules(DEFAULT_KEYWORD_HIGHLIGHT_RULES),
   altAsMeta: false,
   optionArrowWordJump: false,
   scrollOnInput: true,
@@ -415,6 +536,8 @@ function normalizeTerminal(raw: unknown): TerminalSettings {
     cursorBlink: pickBool(r.cursorBlink, d.cursorBlink),
     cursorBarWidth: clampCursorBarWidth(r.cursorBarWidth),
     highlightCursorLine: pickBool(r.highlightCursorLine, d.highlightCursorLine),
+    keywordHighlightEnabled: pickBool(r.keywordHighlightEnabled, d.keywordHighlightEnabled),
+    keywordHighlightRules: normalizeKeywordHighlightRules(r.keywordHighlightRules),
     altAsMeta: pickBool(r.altAsMeta, d.altAsMeta),
     optionArrowWordJump: pickBool(r.optionArrowWordJump, d.optionArrowWordJump),
     scrollOnInput: pickBool(r.scrollOnInput, d.scrollOnInput),

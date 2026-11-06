@@ -39,6 +39,8 @@ import {
 } from "./keyBindings";
 import type { AppIconVariant } from "./settingsModel";
 import {
+  DEFAULT_KEYWORD_HIGHLIGHT_RULES,
+  MAX_KEYWORD_HIGHLIGHT_RULES,
   MAX_SFTP_TRANSFER_CONCURRENCY,
   MAX_TERMINAL_FONT_SIZE,
   MAX_TERMINAL_SCROLLBACK,
@@ -46,6 +48,7 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   clampCursorBarWidth,
   clampScrollback,
+  type KeywordHighlightRule,
 } from "./settingsModel";
 import { resolvedThemeMode, updateSettings, useSettings } from "./settingsStore";
 import {
@@ -808,6 +811,266 @@ export function AppearanceTab() {
   );
 }
 
+// ── 关键字高亮规则编辑器 ────────────────────────────────
+
+const DEFAULT_NEW_RULE_COLOR = "#F87171";
+
+/** 内置规则的标签 / 正则被用户改过时显示「恢复」入口（颜色不参与比较，对照 Netcatty）。 */
+function isBuiltInRuleModified(rule: KeywordHighlightRule): boolean {
+  const def = DEFAULT_KEYWORD_HIGHLIGHT_RULES.find((r) => r.id === rule.id);
+  if (!def) return false;
+  return rule.label !== def.label || rule.patterns.join("\n") !== def.patterns.join("\n");
+}
+
+/** 新增 / 编辑规则弹窗（对照 Netcatty AddCustomRuleDialog）。 */
+function KeywordRuleDialog({
+  rule,
+  builtIn,
+  onCancel,
+  onSave,
+  t,
+}: {
+  rule: KeywordHighlightRule | null;
+  builtIn: boolean;
+  onCancel: () => void;
+  onSave: (rule: KeywordHighlightRule) => void;
+  t: TFn;
+}) {
+  const [label, setLabel] = useState(rule?.label ?? "");
+  const [patternsText, setPatternsText] = useState(rule?.patterns.join("\n") ?? "");
+  const [color, setColor] = useState(rule?.color ?? DEFAULT_NEW_RULE_COLOR);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit = label.trim().length > 0 && patternsText.trim().length > 0;
+
+  const submit = () => {
+    if (!canSubmit) return;
+    const patterns = patternsText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .slice(0, 16);
+    for (const p of patterns) {
+      try {
+        new RegExp(p, "gi");
+      } catch {
+        setError(t("settings.terminal.keywordHighlight.invalidPattern"));
+        return;
+      }
+    }
+    onSave({
+      id: rule?.id ?? `custom-${Date.now().toString(36)}`,
+      label: label.trim(),
+      patterns,
+      color: color.toUpperCase(),
+      enabled: rule?.enabled ?? true,
+    });
+  };
+
+  return (
+    <div className="modal-mask" onMouseDown={onCancel}>
+      <div className="nc-set-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="nc-set-modal-title">
+          {rule
+            ? builtIn
+              ? t("settings.terminal.keywordHighlight.editBuiltIn")
+              : t("settings.terminal.keywordHighlight.editCustom")
+            : t("settings.terminal.keywordHighlight.addCustom")}
+        </div>
+        <div className="nc-set-field">
+          <span className="nc-set-field-label">{t("settings.terminal.keywordHighlight.labelField")}</span>
+          <div className="nc-set-field-row">
+            <input
+              className="nc-set-input"
+              value={label}
+              placeholder={t("settings.terminal.keywordHighlight.labelPlaceholder")}
+              onChange={(e) => setLabel(e.target.value)}
+            />
+            <label className="nc-set-rule-color is-lg" style={{ background: color }}>
+              <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
+            </label>
+          </div>
+        </div>
+        <div className="nc-set-field">
+          <span className="nc-set-field-label">{t("settings.terminal.keywordHighlight.patternField")}</span>
+          <textarea
+            className={"nc-set-textarea" + (error ? " is-invalid" : "")}
+            rows={Math.max(3, Math.min(10, patternsText.split("\n").length + 1))}
+            value={patternsText}
+            placeholder={t("settings.terminal.keywordHighlight.patternPlaceholder")}
+            onChange={(e) => {
+              setPatternsText(e.target.value);
+              if (error) setError(null);
+            }}
+          />
+          <span className="nc-set-field-hint">
+            {t("settings.terminal.keywordHighlight.patternHint")}
+          </span>
+          {error && <span className="nc-set-field-error">{error}</span>}
+        </div>
+        {label.trim() && patternsText.trim() && !error && (
+          <div className="nc-set-rule-preview">
+            <span className="nc-set-field-hint">{t("settings.terminal.keywordHighlight.preview")}:</span>
+            <span style={{ color: color.toUpperCase() }}>{label}</span>
+          </div>
+        )}
+        <div className="nc-set-modal-actions">
+          <button type="button" className="nc-set-btn is-secondary" onClick={onCancel}>
+            {t("settings.terminal.keywordHighlight.cancel")}
+          </button>
+          <button type="button" className="nc-set-btn is-primary" disabled={!canSubmit} onClick={submit}>
+            {rule
+              ? t("settings.terminal.keywordHighlight.save")
+              : t("settings.terminal.keywordHighlight.add")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 规则列表：色块 + 标签 + 开关 + 内置/自定义的编辑、恢复、删除（对照 Netcatty KeywordHighlightRulesEditor）。 */
+function KeywordHighlightRulesEditor({
+  rules,
+  onChange,
+  t,
+}: {
+  rules: KeywordHighlightRule[];
+  onChange: (rules: KeywordHighlightRule[]) => void;
+  t: TFn;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<KeywordHighlightRule | null>(null);
+
+  const isBuiltIn = (id: string) => DEFAULT_KEYWORD_HIGHLIGHT_RULES.some((r) => r.id === id);
+  const canAdd = rules.length < MAX_KEYWORD_HIGHLIGHT_RULES;
+
+  const updateRule = (id: string, patch: Partial<KeywordHighlightRule>) =>
+    onChange(rules.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const closeDialog = () => {
+    setDialogOpen(false);
+    setEditingRule(null);
+  };
+
+  return (
+    <>
+      <div className="nc-set-rule-list">
+        {rules.map((rule) => {
+          const builtIn = isBuiltIn(rule.id);
+          const modified = builtIn && isBuiltInRuleModified(rule);
+          return (
+            <div key={rule.id} className="nc-set-rule-row">
+              <span
+                className={"nc-set-rule-label" + (rule.enabled ? "" : " is-off")}
+                style={rule.enabled ? { color: rule.color } : undefined}
+                title={rule.patterns.join("  ·  ")}
+              >
+                {rule.label}
+              </span>
+              <button
+                type="button"
+                className="nc-set-icon-btn"
+                title={
+                  builtIn
+                    ? t("settings.terminal.keywordHighlight.editBuiltIn")
+                    : t("settings.terminal.keywordHighlight.editCustom")
+                }
+                onClick={() => {
+                  setEditingRule(rule);
+                  setDialogOpen(true);
+                }}
+              >
+                <Icon name="pencil" size={12} />
+              </button>
+              {modified && (
+                <button
+                  type="button"
+                  className="nc-set-icon-btn"
+                  title={t("settings.terminal.keywordHighlight.resetBuiltIn")}
+                  onClick={() => {
+                    const def = DEFAULT_KEYWORD_HIGHLIGHT_RULES.find((r) => r.id === rule.id);
+                    if (def) updateRule(rule.id, { label: def.label, patterns: [...def.patterns] });
+                  }}
+                >
+                  <Icon name="refresh" size={12} />
+                </button>
+              )}
+              {!builtIn && (
+                <button
+                  type="button"
+                  className="nc-set-icon-btn is-danger"
+                  title={t("settings.terminal.keywordHighlight.delete")}
+                  onClick={() => onChange(rules.filter((r) => r.id !== rule.id))}
+                >
+                  <Icon name="trash" size={12} />
+                </button>
+              )}
+              <label
+                className="nc-set-rule-color"
+                style={{ background: rule.color }}
+                title={t("settings.terminal.keywordHighlight.labelField")}
+              >
+                <input
+                  type="color"
+                  value={rule.color}
+                  onChange={(e) => updateRule(rule.id, { color: e.target.value.toUpperCase() })}
+                />
+              </label>
+              <Toggle checked={rule.enabled} onChange={(v) => updateRule(rule.id, { enabled: v })} />
+            </div>
+          );
+        })}
+      </div>
+      <div className="nc-set-rule-footer">
+        <button
+          type="button"
+          className="nc-set-link-btn"
+          disabled={!canAdd}
+          onClick={() => {
+            setEditingRule(null);
+            setDialogOpen(true);
+          }}
+        >
+          <Icon name="plus" size={14} />
+          {t("settings.terminal.keywordHighlight.addCustom")}
+        </button>
+        <button
+          type="button"
+          className="nc-set-link-btn"
+          onClick={() =>
+            onChange(
+              rules.map((rule) => {
+                const def = DEFAULT_KEYWORD_HIGHLIGHT_RULES.find((r) => r.id === rule.id);
+                return def ? { ...def, patterns: [...def.patterns], enabled: rule.enabled } : rule;
+              }),
+            )
+          }
+        >
+          <Icon name="refresh" size={14} />
+          {t("settings.terminal.keywordHighlight.resetDefaults")}
+        </button>
+      </div>
+      {dialogOpen && (
+        <KeywordRuleDialog
+          rule={editingRule}
+          builtIn={editingRule ? isBuiltIn(editingRule.id) : false}
+          onCancel={closeDialog}
+          onSave={(rule) => {
+            if (editingRule) {
+              onChange(rules.map((r) => (r.id === editingRule.id ? rule : r)));
+            } else {
+              onChange([...rules, rule]);
+            }
+            closeDialog();
+          }}
+          t={t}
+        />
+      )}
+    </>
+  );
+}
+
 // ── 终端 ──────────────────────────────────────────────────
 
 export function TerminalTab() {
@@ -1044,6 +1307,32 @@ export function TerminalTab() {
         <Row title={t("settings.terminal.cursor.highlightLine")} desc={t("settings.terminal.cursor.highlightLine.desc")}>
           <Toggle checked={term.highlightCursorLine} onChange={(v) => patch({ highlightCursorLine: v })} />
         </Row>
+      </Section>
+
+      <Section
+        title={t("settings.terminal.section.keywordHighlight")}
+        hint={
+          term.keywordHighlightEnabled
+            ? t("settings.terminal.keywordHighlight.hint")
+            : undefined
+        }
+      >
+        <Row
+          title={t("settings.terminal.keywordHighlight.enabled")}
+          desc={t("settings.terminal.keywordHighlight.enabled.desc")}
+        >
+          <Toggle
+            checked={term.keywordHighlightEnabled}
+            onChange={(v) => patch({ keywordHighlightEnabled: v })}
+          />
+        </Row>
+        {term.keywordHighlightEnabled && (
+          <KeywordHighlightRulesEditor
+            rules={term.keywordHighlightRules}
+            onChange={(rules) => patch({ keywordHighlightRules: rules })}
+            t={t}
+          />
+        )}
       </Section>
 
       <Section title={t("settings.terminal.section.keyboard")}>

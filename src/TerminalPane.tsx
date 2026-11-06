@@ -76,7 +76,9 @@ import type {
   TerminalTransport,
 } from "./backend/client";
 import type { Tab } from "./workspaceModel";
-import { getSettings, subscribeSettings } from "./settings/settingsStore";
+import { getSettings, subscribeSettings, updateSettings } from "./settings/settingsStore";
+import { cloneKeywordHighlightRules, type KeywordHighlightRule } from "./settings/settingsModel";
+import { cellOffsets, compileKeywordRules, findKeywordSpans } from "./terminal/keywordHighlight";
 import { readTerminalSelection } from "./Terminal";
 import {
   advanceIndeterminateConnectionProgress,
@@ -397,9 +399,13 @@ export function TerminalPane({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [highlightOpen, setHighlightOpen] = useState(false);
   const [highlightDraft, setHighlightDraft] = useState("");
-  const [highlightRules, setHighlightRules] = useState<
-    { id: string; keyword: string; color: string }[]
-  >([]);
+  /** 关键字高亮规则来自设置（设置页与工具栏浮层共享同一份，改后即时重绘）。 */
+  const [highlightEnabled, setHighlightEnabled] = useState(
+    () => getSettings().terminal.keywordHighlightEnabled,
+  );
+  const [highlightRules, setHighlightRules] = useState<KeywordHighlightRule[]>(() =>
+    cloneKeywordHighlightRules(getSettings().terminal.keywordHighlightRules),
+  );
   /** 片段 / 脚本列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
   const [snippets, setSnippets] = useState<api.Snippet[]>([]);
   /** 自动触发用最新快照（异步回调里避免闭包旧值）。 */
@@ -1755,52 +1761,100 @@ export function TerminalPane({
     search.findNext(searchQuery, SEARCH_OPTIONS);
   }, [searchOpen, searchQuery]);
 
-  /** 关键词高亮：在写入解析后扫描新增行，用 xterm decoration 铺底色。 */
+  /** 设置热更新：关键字高亮开关 / 规则改动后立即同步到已开窗格（无需重启）。 */
+  useEffect(() => {
+    return subscribeSettings(() => {
+      const terminalSettings = getSettings().terminal;
+      setHighlightEnabled(terminalSettings.keywordHighlightEnabled);
+      setHighlightRules((prev) => {
+        const next = cloneKeywordHighlightRules(terminalSettings.keywordHighlightRules);
+        // 与高亮无关的设置变更也会触发订阅，这里按内容比对避免无谓重绘。
+        return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+      });
+    });
+  }, []);
+
+  /** 写入关键字高亮设置（设置页与工具栏浮层共用同一份）。 */
+  function persistKeywordHighlight(patch: { enabled?: boolean; rules?: KeywordHighlightRule[] }) {
+    const terminalSettings = getSettings().terminal;
+    updateSettings({
+      terminal: {
+        ...terminalSettings,
+        keywordHighlightEnabled: patch.enabled ?? terminalSettings.keywordHighlightEnabled,
+        keywordHighlightRules: patch.rules ?? terminalSettings.keywordHighlightRules,
+      },
+    });
+  }
+
+  /** 关键字高亮：按设置里的规则给命中片段着色（xterm decoration foregroundColor）。 */
   useEffect(() => {
     const term = controllerRef.current?.term;
-    if (!term || highlightRules.length === 0) return;
-    // registerDecoration 属于 proposed API。
+    if (!term) return;
+    const compiled = highlightEnabled ? compileKeywordRules(highlightRules) : [];
+    if (compiled.length === 0) return;
+    // registerMarker / registerDecoration 属于 proposed API。
     term.options.allowProposedApi = true;
-    // 首次扫描当前缓冲区全部行；之后只扫新增行（lastLine 始终是未扫描的
-    // 起点），避免每轮重扫末行造成同一行重复注册 decoration。
-    let lastLine = 0;
-    const decorations: { dispose: () => void }[] = [];
-    const scan = () => {
+    let disposed = false;
+    let timer: number | null = null;
+    let items: { decoration: { dispose: () => void }; marker: { dispose: () => void } }[] = [];
+    const clear = () => {
+      for (const item of items) {
+        item.decoration.dispose();
+        item.marker.dispose();
+      }
+      items = [];
+    };
+    // 只处理可视区：滚动/写入时重扫，避免长会话里给整个 scrollback 建 decoration。
+    const paint = () => {
+      clear();
+      if (disposed) return;
       const buf = term.buffer.active;
       const cursorLine = buf.baseY + buf.cursorY;
-      for (let y = lastLine; y < buf.length; y += 1) {
-        const text = buf.getLine(y)?.translateToString(true) ?? "";
-        const rule = highlightRules.find((r) =>
-          text.toLowerCase().includes(r.keyword.toLowerCase()),
-        );
-        if (!rule) continue;
-        const marker = term.registerMarker(y - cursorLine);
-        if (!marker) continue;
-        const decoration = term.registerDecoration({
-          marker,
-          width: term.cols,
-          backgroundColor: rule.color,
-        });
-        decorations.push({
-          dispose: () => {
-            decoration?.dispose();
+      const top = buf.viewportY;
+      const bottom = Math.min(top + term.rows, buf.length);
+      for (let y = top; y < bottom; y += 1) {
+        const line = buf.getLine(y);
+        if (!line) continue;
+        const text = line.translateToString(true);
+        const spans = findKeywordSpans(text, compiled);
+        if (spans.length === 0) continue;
+        const offsets = cellOffsets(line);
+        for (const span of spans) {
+          const startX = offsets[span.start];
+          const endX = offsets[span.end - 1];
+          if (startX === undefined || endX === undefined) continue;
+          const marker = term.registerMarker(y - cursorLine);
+          if (!marker) continue;
+          const decoration = term.registerDecoration({
+            marker,
+            x: startX,
+            width: endX - startX + 1,
+            foregroundColor: span.color,
+          });
+          if (!decoration) {
             marker.dispose();
-          },
-        });
-      }
-      lastLine = buf.length;
-      // 长会话里行数无限增长，限定保留最近 500 个装饰器，超出即释放最旧的。
-      while (decorations.length > 500) {
-        decorations.shift()?.dispose();
+            continue;
+          }
+          items.push({ decoration, marker });
+        }
       }
     };
-    const sub = term.onWriteParsed(scan);
-    scan();
+    const schedule = () => {
+      if (timer !== null) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        paint();
+      }, 80);
+    };
+    const subs = [term.onWriteParsed(schedule), term.onScroll(schedule), term.onResize(schedule)];
+    paint();
     return () => {
-      sub.dispose();
-      decorations.forEach((d) => d.dispose());
+      disposed = true;
+      if (timer !== null) window.clearTimeout(timer);
+      for (const sub of subs) sub.dispose();
+      clear();
     };
-  }, [highlightRules]);
+  }, [highlightEnabled, highlightRules]);
 
   /** 脚本下拉菜单（终端工具栏「脚本」按钮）。 */
   const [scriptMenuOpen, setScriptMenuOpen] = useState(false);
@@ -3250,45 +3304,95 @@ export function TerminalPane({
                           <input
                             autoFocus
                             value={highlightDraft}
-                            placeholder="输入关键词后回车"
+                            placeholder="输入关键词后回车新增规则"
                             onChange={(e) => setHighlightDraft(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === "Enter" && highlightDraft.trim()) {
-                                setHighlightRules((prev) => [
-                                  ...prev,
+                              const keyword = highlightDraft.trim();
+                              if (e.key !== "Enter" || !keyword) return;
+                              const pattern = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                              persistKeywordHighlight({
+                                rules: [
+                                  ...highlightRules,
                                   {
-                                    id: `${Date.now().toString(36)}-${prev.length}`,
-                                    keyword: highlightDraft.trim(),
-                                    color: "#f6e05e",
+                                    id: `custom-${Date.now().toString(36)}`,
+                                    label: keyword,
+                                    patterns: [pattern],
+                                    color: "#F6E05E",
+                                    enabled: true,
                                   },
-                                ]);
-                                setHighlightDraft("");
-                              }
+                                ],
+                              });
+                              setHighlightDraft("");
                             }}
                           />
+                        </div>
+                        <div className="term-highlight-switch">
+                          <span>启用关键字高亮</span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={highlightEnabled}
+                            className={`term-highlight-toggle${highlightEnabled ? " on" : ""}`}
+                            onClick={() =>
+                              persistKeywordHighlight({ enabled: !highlightEnabled })
+                            }
+                          >
+                            <span />
+                          </button>
                         </div>
                         {highlightRules.length === 0 ? (
                           <div className="term-menu-empty">尚无高亮规则</div>
                         ) : (
                           highlightRules.map((rule) => (
-                            <button
+                            <div
                               key={rule.id}
-                              title="点击移除该规则"
-                              onClick={() =>
-                                setHighlightRules((prev) =>
-                                  prev.filter((r) => r.id !== rule.id),
-                                )
-                              }
+                              className={`term-highlight-row${rule.enabled ? "" : " is-off"}`}
                             >
-                              <span
-                                className="term-highlight-dot"
-                                style={{ background: rule.color }}
-                              />
-                              <span className="term-history-cmd">{rule.keyword}</span>
-                              <Icon name="x" size={12} className="term-menu-caret" />
-                            </button>
+                              <button
+                                type="button"
+                                className="term-highlight-rule"
+                                title={rule.enabled ? "点击停用该规则" : "点击启用该规则"}
+                                onClick={() =>
+                                  persistKeywordHighlight({
+                                    rules: highlightRules.map((r) =>
+                                      r.id === rule.id ? { ...r, enabled: !r.enabled } : r,
+                                    ),
+                                  })
+                                }
+                              >
+                                <span
+                                  className="term-highlight-dot"
+                                  style={{ background: rule.color }}
+                                />
+                                <span className="term-history-cmd">{rule.label}</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="term-highlight-remove"
+                                title="移除该规则"
+                                onClick={() =>
+                                  persistKeywordHighlight({
+                                    rules: highlightRules.filter((r) => r.id !== rule.id),
+                                  })
+                                }
+                              >
+                                <Icon name="x" size={12} />
+                              </button>
+                            </div>
                           ))
                         )}
+                        <button
+                          type="button"
+                          className="term-highlight-edit"
+                          disabled={!onOpenSettings}
+                          onClick={() => {
+                            setHighlightOpen(false);
+                            onOpenSettings?.();
+                          }}
+                        >
+                          <Icon name="sliders" size={12} />
+                          在设置中编辑规则
+                        </button>
                       </div>
                     )}
                   </div>

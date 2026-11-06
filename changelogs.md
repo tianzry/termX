@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-11-06 — #220 设置-关键字高亮（Netcatty 数据模型 + 设置/终端同一份规则 + 已开终端热更新）
+
+- **Netcatty 取证（数据模型）**：全局 `terminalKeywordHighlightEnabled` + `terminalKeywordHighlightRules: KeywordHighlightRule[]`，另有主机级覆盖 `host.keywordHighlightEnabled` / `host.keywordHighlightRules` 与主机 popover；规则字段 `{id,label,patterns:string[],color:#RRGGBB,enabled}`；内置 7 组（error/warning/ok/info/debug/ip-mac/unix-path）；匹配方式为「按行、忽略大小写、全局匹配、先规则优先级」；着色语义是 **前景色**（不改底色）；URL/IPV4/IPV6/MAC/Unix path 为预置正则常量；持久化在设置 JSON。工具栏「高亮」按钮与设置页读同一份规则。
+- **落地（termX，全局规则层）**：
+  - `settingsModel.ts`：新增 `KeywordHighlightRule`、5 个预置正则（STRICT IPv4 八位组 / URL / IPv4 / IPv6 / MAC / Unix path）、`DEFAULT_KEYWORD_HIGHLIGHT_RULES`（7 组同色：`#F87171/#FBBF24/#34D399/#3B82F6/#A78BFA/#EC4899/#A78BFA`）、`normalizeKeywordHighlightRules`（空/非法回落内置、去重 id、最多 30 条 × 16 正则、色值收敛大写）；`TerminalSettings` 增加 `keywordHighlightEnabled`（默认 `true`）与 `keywordHighlightRules`。
+  - `terminal/keywordHighlight.ts`（纯逻辑）：`compileKeywordRules`（跳过禁用/非法正则，`gi` 编译）、`findKeywordSpans`（先规则先得、零宽防死循环）、`cellOffsets`（字符索引 → 起始单元格列）。
+  - `TerminalPane.tsx`：工具栏「高亮」浮层改读设置 store（同一份规则）；可视区逐行 `translateToString` → 匹配 → `registerMarker(y - cursorLine)` + `registerDecoration({foregroundColor})`（需 `allowProposedApi`），80ms 去抖，订阅 `onWriteParsed/onScroll/onResize`；`subscribeSettings` 监听设置，JSON 比对避免无关设置重绘 → **改规则/开关已开终端立即重绘，无需重启**；浮层支持总开关、逐条启用、回车新增自定义正则、删除，底部「在设置中编辑规则」跳设置页。
+  - `SettingsTabs.tsx` 终端 tab 新增「关键字高亮」分区：总开关 + 规则列表（色块取色 / 标签 / 启用 / 内置恢复 / 自定义删除）+「添加自定义规则」+「把内置规则恢复为默认」；规则弹窗（标签+颜色、逐行正则、实时预览、非法正则行内报错、取消/保存）。新增 20 个 zh/en i18n key；`styles.css` 增加 `.nc-set-rule-*` / `.nc-set-modal` / `.nc-set-field-*` / `.nc-set-link-btn` 等设置页令牌化样式。
+- **踩坑（已修）**：`normalizeKeywordHighlightRules` 初版把单条正则截断到 200 字符，导致内置 IPV6(~400) / URL 正则被切断 → 正则非法被跳过、内置规则被误判为「已修改」；上限改为 2000 并补回归单测（内置 IPV6/URL 原样保留且 7 组均可编译）。
+- **实机验证（129 `tianzry@192.168.126.129`，debug 版 + CDP 9222）**：
+  - 输出命中即高亮：`echo "error warning ok debug info"` 五个关键字分别红/黄/绿/蓝/紫；`echo "... https://example.com/a 10.0.0.2"` URL 与 IPv4 命中粉色 → 17 个 decoration（`hl-01-129-highlight.png`、`hl-07-terminal-url.png`、`hl-verify2.json`）。
+  - 设置热更新：设置页改 Error 色 `#F87171 → #22CC88`，不关设置/不重启，终端 decoration 立即按新色重绘；关闭设置截图裁剪对比 `hl-12-crop.png`（绿）vs `hl-13-crop.png`（红）；Error 规则关 → 8→6，开 → 6→8（`hl-verify.json`）；总开关关 → 17→0，开 → 0→17（`hl-verify2.json`）。
+  - 持久化：改绿后 `Page.reload`，设置页读回 `#22cc88`、7 条规则仍在（`hl-verify2.json`），随后还原红色。
+  - 工具栏联动：浮层 7 条规则与设置页完全一致（label 列表相同），总开关同态，含「在设置中编辑规则」（`hl-05-toolbar-menu.png`）。
+  - 截图：`hl-02-settings-keyword.png`、`hl-06-settings-reset.png`（内置恢复后 reset 图标 1→0）、`hl-08-rule-dialog.png`、`hl-09-settings-green.png`、`hl-11-settings-master-off.png`。
+- **范围决策（记录）**：本轮只做 Netcatty 的**全局规则层**；主机级 `host.keywordHighlight*` 覆盖与主机 popover 未实现（termX 终端标签无主机级设置入口），不影响设置页与工具栏共享同一份规则的行为。
+- **门禁**：`npm run test:run` 761 通过（新增 `keywordHighlight.test.ts` 7 例）、`npm run build` 通过、`cargo test --lib` 957 通过、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #219 设置页样式按 Netcatty 运行实例取证照抄（字体随包 / 令牌化 / 明暗两套）
 
 - **取证方式（本轮新增能力）**：Netcatty 无调试端口，改为把 portable 目录复制到 `evidence/nc-app-copy`，以 `--remote-debugging-port=9336` + 独立 `--user-data-dir` 启动第二个实例（必须 `run_in_background` + `$p.WaitForExit()` 保活，否则 shell 结束即被回收）；CDP 设 `Emulation 980×720` 后逐个 tab 采集 8×明暗 共 16 张基准图（`evidence/nc-settings2-*.png`）与量测 `nc-settings-style2.json`。另用 `PrintWindow(PW_RENDERFULLCONTENT=2)` 抓真实设置窗口客户区（`nc-settings-window-980x720.png`），与 CDP 图交叉校验。
