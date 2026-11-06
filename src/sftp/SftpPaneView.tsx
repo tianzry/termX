@@ -586,6 +586,14 @@ export function SftpPaneView({
   };
 
   const runRename = async (row: Row, newName: string) => {
+    // 对齐 Netcatty 的重命名语义：空名（trim 后）或与原名相同都视为取消，
+    // 不发请求、不显示错误（服务端对 old == new 会直接返回 Failure）。
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === row.name) {
+      setDialogError("");
+      setDialog(null);
+      return;
+    }
     setDialogBusy(true);
     setDialogError("");
     try {
@@ -593,10 +601,10 @@ export function SftpPaneView({
         await api.sftpRename(
           connection.sftpId,
           join(path, row.name),
-          join(path, newName),
+          join(path, trimmed),
         );
       } else {
-        await api.localRename(join(path, row.name), join(path, newName));
+        await api.localRename(join(path, row.name), join(path, trimmed));
       }
       setDialog(null);
       void load(path);

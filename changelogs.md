@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-11-06 — #228 SFTP 重命名为空名/原名视为取消（全页 + 侧栏）
+
+- **问题**：重命名对话框保留原名直接确认时，前端仍发 `sftp_rename(old, new)`；old == new 时 OpenSSH 返回 Failure，界面弹出「SFTP 操作失败 (rename)：Failure: Failure」。
+- **Netcatty 取证**（`components/sftp/hooks/useSftpPaneDialogs.ts`）：确认按钮在 trim 后为空时禁用；本次按用户要求把「与原名相同」也视为取消。
+- **实现** `src/sftp/SftpPaneView.tsx` `runRename`：先 `trim`，当 `!trimmed || trimmed === row.name` 时清错误、关闭对话框并直接 `return`，不发请求；真正改名统一使用 trim 后的名称。全页与侧栏共用同一 `SftpPaneView`，一处修复覆盖两个入口。
+- **回归** `src/sftp/SftpPaneView.test.tsx`：新增「重命名名称未变时视为取消，不发请求、不报错」用例（断言 `localRename` 未被调用且对话框关闭）。
+- **验证**：`npx vitest run src/sftp/SftpPaneView.test.tsx` 通过；129 实机在侧栏与全页分别保留原名确认，均静默关闭、无错误提示（截图见 `evidence/af-*.png`）。
+
 ## 2026-11-06 — #227 终端侧栏 SFTP 面板照抄 Netcatty（红圈 5 项排除 / 复用 SSH 会话通道）
 
 - **对照图逐项取证（红圈项不移植）**：对照图 `attachments/5b27d2db-…/image.png` 红圈共 **5 项**，均不移植：

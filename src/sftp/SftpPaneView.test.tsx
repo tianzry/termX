@@ -6,6 +6,7 @@ import { SftpPaneView } from "./SftpPaneView";
 
 vi.mock("../backend/client", () => ({
   localListDir: vi.fn(),
+  localRename: vi.fn(),
   onSftpTransferUpdated: vi.fn(async () => () => {}),
 }));
 
@@ -19,6 +20,7 @@ const LOCAL = {
 };
 
 beforeEach(() => {
+  vi.mocked(api.localRename).mockReset();
   vi.mocked(api.localListDir).mockResolvedValue([
     {
       name: "sample.tar.gz",
@@ -51,5 +53,20 @@ describe("SftpPaneView 右键菜单", () => {
 
     expect(screen.getByText("刷新")).toBeInTheDocument();
     expect(screen.queryByText("解压到当前目录")).not.toBeInTheDocument();
+  });
+
+  it("重命名名称未变时视为取消，不发请求、不报错", async () => {
+    render(<SftpPaneView connection={LOCAL} onPathChange={() => {}} />);
+    await waitFor(() => expect(screen.getByText("sample.tar.gz")).toBeInTheDocument());
+
+    fireEvent.contextMenu(
+      document.querySelector('[data-sftp-row="sample.tar.gz"]') as HTMLElement,
+    );
+    fireEvent.click(screen.getByText("重命名"));
+    // 输入框保留原名，直接确认 → 取消（对齐 Netcatty）。
+    fireEvent.click(screen.getByRole("button", { name: "重命名" }));
+
+    expect(api.localRename).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
