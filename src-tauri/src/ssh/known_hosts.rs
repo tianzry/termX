@@ -1,5 +1,5 @@
 //! known_hosts 路径策略：复用系统标准位置 `~/.ssh/known_hosts`，
-//! 让用户在 OpenSSH / rssh / 其他 SSH 客户端之间共享同一份信任链。
+//! 让用户在 OpenSSH / termx / 其他 SSH 客户端之间共享同一份信任链。
 //!
 //! 移动端没有可依赖的用户 home，退到 app_data_dir/.ssh/known_hosts。
 

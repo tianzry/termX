@@ -136,7 +136,7 @@ impl GitHubSync {
 
     /// 推送配置 JSON 到 GitHub。
     pub async fn push(&self, json_content: &str) -> AppResult<()> {
-        self.push_file(BACKUP_FILE, json_content, "Update RSSH config")
+        self.push_file(BACKUP_FILE, json_content, "Update termX config")
             .await
     }
 
@@ -182,7 +182,7 @@ impl GitHubSync {
     /// 推送明文同步元数据到独立 JSON 文件，不改变旧版加密备份文件。
     pub async fn push_metadata(&self, metadata: &SyncMetadata) -> AppResult<()> {
         let content = metadata.to_json()?;
-        self.push_file(METADATA_FILE, &content, "Update RSSH config metadata")
+        self.push_file(METADATA_FILE, &content, "Update termX config metadata")
             .await
     }
 
@@ -243,7 +243,7 @@ impl GitHubSync {
             "X-GitHub-Api-Version",
             HeaderValue::from_static("2022-11-28"),
         );
-        h.insert("User-Agent", HeaderValue::from_static("RSSH"));
+        h.insert("User-Agent", HeaderValue::from_static("termX"));
         Ok(h)
     }
 }

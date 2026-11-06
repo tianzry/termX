@@ -1,13 +1,13 @@
-//! `rssh <profile|credential|forward> list` —— entity listing.
+//! `termx <profile|credential|forward> list` —— entity listing.
 
-use rssh_lib::error::AppResult;
-use rssh_lib::models::{ForwardType, Profile};
+use termx_lib::error::AppResult;
+use termx_lib::models::{ForwardType, Profile};
 
 use crate::ctx::CliCtx;
 use crate::helpers::hex_to_rgb;
 
 pub fn cmd_list_profiles(conn: &CliCtx, query: Option<&str>) -> AppResult<()> {
-    let list = rssh_lib::db::profile::list(conn)?;
+    let list = termx_lib::db::profile::list(conn)?;
     let filtered: Vec<&Profile> = match query {
         Some(q) => {
             let q = q.to_lowercase();
@@ -23,8 +23,8 @@ pub fn cmd_list_profiles(conn: &CliCtx, query: Option<&str>) -> AppResult<()> {
         println!("No profiles.");
         return Ok(());
     }
-    let creds = rssh_lib::db::credential::list(conn)?;
-    let groups = rssh_lib::db::group::list(conn)?;
+    let creds = termx_lib::db::credential::list(conn)?;
+    let groups = termx_lib::db::group::list(conn)?;
     for p in &filtered {
         let user = creds
             .iter()
@@ -47,7 +47,7 @@ pub fn cmd_list_profiles(conn: &CliCtx, query: Option<&str>) -> AppResult<()> {
 }
 
 pub fn cmd_list_credentials(conn: &CliCtx) -> AppResult<()> {
-    let list = rssh_lib::db::credential::list(conn)?;
+    let list = termx_lib::db::credential::list(conn)?;
     if list.is_empty() {
         println!("No credentials.");
         return Ok(());
@@ -66,12 +66,12 @@ pub fn cmd_list_credentials(conn: &CliCtx) -> AppResult<()> {
 }
 
 pub fn cmd_list_forwards(conn: &CliCtx) -> AppResult<()> {
-    let list = rssh_lib::db::forward::list(conn)?;
+    let list = termx_lib::db::forward::list(conn)?;
     if list.is_empty() {
         println!("No forwards.");
         return Ok(());
     }
-    let profiles = rssh_lib::db::profile::list(conn)?;
+    let profiles = termx_lib::db::profile::list(conn)?;
     for f in &list {
         let pname = profiles
             .iter()

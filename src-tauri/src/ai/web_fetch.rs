@@ -13,9 +13,9 @@ const MAX_REDIRECTS: usize = 5;
 const MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_MARKDOWN_BYTES: usize = 64 * 1024;
 const MAX_URL_CHARS: usize = 2_048;
-const TRUNCATION_NOTICE: &str = "\n\n[Content truncated by rssh.]";
+const TRUNCATION_NOTICE: &str = "\n\n[Content truncated by termx.]";
 const CHROME_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
-const HONEST_UA: &str = concat!("rssh/", env!("CARGO_PKG_VERSION"));
+const HONEST_UA: &str = concat!("termx/", env!("CARGO_PKG_VERSION"));
 
 // Process-lifetime connection pool — mirrors web_search. UA is deliberately NOT
 // set on the builder: send_request swaps CHROME_UA / HONEST_UA per request for
@@ -330,14 +330,14 @@ mod tests {
     fn keeps_short_documentation_pages() {
         let html = r#"
             <html><head><title>Flag reference</title></head><body><main>
-              <h1>--safe</h1><p>Enable safe mode.</p><pre>rssh --safe</pre>
+              <h1>--safe</h1><p>Enable safe mode.</p><pre>termx --safe</pre>
             </main></body></html>
         "#;
 
         let markdown = extract_markdown(html).unwrap();
 
         assert!(markdown.contains("--safe"));
-        assert!(markdown.contains("rssh --safe"));
+        assert!(markdown.contains("termx --safe"));
     }
 
     #[tokio::test]

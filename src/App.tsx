@@ -459,9 +459,9 @@ export default function App() {
     }
   }, [dataLoaded, deepLinks, profiles]);
 
-  // 新窗口冷启动：后端把连接参数写进 `window.__rssh_clone`，这里恢复成标签。
+  // 新窗口冷启动：后端把连接参数写进 `window.__termx_clone`，这里恢复成标签。
   useEffect(() => {
-    const clone = (window as unknown as { __rssh_clone?: string }).__rssh_clone;
+    const clone = (window as unknown as { __termx_clone?: string }).__termx_clone;
     if (!clone) return;
     try {
       const connector = JSON.parse(clone) as Connector;

@@ -3,6 +3,6 @@
 <plist version="1.0">
   <dict>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>RSSH uses your local network to connect to SSH, SFTP, and Telnet servers that you configure.</string>
+    <string>termX uses your local network to connect to SSH, SFTP, and Telnet servers that you configure.</string>
   </dict>
 </plist>

@@ -6,8 +6,8 @@
 use std::io::Write;
 use std::process::Command;
 
-use rssh_lib::error::AppResult;
-use rssh_lib::models::{Credential, CredentialType, Profile};
+use termx_lib::error::AppResult;
+use termx_lib::models::{Credential, CredentialType, Profile};
 
 use super::cred::load_cred_secrets;
 use crate::ctx::CliCtx;
@@ -24,7 +24,7 @@ pub fn build_ssh_command(
     profile: &Profile,
     leaf_cred: &Credential,
 ) -> AppResult<Vec<tempfile::NamedTempFile>> {
-    let chain = rssh_lib::bastion::resolve_chain(conn, profile)?;
+    let chain = termx_lib::bastion::resolve_chain(conn, profile)?;
     let mut key_files: Vec<tempfile::NamedTempFile> = Vec::new();
 
     if !chain.is_empty() {
@@ -34,7 +34,7 @@ pub fn build_ssh_command(
             // 找不到 cred = DB 数据不一致，显式报错而不是降级到"无 user@"。
             let c = load_cred_secrets(
                 conn,
-                rssh_lib::db::credential::get(conn, &hop.credential_id)?,
+                termx_lib::db::credential::get(conn, &hop.credential_id)?,
             )?;
             let mut s = String::new();
             s.push_str(&c.username);
@@ -81,7 +81,7 @@ pub fn build_ssh_command(
 /// 1. **Atomic 0600**: `Builder::permissions(0o600)` passes the mode to the
 ///    OS `open(2)` call, so the file is born 0600. The old "create then
 ///    chmod" leaked a window where the PEM bytes existed on disk at 0644
-///    (default umask). Short window, but reproducible on every `rssh profile open`,
+///    (default umask). Short window, but reproducible on every `termx profile open`,
 ///    and `/tmp` is world-traversable on shared hosts / CI runners.
 ///
 /// 2. **User-private dir** instead of `/tmp`: even with 0600 on the file,
@@ -92,7 +92,7 @@ pub fn write_temp_key(pem: &str) -> AppResult<tempfile::NamedTempFile> {
     let dir = secure_key_tmpdir()?;
 
     let mut builder = tempfile::Builder::new();
-    builder.prefix("rssh-key-");
+    builder.prefix("termx-key-");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -108,11 +108,11 @@ pub fn write_temp_key(pem: &str) -> AppResult<tempfile::NamedTempFile> {
     Ok(f)
 }
 
-/// `~/.rssh/tmp/`, ensured to exist with 0700 (Unix). We set perms each
+/// `~/.termx/tmp/`, ensured to exist with 0700 (Unix). We set perms each
 /// call rather than only on first-create — defends against a user who
 /// chmodded the dir to 0755 thinking it was harmless.
 fn secure_key_tmpdir() -> AppResult<std::path::PathBuf> {
-    let mut dir = rssh_lib::db::data_dir()?;
+    let mut dir = termx_lib::db::data_dir()?;
     dir.push("tmp");
     std::fs::create_dir_all(&dir)?;
     #[cfg(unix)]

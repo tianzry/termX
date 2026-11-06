@@ -1,7 +1,7 @@
-﻿//! `rssh <profile|credential|forward> add` —— 交互式新增。
+//! `termx <profile|credential|forward> add` —— 交互式新增。
 
-use rssh_lib::error::{AppError, AppResult};
-use rssh_lib::models::{Credential, CredentialType, Forward, ForwardRule, ForwardType, Profile};
+use termx_lib::error::{AppError, AppResult};
+use termx_lib::models::{Credential, CredentialType, Forward, ForwardRule, ForwardType, Profile};
 
 use crate::ctx::CliCtx;
 use crate::helpers::{
@@ -14,14 +14,14 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
     let host = prompt("Host: ");
     let port: u16 = prompt_default("Port", "22").parse().unwrap_or(22);
 
-    let creds = rssh_lib::db::credential::list(conn)?;
+    let creds = termx_lib::db::credential::list(conn)?;
     // credential_id 是必填：空 list / 用户选 0 都视为没填完整，直接 Err 退出。
     // 之前的 .unwrap_or_default() 会写空串入库，让后续 ssh_connect/open 撞 not_found。
     let credential_id = menu_select(
         "Credentials:",
         "Credential",
         &creds,
-        "No credentials yet. Run 'rssh credential add' first.",
+        "No credentials yet. Run 'termx credential add' first.",
         |c| format!("{} ({})", c.name, c.username),
     )
     .map(|c| c.id.clone())
@@ -29,12 +29,12 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         AppError::config(
             "cli_credential_required",
             serde_json::json!({
-                "hint": "Profile must reference a credential. Pick one from the list, or run 'rssh credential add' first."
+                "hint": "Profile must reference a credential. Pick one from the list, or run 'termx credential add' first."
             }),
         )
     })?;
 
-    let profiles = rssh_lib::db::profile::list(conn)?;
+    let profiles = termx_lib::db::profile::list(conn)?;
     let bastion_profile_id = menu_select("Bastion (optional):", "Bastion", &profiles, "", |p| {
         format!("{} ({})", p.name, p.host)
     })
@@ -42,7 +42,7 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
 
     let init_command = prompt_optional("Init command (optional): ");
 
-    let groups = rssh_lib::db::group::list(conn)?;
+    let groups = termx_lib::db::group::list(conn)?;
     let group_id = menu_select("Group (optional):", "Group", &groups, "", |g| {
         g.name.clone()
     })
@@ -95,7 +95,7 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         telnet_username: None,
         telnet_charset: None,
     };
-    rssh_lib::db::profile::insert(conn, &p)?;
+    termx_lib::db::profile::insert(conn, &p)?;
     println!("Profile '{}' created.", p.name);
     Ok(())
 }
@@ -146,7 +146,7 @@ pub fn cmd_add_forward(conn: &CliCtx) -> AppResult<()> {
         rules.push(prompt_forward_rule(None));
     }
 
-    let profiles = rssh_lib::db::profile::list(conn)?;
+    let profiles = termx_lib::db::profile::list(conn)?;
     if profiles.is_empty() {
         return Err(AppError::config("cli_no_profiles", serde_json::json!({})));
     }
@@ -175,7 +175,7 @@ pub fn cmd_add_forward(conn: &CliCtx) -> AppResult<()> {
         auto_start: false,
         auto_reconnect: None,
     };
-    rssh_lib::db::forward::insert(conn, &f)?;
+    termx_lib::db::forward::insert(conn, &f)?;
     println!("Forward '{}' created.", f.name);
     Ok(())
 }

@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn plugin_id_rules() {
         assert!(valid_plugin_id("mon"));
-        assert!(valid_plugin_id("rssh-plugin-monitor"));
+        assert!(valid_plugin_id("termx-plugin-monitor"));
         assert!(!valid_plugin_id("a"));
         assert!(!valid_plugin_id("-mon"));
         assert!(!valid_plugin_id("Mon"));

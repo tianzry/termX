@@ -12,7 +12,7 @@ pub mod models;
 mod redaction;
 pub mod secret;
 mod sftp;
-// pub：`rssh-cli`（`--features cli`）的 `sftp` 子命令直接复用 `SftpHandle` /
+// pub：`termx-cli`（`--features cli`）的 `sftp` 子命令直接复用 `SftpHandle` /
 // `ProxyConfig` / known_hosts 路径，bin 是独立 crate，必须经 lib 公共面拿到它们。
 pub mod ssh;
 pub use ssh::bastion;
@@ -33,7 +33,10 @@ use state::AppState;
 
 #[cfg(target_os = "linux")]
 fn apply_linux_wayland_compat() {
-    if std::env::var_os("RSSH_DISABLE_WAYLAND_COMPAT").is_some() {
+    // `RSSH_*` 旧名保留回退一个发布周期，便于既有脚本/桌面文件继续生效。
+    if std::env::var_os("TERMX_DISABLE_WAYLAND_COMPAT").is_some()
+        || std::env::var_os("RSSH_DISABLE_WAYLAND_COMPAT").is_some()
+    {
         return;
     }
 
@@ -56,7 +59,9 @@ fn apply_linux_wayland_compat() {
     // GBM 后端兼容：全局导出的 GBM_BACKEND，尤其是 nvidia-drm，可能导致
     // Hyprland 下 GTK / WebKitGTK 报 "Failed to create GBM buffer"。Keep an
     // explicit opt-out for users whose stack needs this variable.
-    if std::env::var_os("RSSH_KEEP_GBM_BACKEND").is_none() {
+    if std::env::var_os("TERMX_KEEP_GBM_BACKEND").is_none()
+        && std::env::var_os("RSSH_KEEP_GBM_BACKEND").is_none()
+    {
         std::env::remove_var("GBM_BACKEND");
     }
 }
@@ -489,5 +494,5 @@ pub fn run() {
             ai::commands::ai_provider_delete,
         ])
         .run(tauri::generate_context!())
-        .expect("RSSH startup failed");
+        .expect("termX startup failed");
 }

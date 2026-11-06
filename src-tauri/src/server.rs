@@ -1,4 +1,4 @@
-//! Headless WebSocket server — a second adapter over the SAME rssh engine the
+//! Headless WebSocket server — a second adapter over the SAME termx engine the
 //! Tauri app uses (INV-4); only the transport differs. It lets the unchanged
 //! web frontend run outside Tauri (a browser, or IntelliJ's JCEF) by speaking
 //! the wire protocol the IPC shim expects. Gated behind the `server` feature.
@@ -104,7 +104,7 @@ pub async fn run() -> std::io::Result<()> {
                 // Log and keep serving. The short backoff stops a hot spin under fd
                 // exhaustion (accept would otherwise fail-and-retry at 100% CPU
                 // until an fd frees up).
-                log::warn!("rssh-server: accept failed (continuing): {e}");
+                log::warn!("termx-server: accept failed (continuing): {e}");
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
@@ -113,7 +113,7 @@ pub async fn run() -> std::io::Result<()> {
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_conn(stream, expected, state).await {
-                log::warn!("rssh-server: connection ended: {e}");
+                log::warn!("termx-server: connection ended: {e}");
             }
         });
     }
@@ -2470,7 +2470,7 @@ mod tests {
     fn ai_instance_mismatch_uses_the_coded_headless_wire_format() {
         assert_eq!(
             err_value(AppError::not_found("ai_session_not_found", json!({}))),
-            json!(r#"__rssh_err__|{"code":"ai_session_not_found","params":{}}"#)
+            json!(r#"__termx_err__|{"code":"ai_session_not_found","params":{}}"#)
         );
     }
 

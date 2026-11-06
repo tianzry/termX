@@ -1,4 +1,4 @@
-﻿//! `rssh` / `rssh-cli` CLI 入口。
+//! `termx` / `termx-cli` CLI 入口。
 //!
 //! 所有具体子命令实现在 `commands::*`，IO/格式 helper 在 `helpers::*`。
 //! 本文件只负责：
@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{ArgValueCompleter, CompleteEnv};
 
-use rssh_lib::db::Db;
+use termx_lib::db::Db;
 
 mod commands;
 mod ctx;
@@ -27,9 +27,9 @@ use ctx::CliCtx;
 
 #[derive(Parser)]
 #[command(
-    name = "rssh",
-    version = rssh_lib::CLI_VERSION,
-    about = "RSSH — SSH connection manager"
+    name = "termx",
+    version = termx_lib::CLI_VERSION,
+    about = "termX — SSH connection manager"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -253,23 +253,23 @@ enum GroupCmd {
 // main
 // ═══════════════════════════════════════════════════════════════════
 
-/// On Linux the CLI is installed as `/usr/local/bin/rssh`, which shadows the
-/// GUI binary at `/usr/bin/rssh`.  When invoked without a subcommand, detect
-/// the GUI binary and launch it instead — so `rssh` opens the app, while
-/// `rssh profile list`, `rssh profile open …` etc. still use the CLI path.
+/// On Linux the CLI is installed as `/usr/local/bin/termx`, which shadows the
+/// GUI binary at `/usr/bin/termx`.  When invoked without a subcommand, detect
+/// the GUI binary and launch it instead — so `termx` opens the app, while
+/// `termx profile list`, `termx profile open …` etc. still use the CLI path.
 #[cfg(target_os = "linux")]
 fn try_launch_gui() -> bool {
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
-    if commands::open::in_rssh_app() {
+    if commands::open::in_termx_app() {
         return false;
     }
     // No display server → headless / SSH session, stay in CLI.
     if std::env::var("DISPLAY").is_err() && std::env::var("WAYLAND_DISPLAY").is_err() {
         return false;
     }
-    let gui = std::path::PathBuf::from("/usr/bin/rssh");
+    let gui = std::path::PathBuf::from("/usr/bin/termx");
     if !gui.exists() {
         return false;
     }
@@ -290,12 +290,12 @@ fn try_launch_gui() -> bool {
 
 /// 把 lib 抛上来的 `AppError` 渲染成 CLI 可读的英文。
 ///
-/// 业务变体（Ssh/Sftp/...）的 Display 是 `__rssh_err__|{json}` 协议字符串，
+/// 业务变体（Ssh/Sftp/...）的 Display 是 `__termx_err__|{json}` 协议字符串，
 /// 给前端 `errMsg()` 翻译用。CLI 没有 catalog，脱壳显示成 `<code>(<params>)`，
 /// 开发者一看就知道发生了什么；找不到协议前缀就原样输出（Database/Io 等模板）。
-fn format_lib_error(e: &rssh_lib::error::AppError) -> String {
+fn format_lib_error(e: &termx_lib::error::AppError) -> String {
     let s = e.to_string();
-    let Some(payload_json) = s.strip_prefix("__rssh_err__|") else {
+    let Some(payload_json) = s.strip_prefix("__termx_err__|") else {
         return s;
     };
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(payload_json) else {
@@ -323,9 +323,9 @@ fn format_lib_error(e: &rssh_lib::error::AppError) -> String {
 
 fn main() {
     CompleteEnv::with_factory(Cli::command)
-        .var("_RSSH_COMPLETE")
-        .bin("rssh")
-        .completer("rssh")
+        .var("_TERMX_COMPLETE")
+        .bin("termx")
+        .completer("termx")
         .complete();
 
     let cli = Cli::parse();
@@ -343,11 +343,11 @@ fn main() {
         return;
     }
     if matches!(cli.command, Some(Cmd::Version)) {
-        println!("{}", rssh_lib::CLI_VERSION);
+        println!("{}", termx_lib::CLI_VERSION);
         return;
     }
 
-    let data_dir = rssh_lib::db::data_dir().unwrap_or_else(|e| {
+    let data_dir = termx_lib::db::data_dir().unwrap_or_else(|e| {
         eprintln!("error: {}", format_lib_error(&e));
         std::process::exit(1);
     });

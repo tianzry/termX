@@ -1,7 +1,7 @@
 //! 脱敏 + 截断 + 命令形态校验。
 //!
 //! 这是发往 LLM 的所有内容必经的过滤层。设计原则：
-//! - 脱敏在 rssh 本地完成，不依赖 LLM 自律
+//! - 脱敏在 termx 本地完成，不依赖 LLM 自律
 //! - shape validator 不区分远端 OS（Linux/macOS/*BSD），不 hardcode "必须有 -b"
 //! - 破坏性命令清单写死，LLM 提到一律拦死
 
@@ -201,7 +201,7 @@ pub const COUNTED_LOOP: &[&str] = &["vmstat", "iostat", "pidstat", "mpstat", "sa
 /// - `truncate`：`-s 0` 清空文件，`--size=N` 改长度
 /// - `ed`：行编辑器，从 stdin 读命令并写盘（`echo ',d\nw\n' | ed file` 清空）
 /// - `tar` / `unzip` / `cpio`：解 archive 写任意路径（`tar xf -C /etc`）。读用法
-///   （`tar tf` / `unzip -l`）在 rssh 诊断场景罕见，LLM 用 `ls` / `file` 替代
+///   （`tar tf` / `unzip -l`）在 termx 诊断场景罕见，LLM 用 `ls` / `file` 替代
 #[cfg(test)]
 pub const WRITE_VERBS: &[&str] = &[
     "tee", "cp", "mv", "ln", "install", "truncate", "ed", "tar", "unzip", "cpio",
@@ -264,11 +264,11 @@ fn canonical_head(head: &str) -> &str {
 /// Shell 列表：用于识别 `bash -c "..."` 这类 deferred-execution 形态。
 /// **不在 INTERPRETERS_DENIED 里**——shell 编排 pipe (`cmd1 | cmd2`) 是合法用例，
 /// 但 `-c "..."` 把后续命令字面塞进 string，sanitize 看不到 → 所有规则全废。
-/// rssh 远端命令本身就跑在 shell 里，从来没有合法用例需要再起一层 `bash -c`。
+/// termx 远端命令本身就跑在 shell 里，从来没有合法用例需要再起一层 `bash -c`。
 pub const SHELLS: &[&str] = &["bash", "sh", "zsh", "dash", "ksh", "mksh", "ash"];
 
 /// Deferred-execution builtins：和 `bash -c` 同性质，把后续字符串作为命令执行，
-/// sanitize 完全看不到内容。LLM 在 rssh 场景下从无合法用例。
+/// sanitize 完全看不到内容。LLM 在 termx 场景下从无合法用例。
 #[cfg(test)]
 pub const DEFERRED_EXEC: &[&str] = &["eval", "source", "."];
 
@@ -293,7 +293,7 @@ pub const COMMAND_FORWARDERS: &[&str] = &[
 /// 名单原则：通用脚本语言，能 in-process 读写文件 / 起子进程。**故意不含 bash / sh / zsh**
 /// —— LLM 用 shell 编排管道是合法用例，再走 sanitize 拦写动词即可。
 ///
-/// rssh 自己的 file_ops 走 `run_file_op` 不经 sanitize::validate（详见 file_ops.rs 注释），
+/// termx 自己的 file_ops 走 `run_file_op` 不经 sanitize::validate（详见 file_ops.rs 注释），
 /// 所以这里禁 perl 不影响 file_ops 的 perl 降级路径。
 #[cfg(test)]
 pub const INTERPRETERS_DENIED: &[&str] = &[
@@ -437,7 +437,7 @@ fn node_text<'a>(n: &tree_sitter::Node, src: &'a [u8]) -> &'a str {
 
 /// 从 `command_name` 节点剥出命令头的归一化字面名（剥 quote / unescape `\X`）。
 ///
-/// **fail-closed**：rssh 场景下 LLM 写命令头从来没有合法用例需要 substitution
+/// **fail-closed**：termx 场景下 LLM 写命令头从来没有合法用例需要 substitution
 /// (`$(...)`/`` `...` ``)、ANSI-C hex escape (`$'r\x6d'`)、字段拼接 (`r"m"`)、
 /// 变量间接 (`$cmd`) —— 这些纯粹是 obfuscation。一律 Err，避免拼出 shell 真正
 /// 执行的黑名单命令。
@@ -689,7 +689,7 @@ impl Blacklist {
                 "{head} (file modification must go through patch_file)"
             ))),
             Some(BlCategory::Interpreter) => Err(ShapeError::Write(format!(
-                "{head} (rssh blocks script interpreters; use patch_file / match_file for file work)"
+                "{head} (termx blocks script interpreters; use patch_file / match_file for file work)"
             ))),
             Some(BlCategory::DeferredExec) => Err(ShapeError::Write(format!(
                 "{head} (deferred execution hides the real command from sanitize)"
@@ -708,7 +708,7 @@ fn check_per_command_rules(head: &str, args: &[String]) -> Result<(), ShapeError
     // bash builtin `command`：
     // - `command -v X` / `-V X`：introspection（仅查 X 是否可执行），放行
     // - `command X` / `command -p X`：真执行 X，但 X 没经过 sanitize → 拒
-    //   （rssh 场景下 LLM 直接写命令名就行，不需要 `command` 前缀）
+    //   （termx 场景下 LLM 直接写命令名就行，不需要 `command` 前缀）
     if head == "command" {
         if arg_text.iter().any(|t| matches!(*t, "-v" | "-V")) {
             return Ok(());
@@ -744,7 +744,7 @@ fn check_per_command_rules(head: &str, args: &[String]) -> Result<(), ShapeError
     }
 
     // INTERACTIVE_BARE 一律拒。`less foo` / `vim file` / `watch -n1 date` 等命令
-    // 即使有 operand 仍然是屏幕刷新的交互式 TUI，rssh 这种 ssh exec 拿不到结构化输出，
+    // 即使有 operand 仍然是屏幕刷新的交互式 TUI，termx 这种 ssh exec 拿不到结构化输出，
     // 应该走 cat / tail -n / 一次性命令替代。
     if INTERACTIVE_BARE.contains(&head) {
         return Err(ShapeError::Interactive(head.to_string()));
@@ -1787,7 +1787,7 @@ mod tests {
 
     #[test]
     fn shape_devnull_glued_to_command_passes() {
-        // 紧贴形态（命令和重定向操作符之间无空格）—— shell 接受，rssh 也得接受。
+        // 紧贴形态（命令和重定向操作符之间无空格）—— shell 接受，termx 也得接受。
         // Regression：之前 split_whitespace 后整个 token 含 `>`，被一律拒，破坏 /dev/null 白名单意图。
         assert!(validate("echo a>/dev/null").is_ok());
         assert!(validate("echo a>>/dev/null").is_ok());
@@ -1886,7 +1886,7 @@ mod tests {
 
     #[test]
     fn shape_obfuscated_arg_blocked() {
-        // args 里出现 `$'...'` ANSI-C string，shell 会 unescape 后再传给命令；rssh 的
+        // args 里出现 `$'...'` ANSI-C string，shell 会 unescape 后再传给命令；termx 的
         // normalize_head 只剥 backslash，看不出 `\x2dc` 等于 `-c`。这会让 SHELL+-c /
         // env -S / curl -o 等 per-command 规则在含 ANSI-C arg 时被绕过。
         //
@@ -2023,7 +2023,7 @@ mod tests {
     #[test]
     fn shape_archive_tools_blocked() {
         // tar / unzip / cpio 解压能写任意路径（`tar xf foo.tar -C /etc/`）。
-        // 读用法（`tar tf` / `unzip -l`）在 rssh 场景罕见，LLM 诊断用 ls / file 即可。
+        // 读用法（`tar tf` / `unzip -l`）在 termx 场景罕见，LLM 诊断用 ls / file 即可。
         // 统一全拒，要求 LLM 走更精确的 ls / file。
         assert!(matches!(
             validate("tar xf foo.tar"),
@@ -2058,7 +2058,7 @@ mod tests {
             validate("$'\\x72m' -rf /"),
             Err(ShapeError::Destructive(_))
         ));
-        // 普通 $'echo' 等也拒（rssh 没有合法用例需要 ANSI-C quoting 在命令头位置）
+        // 普通 $'echo' 等也拒（termx 没有合法用例需要 ANSI-C quoting 在命令头位置）
         assert!(matches!(
             validate("$'echo' a"),
             Err(ShapeError::Destructive(_))
@@ -2422,7 +2422,7 @@ mod tests {
         // bash/sh/zsh/dash 的 `-c "..."` 是 deferred-execution：sanitize 看不到字符串内容，
         // 后面任何 `rm -rf /` / 写文件 / 解释器调用都绕过所有规则。
         //
-        // rssh 远端命令本身就跑在 shell 里，"shell pipe 编排"用 `|` `&&` 直接写就行，
+        // termx 远端命令本身就跑在 shell 里，"shell pipe 编排"用 `|` `&&` 直接写就行，
         // **没有任何合法用例需要 `bash -c`**。
         assert!(matches!(
             validate("bash -c 'rm -rf /'"),

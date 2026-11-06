@@ -351,7 +351,7 @@ pub fn spawn_local_shell(
     let mut cmd = CommandBuilder::new(&shell);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    cmd.env("RSSH_APP", "1");
+    cmd.env("TERMX_APP", "1");
     if let Some(dir) = &cwd {
         cmd.cwd(dir);
     }
@@ -387,7 +387,7 @@ pub fn spawn_command(
     cmd.env("PATH", search_path);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    cmd.env("RSSH_APP", "1");
+    cmd.env("TERMX_APP", "1");
     for arg in args {
         cmd.arg(arg);
     }

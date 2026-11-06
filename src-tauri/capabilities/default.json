@@ -1,7 +1,7 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for RSSH",
-  "windows": ["main", "rssh-*"],
+  "description": "Default capabilities for termX",
+  "windows": ["main", "termx-*"],
   "permissions": [
     "core:default",
     "core:window:allow-set-title",

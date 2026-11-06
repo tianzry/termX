@@ -8,7 +8,7 @@
 //! - tools     暴露给 LLM 的工具：run_command / load_skill / download_file /
 //!             analyze_locally / match_file / patch_file / web_search / web_fetch
 //! - session   AI 会话生命周期 + 对话循环（含远端 file_ops 脚本拼装：
-//!             python3 / perl 两层降级，rssh 后端不再 cat 整文件回流）
+//!             python3 / perl 两层降级，termx 后端不再 cat 整文件回流）
 //! - commands  Tauri 命令入口
 
 pub mod audit;

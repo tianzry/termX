@@ -139,11 +139,11 @@ pub fn build_catalog_prompt(
     if is_mobile {
         s.push_str(
             "\n---\n\n# Runtime: mobile device\n\n\
-             The user is running rssh on a **mobile build** (Android / iOS). On this build the following tools are **unavailable** and MUST NOT be invoked:\n\
+             The user is running termx on a **mobile build** (Android / iOS). On this build the following tools are **unavailable** and MUST NOT be invoked:\n\
              - `analyze_locally` — the mobile app cannot spawn additional windows.\n\
              - `download_file` — the mobile app has no native file-save dialog.\n\n\
              If the diagnosis would normally require either tool (e.g. dump heap to local for MAT, save flamegraph SVG, run pprof locally), **do not attempt them on the remote host as a workaround** — heap dumps and similar long-running probes can cause STW pauses or fill remote disk. \
-             Instead, tell the user plainly that this step needs the desktop build of rssh, and continue the diagnosis with whatever in-session tooling remains useful.\n",
+             Instead, tell the user plainly that this step needs the desktop build of termx, and continue the diagnosis with whatever in-session tooling remains useful.\n",
         );
     }
 

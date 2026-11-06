@@ -1,10 +1,10 @@
-//! `rssh snippet` —— 片段（snippets.json）的脚本友好 CRUD。
+//! `termx snippet` —— 片段（snippets.json）的脚本友好 CRUD。
 //!
 //! Netcatty 的 `netcatty-tool-cli` 通过运行中应用的 RPC 提供 `snippet` 能力；
 //! 片段本身是本地 JSON 文件，CLI 直接读写同一份文件即可，无需应用在线。
 
-use rssh_lib::error::{AppError, AppResult};
-use rssh_lib::models::Snippet;
+use termx_lib::error::{AppError, AppResult};
+use termx_lib::models::Snippet;
 
 use crate::ctx::CliCtx;
 
@@ -27,7 +27,7 @@ pub fn filter_snippets<'a>(list: &'a [Snippet], query: Option<&str>) -> Vec<&'a 
 }
 
 pub fn cmd_list(conn: &CliCtx, query: Option<&str>) -> AppResult<()> {
-    let list = rssh_lib::db::snippet::load(&conn.data_dir)?;
+    let list = termx_lib::db::snippet::load(&conn.data_dir)?;
     let filtered = filter_snippets(&list, query);
     if filtered.is_empty() {
         println!("No snippets.");
@@ -45,7 +45,7 @@ pub fn cmd_list(conn: &CliCtx, query: Option<&str>) -> AppResult<()> {
 }
 
 pub fn cmd_show(conn: &CliCtx, name: &str) -> AppResult<()> {
-    let list = rssh_lib::db::snippet::load(&conn.data_dir)?;
+    let list = termx_lib::db::snippet::load(&conn.data_dir)?;
     let s = find_snippet(&list, name)?;
     println!("name:        {}", s.name);
     println!("command:     {}", s.command);
@@ -71,7 +71,7 @@ pub fn cmd_add(
             serde_json::json!({ "hint": "name and command must be non-empty" }),
         ));
     }
-    let mut list = rssh_lib::db::snippet::load(&conn.data_dir)?;
+    let mut list = termx_lib::db::snippet::load(&conn.data_dir)?;
     if list.iter().any(|s| s.name.eq_ignore_ascii_case(name)) {
         return Err(AppError::other(
             "snippet_exists",
@@ -86,19 +86,19 @@ pub fn cmd_add(
         package: package.to_owned(),
         ..Default::default()
     });
-    rssh_lib::db::snippet::save(&conn.data_dir, &list)?;
+    termx_lib::db::snippet::save(&conn.data_dir, &list)?;
     println!("Added snippet '{}'.", name);
     Ok(())
 }
 
 pub fn cmd_rm(conn: &CliCtx, name: &str) -> AppResult<()> {
-    let mut list = rssh_lib::db::snippet::load(&conn.data_dir)?;
+    let mut list = termx_lib::db::snippet::load(&conn.data_dir)?;
     let idx = list
         .iter()
         .position(|s| s.name.eq_ignore_ascii_case(name))
         .ok_or_else(|| not_found(name))?;
     list.remove(idx);
-    rssh_lib::db::snippet::save(&conn.data_dir, &list)?;
+    termx_lib::db::snippet::save(&conn.data_dir, &list)?;
     println!("Removed snippet '{}'.", name);
     Ok(())
 }

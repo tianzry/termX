@@ -1,8 +1,8 @@
-﻿//! Config sync — one import path, two merge tiers.
+//! Config sync — one import path, two merge tiers.
 //!
 //! **merge_import** is the single import entry point for every path — file
-//! `import` / `rssh config import` AND `github_pull` / `webdav_pull` /
-//! `rssh config github pull` / `rssh config webdav pull`.
+//! `import` / `termx config import` AND `github_pull` / `webdav_pull` /
+//! `termx config github pull` / `termx config webdav pull`.
 //!
 //! Tier 1 — grouped entities (credentials / profiles / forwards / groups /
 //! serial_profiles / telnet_profiles): incremental upsert by identity. Each
@@ -76,7 +76,7 @@ fn command_block_redaction(db: &Db) -> AppResult<CommandBlockRedaction> {
     let prompt_enabled = crate::db::settings::get(db, "command_block_prompt_redact_enabled")?
         .is_none_or(|value| value != "false");
     let prompt_replacement = crate::db::settings::get(db, "command_block_prompt_replacement")?
-        .unwrap_or_else(|| "anonymous@rssh".into());
+        .unwrap_or_else(|| "anonymous@termx".into());
     Ok(CommandBlockRedaction {
         prompt_enabled,
         prompt_replacement,
@@ -573,7 +573,7 @@ fn parse_skill(item: &Value) -> AppResult<Option<crate::db::ai_skill::UserSkill>
 
 // ---------------------------------------------------------------------------
 // Export — the counterpart to merge_import. One builder for every transport
-// (GUI commands + headless server + `rssh` CLI) so the on-disk/on-GitHub shape
+// (GUI commands + headless server + `termx` CLI) so the on-disk/on-GitHub shape
 // can never drift between them.
 // ---------------------------------------------------------------------------
 
@@ -605,7 +605,7 @@ pub enum ExportMode {
 }
 
 /// Read the per-category toggles + profile group filter from settings. The GUI
-/// and `rssh config github push` / `rssh config webdav push` both feed the
+/// and `termx config github push` / `termx config webdav push` both feed the
 /// result into `build_payload` so the same opt-outs apply no matter which
 /// remote transport pushes to the shared repo / WebDAV endpoint.
 pub fn read_sync_prefs(db: &Db) -> AppResult<SyncPrefs> {
@@ -1616,7 +1616,7 @@ mod tests {
             "version": 1,
             "command_block_redaction": {
                 "prompt_enabled": true,
-                "prompt_replacement": "anonymous@rssh",
+                "prompt_replacement": "anonymous@termx",
                 "rules": [{"id": "bad", "pattern": "(", "replacement": "<X>"}]
             }
         });

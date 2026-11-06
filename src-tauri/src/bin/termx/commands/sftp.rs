@@ -1,4 +1,4 @@
-//! `rssh sftp` —— Agent / 脚本用的直连 SFTP 传输。
+//! `termx sftp` —— Agent / 脚本用的直连 SFTP 传输。
 //!
 //! 复用 lib 的 `SftpHandle::connect`：凭据从 SecretStore 读取，密码与私钥都能
 //! 非交互认证，不需要本机 OpenSSH 客户端。局限（见 `sftp` 子命令文档）：
@@ -6,10 +6,10 @@
 
 use std::path::PathBuf;
 
-use rssh_lib::error::{AppError, AppResult};
-use rssh_lib::models::{Credential, Profile};
-use rssh_lib::ssh::proxy::ProxyConfig;
-use rssh_lib::ssh::sftp::SftpHandle;
+use termx_lib::error::{AppError, AppResult};
+use termx_lib::models::{Credential, Profile};
+use termx_lib::ssh::proxy::ProxyConfig;
+use termx_lib::ssh::sftp::SftpHandle;
 
 use crate::ctx::CliCtx;
 use crate::helpers::cred::{find_id_by_name, load_cred_secrets};
@@ -24,14 +24,14 @@ struct Target {
 }
 
 fn resolve(conn: &CliCtx, name: &str) -> AppResult<Target> {
-    let profiles = rssh_lib::db::profile::list(conn)?;
+    let profiles = termx_lib::db::profile::list(conn)?;
     let id = find_id_by_name(&profiles, name, "Profile")?;
-    let profile = rssh_lib::db::profile::get(conn, &id)?;
+    let profile = termx_lib::db::profile::get(conn, &id)?;
     let cred = load_cred_secrets(
         conn,
-        rssh_lib::db::credential::get(conn, &profile.credential_id)?,
+        termx_lib::db::credential::get(conn, &profile.credential_id)?,
     )?;
-    let known_hosts = rssh_lib::ssh::known_hosts::path_for(&conn.data_dir);
+    let known_hosts = termx_lib::ssh::known_hosts::path_for(&conn.data_dir);
     // 档案里的内联代理字段（库条目 `proxy_profile_id` 需要额外的 SecretStore
     // 查询，本轮不接；连接层会按直连处理）。
     let proxy = match (

@@ -5,7 +5,7 @@
 use std::process::{Child, Command};
 use std::time::Duration;
 
-use rssh_lib::totp::{answers_for_prompts, TotpConfig};
+use termx_lib::totp::{answers_for_prompts, TotpConfig};
 
 struct AcceptAnyHostKey;
 

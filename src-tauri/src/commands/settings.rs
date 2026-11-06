@@ -342,7 +342,7 @@ mod auto_launch_impl {
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    /// headless 服务进程（rssh-server.exe）不允许登记开机自启，
+    /// headless 服务进程（termx-server.exe）不允许登记开机自启，
     /// 否则 Run 键会指向无界面的服务端二进制。
     pub fn is_headless() -> bool {
         std::env::current_exe()

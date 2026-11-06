@@ -118,7 +118,7 @@ use crate::error::{AppError, AppResult};
 
 /// Encode the frontend clone payload as a JavaScript string literal.
 ///
-/// The frontend reads `window.__rssh_clone` as a string and parses it once
+/// The frontend reads `window.__termx_clone` as a string and parses it once
 /// during startup, so the JSON payload must remain quoted in the script.
 fn clone_init_script(clone: &str) -> AppResult<String> {
     let json_literal = serde_json::to_string(clone).map_err(|e| {
@@ -127,13 +127,13 @@ fn clone_init_script(clone: &str) -> AppResult<String> {
             serde_json::json!({ "err": e.to_string() }),
         )
     })?;
-    Ok(format!("window.__rssh_clone = {};", json_literal))
+    Ok(format!("window.__termx_clone = {};", json_literal))
 }
 
 /// Open a new in-process Tauri window with a clone payload.
 ///
 /// The new window boots the same frontend; `AppShell` reads
-/// `window.__rssh_clone` on mount and auto-creates the cloned tab. Windows
+/// `window.__termx_clone` on mount and auto-creates the cloned tab. Windows
 /// share `AppState` (sessions, DB, PTY registry) via `Arc<Mutex<..>>`, so
 /// spawning a new window is cheap and does not fork the backend.
 ///
@@ -144,9 +144,9 @@ fn clone_init_script(clone: &str) -> AppResult<String> {
 #[tauri::command]
 pub async fn open_tab_in_new_window(app: AppHandle, clone: String) -> AppResult<()> {
     let init_script = clone_init_script(&clone)?;
-    let label = format!("rssh-{}", Uuid::new_v4().simple());
+    let label = format!("termx-{}", Uuid::new_v4().simple());
     WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
-        .title("RSSH")
+        .title("termX")
         .inner_size(1200.0, 800.0)
         .initialization_script(&init_script)
         .build()
@@ -169,7 +169,7 @@ mod tests {
         let script = clone_init_script(clone).unwrap();
         assert_eq!(
             script,
-            r#"window.__rssh_clone = "{\"type\":\"ssh\",\"label\":\"prod\"}";"#
+            r#"window.__termx_clone = "{\"type\":\"ssh\",\"label\":\"prod\"}";"#
         );
     }
 
@@ -178,7 +178,7 @@ mod tests {
         let clone = "{\"label\":\"line\nquote \\\"\"}";
         let script = clone_init_script(clone).unwrap();
         let literal = script
-            .strip_prefix("window.__rssh_clone = ")
+            .strip_prefix("window.__termx_clone = ")
             .and_then(|value| value.strip_suffix(';'))
             .unwrap();
         assert_eq!(serde_json::from_str::<String>(literal).unwrap(), clone);

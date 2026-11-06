@@ -1,6 +1,6 @@
 //! CliCtx — DB + 懒加载 SecretStore。Deref<Target=Db> 让所有 `db::*::*(ctx, ...)`
 //! 调用零改动透传。`secret_store` 只在首次访问时探测系统 keychain，避免
-//! `rssh profile list` 等只读命令付出 keychain 探测延迟。
+//! `termx profile list` 等只读命令付出 keychain 探测延迟。
 //!
 //! 首次构造 SecretStore 同时跑一次启动迁移（idempotent），跟 GUI 入口对齐。
 //! Marker 在 DB 共享，两入口任一跑过另一入口启动时直接跳过。
@@ -9,9 +9,9 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use rssh_lib::db::Db;
-use rssh_lib::migration;
-use rssh_lib::secret::{self, SecretStore};
+use termx_lib::db::Db;
+use termx_lib::migration;
+use termx_lib::secret::{self, SecretStore};
 
 pub(crate) struct CliCtx {
     pub db: Arc<Db>,

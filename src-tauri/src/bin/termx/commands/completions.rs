@@ -8,7 +8,7 @@ use clap_complete::env::{Bash, EnvCompleter, Fish, Powershell, Zsh};
 use clap_complete::CompletionCandidate;
 use rusqlite::{Connection, OpenFlags};
 
-const COMPLETE_VAR: &str = "_RSSH_COMPLETE";
+const COMPLETE_VAR: &str = "_TERMX_COMPLETE";
 
 #[derive(Clone, Copy)]
 enum NameKind {
@@ -31,7 +31,7 @@ pub fn print_completions(shell: &str) {
     };
 
     if let Err(error) =
-        shell.write_registration(COMPLETE_VAR, "rssh", "rssh", "rssh", &mut io::stdout())
+        shell.write_registration(COMPLETE_VAR, "termx", "termx", "termx", &mut io::stdout())
     {
         eprintln!("Failed to generate completions: {error}");
     }
@@ -57,7 +57,7 @@ fn complete_names(kind: NameKind, current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(current) = current.to_str() else {
         return Vec::new();
     };
-    let Ok(data_dir) = rssh_lib::db::data_dir() else {
+    let Ok(data_dir) = termx_lib::db::data_dir() else {
         return Vec::new();
     };
     complete_names_from_db(kind, current, &data_dir.join("rssh.db"))

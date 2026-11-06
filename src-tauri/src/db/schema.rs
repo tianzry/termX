@@ -575,7 +575,7 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
              );
              INSERT OR IGNORE INTO settings (key, value) VALUES
                  ('command_block_prompt_redact_enabled', 'true'),
-                 ('command_block_prompt_replacement', 'anonymous@rssh');",
+                 ('command_block_prompt_replacement', 'anonymous@termx');",
         )?;
     }
 
@@ -1448,7 +1448,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(enabled, "true");
-        assert_eq!(replacement, "anonymous@rssh");
+        assert_eq!(replacement, "anonymous@termx");
     }
 
     #[test]

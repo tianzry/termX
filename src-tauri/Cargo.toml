@@ -1,11 +1,11 @@
 [package]
-name = "rssh"
+name = "termx"
 version = "0.0.1"
 edition = "2021"
-default-run = "rssh"
+default-run = "termx"
 
 [lib]
-name = "rssh_lib"
+name = "termx_lib"
 crate-type = ["staticlib", "cdylib", "lib"]
 
 [build-dependencies]
@@ -105,7 +105,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 libc = "0.2"
 
-# PTY, serial and clipboard — the three desktop targets RSSH actually ships.
+# PTY, serial and clipboard — the three desktop targets termX actually ships.
 # Cargo target tables cannot use Tauri's `desktop` cfg alias, so keep this as a
 # positive OS list instead of treating every non-mobile target as a desktop.
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
@@ -147,19 +147,19 @@ mockito = "1.7.2"
 tempfile = "3"
 
 [[bin]]
-name = "rssh"
+name = "termx"
 path = "src/main.rs"
 
 [[bin]]
-name = "rssh-cli"
-path = "src/bin/rssh/main.rs"
+name = "termx-cli"
+path = "src/bin/termx/main.rs"
 required-features = ["cli"]
 
 # NOTE: kept OUT of src/bin/ on purpose. The Tauri bundler auto-discovers every
 # src/bin/<name> as an app binary (ignoring required-features) and would force the
-# GUI build to copy a `rssh-server` it never builds. This binary is JetBrains-only
-# (`cargo build --features server --bin rssh-server`).
+# GUI build to copy a `termx-server` it never builds. This binary is JetBrains-only
+# (`cargo build --features server --bin termx-server`).
 [[bin]]
-name = "rssh-server"
+name = "termx-server"
 path = "src/server_main.rs"
 required-features = ["server"]

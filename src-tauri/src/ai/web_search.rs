@@ -1,7 +1,7 @@
 //! Bounded, zero-configuration Hosted MCP web search for AI sessions.
 //!
 //! The MCP service's text response is returned to the LLM verbatim — we do not
-//! parse it into structured results, so rssh never breaks when Exa / Parallel
+//! parse it into structured results, so termx never breaks when Exa / Parallel
 //! change their response shape (mirrors opencode's approach). The only local
 //! processing is redacting the query before it leaves the device.
 
@@ -256,7 +256,7 @@ fn http_client() -> Result<&'static reqwest::Client, WebSearchError> {
             reqwest::Client::builder()
                 .connect_timeout(CONNECT_TIMEOUT)
                 .timeout(REQUEST_TIMEOUT)
-                .user_agent(concat!("rssh/", env!("CARGO_PKG_VERSION")))
+                .user_agent(concat!("termx/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .map_err(|_| ())
         })
@@ -330,7 +330,10 @@ pub async fn search(
     routing_key: &str,
 ) -> Result<WebSearchResponse, WebSearchError> {
     let query = build_query(input, redact_rules).map_err(WebSearchError::InvalidInput)?;
-    let provider_override = std::env::var("RSSH_WEB_SEARCH_PROVIDER").ok();
+    // 新名优先；`RSSH_WEB_SEARCH_PROVIDER` 为旧名回退（保留一个发布周期）。
+    let provider_override = std::env::var("TERMX_WEB_SEARCH_PROVIDER")
+        .or_else(|_| std::env::var("RSSH_WEB_SEARCH_PROVIDER"))
+        .ok();
     let provider = select_provider(routing_key, provider_override.as_deref());
     search_provider(provider, provider.endpoint(), &query).await
 }

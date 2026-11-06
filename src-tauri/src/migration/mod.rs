@@ -11,7 +11,7 @@
 //! 设计取自 Alembic / Diesel / sqitch / Rails ActiveRecord migration 运行模型。
 //! 用户跨多个大版本跳升无破坏 (v1 → v5 仍能按链路依次跑完中间各 migration)。
 //!
-//! 调用方：lib.rs setup 闭包（GUI）+ bin/rssh ctx.secret_store() 首次访问（CLI），
+//! 调用方：lib.rs setup 闭包（GUI）+ bin/termx ctx.secret_store() 首次访问（CLI），
 //! 各调一次。Marker 在 DB 共享，所以两入口一致。
 
 use crate::db::Db;

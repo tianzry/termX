@@ -1,5 +1,5 @@
-//! `rssh-server` — headless ws server entry point. Reuses the rssh engine via
-//! `rssh_lib::server`; the IDEA plugin (or a dev script) spawns this and reads
+//! `termx-server` — headless ws server entry point. Reuses the termx engine via
+//! `termx_lib::server`; the IDEA plugin (or a dev script) spawns this and reads
 //! the `{"port":..,"token":..}` line it prints on stdout to point the frontend.
 
 #[cfg(desktop)]
@@ -12,14 +12,14 @@ fn main() {
         .build()
         .expect("failed to build tokio runtime");
 
-    if let Err(e) = rt.block_on(rssh_lib::server::run()) {
-        eprintln!("rssh-server failed: {e}");
+    if let Err(e) = rt.block_on(termx_lib::server::run()) {
+        eprintln!("termx-server failed: {e}");
         std::process::exit(1);
     }
 }
 
 #[cfg(mobile)]
 fn main() {
-    eprintln!("rssh-server is only supported on desktop platforms");
+    eprintln!("termx-server is only supported on desktop platforms");
     std::process::exit(1);
 }

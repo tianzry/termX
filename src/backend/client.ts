@@ -10,7 +10,7 @@ import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
  * 目标形状对齐 netcatty 的 `window.netcatty` 服务面（session / sftp / ssh），
  * 但底层是 `invoke` + `listen`，供上层业务无感迁移。
  *
- * 关键约定（务必记牢，来自 rssh 后端）：
+ * 关键约定（务必记牢，来自 termx 后端）：
  * - 顶层 invoke 参数用 camelCase（Tauri 自动映射到 Rust snake_case）；
  *   但「嵌套 struct」（credential / profile）内部字段走 serde 原样 snake_case / 别名，不转换。
  * - 终端字节流「下行」（后端→前端）统一走 base64 文本事件 `<domain>:data:<id>`，收包要 atob 解码；
@@ -522,7 +522,7 @@ export function getCurrentDeepLinks(): Promise<string[] | null> {
   return getCurrent();
 }
 
-/** 当前窗口 label（主窗口 `main`；多窗口为 `rssh-<uuid>`）。纯 Web 壳回落 main。 */
+/** 当前窗口 label（主窗口 `main`；多窗口为 `termx-<uuid>`）。纯 Web 壳回落 main。 */
 export function currentWindowLabel(): string {
   try {
     return getCurrentWindow().label;
@@ -531,7 +531,7 @@ export function currentWindowLabel(): string {
   }
 }
 
-/** 用同连接参数开一个新窗口；新窗口启动时读 `window.__rssh_clone`。 */
+/** 用同连接参数开一个新窗口；新窗口启动时读 `window.__termx_clone`。 */
 export function openTabInNewWindow(clone: string): Promise<void> {
   return invoke("open_tab_in_new_window", { clone });
 }

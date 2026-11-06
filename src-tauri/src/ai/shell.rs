@@ -67,7 +67,7 @@ impl ShellKind {
         if self.is_raw_device() {
             return (String::new(), cmd.to_string());
         }
-        let marker = format!("__rssh_done_{}", uuid::Uuid::new_v4().simple());
+        let marker = format!("__termx_done_{}", uuid::Uuid::new_v4().simple());
         let full = self.format_sentinel(cmd, &marker);
         (marker, full)
     }
@@ -131,7 +131,7 @@ impl ShellKind {
     }
 
     /// Statement separator the LLM should use when packing multiple commands
-    /// into one `cmd` argument. Reminder: rssh does NOT split — LLM is the
+    /// into one `cmd` argument. Reminder: termx does NOT split — LLM is the
     /// one composing the line, so it needs to pick the right glue itself.
     pub fn separator(self) -> &'static str {
         match self {
@@ -227,7 +227,7 @@ impl ShellKind {
             "\n---\n\n# Target shell\n\n\
              The remote session is running **{name}**.\n\n\
              - Use shell-appropriate command syntax. Typical commands here: {examples}.\n\
-             - When you need multiple commands in one `cmd` argument, separate them with `{sep}` (rssh does not split — you compose the line).\n\
+             - When you need multiple commands in one `cmd` argument, separate them with `{sep}` (termx does not split — you compose the line).\n\
              - Exit code variable for this shell: {exit_var}.\n\
              - {tips}\n",
             name = self.name(),
@@ -265,16 +265,16 @@ mod tests {
 
     #[test]
     fn format_sentinel_posix() {
-        let got = ShellKind::Posix.format_sentinel("ls -la", "__rssh_done_abc");
-        assert_eq!(got, "ls -la; echo \"__rssh_done_abc:$?\"");
+        let got = ShellKind::Posix.format_sentinel("ls -la", "__termx_done_abc");
+        assert_eq!(got, "ls -la; echo \"__termx_done_abc:$?\"");
     }
 
     #[test]
     fn format_sentinel_cmd_no_quotes() {
         // cmd's `echo "X"` would print the literal quotes — the template
         // intentionally omits them. `&` is the unconditional separator.
-        let got = ShellKind::Cmd.format_sentinel("ipconfig", "__rssh_done_abc");
-        assert_eq!(got, "ipconfig & echo __rssh_done_abc:%errorlevel%");
+        let got = ShellKind::Cmd.format_sentinel("ipconfig", "__termx_done_abc");
+        assert_eq!(got, "ipconfig & echo __termx_done_abc:%errorlevel%");
     }
 
     #[test]
@@ -286,13 +286,13 @@ mod tests {
         // code can't leak into a later cmdlet, (b) snapshot the cmdlet success flag
         // into $ok *right after* the command (before the `$null -ne` comparison can
         // clobber $?), and (c) coalesce to a digit so the field is always numeric.
-        let got = ShellKind::Powershell.format_sentinel("Get-Process", "__rssh_done_abc");
+        let got = ShellKind::Powershell.format_sentinel("Get-Process", "__termx_done_abc");
         assert!(got.starts_with("$LASTEXITCODE=$null;"), "got: {got}");
         assert!(
             got.contains("Get-Process; $ok=$?;"),
             "must snapshot $? right after cmd: {got}"
         );
-        assert!(got.contains("__rssh_done_abc:"));
+        assert!(got.contains("__termx_done_abc:"));
         assert!(got.contains("$LASTEXITCODE")); // native exit code when one exists
         assert!(
             got.contains("elseif ($ok)"),
@@ -408,8 +408,8 @@ mod tests {
         let (m1, _) = ShellKind::Posix.sentinel_command("ls");
         let (m2, _) = ShellKind::Posix.sentinel_command("ls");
         assert_ne!(m1, m2);
-        assert!(m1.starts_with("__rssh_done_"));
-        assert!(m2.starts_with("__rssh_done_"));
+        assert!(m1.starts_with("__termx_done_"));
+        assert!(m2.starts_with("__termx_done_"));
     }
 
     #[test]
@@ -435,7 +435,7 @@ mod tests {
     fn serial_format_sentinel_is_passthrough() {
         // Direct call (edge): the raw command is the entire line, marker ignored.
         assert_eq!(
-            ShellKind::Serial.format_sentinel("reset", "__rssh_done_x"),
+            ShellKind::Serial.format_sentinel("reset", "__termx_done_x"),
             "reset"
         );
     }
@@ -463,7 +463,7 @@ mod tests {
         assert_eq!(marker, "");
         assert_eq!(full, "show version");
         assert_eq!(
-            ShellKind::Telnet.format_sentinel("display version", "__rssh_done_x"),
+            ShellKind::Telnet.format_sentinel("display version", "__termx_done_x"),
             "display version"
         );
         assert_eq!(ShellKind::Telnet.separator(), "\n");

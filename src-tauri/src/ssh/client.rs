@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
@@ -89,7 +89,7 @@ fn ssh_dispatcher() -> &'static tokio::sync::mpsc::UnboundedSender<SshJob> {
     TX.get_or_init(|| {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SshJob>();
         std::thread::Builder::new()
-            .name("rssh-ssh".into())
+            .name("termx-ssh".into())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()

@@ -159,7 +159,7 @@ describe("invoke 参数形状", () => {
   });
 
   it("invoke 拒绝时原样抛出后端错误（供上层 decodeAppError 解析）", async () => {
-    const raw = '__rssh_err__|{"code":"ssh_auth_failed"}';
+    const raw = '__termx_err__|{"code":"ssh_auth_failed"}';
     mockedInvoke.mockRejectedValue(new Error(raw));
     await expect(sshConnect("p", 80, 24, "sid-x")).rejects.toThrow(raw);
   });

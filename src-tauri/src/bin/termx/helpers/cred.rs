@@ -3,9 +3,9 @@
 //! `Named` trait 把 Profile/Credential/Forward 的 (name, id) 抽象成统一形态，
 //! `find_id_by_name` 走泛型一份代替三份重复函数。
 
-use rssh_lib::error::AppResult;
-use rssh_lib::models::{Credential, Forward, Profile};
-use rssh_lib::secret::cred_secret_key;
+use termx_lib::error::AppResult;
+use termx_lib::models::{Credential, Forward, Profile};
+use termx_lib::secret::cred_secret_key;
 
 use super::tui::die;
 use crate::ctx::CliCtx;
@@ -67,13 +67,13 @@ pub fn load_cred_secrets(conn: &CliCtx, mut c: Credential) -> AppResult<Credenti
 /// 把 Credential 完整写入（DB INSERT + SecretStore secret）。
 /// 私钥 passphrase 不再持久化 — OpenSSH 会在使用 -i 时自行交互索取。
 pub fn upsert_cred_with_secrets(conn: &CliCtx, c: &Credential) -> AppResult<()> {
-    rssh_lib::db::credential::insert(conn, c)?;
+    termx_lib::db::credential::insert(conn, c)?;
     write_secret(conn, c)
 }
 
 /// update 版本（DB UPDATE 而非 INSERT）。
 pub fn update_cred_with_secrets(conn: &CliCtx, c: &Credential) -> AppResult<()> {
-    rssh_lib::db::credential::update(conn, c)?;
+    termx_lib::db::credential::update(conn, c)?;
     write_secret(conn, c)
 }
 

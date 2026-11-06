@@ -155,7 +155,7 @@ pub async fn check_update(
     }
 
     let client = reqwest::Client::builder()
-        .user_agent(concat!("rssh/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("termx/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| {
@@ -230,7 +230,7 @@ pub async fn fetch_latest_release_tag(repo: String) -> AppResult<String> {
     }
     let url = format!("https://github.com/{repo}/releases/latest");
     let client = reqwest::Client::builder()
-        .user_agent(concat!("rssh/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("termx/", env!("CARGO_PKG_VERSION")))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| {

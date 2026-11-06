@@ -27,7 +27,7 @@ use super::{Actor, CommandOutcome};
 
 /// 远端 file_ops 工具能力。lazy 探测一次后缓存到 session 生命周期。
 ///
-/// 设计原则：rssh 后端不再 cat 整文件回 PTY（避免 ANSI/scrollback/buffer 丢内容），
+/// 设计原则：termx 后端不再 cat 整文件回 PTY（避免 ANSI/scrollback/buffer 丢内容），
 /// 改为让远端预制脚本读文件 + 算 count/context + 写 tmp，只回小 JSON。
 /// patch_file 的 unified diff 走独立的 `diff -u` 命令算。
 /// 因此 file_ops 整体硬依赖 python3 或 (perl + diff)。
@@ -79,20 +79,20 @@ fn parse_capabilities(output: &str) -> RemoteCapabilities {
 // ─── JSON marker ─────────────────────────────────────────────────
 
 /// JSON 输出包裹 marker：脚本把结果包在两个 marker 之间输出，
-/// rssh 后端用此 marker 从 PTY 字节流里精准切出 JSON，规避 shell prompt /
+/// termx 后端用此 marker 从 PTY 字节流里精准切出 JSON，规避 shell prompt /
 /// ANSI 序列 / 命令回显的干扰。
-const JSON_MARKER: &str = "__RSSH_JSON__";
+const JSON_MARKER: &str = "__TERMX_JSON__";
 
 /// 从 PTY 原始输出里抽出由 `JSON_MARKER` 包裹的内容。
 /// 找不到一对独立成行的 marker 返回 None。
 ///
-/// **按"独立成行"匹配**，不是 rfind 子串。脚本字面量里有 `M="__RSSH_JSON__"` 这行，
+/// **按"独立成行"匹配**，不是 rfind 子串。脚本字面量里有 `M="__TERMX_JSON__"` 这行，
 /// 脚本协议把 marker 输出为**整行**（前后都是 `\n`）。如果用 rfind：
 ///   1. 脚本源码 `M = "..."` 那行 echo 回显（marker 子串嵌在 `M = "<marker>"`）
 ///   2. 脚本输出的开头 marker（整行）
 ///   3. 脚本输出的结尾 marker（整行）
 ///   4. **更危险**：match_file 的 context 字段如果含 marker 字面（用户在文件里写了
-///      `__RSSH_JSON__` 注释），子串扫到的位置会在 JSON 内部切，破坏解析。
+///      `__TERMX_JSON__` 注释），子串扫到的位置会在 JSON 内部切，破坏解析。
 ///
 /// 按行匹配杜绝以上风险：只有"整行 trim 后等于 marker"的位置才算锚点。脚本输出的
 /// marker 一定独占一行；echo 回显里的字面量永远嵌在更长的源码行里，不会误匹配；
@@ -136,7 +136,7 @@ fn extract_json_payload(pty_output: &str) -> Option<&str> {
 /// 把全部 output buffer 住 —— 短 find（如 "a"）配大文件 (`/var/log/*`) 可产 MB 级 JSON，
 /// 在 backend 拿到 payload 前先把前端 UI OOM。在远端就 cap 才彻底安全。
 const PYTHON_MATCH_SCRIPT: &str = r#"import sys,json
-M="__RSSH_JSON__"
+M="__TERMX_JSON__"
 def o(x):sys.stdout.write(M+"\n"+json.dumps(x,ensure_ascii=False)+"\n"+M+"\n")
 p=sys.argv[1];f=sys.argv[2];b=int(sys.argv[3]);a=int(sys.argv[4])
 try:t=open(p,"rb").read().decode("utf-8")
@@ -159,7 +159,7 @@ o(r)
 /// 前置：shell 已 `cp path tmp`。脚本读 tmp → 校验 count → in-place 替换 → JSON {count}。
 /// count 不匹配时删除 tmp，避免半成品残留。
 const PYTHON_PATCH_SCRIPT: &str = r#"import sys,json,os
-M="__RSSH_JSON__"
+M="__TERMX_JSON__"
 def o(x):sys.stdout.write(M+"\n"+json.dumps(x,ensure_ascii=False)+"\n"+M+"\n")
 p=sys.argv[1];f=sys.argv[2];r=sys.argv[3];e=int(sys.argv[4])
 try:t=open(p,"rb").read().decode("utf-8")
@@ -178,7 +178,7 @@ o({"count":c})
 /// `\Q...\E` 把 find 当字面量匹配，跳过 regex 元字符。utf8::decode 让长度按字符算。
 /// 同 PYTHON_MATCH_SCRIPT：远端 cap = 50 matches，count 仍记真实总数。
 const PERL_MATCH_SCRIPT: &str = r#"use strict;use warnings;use JSON::PP;
-my $M="__RSSH_JSON__";
+my $M="__TERMX_JSON__";
 sub o{print $M,"\n",encode_json($_[0]),"\n",$M,"\n"}
 my($p,$f,$b,$a)=@ARGV;utf8::decode($f);
 open(my $h,'<:raw',$p)or do{o({error=>"file_not_found"});exit 0};
@@ -200,7 +200,7 @@ o(\%r);
 
 /// patch_file Stage 2 的 perl 脚本（降级路径）。位置参数：tmp_path find replace expected
 const PERL_PATCH_SCRIPT: &str = r#"use strict;use warnings;use JSON::PP;
-my $M="__RSSH_JSON__";
+my $M="__TERMX_JSON__";
 sub o{print $M,"\n",encode_json($_[0]),"\n",$M,"\n"}
 my($p,$f,$r,$e)=@ARGV;utf8::decode($f);utf8::decode($r);
 open(my $h,'<:raw',$p)or do{o({error=>"io_error",message=>"$!"});exit 0};
@@ -316,7 +316,7 @@ fn ansi_c_quote(s: &str) -> String {
     out
 }
 
-/// POSIX 单引号转义。所有 rssh 后端拼装的 PTY 命令都走这个，避免路径含
+/// POSIX 单引号转义。所有 termx 后端拼装的 PTY 命令都走这个，避免路径含
 /// 空格/特殊字符时被 shell 错误解析。
 ///
 /// 转义规则：把整个串包在单引号里；输入中的每个单引号替换为 `'\''`
@@ -335,7 +335,7 @@ fn shell_quote(s: &str) -> String {
 ///   脚本/find/replace 全单行化要规避的问题。path 走的是 shell_quote 不经 ansi_c_quote，必须
 ///   在入口直接拒。
 /// - 其他 C0 控制字符 (0x00-0x1F) 和 DEL (0x7F)：terminal escape injection 防御（同 ansi_c_quote
-///   注释里 ESC/BEL 的理由）。Unix 文件名理论上允许这些字符，但 rssh 用户场景里它们没合理用法。
+///   注释里 ESC/BEL 的理由）。Unix 文件名理论上允许这些字符，但 termx 用户场景里它们没合理用法。
 fn validate_path(path: &str) -> Result<(), &'static str> {
     if path.is_empty() {
         return Err("empty path");
@@ -525,7 +525,7 @@ impl Actor {
     ///
     /// 跟 `handle_run_command` 的区别：
     /// 1. **不走 `sanitize::validate`**。cp / mv / python3 等会被 DESTRUCTIVE / INTERPRETERS_DENIED
-    ///    拒掉，但 file_ops 的命令是 rssh 后端构造的固定模板（不是 LLM 直传），由 rssh 自己负责安全。
+    ///    拒掉，但 file_ops 的命令是 termx 后端构造的固定模板（不是 LLM 直传），由 termx 自己负责安全。
     /// 2. 返回原始 `CommandOutcome` 给上层做错误分支（多步流程要根据 exit / JSON marker
     ///    决定是否中断、是否提示 tmp 残留等）。
     ///
@@ -620,7 +620,7 @@ impl Actor {
                 Self::complete_action(ack, Ok(()));
                 // 返回 redact 前的 raw output —— 上层要从中 extract_json_payload，
                 // 脱敏后的版本里 marker 可能被改写。脱敏只作用于 audit / UI 显示，
-                // 不影响 rssh 内部解析。
+                // 不影响 termx 内部解析。
                 Ok(CommandOutcome::Result {
                     exit_code,
                     output,
@@ -662,7 +662,7 @@ impl Actor {
             None => {
                 return Ok(self.make_tool_error(
                     &tc.id,
-                    "match_file: remote system lacks python3 / perl — rssh cannot inspect the file. \
+                    "match_file: remote system lacks python3 / perl — termx cannot inspect the file. \
                      Tell the user to install python3 (preferred) or perl.",
                 ));
             }
@@ -787,7 +787,7 @@ impl Actor {
             None => {
                 return Ok(self.make_tool_error(
                     &tc.id,
-                    "patch_file: remote system lacks python3 / perl — rssh cannot patch the file. \
+                    "patch_file: remote system lacks python3 / perl — termx cannot patch the file. \
                      Tell the user to install python3 (preferred) or perl.",
                 ));
             }
@@ -795,7 +795,7 @@ impl Actor {
         if !caps.diff {
             return Ok(self.make_tool_error(
                 &tc.id,
-                "patch_file: remote system lacks `diff` — rssh cannot show the diff for approval. \
+                "patch_file: remote system lacks `diff` — termx cannot show the diff for approval. \
                  Tell the user to install diffutils.",
             ));
         }
@@ -807,7 +807,7 @@ impl Actor {
             .chars()
             .take(8)
             .collect();
-        let tmp_path = format!("{}.rssh-{}", input.path, tmp_suffix);
+        let tmp_path = format!("{}.termx-{}", input.path, tmp_suffix);
 
         // ── Card 1/4: cp 原文到 tmp ──────────────────────────────
         let domain = serde_json::Map::from_iter([
@@ -1325,7 +1325,7 @@ mod tests {
     #[test]
     fn extract_json_basic() {
         let pty =
-            "shell echo\n__RSSH_JSON__\n{\"count\":3,\"matches\":[]}\n__RSSH_JSON__\nsentinel:0\n";
+            "shell echo\n__TERMX_JSON__\n{\"count\":3,\"matches\":[]}\n__TERMX_JSON__\nsentinel:0\n";
         assert_eq!(
             extract_json_payload(pty),
             Some("{\"count\":3,\"matches\":[]}")
@@ -1334,7 +1334,7 @@ mod tests {
 
     #[test]
     fn extract_json_with_pty_noise() {
-        let pty = "\x1b[?2004l\rprefix\n__RSSH_JSON__\n{\"a\":1}\n__RSSH_JSON__\r\nsentinel\n";
+        let pty = "\x1b[?2004l\rprefix\n__TERMX_JSON__\n{\"a\":1}\n__TERMX_JSON__\r\nsentinel\n";
         assert_eq!(extract_json_payload(pty), Some("{\"a\":1}"));
     }
 
@@ -1342,24 +1342,24 @@ mod tests {
     fn extract_json_missing_returns_none() {
         assert_eq!(extract_json_payload("no markers here"), None);
         assert_eq!(
-            extract_json_payload("__RSSH_JSON__\nonly one marker\n"),
+            extract_json_payload("__TERMX_JSON__\nonly one marker\n"),
             None
         );
     }
 
     #[test]
     fn extract_json_ignores_marker_literal_in_echoed_script() {
-        // Regression: shell ECHO 会把脚本源码一并回显，脚本里 `M = "__RSSH_JSON__"`
+        // Regression: shell ECHO 会把脚本源码一并回显，脚本里 `M = "__TERMX_JSON__"`
         // 那行会作为 echo 的一部分进入 buffer。此时 buffer 含 3 个 marker：
         // 1 个 echo 字面量 + 2 个脚本真正输出。必须抽脚本输出的那对。
         let pty = "\
 python3 -c 'import sys\n\
-M = \"__RSSH_JSON__\"\n\
+M = \"__TERMX_JSON__\"\n\
 print(M); print(\"payload\"); print(M)'\n\
-__RSSH_JSON__\n\
+__TERMX_JSON__\n\
 {\"count\":5,\"matches\":[{\"line\":84}]}\n\
-__RSSH_JSON__\n\
-__rssh_done_abc:0\n";
+__TERMX_JSON__\n\
+__termx_done_abc:0\n";
         assert_eq!(
             extract_json_payload(pty),
             Some("{\"count\":5,\"matches\":[{\"line\":84}]}")
@@ -1368,18 +1368,18 @@ __rssh_done_abc:0\n";
 
     #[test]
     fn extract_json_ignores_marker_literal_inside_json_payload() {
-        // Regression：之前用 rfind 子串。如果用户文件里写了 `__RSSH_JSON__` 注释，
+        // Regression：之前用 rfind 子串。如果用户文件里写了 `__TERMX_JSON__` 注释，
         // match_file 把 context 字段塞进 JSON 输出 —— rfind 会扫到 JSON 内部的 marker 子串，
         // 在 JSON 中间切，破解析。按"独立成行"匹配杜绝这个：marker 子串嵌在引号 + 上下文里
         // 时永远不会独占一行。
         let pty = "\
-__RSSH_JSON__\n\
-{\"count\":1,\"matches\":[{\"line\":3,\"context\":\"# note: __RSSH_JSON__ is rssh internal\"}]}\n\
-__RSSH_JSON__\n\
-__rssh_done_xyz:0\n";
+__TERMX_JSON__\n\
+{\"count\":1,\"matches\":[{\"line\":3,\"context\":\"# note: __TERMX_JSON__ is termx internal\"}]}\n\
+__TERMX_JSON__\n\
+__termx_done_xyz:0\n";
         assert_eq!(
             extract_json_payload(pty),
-            Some("{\"count\":1,\"matches\":[{\"line\":3,\"context\":\"# note: __RSSH_JSON__ is rssh internal\"}]}")
+            Some("{\"count\":1,\"matches\":[{\"line\":3,\"context\":\"# note: __TERMX_JSON__ is termx internal\"}]}")
         );
     }
 
@@ -1388,9 +1388,9 @@ __rssh_done_xyz:0\n";
         // 防御性：PTY buffer 累积多次工具调用的输出时（实际不会，每次 finish 都清，
         // 但万一上游误传整段 session log），取最后一对仍然给出最新的 JSON。
         let pty = "\
-__RSSH_JSON__\n{\"call\":\"first\"}\n__RSSH_JSON__\n\
+__TERMX_JSON__\n{\"call\":\"first\"}\n__TERMX_JSON__\n\
 some interleaved noise\n\
-__RSSH_JSON__\n{\"call\":\"second\"}\n__RSSH_JSON__\n";
+__TERMX_JSON__\n{\"call\":\"second\"}\n__TERMX_JSON__\n";
         assert_eq!(extract_json_payload(pty), Some("{\"call\":\"second\"}"));
     }
 
@@ -1494,7 +1494,7 @@ __RSSH_JSON__\n{\"call\":\"second\"}\n__RSSH_JSON__\n";
         // 的字符串缩进塌掉，patch 写出来的文件就乱了。
         //
         // 历史误诊场景：发现 prometheus.yml 改完缩进塌成 2 空格，第一反应怀疑这里。
-        // 实际是 LLM 在 tool input 里就给了塌的缩进 —— rssh 链路本身无损。本测试钉死
+        // 实际是 LLM 在 tool input 里就给了塌的缩进 —— termx 链路本身无损。本测试钉死
         // 这个不变量，下次遇到类似怀疑直接看这测试是否还过。
         let yaml = "  - job_name: \"x\"\n    scrape_interval: 1s\n      - targets: [\"h:80\"]";
         let q = ansi_c_quote(yaml);
@@ -1623,8 +1623,8 @@ __RSSH_JSON__\n{\"call\":\"second\"}\n__RSSH_JSON__\n";
 
     #[test]
     fn build_cp_cmd_form() {
-        let cmd = build_cp_cmd("/p", "/p.rssh-abc12345");
-        assert_eq!(cmd, r"\cp -- '/p' '/p.rssh-abc12345'");
+        let cmd = build_cp_cmd("/p", "/p.termx-abc12345");
+        assert_eq!(cmd, r"\cp -- '/p' '/p.termx-abc12345'");
     }
 
     #[test]
@@ -1653,8 +1653,8 @@ __RSSH_JSON__\n{\"call\":\"second\"}\n__RSSH_JSON__\n";
 
     #[test]
     fn build_mv_cmd_form() {
-        let cmd = build_mv_cmd("/p.rssh-abc12345", "/p");
-        assert_eq!(cmd, r"\mv -- '/p.rssh-abc12345' '/p'");
+        let cmd = build_mv_cmd("/p.termx-abc12345", "/p");
+        assert_eq!(cmd, r"\mv -- '/p.termx-abc12345' '/p'");
     }
 
     #[test]

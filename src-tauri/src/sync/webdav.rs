@@ -36,7 +36,7 @@ impl WebDavSync {
     pub fn client_builder() -> reqwest::ClientBuilder {
         Client::builder()
             .timeout(DEFAULT_TIMEOUT)
-            .user_agent(format!("rssh/{}", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("termx/{}", env!("CARGO_PKG_VERSION")))
     }
 
     pub fn from_settings(url: &str, username: &str, password: &str) -> AppResult<Self> {
@@ -162,7 +162,7 @@ impl WebDavSync {
     }
 
     /// Path prefixes of `base` ordered leaf-first:
-    /// "/dav/rssh/" -> ["/dav/rssh/", "/dav/"].
+    /// "/dav/termx/" -> ["/dav/termx/", "/dav/"].
     fn path_prefixes_leaf_first(base: &Url) -> AppResult<Vec<Url>> {
         let mut prefixes = Vec::new();
         let mut acc = String::new();
@@ -340,16 +340,16 @@ mod tests {
 
     #[test]
     fn from_settings_accepts_valid_https_url() {
-        let s = WebDavSync::from_settings("https://dav.example.com/rssh/", "u", "p").unwrap();
-        assert_eq!(s.url, "https://dav.example.com/rssh/");
+        let s = WebDavSync::from_settings("https://dav.example.com/termx/", "u", "p").unwrap();
+        assert_eq!(s.url, "https://dav.example.com/termx/");
         assert_eq!(s.username, "u");
         assert_eq!(s.password, "p");
     }
 
     #[test]
     fn from_settings_adds_trailing_slash() {
-        let s = WebDavSync::from_settings("https://dav.example.com/rssh", "u", "p").unwrap();
-        assert_eq!(s.url, "https://dav.example.com/rssh/");
+        let s = WebDavSync::from_settings("https://dav.example.com/termx", "u", "p").unwrap();
+        assert_eq!(s.url, "https://dav.example.com/termx/");
     }
 
     #[test]
@@ -416,12 +416,12 @@ mod tests {
     async fn push_uses_correct_nested_path() {
         let mut server = mockito::Server::new_async().await;
         let put = server
-            .mock("PUT", "/rssh/rssh_backup.enc")
+            .mock("PUT", "/termx/rssh_backup.enc")
             .with_status(201)
             .match_header("authorization", "Basic dTpw")
             .create_async()
             .await;
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
         sync.push("payload").await.unwrap();
 
@@ -437,13 +437,13 @@ mod tests {
         };
         let body = metadata.to_json().unwrap();
         let _m = server
-            .mock("PUT", "/rssh/rssh_backup.meta.json")
+            .mock("PUT", "/termx/rssh_backup.meta.json")
             .match_header("authorization", "Basic dTpw")
             .match_body(body.as_str())
             .with_status(201)
             .create_async()
             .await;
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         sync.push_metadata(&metadata).await.unwrap();
@@ -458,13 +458,13 @@ mod tests {
         };
         let body = metadata.to_json().unwrap();
         let _m = server
-            .mock("GET", "/rssh/rssh_backup.meta.json")
+            .mock("GET", "/termx/rssh_backup.meta.json")
             .match_header("authorization", "Basic dTpw")
             .with_status(200)
             .with_body(body)
             .create_async()
             .await;
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         assert_eq!(sync.pull_metadata().await.unwrap(), Some(metadata));
@@ -596,7 +596,7 @@ mod tests {
         // A non-root base makes the PROPFIND pre-flight the first request on
         // the wire; its transport failure must not claim push or pull.
         let client = Client::builder().no_proxy().build().unwrap();
-        let sync = WebDavSync::with_client("http://127.0.0.1:0/rssh", "u", "p", client).unwrap();
+        let sync = WebDavSync::with_client("http://127.0.0.1:0/termx", "u", "p", client).unwrap();
 
         let err = sync.push("payload").await.unwrap_err();
         assert_eq!(err.code(), "webdav_preflight_failed");
@@ -607,7 +607,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         // Leaf exists: single PROPFIND, no MKCOL.
         let probe = server
-            .mock("PROPFIND", "/rssh/")
+            .mock("PROPFIND", "/termx/")
             .match_header("Depth", "0")
             .with_status(207)
             .expect(1)
@@ -620,13 +620,13 @@ mod tests {
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/rssh/rssh_backup.enc")
+            .mock("PUT", "/termx/rssh_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
             .await;
 
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         sync.push("payload").await.unwrap();
@@ -641,25 +641,25 @@ mod tests {
     async fn push_creates_missing_collection_before_put() {
         let mut server = mockito::Server::new_async().await;
         let probe = server
-            .mock("PROPFIND", "/rssh/")
+            .mock("PROPFIND", "/termx/")
             .with_status(404)
             .expect(1)
             .create_async()
             .await;
         let mkcol = server
-            .mock("MKCOL", "/rssh/")
+            .mock("MKCOL", "/termx/")
             .with_status(201)
             .expect(1)
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/rssh/rssh_backup.enc")
+            .mock("PUT", "/termx/rssh_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
             .await;
 
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         sync.push("payload").await.unwrap();
@@ -673,10 +673,10 @@ mod tests {
     #[tokio::test]
     async fn push_skips_existing_parent_collections() {
         let mut server = mockito::Server::new_async().await;
-        // Bottom-up: leaf /dav/rssh/ missing, parent /dav/ exists — the walk
+        // Bottom-up: leaf /dav/termx/ missing, parent /dav/ exists — the walk
         // must stop there and never MKCOL the existing parent.
         let probe_leaf = server
-            .mock("PROPFIND", "/dav/rssh/")
+            .mock("PROPFIND", "/dav/termx/")
             .with_status(404)
             .expect(1)
             .create_async()
@@ -694,19 +694,19 @@ mod tests {
             .create_async()
             .await;
         let mkcol_leaf = server
-            .mock("MKCOL", "/dav/rssh/")
+            .mock("MKCOL", "/dav/termx/")
             .with_status(201)
             .expect(1)
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/dav/rssh/rssh_backup.enc")
+            .mock("PUT", "/dav/termx/rssh_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
             .await;
 
-        let base = format!("{}/dav/rssh", server.url());
+        let base = format!("{}/dav/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         sync.push("payload").await.unwrap();
@@ -772,25 +772,25 @@ mod tests {
     async fn push_treats_mkcol_405_as_existing_collection() {
         let mut server = mockito::Server::new_async().await;
         let _probe = server
-            .mock("PROPFIND", "/rssh/")
+            .mock("PROPFIND", "/termx/")
             .with_status(404)
             .expect(1)
             .create_async()
             .await;
         let mkcol = server
-            .mock("MKCOL", "/rssh/")
+            .mock("MKCOL", "/termx/")
             .with_status(405)
             .expect(1)
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/rssh/rssh_backup.enc")
+            .mock("PUT", "/termx/rssh_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
             .await;
 
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         sync.push("payload").await.unwrap();
@@ -804,20 +804,20 @@ mod tests {
     async fn pull_probes_collection_before_get() {
         let mut server = mockito::Server::new_async().await;
         let probe = server
-            .mock("PROPFIND", "/rssh/")
+            .mock("PROPFIND", "/termx/")
             .with_status(207)
             .expect(1)
             .create_async()
             .await;
         let _file = server
-            .mock("GET", "/rssh/rssh_backup.enc")
+            .mock("GET", "/termx/rssh_backup.enc")
             .with_status(200)
             .with_body("encrypted-data")
             .expect(1)
             .create_async()
             .await;
 
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         assert_eq!(sync.pull().await.unwrap(), "encrypted-data");
@@ -829,25 +829,25 @@ mod tests {
     async fn pull_creates_missing_collection_then_reports_not_found() {
         let mut server = mockito::Server::new_async().await;
         let _probe = server
-            .mock("PROPFIND", "/rssh/")
+            .mock("PROPFIND", "/termx/")
             .with_status(404)
             .expect(1)
             .create_async()
             .await;
         let mkcol = server
-            .mock("MKCOL", "/rssh/")
+            .mock("MKCOL", "/termx/")
             .with_status(201)
             .expect(1)
             .create_async()
             .await;
         let _file = server
-            .mock("GET", "/rssh/rssh_backup.enc")
+            .mock("GET", "/termx/rssh_backup.enc")
             .with_status(404)
             .expect(1)
             .create_async()
             .await;
 
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         let err = sync.pull().await.unwrap_err();
@@ -860,26 +860,26 @@ mod tests {
     async fn mkcol_error_carries_op() {
         let mut server = mockito::Server::new_async().await;
         let _probe = server
-            .mock("PROPFIND", "/rssh/")
+            .mock("PROPFIND", "/termx/")
             .with_status(404)
             .expect(1)
             .create_async()
             .await;
         let _mkcol = server
-            .mock("MKCOL", "/rssh/")
+            .mock("MKCOL", "/termx/")
             .with_status(403)
             .expect(1)
             .create_async()
             .await;
 
-        let base = format!("{}/rssh", server.url());
+        let base = format!("{}/termx", server.url());
         let sync = WebDavSync::from_settings(&base, "u", "p").unwrap();
 
         let err = sync.push("payload").await.unwrap_err();
         match err {
             AppError::Other(c) => {
                 assert_eq!(c.code, "webdav_auth_failed");
-                assert_eq!(c.params["op"], "MKCOL /rssh/");
+                assert_eq!(c.params["op"], "MKCOL /termx/");
                 assert_eq!(c.params["status"], 403);
             }
             other => panic!("expected AppError::Other, got {other:?}"),

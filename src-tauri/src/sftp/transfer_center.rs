@@ -794,10 +794,10 @@ fn pick_next_index(
         .map(|(i, _)| i)
 }
 
-/// 从 AppError 的 Display（`__rssh_err__|{...}`）解析 i18n code。
+/// 从 AppError 的 Display（`__termx_err__|{...}`）解析 i18n code。
 fn err_code(e: &AppError) -> String {
     e.to_string()
-        .strip_prefix("__rssh_err__|")
+        .strip_prefix("__termx_err__|")
         .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
         .and_then(|v| v.get("code").and_then(|c| c.as_str()).map(str::to_string))
         .unwrap_or_else(|| "sftp_io_failed".to_string())

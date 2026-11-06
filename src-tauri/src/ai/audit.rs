@@ -1,7 +1,7 @@
 //! 内存审计日志 + 保存到人类可读文本。
 //!
 //! 决议 #4：审计 panel 时间线一目了然，用户主动点保存才落盘。
-//! 文件名形如 `rssh-diagnose-<session>-<ts>.log`。
+//! 文件名形如 `termx-diagnose-<session>-<ts>.log`。
 
 use std::path::Path;
 
@@ -44,7 +44,7 @@ pub enum AuditKind {
         id: String,
         reason: String,
     },
-    /// rssh's own safety layer refused a run_command before it ever reached the
+    /// termx's own safety layer refused a run_command before it ever reached the
     /// user as an approval card (blacklist / shape validator). Distinct from
     /// CommandRejected, which is the *user* rejecting a card.
     CommandBlocked {
@@ -120,7 +120,7 @@ impl AuditLog {
     pub fn to_log_string(&self) -> String {
         let mut s = String::new();
         s.push_str(&format!(
-            "# rssh AI 排障审计\n# 共 {} 条记录\n# 生成时间: {}\n\n",
+            "# termx AI 排障审计\n# 共 {} 条记录\n# 生成时间: {}\n\n",
             self.entries.len(),
             Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
         ));
@@ -361,7 +361,7 @@ mod tests {
         log.push(AuditKind::Note {
             message: "测试".into(),
         });
-        let path = std::env::temp_dir().join("rssh-audit-test.log");
+        let path = std::env::temp_dir().join("termx-audit-test.log");
         log.save_to_file(&path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("NOTE"));

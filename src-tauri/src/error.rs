@@ -4,7 +4,7 @@ use serde::Serialize;
 
 /// i18n 错误消息：`code` 对应前端 `error.<code>` 翻译键，`params` 用于占位符替换。
 ///
-/// `Display` 输出形如 `__rssh_err__|{"code":"...","params":{...}}`，前端 `errMsg()`
+/// `Display` 输出形如 `__termx_err__|{"code":"...","params":{...}}`，前端 `errMsg()`
 /// 识别此前缀走翻译表。每个 `AppError` 业务变体都装一个 `CodedMsg`——所有错误
 /// 必须 i18n，没有"裸字符串报错信息"的逃生通道。
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ impl CodedMsg {
 impl std::fmt::Display for CodedMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let payload = serde_json::json!({ "code": self.code, "params": &self.params });
-        write!(f, "__rssh_err__|{payload}")
+        write!(f, "__termx_err__|{payload}")
     }
 }
 
@@ -39,7 +39,7 @@ pub enum AppError {
     Io(CodedMsg),
 
     /// 锁中毒——编程 bug，固定 i18n code，无参数。
-    #[error("__rssh_err__|{{\"code\":\"lock_poisoned\",\"params\":{{}}}}")]
+    #[error("__termx_err__|{{\"code\":\"lock_poisoned\",\"params\":{{}}}}")]
     Lock,
 
     /// SSH 协议 / 连接 / 认证错误。
@@ -161,7 +161,7 @@ mod tests {
     use std::fmt;
 
     /// 前端 `errMsg()` 硬编码识别这个前缀，改了字面值即破整套 i18n 翻译。
-    const PROTO_PREFIX: &str = "__rssh_err__|";
+    const PROTO_PREFIX: &str = "__termx_err__|";
 
     #[derive(Debug)]
     struct ChainedError {
@@ -213,7 +213,7 @@ mod tests {
         let m = CodedMsg::new("foo", json!({"x": 1}));
         assert_eq!(
             m.to_string(),
-            r#"__rssh_err__|{"code":"foo","params":{"x":1}}"#
+            r#"__termx_err__|{"code":"foo","params":{"x":1}}"#
         );
     }
 
@@ -222,7 +222,7 @@ mod tests {
         let m = CodedMsg::new("ssh_auth_rejected", json!({}));
         assert_eq!(
             m.to_string(),
-            r#"__rssh_err__|{"code":"ssh_auth_rejected","params":{}}"#
+            r#"__termx_err__|{"code":"ssh_auth_rejected","params":{}}"#
         );
     }
 
@@ -232,7 +232,7 @@ mod tests {
         let m = CodedMsg::new("ssh_connect_failed", json!({"err": "timeout"}));
         assert_eq!(
             m.to_string(),
-            r#"__rssh_err__|{"code":"ssh_connect_failed","params":{"err":"timeout"}}"#
+            r#"__termx_err__|{"code":"ssh_connect_failed","params":{"err":"timeout"}}"#
         );
     }
 
@@ -243,7 +243,7 @@ mod tests {
         // 字节相同。
         assert_eq!(
             AppError::Lock.to_string(),
-            r#"__rssh_err__|{"code":"lock_poisoned","params":{}}"#
+            r#"__termx_err__|{"code":"lock_poisoned","params":{}}"#
         );
     }
 
@@ -252,19 +252,19 @@ mod tests {
         let e = AppError::ssh("ssh_connect_failed", json!({"host": "h", "port": 22}));
         assert_eq!(
             e.to_string(),
-            r#"__rssh_err__|{"code":"ssh_connect_failed","params":{"host":"h","port":22}}"#
+            r#"__termx_err__|{"code":"ssh_connect_failed","params":{"host":"h","port":22}}"#
         );
     }
 
     #[test]
     fn app_error_serialize_for_tauri_exact_value() {
         // Tauri 把 AppError 当 string 序列化送给前端：JSON 字符串字面量
-        // 形态 = `"__rssh_err__|{...}"`（外层加引号 + 内层 JSON 中的 " 被转义）。
+        // 形态 = `"__termx_err__|{...}"`（外层加引号 + 内层 JSON 中的 " 被转义）。
         let e = AppError::not_found("profile_not_found", json!({"id": "abc"}));
         let json = serde_json::to_string(&e).unwrap();
         assert_eq!(
             json,
-            r#""__rssh_err__|{\"code\":\"profile_not_found\",\"params\":{\"id\":\"abc\"}}""#
+            r#""__termx_err__|{\"code\":\"profile_not_found\",\"params\":{\"id\":\"abc\"}}""#
         );
     }
 
@@ -276,7 +276,7 @@ mod tests {
         let e: AppError = io.into();
         assert_eq!(
             e.to_string(),
-            r#"__rssh_err__|{"code":"io_error","params":{"err":"boom"}}"#
+            r#"__termx_err__|{"code":"io_error","params":{"err":"boom"}}"#
         );
     }
 

@@ -50,7 +50,7 @@ pub(in crate::ai::session) enum CommandOutcome {
     },
 }
 
-/// SFTP 下载硬上限。LLM 不可信，rssh 在边界 enforce：超过 100MB 一律不走 SFTP。
+/// SFTP 下载硬上限。LLM 不可信，termx 在边界 enforce：超过 100MB 一律不走 SFTP。
 /// 用户要分析更大的 artifact（GB-scale heap dump 等），人工 scp/rsync 拉到本地后
 /// 直接调用 analyze_locally。理由：(1) 单条 SSH 上的 SFTP 不是搬 GB 文件的合适通道；
 /// (2) AI 静默把巨型文件拉过来对用户是 hostile —— 让人显式动手。
@@ -783,7 +783,7 @@ impl Actor {
 
             // Shell section 跟 system_prompt 拼在一起喂 LLM。shell_kind 启动时定死，
             // 不再变，这里拼是为了不把 section 烤进 self.system_prompt（保持其干净）。
-            // section 是 rssh 自己生成的静态字符串，不含敏感信息，不需要过 redact。
+            // section 是 termx 自己生成的静态字符串，不含敏感信息，不需要过 redact。
             let system_prompt = format!(
                 "{}{}",
                 self.system_prompt,
@@ -1351,7 +1351,7 @@ impl Actor {
             "skill_loaded",
             json!({ "id": skill.id, "name": skill.name }),
         );
-        // Skill content is operator-curated rssh-side text — already trusted
+        // Skill content is operator-curated termx-side text — already trusted
         // and free of remote secrets. Mark pre_redacted to skip re-scan.
         Ok(Self::make_tool_result(
             &tc.id,
@@ -1376,7 +1376,7 @@ impl Actor {
             return Ok(self.make_tool_error(
                 &tc.id,
                 &format!(
-                    "rssh caps download_file at {MAX_DOWNLOAD_MB} MB (you requested max_mb={}). \
+                    "termx caps download_file at {MAX_DOWNLOAD_MB} MB (you requested max_mb={}). \
                      Don't retry with a smaller max_mb if the actual file is larger — `ls -l` it first. \
                      For artifacts >{MAX_DOWNLOAD_MB} MB, tell the user to transfer {} via scp / rsync / sz \
                      to their local machine themselves, then call `analyze_locally` on that local path.",
@@ -1509,7 +1509,7 @@ impl Actor {
                     message: format!("download_file failed: {e}"),
                 });
                 // Card text is user-facing — never inline AppError's
-                // `__rssh_err__|JSON` wire format (the front-end errMsg()
+                // `__termx_err__|JSON` wire format (the front-end errMsg()
                 // helper resolves that, but bare <pre> rendering exposes it).
                 // Use code() to give a semantic bucket + the remote path.
                 let card_msg = match e.code() {
@@ -1536,13 +1536,13 @@ impl Actor {
                 );
                 let msg = if e.code() == "sftp_file_too_large" {
                     format!(
-                        "Remote file {} exceeds rssh's {} MB download cap (size was discovered mid-transfer or grew past the requested max_mb). \
+                        "Remote file {} exceeds termx's {} MB download cap (size was discovered mid-transfer or grew past the requested max_mb). \
                          Don't retry — ask the user to transfer it via scp / rsync / sz to their local machine, then call `analyze_locally` on the local path they paste back.",
                         input.remote_path, MAX_DOWNLOAD_MB
                     )
                 } else {
                     format!(
-                        "SFTP transfer failed ({e}). Common cause: the user manually ssh'd through a bastion, so rssh's connection terminates at the bastion and can't see the target's filesystem. \
+                        "SFTP transfer failed ({e}). Common cause: the user manually ssh'd through a bastion, so termx's connection terminates at the bastion and can't see the target's filesystem. \
                          Tell the user to pull {} via scp / rsync / sz to their local machine themselves, then paste the key analysis output back into the chat.",
                         input.remote_path
                     )
@@ -1607,7 +1607,7 @@ impl Actor {
             }
         }
 
-        // Inject handoff into the new window's `window.__rssh_ai_handoff`;
+        // Inject handoff into the new window's `window.__termx_ai_handoff`;
         // the new window's AppShell reads it onMount → opens local shell tab
         // → starts an independent AI session → sends first message.
         let handoff = json!({
@@ -1624,10 +1624,10 @@ impl Actor {
             }
         };
         // 直接把 JSON 字符串赋值为 JS string；前端走 JSON.parse(data) 还原。
-        // 不要在这里 JSON.parse —— 否则 window.__rssh_ai_handoff 已经是 object，
+        // 不要在这里 JSON.parse —— 否则 window.__termx_ai_handoff 已经是 object，
         // 前端再 JSON.parse 会撞 "[object Object]" 解析失败。
-        let init_script = format!("window.__rssh_ai_handoff = {};", json_literal);
-        let label = format!("rssh-ai-{}", uuid::Uuid::new_v4().simple());
+        let init_script = format!("window.__termx_ai_handoff = {};", json_literal);
+        let label = format!("termx-ai-{}", uuid::Uuid::new_v4().simple());
 
         // Tauri 2 把 .title()/.inner_size() 等窗口方法限定在 #[cfg(desktop)]，
         // 移动端不存在。analyze_locally 的本质就是开新窗口，移动端语义上不存在，
@@ -1650,7 +1650,7 @@ impl Actor {
         {
             if let Err(e) = self
                 .app
-                .open_app_window(&label, "RSSH — Local Analysis", &init_script)
+                .open_app_window(&label, "termX — Local Analysis", &init_script)
             {
                 emit_done(self, false, format!("Failed to open analysis window: {e}"));
                 return Ok(self.make_tool_error(
@@ -1705,7 +1705,7 @@ impl Actor {
         };
 
         if let Err(e) = sanitize::validate_with(&input.cmd, &self.cfg.blacklist) {
-            // rssh blocked this before it ever became an approval card. Surface it
+            // termx blocked this before it ever became an approval card. Surface it
             // in both panels (chat note + audit) — otherwise the safety layer fires
             // silently and the user only sees the AI inexplicably change tack.
             let reason = e.to_string();
@@ -1719,7 +1719,7 @@ impl Actor {
             );
             return Ok(self.make_tool_error(
                 &tc.id,
-                &format!("rssh refused the command: {e}. Try a compliant rewrite."),
+                &format!("termx refused the command: {e}. Try a compliant rewrite."),
             ));
         }
 
@@ -1904,7 +1904,7 @@ impl Actor {
     /// commits to history once per turn so tool_use/tool_result pairing is
     /// preserved even when a handler bails out mid-way.
     ///
-    /// `pre_redacted: true` because errors are rssh-generated strings (no
+    /// `pre_redacted: true` because errors are termx-generated strings (no
     /// sensitive remote content) and double-redacting them is wasted work.
     pub(in crate::ai::session) fn make_tool_error(
         &self,
@@ -1923,9 +1923,9 @@ impl Actor {
     }
 
     /// Convenience wrapper for handler success-path that produces a
-    /// pre-redacted structured payload (file_ops JSON / rssh-side text).
+    /// pre-redacted structured payload (file_ops JSON / termx-side text).
     /// Content already passed through `sanitize::redact` at the insertion
-    /// site (or doesn't need redaction because it's rssh-generated).
+    /// site (or doesn't need redaction because it's termx-generated).
     pub(in crate::ai::session) fn make_tool_result(
         tool_call_id: &str,
         content: String,

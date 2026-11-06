@@ -23,7 +23,7 @@ fn install_dir() -> PathBuf {
         dirs::data_local_dir()
             .unwrap_or_default()
             .join("Programs")
-            .join("rssh")
+            .join("termx")
     } else {
         PathBuf::from("/usr/local/bin")
     }
@@ -31,9 +31,9 @@ fn install_dir() -> PathBuf {
 
 fn cli_name() -> &'static str {
     if cfg!(target_os = "windows") {
-        "rssh.exe"
+        "termx.exe"
     } else {
-        "rssh"
+        "termx"
     }
 }
 
@@ -61,7 +61,7 @@ fn find_installed() -> Option<PathBuf> {
                 .unwrap_or_default()
                 .join(".cargo")
                 .join("bin")
-                .join("rssh-cli"),
+                .join("termx-cli"),
         ]
     };
     candidates.into_iter().find(|p| p.exists())
@@ -69,9 +69,9 @@ fn find_installed() -> Option<PathBuf> {
 
 fn find_bundled(app: &AppHandle) -> Option<PathBuf> {
     let name = if cfg!(target_os = "windows") {
-        "rssh-cli.exe"
+        "termx-cli.exe"
     } else {
-        "rssh-cli"
+        "termx-cli"
     };
 
     // 1. Production: bundled in app resources
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn malformed_version_is_outdated() {
-        assert!(version_is_older("rssh 1.0.0", CLI_VERSION));
+        assert!(version_is_older("termx 1.0.0", CLI_VERSION));
         assert!(version_is_older("", CLI_VERSION));
     }
 }
@@ -269,7 +269,7 @@ fn setup_completions(cli: &PathBuf) {
         let dir = home.join(".zsh/completions");
         let _ = std::fs::create_dir_all(&dir);
         if let Ok(out) = Command::new(cli).arg("completions").arg("zsh").output() {
-            let _ = std::fs::write(dir.join("_rssh"), &out.stdout);
+            let _ = std::fs::write(dir.join("_termx"), &out.stdout);
         }
     } else if shell.contains("bash") {
         let dir = home
@@ -279,13 +279,13 @@ fn setup_completions(cli: &PathBuf) {
             .join("completions");
         let _ = std::fs::create_dir_all(&dir);
         if let Ok(out) = Command::new(cli).arg("completions").arg("bash").output() {
-            let _ = std::fs::write(dir.join("rssh"), &out.stdout);
+            let _ = std::fs::write(dir.join("termx"), &out.stdout);
         }
     } else if shell.contains("fish") {
         let dir = home.join(".config").join("fish").join("completions");
         let _ = std::fs::create_dir_all(&dir);
         if let Ok(out) = Command::new(cli).arg("completions").arg("fish").output() {
-            let _ = std::fs::write(dir.join("rssh.fish"), &out.stdout);
+            let _ = std::fs::write(dir.join("termx.fish"), &out.stdout);
         }
     }
 
@@ -303,9 +303,9 @@ fn setup_completions(cli: &PathBuf) {
                 .join("Microsoft.PowerShell_profile.ps1");
             let _ = std::fs::create_dir_all(profile.parent().unwrap());
             let existing = std::fs::read_to_string(&profile).unwrap_or_default();
-            if !existing.contains("Register-ArgumentCompleter -Native -CommandName rssh") {
+            if !existing.contains("Register-ArgumentCompleter -Native -CommandName termx") {
                 let mut content = existing;
-                content.push_str("\n# RSSH completions\n");
+                content.push_str("\n# termX completions\n");
                 content.push_str(&String::from_utf8_lossy(&out.stdout));
                 let _ = std::fs::write(&profile, content);
             }

@@ -1,7 +1,7 @@
-//! `rssh group <list|add|edit|rm>` —— connection group management.
+//! `termx group <list|add|edit|rm>` —— connection group management.
 
-use rssh_lib::error::{AppError, AppResult};
-use rssh_lib::models::Group;
+use termx_lib::error::{AppError, AppResult};
+use termx_lib::models::Group;
 
 use crate::ctx::CliCtx;
 use crate::helpers::{confirm, die, prompt, prompt_default};
@@ -16,7 +16,7 @@ fn parse_sort_order(value: &str) -> AppResult<i32> {
 }
 
 pub fn cmd_list_groups(conn: &CliCtx) -> AppResult<()> {
-    let groups = rssh_lib::db::group::list(conn)?;
+    let groups = termx_lib::db::group::list(conn)?;
     if groups.is_empty() {
         println!("No groups.");
         return Ok(());
@@ -53,13 +53,13 @@ pub fn cmd_add_group(conn: &CliCtx) -> AppResult<()> {
         terminal_waves_enabled,
         proxy_profile_id: None,
     };
-    rssh_lib::db::group::insert(conn, &group)?;
+    termx_lib::db::group::insert(conn, &group)?;
     println!("Group '{}' created.", group.name);
     Ok(())
 }
 
 pub fn cmd_edit_group(conn: &CliCtx, name: &str) -> AppResult<()> {
-    let groups = rssh_lib::db::group::list(conn)?;
+    let groups = termx_lib::db::group::list(conn)?;
     let current = groups
         .iter()
         .find(|group| group.name.eq_ignore_ascii_case(name))
@@ -74,13 +74,13 @@ pub fn cmd_edit_group(conn: &CliCtx, name: &str) -> AppResult<()> {
         current.terminal_waves_enabled,
     );
 
-    rssh_lib::db::group::update(conn, &updated)?;
+    termx_lib::db::group::update(conn, &updated)?;
     println!("Group '{}' updated.", updated.name);
     Ok(())
 }
 
 pub fn cmd_rm_group(conn: &CliCtx, name: &str) -> AppResult<()> {
-    let groups = rssh_lib::db::group::list(conn)?;
+    let groups = termx_lib::db::group::list(conn)?;
     let id = groups
         .iter()
         .find(|group| group.name.eq_ignore_ascii_case(name))
@@ -90,7 +90,7 @@ pub fn cmd_rm_group(conn: &CliCtx, name: &str) -> AppResult<()> {
         return Ok(());
     }
 
-    rssh_lib::db::group::delete(conn, &id)?;
+    termx_lib::db::group::delete(conn, &id)?;
     println!("Deleted.");
     Ok(())
 }

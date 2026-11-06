@@ -1,16 +1,16 @@
-//! `rssh profile open <name>` / `rssh forward open <name>` —— 直接 exec ssh，
+//! `termx profile open <name>` / `termx forward open <name>` —— 直接 exec ssh，
 //! 或在 GUI 内嵌终端里 emit OSC 7337 让宿主接管。
 
 use std::process::Command;
 
-use rssh_lib::error::AppResult;
-use rssh_lib::models::ForwardType;
+use termx_lib::error::AppResult;
+use termx_lib::models::ForwardType;
 
 use crate::ctx::CliCtx;
 use crate::helpers::{build_ssh_command, die, load_cred_secrets};
 
-pub fn in_rssh_app() -> bool {
-    std::env::var("RSSH_APP").is_ok()
+pub fn in_termx_app() -> bool {
+    std::env::var("TERMX_APP").is_ok()
 }
 
 /// 把 `kind:name` 编进 OSC 7337，让宿主 GUI 终端 catch 后接管。
@@ -18,28 +18,28 @@ pub fn in_rssh_app() -> bool {
 /// 控制符，理论上 osc_open 拿不到坏值。这里再校一次：万一 DB 被外部工具
 /// 写了脏数据 / 旧版本残留，宁可拒绝打印也不让恶意 ESC/BEL 注入终端。
 fn osc_open(kind: &str, name: &str) -> AppResult<()> {
-    rssh_lib::models::validate_name(name)?;
+    termx_lib::models::validate_name(name)?;
     // OSC 7337 ; <kind>:<name> ST   （kind 永远是字面量 "open" / "fwd"，不需校）
     print!("\x1b]7337;{}:{}\x07", kind, name);
     Ok(())
 }
 
 pub fn cmd_open_profile(conn: &CliCtx, name: &str) -> AppResult<()> {
-    if in_rssh_app() {
+    if in_termx_app() {
         return osc_open("open", name);
     }
     open_ssh(conn, name)
 }
 
 pub fn cmd_open_forward(conn: &CliCtx, name: &str) -> AppResult<()> {
-    if in_rssh_app() {
+    if in_termx_app() {
         return osc_open("fwd", name);
     }
     open_forward(conn, name)
 }
 
 fn open_ssh(conn: &CliCtx, name: &str) -> AppResult<()> {
-    let profiles = rssh_lib::db::profile::list(conn)?;
+    let profiles = termx_lib::db::profile::list(conn)?;
     let profile = profiles
         .iter()
         .find(|p| p.name.eq_ignore_ascii_case(name))
@@ -50,7 +50,7 @@ fn open_ssh(conn: &CliCtx, name: &str) -> AppResult<()> {
     // 旧版的 .ok() 会让 ssh 走默认 key fallback，错的离谱。
     let cred = load_cred_secrets(
         conn,
-        rssh_lib::db::credential::get(conn, &profile.credential_id)?,
+        termx_lib::db::credential::get(conn, &profile.credential_id)?,
     )?;
 
     let mut cmd = Command::new("ssh");
@@ -82,16 +82,16 @@ fn open_ssh(conn: &CliCtx, name: &str) -> AppResult<()> {
 }
 
 fn open_forward(conn: &CliCtx, name: &str) -> AppResult<()> {
-    let forwards = rssh_lib::db::forward::list(conn)?;
+    let forwards = termx_lib::db::forward::list(conn)?;
     let fwd = forwards
         .iter()
         .find(|f| f.name.eq_ignore_ascii_case(name))
         .unwrap_or_else(|| die(format!("Forward '{name}' not found")));
 
-    let profile = rssh_lib::db::profile::get(conn, &fwd.profile_id)?;
+    let profile = termx_lib::db::profile::get(conn, &fwd.profile_id)?;
     let cred = load_cred_secrets(
         conn,
-        rssh_lib::db::credential::get(conn, &profile.credential_id)?,
+        termx_lib::db::credential::get(conn, &profile.credential_id)?,
     )?;
 
     let mut cmd = Command::new("ssh");

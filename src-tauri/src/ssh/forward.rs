@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -973,7 +973,7 @@ pub async fn start(forward: Forward, target: ConnTarget) -> AppResult<ForwardHan
             router.pending = None;
         }
         let _ = task_handle
-            .disconnect(Disconnect::ByApplication, "rssh forward stopped", "")
+            .disconnect(Disconnect::ByApplication, "termx forward stopped", "")
             .await;
         task_connected.store(false, Ordering::Relaxed);
     });

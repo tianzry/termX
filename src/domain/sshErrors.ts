@@ -2,14 +2,17 @@
  * SSH 错误分类与展示（对齐 netcatty createTerminalSessionStarters 的
  * `isAuthFailureMessage`；R5：用户可见错误必须经本模块解析成中文）。
  *
- * termX 后端把 AppError 序列化成 `__rssh_err__|{"code":...,"params":...}`
+ * termX 后端把 AppError 序列化成 `__termx_err__|{"code":...,"params":...}`
  * 信封字符串；前端先解码出 code + params，再映射为中文文案。任何情况下
  * 都不把原始信封直接展示给用户。
  */
 
+/** `__rssh_err__|` 是改名前的旧信封；旧后端/旧日志仍可能带出，双前缀兼容。 */
+const ERROR_MARKERS = ["__termx_err__|", "__rssh_err__|"] as const;
+
 export function decodeAppError(raw: string): { code?: string; params?: Record<string, unknown>; message: string } {
-  const marker = "__rssh_err__|";
-  if (raw.startsWith(marker)) {
+  const marker = ERROR_MARKERS.find((candidate) => raw.startsWith(candidate));
+  if (marker) {
     try {
       const parsed = JSON.parse(raw.slice(marker.length)) as {
         code?: string;
