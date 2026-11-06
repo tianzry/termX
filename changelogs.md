@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-06 — #247 严格验收（第一轮：UI 全页扫描）报告 + P2 修复
+
+- **范围**：只验收已移植功能；先按 `docs/plan.md`、`todo.md`、changelogs 整理排除清单（Mosh/ET/X11、AI/MCP/插件/Codex、会话快照、FIDO/appLock、系统托盘、Browser/Theme/System 页签、Save layout/Change position、内嵌浏览器、ymodem、openSessionLog、Paste Selection、保存屏幕、拖出桌面、GBK 文件名、脚本页 Shell 历史、独立设置窗口、更新安装，以及需要真实 CA/管理员权限/物理串口/原生对话框的外部条件项），写入 `docs/netcatty-acceptance-2026-11-06.md`。
+- **取证**：CDP 9222 实机 + 129 SSH 会话；Vault 九页与设置八 tab 逐页量测，终端工具栏/右键菜单/侧栏逐项触发；性能用 rAF + PerformanceObserver + `performance.memory`，非主观判断。
+- **P2 修复**：终端右侧栏泄漏到 Vault/SFTP。`App.tsx` 的 `{tool && <TerminalSidePanel/>}` 未限定终端 surface，侧栏打开时切到 Vault，420px 侧栏仍占位 → Vault 主机页内容区被压到 554px，`.vault-header` 内容 773px，右侧「新建主机/终端/串口/Telnet」越界 218px 且被裁切。改为 `{terminalActive && tool && ...}`；`tool` 状态保留，切回终端按原视图恢复。
+  - 改前：surface `554/773`，header actions 右边界 990 vs surface 772。
+  - 改后：surface `974/974`、header `974/974`、`documentElement.scrollWidth == clientWidth`；切回终端侧栏恢复且仍在 history。
+- **其他通过项**：Vault 九页 1200/900 无横向溢出；设置八 tab 无横向溢出（AI 禁用并标「未移植」）；右键菜单无空壳；工具栏高亮/撰写栏/搜索/脚本/监控/侧栏切换均实际打开；L 的历史侧栏尺寸复测通过。
+- **功能**：会话日志「开始记录」依赖原生保存框，无人值守下取消后 `logBusy` 正常复位（不伪造写入结果，记为外部条件）；其余主链路（连接、工具栏、右键、SFTP、历史、笔记、监控、设置切换）通过。
+- **性能**：20 万行输出 6s 内完成，821 帧 avg 7.4ms / p95 7 / max 63，>50ms 仅 3 帧，long task 0；滚动 120 帧全 7ms；堆 32→49MB 后回落 47MB。未发现需修的 P1/P2 性能问题。
+- **门禁**：`npx tsc --noEmit` ✓、`npm run test:run` 71 文件 / 790 用例 ✓、`npm run build` ✓。
+- **踩坑**：① CDP 探针要用真实 `Input.dispatchMouseEvent` 才能切标签，`.click()` 对会话 tab 无效；设置弹窗未先关闭会让后续点击落到遮罩上，出现「按钮都在却全部无反应」的假象。② 会话日志开始会弹 Windows 原生保存框，CDP 无法交互；需用 `EnumWindows` 找到 `#32770` 窗口并 `WM_CLOSE`，才能让 `logBusy` 复位。③ 探针按 title 找按钮时，禁用状态的 title 会变成解释文案（如「暂无脚本…」），按旧 title 找不到会误判为「无反应」。
+
 ## 2026-11-06 — #246 命令历史入口改走右侧栏 + 侧栏视图按 Netcatty 重做（L）
 
 - **问题**：终端顶部工具栏「更多 → 命令历史」打开的是一个悬浮面板（`.term-history-menu` 绝对定位 + 阴影 + 自带标题/关闭按钮），与右侧栏其它视图（SFTP/脚本/笔记）不是同一容器，开关与按标签记忆也不一致；视图内部尺寸/结构与 Netcatty `components/HistorySidePanel.tsx` 有差异。
