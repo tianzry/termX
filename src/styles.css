@@ -5870,118 +5870,239 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* 关键字高亮浮层：逐项对齐 Netcatty HostKeywordHighlightPopover
+ * （w-80 p-0；头部 px-3 py-2 + muted 底；规则区 max-h-64；添加区与清空区各带分割线）。 */
 .term-highlight-menu {
-  width: 264px;
+  width: 320px;
+  padding: 0;
+  overflow: hidden;
 }
 
-/* 关键字高亮浮层：总开关 + 规则行 + 设置跳转（与设置页共用同一份规则）。 */
-.term-highlight-switch {
+.term-highlight-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 8px 6px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--muted) / 0.3);
+}
+
+.term-highlight-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-highlight-enabled {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: hsl(var(--muted-foreground));
 }
 
-.term-highlight-toggle {
+.term-highlight-menu .term-highlight-toggle {
   position: relative;
   width: 36px;
   height: 20px;
+  flex: 0 0 auto;
   padding: 0;
-  border: 1px solid hsl(var(--border));
+  border: 2px solid transparent;
   border-radius: 999px;
-  background: hsl(var(--muted));
+  background: hsl(var(--muted-foreground) / 0.3);
   cursor: pointer;
 }
 
 .term-highlight-toggle > span {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: hsl(var(--foreground));
-  transition: transform 0.12s ease;
+  background: #ffffff;
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.25);
+  transition: transform 0.2s ease;
 }
 
-.term-highlight-toggle.on {
+.term-highlight-menu .term-highlight-toggle.on {
   background: hsl(var(--primary));
-  border-color: hsl(var(--primary));
+  border-color: transparent;
 }
 
 .term-highlight-toggle.on > span {
   transform: translateX(16px);
-  background: hsl(var(--primary-foreground));
+}
+
+.term-highlight-scroll {
+  max-height: 256px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.term-highlight-empty {
+  padding: 16px 8px;
+  font-size: 12px;
+  font-style: italic;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
 }
 
 .term-highlight-row {
   display: flex;
   align-items: center;
-}
-
-.term-highlight-rule {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
   gap: 8px;
-  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
 }
 
-.term-highlight-row.is-off .term-highlight-rule {
-  opacity: 0.45;
+.term-highlight-row:hover {
+  background: hsl(var(--accent) / 0.5);
 }
 
-.term-highlight-remove {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* 主机级规则的颜色胶囊：点一下就用系统取色器改色，改完立即重绘。 */
-.term-highlight-color {
-  width: 20px;
-  height: 18px;
+/* 勾选框：Netcatty Checkbox 12×12、圆角 2px，开启为实心 primary（无对勾）。 */
+.term-highlight-menu .term-highlight-check {
+  position: relative;
+  width: 12px;
+  height: 12px;
   flex: 0 0 auto;
-  margin-right: 4px;
   padding: 0;
-  border: 1px solid hsl(var(--border));
-  border-radius: 4px;
+  border: 1px solid hsl(var(--muted-foreground) / 0.5);
+  border-radius: 2px;
   background: transparent;
   cursor: pointer;
 }
 
-.term-highlight-color::-webkit-color-swatch-wrapper {
-  padding: 2px;
+.term-highlight-menu .term-highlight-check:hover:not(:disabled) {
+  background: transparent;
 }
 
-.term-highlight-color::-webkit-color-swatch {
-  border: none;
-  border-radius: 2px;
+.term-highlight-menu .term-highlight-check.on {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
 }
 
-.term-highlight-edit {
+.term-highlight-info {
+  flex: 1;
+  min-width: 0;
   display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.term-highlight-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: inherit;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.term-highlight-pattern {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 颜色块：规则行 Netcatty w-6 h-4（24×16，圆角 4），添加区 w-7 h-7（28×28）。 */
+.term-highlight-swatch {
+  position: relative;
+  width: 24px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.term-highlight-swatch:hover {
+  border-color: hsl(var(--border));
+}
+
+.term-highlight-swatch.term-highlight-swatch-lg {
+  width: 28px;
+  height: 28px;
+}
+
+.term-highlight-swatch > span {
+  position: absolute;
+  inset: 0;
+}
+
+.term-highlight-swatch input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* 删除按钮：Netcatty Trash2 10px，默认 opacity-0，行悬停才显现。 */
+.term-highlight-menu .term-highlight-remove {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  border-top: 1px solid hsl(var(--border));
+  justify-content: center;
+  padding: 0;
+  color: hsl(var(--destructive));
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.term-highlight-row:hover .term-highlight-remove {
+  opacity: 1;
+}
+
+.term-highlight-menu .term-highlight-remove:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
+}
+
+.term-highlight-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--muted) / 0.2);
+}
+
+.term-highlight-add-title {
+  font-size: 12px;
+  font-weight: 500;
   color: hsl(var(--muted-foreground));
 }
 
-.term-highlight-form {
-  padding: 4px 4px 6px;
+.term-highlight-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.term-highlight-form input {
-  width: 100%;
-  height: 26px;
+.term-highlight-add-row > input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
   padding: 0 8px;
   border: 1px solid hsl(var(--border));
   border-radius: 5px;
@@ -5991,11 +6112,68 @@ button:disabled {
   font-size: 12px;
 }
 
-.term-highlight-dot {
-  width: 10px;
-  height: 10px;
-  flex-shrink: 0;
-  border-radius: 2px;
+.term-highlight-add-row > input:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+}
+
+.term-highlight-add-row > input.is-invalid {
+  border-color: hsl(var(--destructive));
+}
+
+/* 添加按钮：Netcatty variant=secondary，28×28 浅灰底 + 12px 加号。 */
+.term-highlight-menu .term-highlight-add-btn {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+
+.term-highlight-menu .term-highlight-add-btn:hover:not(:disabled) {
+  background: hsl(var(--secondary) / 0.8);
+}
+
+.term-highlight-menu .term-highlight-add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.term-highlight-error {
+  font-size: 10px;
+  color: hsl(var(--destructive));
+}
+
+/* 清空全部：Netcatty 右下角小号 ghost 按钮（h-6，仅内容宽度）。 */
+.term-highlight-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px;
+  border-top: 1px solid hsl(var(--border) / 0.6);
+}
+
+.term-highlight-menu .term-highlight-clear {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-highlight-menu .term-highlight-clear:hover:not(:disabled) {
+  background: transparent;
+  color: hsl(var(--destructive));
 }
 
 .term-tool-menu button.is-recording {
@@ -6027,8 +6205,7 @@ button:disabled {
   font-size: 12px;
 }
 
-.term-search-bar input:focus,
-.term-highlight-form input:focus {
+.term-search-bar input:focus {
   outline: none;
   border-color: hsl(var(--ring));
 }

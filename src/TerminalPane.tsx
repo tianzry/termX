@@ -77,7 +77,7 @@ import type {
   TerminalTransport,
 } from "./backend/client";
 import type { Tab } from "./workspaceModel";
-import { getSettings, subscribeSettings, updateSettings } from "./settings/settingsStore";
+import { getSettings, subscribeSettings } from "./settings/settingsStore";
 import { cloneKeywordHighlightRules, normalizeHostKeywordHighlightRules, type KeywordHighlightRule } from "./settings/settingsModel";
 import {
   cellOffsets,
@@ -413,8 +413,11 @@ export function TerminalPane({
   const [searchIndex, setSearchIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [highlightOpen, setHighlightOpen] = useState(false);
-  const [highlightDraft, setHighlightDraft] = useState("");
-  const [hostHighlightDraft, setHostHighlightDraft] = useState("");
+  /** 主机规则的「添加」草稿；对齐 Netcatty HostKeywordHighlightPopover（名称 + 颜色 + 正则）。 */
+  const [hostHighlightLabel, setHostHighlightLabel] = useState("");
+  const [hostHighlightPattern, setHostHighlightPattern] = useState("");
+  const [hostHighlightColor, setHostHighlightColor] = useState("#F87171");
+  const [hostHighlightError, setHostHighlightError] = useState("");
   /** 关键字高亮规则来自设置（设置页与工具栏浮层共享同一份，改后即时重绘）。 */
   const [highlightEnabled, setHighlightEnabled] = useState(
     () => getSettings().terminal.keywordHighlightEnabled,
@@ -1847,16 +1850,35 @@ export function TerminalPane({
     });
   }, []);
 
-  /** 写入关键字高亮设置（设置页与工具栏浮层共用同一份）。 */
-  function persistKeywordHighlight(patch: { enabled?: boolean; rules?: KeywordHighlightRule[] }) {
-    const terminalSettings = getSettings().terminal;
-    updateSettings({
-      terminal: {
-        ...terminalSettings,
-        keywordHighlightEnabled: patch.enabled ?? terminalSettings.keywordHighlightEnabled,
-        keywordHighlightRules: patch.rules ?? terminalSettings.keywordHighlightRules,
-      },
+  /**
+   * 新增主机规则（对齐 Netcatty `addHostKeywordHighlightRule`）：
+   * 名称 + 正则 + 颜色，正则先校验；新增后同时打开主机总开关。
+   */
+  function addHostHighlightRule() {
+    if (!encodingProfileId) return;
+    const label = hostHighlightLabel.trim();
+    const pattern = hostHighlightPattern.trim();
+    if (!label || !pattern) return;
+    try {
+      new RegExp(pattern, "gi");
+    } catch {
+      setHostHighlightError("无效的正则表达式");
+      return;
+    }
+    const id =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    persistHostKeywordHighlight({
+      rules: [
+        ...hostHighlightRules,
+        { id, label, patterns: [pattern], color: hostHighlightColor, enabled: true },
+      ],
+      enabled: true,
     });
+    setHostHighlightLabel("");
+    setHostHighlightPattern("");
+    setHostHighlightError("");
   }
 
   /**
@@ -3419,227 +3441,170 @@ export function TerminalPane({
                 return (
                   <div key={action} className="term-tool-more">
                     <button
-                      className={`term-tool-btn${highlightOpen || highlightRules.length > 0 || (hostHighlightEnabled && hostHighlightRules.length > 0) ? " active" : ""}`}
-                      title={TERMINAL_TOOLBAR_TEXT.highlight.title}
-                      onClick={() => setHighlightOpen((v) => !v)}
+                      className="term-tool-btn"
+                      title={
+                        encodingProfileId
+                          ? TERMINAL_TOOLBAR_TEXT.highlight.title
+                          : "本机 / 串口终端不支持主机高亮规则"
+                      }
+                      disabled={!encodingProfileId}
+                      onClick={() => {
+                        setHostHighlightError("");
+                        setHighlightOpen((v) => !v);
+                      }}
                     >
                       <Icon name="highlighter" size={12} />
                     </button>
                     {highlightOpen && (
                       <div className="term-tool-menu term-highlight-menu">
-                        <div className="term-menu-label">
-                          {TERMINAL_TOOLBAR_TEXT.highlight.label}
-                        </div>
-                        <div className="term-highlight-form">
-                          <input
-                            autoFocus
-                            value={highlightDraft}
-                            placeholder="输入关键词后回车新增规则"
-                            onChange={(e) => setHighlightDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              const keyword = highlightDraft.trim();
-                              if (e.key !== "Enter" || !keyword) return;
-                              const pattern = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                              persistKeywordHighlight({
-                                rules: [
-                                  ...highlightRules,
-                                  {
-                                    id: `custom-${Date.now().toString(36)}`,
-                                    label: keyword,
-                                    patterns: [pattern],
-                                    color: "#F6E05E",
-                                    enabled: true,
-                                  },
-                                ],
-                              });
-                              setHighlightDraft("");
-                            }}
-                          />
-                        </div>
-                        <div className="term-highlight-switch">
-                          <span>启用关键字高亮</span>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={highlightEnabled}
-                            className={`term-highlight-toggle${highlightEnabled ? " on" : ""}`}
-                            onClick={() =>
-                              persistKeywordHighlight({ enabled: !highlightEnabled })
-                            }
-                          >
-                            <span />
-                          </button>
-                        </div>
-                        {highlightRules.length === 0 ? (
-                          <div className="term-menu-empty">尚无高亮规则</div>
-                        ) : (
-                          highlightRules.map((rule) => (
-                            <div
-                              key={rule.id}
-                              className={`term-highlight-row${rule.enabled ? "" : " is-off"}`}
+                        <div className="term-highlight-header">
+                          <span className="term-highlight-title">
+                            {TERMINAL_TOOLBAR_TEXT.highlight.label}
+                          </span>
+                          <label className="term-highlight-enabled">
+                            <span>{hostHighlightEnabled ? "已启用" : "已禁用"}</span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={hostHighlightEnabled}
+                              className={`term-highlight-toggle${hostHighlightEnabled ? " on" : ""}`}
+                              onClick={() =>
+                                persistHostKeywordHighlight({
+                                  enabled: !hostHighlightEnabled,
+                                })
+                              }
                             >
-                              <button
-                                type="button"
-                                className="term-highlight-rule"
-                                title={rule.enabled ? "点击停用该规则" : "点击启用该规则"}
-                                onClick={() =>
-                                  persistKeywordHighlight({
-                                    rules: highlightRules.map((r) =>
-                                      r.id === rule.id ? { ...r, enabled: !r.enabled } : r,
-                                    ),
-                                  })
-                                }
+                              <span />
+                            </button>
+                          </label>
+                        </div>
+                        <div className="term-highlight-scroll">
+                          {hostHighlightRules.length === 0 ? (
+                            <div className="term-highlight-empty">
+                              此主机未定义自定义高亮规则
+                            </div>
+                          ) : (
+                            hostHighlightRules.map((rule) => (
+                              <div
+                                key={rule.id}
+                                className={`term-highlight-row${rule.enabled ? "" : " is-off"}`}
                               >
-                                <span
-                                  className="term-highlight-dot"
-                                  style={{ background: rule.color }}
+                                <button
+                                  type="button"
+                                  role="checkbox"
+                                  aria-checked={rule.enabled}
+                                  className={`term-highlight-check${rule.enabled ? " on" : ""}`}
+                                  title={rule.enabled ? "点击停用该规则" : "点击启用该规则"}
+                                  onClick={() =>
+                                    persistHostKeywordHighlight({
+                                      rules: hostHighlightRules.map((r) =>
+                                        r.id === rule.id ? { ...r, enabled: !r.enabled } : r,
+                                      ),
+                                    })
+                                  }
                                 />
-                                <span className="term-history-cmd">{rule.label}</span>
-                              </button>
-                              <button
-                                type="button"
-                                className="term-highlight-remove"
-                                title="移除该规则"
-                                onClick={() =>
-                                  persistKeywordHighlight({
-                                    rules: highlightRules.filter((r) => r.id !== rule.id),
-                                  })
-                                }
-                              >
-                                <Icon name="x" size={12} />
-                              </button>
-                            </div>
-                          ))
-                        )}
-                        {/* 主机级规则：连接期间追加到全局，断开/关闭后回落全局。 */}
-                        {encodingProfileId && (
-                          <>
-                            <div className="term-menu-sep" />
-                            <div className="term-menu-label">本主机规则（追加到全局）</div>
-                            <div className="term-highlight-switch">
-                              <span>启用本主机规则</span>
-                              <button
-                                type="button"
-                                role="switch"
-                                aria-checked={hostHighlightEnabled}
-                                className={`term-highlight-toggle${hostHighlightEnabled ? " on" : ""}`}
-                                onClick={() =>
-                                  persistHostKeywordHighlight({
-                                    enabled: !hostHighlightEnabled,
-                                  })
-                                }
-                              >
-                                <span />
-                              </button>
-                            </div>
-                            {hostHighlightEnabled && (
-                              <>
-                                <div className="term-highlight-form">
-                                  <input
-                                    value={hostHighlightDraft}
-                                    placeholder="输入关键词后回车新增本主机规则"
-                                    onChange={(e) => setHostHighlightDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      const keyword = hostHighlightDraft.trim();
-                                      if (e.key !== "Enter" || !keyword) return;
-                                      const pattern = keyword.replace(
-                                        /[.*+?^${}()|[\]\\]/g,
-                                        "\\$&",
-                                      );
-                                      persistHostKeywordHighlight({
-                                        rules: [
-                                          ...hostHighlightRules,
-                                          {
-                                            id: `host-${Date.now().toString(36)}`,
-                                            label: keyword,
-                                            patterns: [pattern],
-                                            color: "#FF00AA",
-                                            enabled: true,
-                                          },
-                                        ],
-                                      });
-                                      setHostHighlightDraft("");
-                                    }}
-                                  />
+                                <div className="term-highlight-info">
+                                  <div
+                                    className="term-highlight-name"
+                                    style={rule.enabled ? { color: rule.color } : undefined}
+                                  >
+                                    {rule.label}
+                                  </div>
+                                  <div className="term-highlight-pattern">
+                                    {rule.patterns.join(", ")}
+                                  </div>
                                 </div>
-                                {hostHighlightRules.length === 0 ? (
-                                  <div className="term-menu-empty">本主机尚无规则</div>
-                                ) : (
-                                  hostHighlightRules.map((rule) => (
-                                    <div
-                                      key={rule.id}
-                                      className={`term-highlight-row${rule.enabled ? "" : " is-off"}`}
-                                    >
-                                      <button
-                                        type="button"
-                                        className="term-highlight-rule"
-                                        title={
-                                          rule.enabled ? "点击停用该规则" : "点击启用该规则"
-                                        }
-                                        onClick={() =>
-                                          persistHostKeywordHighlight({
-                                            rules: hostHighlightRules.map((r) =>
-                                              r.id === rule.id
-                                                ? { ...r, enabled: !r.enabled }
-                                                : r,
-                                            ),
-                                          })
-                                        }
-                                      >
-                                        <span
-                                          className="term-highlight-dot"
-                                          style={{ background: rule.color }}
-                                        />
-                                        <span className="term-history-cmd">{rule.label}</span>
-                                      </button>
-                                      <input
-                                        type="color"
-                                        className="term-highlight-color"
-                                        title="改色后立即生效"
-                                        value={rule.color}
-                                        onChange={(e) =>
-                                          persistHostKeywordHighlight({
-                                            rules: hostHighlightRules.map((r) =>
-                                              r.id === rule.id
-                                                ? { ...r, color: e.target.value.toUpperCase() }
-                                                : r,
-                                            ),
-                                          })
-                                        }
-                                      />
-                                      <button
-                                        type="button"
-                                        className="term-highlight-remove"
-                                        title="移除该规则"
-                                        onClick={() =>
-                                          persistHostKeywordHighlight({
-                                            rules: hostHighlightRules.filter(
-                                              (r) => r.id !== rule.id,
-                                            ),
-                                          })
-                                        }
-                                      >
-                                        <Icon name="x" size={12} />
-                                      </button>
-                                    </div>
-                                  ))
-                                )}
-                              </>
-                            )}
-                          </>
+                                <label className="term-highlight-swatch">
+                                  <input
+                                    type="color"
+                                    value={rule.color}
+                                    onChange={(e) =>
+                                      persistHostKeywordHighlight({
+                                        rules: hostHighlightRules.map((r) =>
+                                          r.id === rule.id
+                                            ? { ...r, color: e.target.value.toUpperCase() }
+                                            : r,
+                                        ),
+                                      })
+                                    }
+                                    aria-label={`修改 ${rule.label} 的颜色`}
+                                  />
+                                  <span style={{ background: rule.color }} />
+                                </label>
+                                <button
+                                  type="button"
+                                  className="term-highlight-remove"
+                                  title="移除该规则"
+                                  onClick={() =>
+                                    persistHostKeywordHighlight({
+                                      rules: hostHighlightRules.filter((r) => r.id !== rule.id),
+                                    })
+                                  }
+                                >
+                                  <Icon name="trash" size={10} />
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        <div className="term-highlight-add">
+                          <div className="term-highlight-add-title">添加新规则</div>
+                          <div className="term-highlight-add-row">
+                            <input
+                              value={hostHighlightLabel}
+                              placeholder="标签（例如：错误）"
+                              onChange={(e) => setHostHighlightLabel(e.target.value)}
+                            />
+                            <label className="term-highlight-swatch term-highlight-swatch-lg">
+                              <input
+                                type="color"
+                                value={hostHighlightColor}
+                                onChange={(e) => setHostHighlightColor(e.target.value)}
+                                aria-label="选择规则颜色"
+                              />
+                              <span style={{ background: hostHighlightColor }} />
+                            </label>
+                          </div>
+                          <div className="term-highlight-add-row">
+                            <input
+                              value={hostHighlightPattern}
+                              placeholder={"正则表达式（例如 \\bfailed\\b）"}
+                              className={hostHighlightError ? "is-invalid" : undefined}
+                              onChange={(e) => {
+                                setHostHighlightPattern(e.target.value);
+                                setHostHighlightError("");
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="term-highlight-add-btn"
+                              title="添加规则"
+                              disabled={
+                                !hostHighlightLabel.trim() || !hostHighlightPattern.trim()
+                              }
+                              onClick={addHostHighlightRule}
+                            >
+                              <Icon name="plus" size={12} />
+                            </button>
+                          </div>
+                          {hostHighlightError && (
+                            <div className="term-highlight-error">{hostHighlightError}</div>
+                          )}
+                        </div>
+                        {hostHighlightRules.length > 0 && (
+                          <div className="term-highlight-footer">
+                            <button
+                              type="button"
+                              className="term-highlight-clear"
+                              onClick={() =>
+                                persistHostKeywordHighlight({ rules: [], enabled: false })
+                              }
+                            >
+                              <Icon name="rotate-ccw" size={10} />
+                              清除全部
+                            </button>
+                          </div>
                         )}
-                        <button
-                          type="button"
-                          className="term-highlight-edit"
-                          disabled={!onOpenSettings}
-                          onClick={() => {
-                            setHighlightOpen(false);
-                            onOpenSettings?.();
-                          }}
-                        >
-                          <Icon name="sliders" size={12} />
-                          在设置中编辑规则
-                        </button>
                       </div>
                     )}
                   </div>

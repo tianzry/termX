@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-06 — #243 终端工具栏「主机关键字高亮」浮层按 Netcatty 重做
+
+- **问题**：浮层把全局规则与主机规则混在同一列表，可原地编辑名称/正则/颜色、可单独启用停用，与 Netcatty 的逻辑不一致；尺寸与文案也有偏差。
+- **Netcatty 取证**（`components/terminal/HostKeywordHighlightPopover.tsx` + `locales/zh-CN/terminal.ts` + 运行实例 9336）：弹层只管理**主机级**规则；全局规则只在设置页维护。触发器 `Button variant="secondary" size="icon"` + `Highlighter 12px`，**无**「有规则即高亮」的激活态，本机/串口置灰。弹层 `w-80 p-0`（320），头部 `px-3 py-2 + muted/30`；规则区 `max-h-64 p-2 gap-1.5`；空态「此主机未定义自定义高亮规则」；规则行 `px-2 py-1.5 rounded-md hover:accent/50`：12px 勾选框（实心 primary、无对勾）→ 名称 12px（启用时套 rule.color）/正则 10px mono → 24×16 圆角色块 → 删除按钮 10px（默认 `opacity-0`，行悬停才显现）；底部添加区 `p-2 border-t bg-muted/20`：「标签（例如：错误）」+ 28×28 色块、「正则表达式（例如：\bfailed\b）」+ 28×28 secondary 加号（非法正则行内报错，标签/正则为空时禁用）；清空区右下角小号 ghost「清除全部」；无原地编辑、无排序、无「管理全部规则」跳转，改动即时写入主机档案并立即重着色。
+- **改动**：
+  1. `TerminalPane.tsx`：浮层重写为主机-only —— 总开关绑定 `hostHighlightEnabled`、规则行勾选绑定规则 `enabled`、取色即时写回、删除/清空即时写回，新增 `addHostHighlightRule()`（名称+颜色+正则，`new RegExp` 预校验，自动打开主机开关）；文案/占位/图标全部替换为 Netcatty 中文（Trash2 10、RotateCcw 10，标题统一「主机关键字高亮」）。
+  2. 删除旧草稿态 `highlightDraft` / `hostHighlightDraft`、旧 `persistKeywordHighlight` 与 `updateSettings` 引用。
+  3. `styles.css`：重写 `.term-highlight-*`（320 宽、头部/空态/规则行/勾选框 12、色块 24×16 与 28×28 两档、删除悬停显现、secondary 加号、右下角清空），删除 `.term-highlight-switch/-rule/-dot/-color/-edit/-form` 等死样式与 `:focus` 选择器。
+- **验证**（129 实机 CDP 9222，`tianzry@192.168.126.129`）：全局规则基线装饰 5 个；浮层内新增主机规则 `\bUbuntu\b` 后立即 5→7，关闭浮层颜色已在终端生效；关主机开关 7→5（回落全局），再开 5→7；关闭重开浮层规则与「已启用」保持；「清除全部」后回到空态「此主机未定义自定义高亮规则」且装饰回 5。与 Netcatty 同尺寸并排 `evidence/fixK-hl-side-by-side.png`；应用效果 `fixK-hl-applied.png`、空态 `fixK-hl-termx-empty.png`。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例 ✓；`npm run build` ✓。
+- **踩坑**：JSX 字符串属性不解析反斜杠转义（`placeholder="...\b..."` 会显示成 `\\b`），正则示例占位须写成表达式容器 `{"...\\b..."}`；xterm 移除/重建 decoration 只按行内容重算，验证「即时生效」应数 `.xterm-decoration` 数量而非读装饰元素颜色（前景色由渲染器在单元格上合成）。
+
 ## 2026-11-06 — #242 笔记详情宽度自适应（终端侧栏 + 全页笔记页窄容器）
 
 - **问题**：终端右侧栏打开某条笔记后，编辑态（标题输入 / 正文 / 预览）只占左侧约 280px 窄列，右侧大片空白；侧栏拖宽后详情不跟随。
