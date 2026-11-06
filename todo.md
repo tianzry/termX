@@ -386,6 +386,19 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 
 ---
 
+## 改名专项：rssh → termX（2026-11-06）
+
+> 盘点详见 [docs/rename-rssh-termx.md](docs/rename-rssh-termx.md)。仓库内 73 文件 / 640 处，`evidence/` 25 文件 / 60 处（历史保留）。
+
+- [x] 盘点清单（docs/rename-rssh-termx.md）
+- [ ] 代码改名：crate `termx` / lib `termx_lib` / bin `termx`·`termx-cli`·`termx-server`；显示名、窗口标题、AI 窗口、iOS 用途说明、CLI 帮助/提示、错误前缀 `__termx_err__`（前端双前缀兼容）
+- [ ] 路径迁移：`~/.rssh` → `~/.termX`（移动 + 失败回退）、`rssh.db` → `termx.db`、keychain service `rssh` → `termx`（旧 service 双读 + 懒迁移）、`RSSH_*` 环境变量改 `TERMX_*` 并旧名回退
+- [ ] 文档与脚本：AGENTS、AI 设计文档/提示词、build-debug.bat、.launch-termx.vbs、changelog #218
+- [ ] 5 项门禁 + 129 实机迁移验证（连 129 / SFTP / 写日志 / 重启数据仍在，截图 + JSON）
+- 明确保留：`changelogs` 历史、`docs/plan.md`、迁移文档、`evidence/`、远端同步文件名 `rssh_backup.*`
+
+---
+
 ## 更新记录
 
 | 日期 | 变更 |
@@ -407,6 +420,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 2026-11-06 | #215 第二轮全应用比对：debug 实跑 + CDP 逐页截图；P1 无；P2 串口取消按钮补 outline 边框（已修并重建复测）；P3 为已知能力差异（Netcatty 独有 browser/ymodem/openSessionLog、右键上传下载、插件菜单）。Netcatty 实例无 CDP，逐页像素自动化列为未验证。 |
 | 2026-11-06 | #216 129 SSH 全矩阵实机验证：工具栏 13 项 + 关闭窗格、More 5 项、tab 三态点、右键 8/9 项与点击行为、时间戳对位/reflow/分屏独立、撰写栏多行与历史/Esc、`.cast` 即时落盘与日志页、自动补全 `l`/`ls `/↓/→/Tab、分屏连开 3 次稳定全部通过；P2 修复 `.cast` 录制中 0 字节（Recorder/TextLogRecorder 即时 flush）与右键粘贴字面量 `[200~`（`buildPastePayload` + `writeBulk`）；P3 记录 More「开始录制」内联文案、OSC7 Esc 未确认；门禁 753✓/build✓/948✓/tauri debug✓。 |
 | 2026-11-06 | #217 剩余低危技术债清理：headless dispatcher 补 15 条分支（ssh_exec / 5 discovery / open_external_url / app_lock 6 / clipboard 2），缺口 27→12（剩余全部 GUI 专属并在 server.rs 注释列明）；前端删除零调用 `sftpDownload`；dead-code 警告清零（删 decode_lossy/未用 Arc，server-only 函数加 cfg_attr allow，ChatDelta 加注释 allow，另清 2 个测试告警）；#6 复核为 headless/CLI/暂缓模块在用，保留；#2/#3 非低危保留；门禁 753✓/build✓/949✓/server✓/tauri debug✓。 |
+| 2026-11-06 | rssh→termX 改名专项盘点完成（未改代码）：仓库 73 文件 / 640 处 + evidence 25 文件 / 60 处；清单与迁移方案见 `docs/rename-rssh-termx.md`；确定 crate/二进制/显示名、`~/.termX` + `termx.db` 移动迁移、keychain 双读懒迁移、`RSSH_*` 旧名回退；历史文档与远端备份名保留。 |
 | 2026-11-02 | 十功能计划①本地终端完成：shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel 1:1（对照运行中 Netcatty）；实机比对差异清零（下拉选中态 / local 实底蓝白头像含卡·树·切换器 / local 标签 chip）；子 agent review 两必须修复项（CM 过滤 local、切换器头像）已修；门禁 97/97 + cargo 全绿。 |
 | 2026-11-03 | 按用户指令顺序调整：下一功能=设置中心（#12 标 🟨），SFTP 延后（研究已落盘 Temp）；设置中心研究完成（Netcatty 源码地图+termX 现状+CU 顶栏/SFTP 取证），实现开工。 |
 | 2026-11-03 | 设置中心实现 + 门禁完成：5 tab（应用/外观/终端/快捷键/系统）1:1 + 3 占位（文件关联/AI/同步），全屏 overlay 承载（Netcatty 独立窗口形态差异记录在案）；新增 get_auto_launch/set_auto_launch（Windows 注册表，lib.rs + server.rs 双注册），复用 list_fonts/secret_backend；新增前端单测 12 例；门禁全绿（109/109 + build ✓ + cargo check ×2 + cargo test --lib 789✓）；实机比对与子 agent review 留下一轮。 |
