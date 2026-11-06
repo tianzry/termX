@@ -23,8 +23,17 @@
   - 主窗关闭到托盘/最小化时设置窗是否跟随隐藏；`single_instance` 回调目前只聚焦 main，需补 settings。
   - 隐藏复用 = 内存常驻（与 Netcatty 相同取舍）。
 - **工作量估计**：路由 + 设置窗壳（含 overlay 变体/初始 tab）0.5–1 人日；Rust 建窗/去重/居中/隐藏复用/主窗联动 1–1.5 人日；跨窗口同步（version+origin 事件 + 副作用回归）1–1.5 人日；能力与 dev/打包回归 + 手动双窗测试 0.5–1 人日；**合计 3–5 人日**。建议先做 0.5 人日 spike（Rust 建窗 + `#/settings` 空壳 + 主题广播）验证 WebView2 双窗行为，再正式排期。
-- **结论**：可行，保持「每个窗口一个 WebView2 实例」的模型；不做无边框/mac 特化。本轮只立项与方案，等排期，不写代码。
+- **结论（已决策）**：**不做独立窗口，保留现有应用内 overlay（`SettingsDialog`）形态**。技术上可行（spike 已验证 `WebviewWindow("settings")` + `#/settings` hash 路由在 dev 下可达、980×720 尺寸与 workArea 居中生效、min 820×600 由 `WM_GETMINMAXINFO` 保证），但独立窗口带来的双 WebView2 常驻内存、跨窗同步与 AppLock 联动复杂度不值得为设置页付出；该方案关闭，不再排期。
 - 门禁：`npm run test:run` 751 通过、`npm run build` 通过、`cargo test --lib` 947 项（首跑 1 项已知偶发超时，单跑通过）、`npm run tauri -- build --debug --no-bundle` 通过。
+
+## 2026-11-06 — #212 设置独立窗口方案关闭（保留 overlay）
+
+- **决策**：用户确认设置继续使用应用内全屏 overlay（`SettingsDialog` + `.nc-settings-overlay`），不改为独立 `WebviewWindow`。`todo.md` 对应项已关闭，后续不再捡起。
+- **spike 结果（已回滚，仅留档）**：仅本地未提交验证，验证后全部回滚，未产生提交。
+  - dev（`tauri dev`）：`WebviewWindow("settings")` 打开 `index.html#/settings` 成功，hash 路由可达；inner 980×720；OS 窗口 rect 658,221 在 2560×1390 workArea 内精确居中。
+  - 最小尺寸：`WM_GETMINMAXINFO` 返回 minTrack 1043×797 物理像素（DPR 1.25 + 边框），即 820×600 逻辑尺寸生效。
+  - 回滚范围：`src-tauri/src/commands/window.rs`、`src-tauri/src/lib.rs`、`src-tauri/capabilities/default.json`、`src/main.tsx` 全部还原；spike 取证脚本与截图已删除。
+- 门禁：`npm run test:run` 751 通过、`npm run build` 通过。
 
 ## 2026-11-06 — #210 笔记页信息架构对齐 Netcatty
 
