@@ -12,6 +12,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../backend/client";
 import type { TransferItem, TransferProgress } from "../backend/client";
 
+/** 终态（不需要再收字节进度）的状态集合。 */
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "skipped",
+]);
+
 export interface SftpTransferQueueFeed {
   items: TransferItem[];
   progress: Record<string, TransferProgress>;
@@ -106,15 +114,32 @@ export function useSftpTransferQueue({
     }
   }, [items]);
 
-  // 运行中项订阅字节进度；离开 running 即退订并清掉进度残留。
+  // 非终态项订阅字节进度；终态（完成 / 失败 / 取消 / 跳过）即退订并清掉进度残留。
+  // 订阅范围必须含 queued / paused / conflict：入队后编排器可能瞬间切 running，
+  // 若只按 running 订阅，异步注册回来时状态已变，首帧进度事件会整段丢失。
   const progressSubs = useRef(new Map<string, () => void>());
-  /** 仍在运行的 id：异步订阅回来时据此决定是否保留（避免 effect 重跑误退订）。 */
-  const liveRunning = useRef(new Set<string>());
+  /** 仍需要进度的 id：异步订阅回来时据此决定是否保留（避免 effect 重跑误退订）。 */
+  const liveActive = useRef(new Set<string>());
+  /** 未落盘的进度（每帧最多合并一次 setState）。 */
+  const pendingProgress = useRef(new Map<string, TransferProgress>());
+  const progressFrame = useRef<number | null>(null);
+  const flushProgress = useCallback(() => {
+    progressFrame.current = null;
+    if (pendingProgress.current.size === 0) return;
+    const patch = pendingProgress.current;
+    pendingProgress.current = new Map();
+    setProgress((prev) => {
+      const next = { ...prev };
+      for (const [id, p] of patch) next[id] = p;
+      return next;
+    });
+  }, []);
   useEffect(() => {
     const subs = progressSubs.current;
-    // 弹窗关闭时退订全部进度，并清掉缓存（下次打开重新订阅当前运行项）。
+    // 弹窗关闭时退订全部进度，并清掉缓存（下次打开重新订阅当前非终态项）。
     if (!subscribeProgress) {
-      liveRunning.current = new Set();
+      liveActive.current = new Set();
+      pendingProgress.current.clear();
       if (subs.size > 0) {
         for (const u of subs.values()) u();
         subs.clear();
@@ -122,24 +147,34 @@ export function useSftpTransferQueue({
       }
       return;
     }
-    const runningIds = new Set(
-      items.filter((i) => i.status === "running").map((i) => i.id),
+    const activeIds = new Set(
+      items.filter((i) => !TERMINAL_STATUSES.has(i.status)).map((i) => i.id),
     );
-    liveRunning.current = runningIds;
-    for (const id of runningIds) {
+    liveActive.current = activeIds;
+    for (const id of activeIds) {
       if (subs.has(id)) continue;
       void api.onSftpProgress(id, (p) => {
-        setProgress((prev) => ({ ...prev, [id]: p }));
+        // 后端每 32K 发一条（已按 200ms 节流）；再按 rAF 合并成每帧一次
+        // setState，避免一次传输把整个队列组件重渲染几百次。
+        pendingProgress.current.set(id, p);
+        if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+          if (progressFrame.current === null) {
+            progressFrame.current = window.requestAnimationFrame(flushProgress);
+          }
+        } else {
+          flushProgress();
+        }
       }).then((u) => {
-        if (!mounted.current || !liveRunning.current.has(id)) u();
+        if (!mounted.current || !liveActive.current.has(id)) u();
         else subs.set(id, u);
       });
     }
     const stale: string[] = [];
     for (const [id, u] of subs) {
-      if (!runningIds.has(id)) {
+      if (!activeIds.has(id)) {
         u();
         subs.delete(id);
+        pendingProgress.current.delete(id);
         stale.push(id);
       }
     }
@@ -150,7 +185,7 @@ export function useSftpTransferQueue({
         return next;
       });
     }
-  }, [items, subscribeProgress]);
+  }, [items, subscribeProgress, flushProgress]);
 
   // 卸载：释放全部订阅。
   useEffect(() => {
@@ -159,6 +194,10 @@ export function useSftpTransferQueue({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      if (progressFrame.current !== null) {
+        window.cancelAnimationFrame(progressFrame.current);
+        progressFrame.current = null;
+      }
       for (const u of updated.values()) u();
       updated.clear();
       for (const u of prog.values()) u();

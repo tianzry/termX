@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -15,6 +16,48 @@ use crate::ssh::client;
 /// (transfers.svelte.ts) matches this literal via `errStr.includes(...)` to
 /// flip the status to "cancelled". Keep the constant in sync across both ends.
 pub const CANCELLED_CODE: &str = "transfer_cancelled";
+
+/// 进度事件节流间隔。对齐 Netcatty 传输进度上报（约 200ms 一条）：
+/// 30MB 文件按 32KB 分块原本会发近千条事件，既拖慢 webview 也会让
+/// 进度条更新相互覆盖；首帧立即发出，最后一块（100%）强制发出。
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(200);
+
+/// 进度节流器。用 `Mutex` 而不是 `Cell`：进度闭包会被 async 任务捕获，
+/// future 要满足 Send，`&Cell` 不满足 Sync，会直接编译失败。
+struct ProgressThrottle {
+    last: std::sync::Mutex<Option<Instant>>,
+}
+
+impl ProgressThrottle {
+    fn new() -> Self {
+        Self {
+            last: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn should_emit(&self, transferred: u64, total: u64) -> bool {
+        // 完成帧必须发出，保证前端能拿到 100%（不依赖状态事件补齐）。
+        if total > 0 && transferred >= total {
+            return true;
+        }
+        let now = Instant::now();
+        let mut last = self
+            .last
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match *last {
+            None => {
+                *last = Some(now);
+                true
+            }
+            Some(prev) if now.duration_since(prev) >= PROGRESS_EMIT_INTERVAL => {
+                *last = Some(now);
+                true
+            }
+            _ => false,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteEntry {
@@ -765,16 +808,20 @@ impl SftpHandle {
         let tmp_path = local_path.with_file_name(format!("{file_name}.part"));
 
         let event = format!("sftp:progress:{transfer_id}");
+        // 32KB 一块 × 大文件 = 每秒数百条事件；按 200ms 节流，首帧与 100% 必发。
+        let throttle = ProgressThrottle::new();
         let result = async {
             let mut local_file = tokio::fs::File::create(&tmp_path).await?;
             stream_download(
                 &mut remote_file,
                 &mut local_file,
                 |t| {
-                    let _ = host.emit(
-                        &event,
-                        serde_json::json!({ "transferred": t, "total": total }),
-                    );
+                    if throttle.should_emit(t, total) {
+                        let _ = host.emit(
+                            &event,
+                            serde_json::json!({ "transferred": t, "total": total }),
+                        );
+                    }
                 },
                 &cancel,
             )
@@ -835,14 +882,17 @@ impl SftpHandle {
         })?;
 
         let event = format!("sftp:progress:{transfer_id}");
+        let throttle = ProgressThrottle::new();
         let transferred = stream_download(
             &mut remote_file,
             dst,
             |t| {
-                let _ = host.emit(
-                    &event,
-                    serde_json::json!({ "transferred": t, "total": total }),
-                );
+                if throttle.should_emit(t, total) {
+                    let _ = host.emit(
+                        &event,
+                        serde_json::json!({ "transferred": t, "total": total }),
+                    );
+                }
             },
             &cancel,
         )
@@ -932,6 +982,7 @@ impl SftpHandle {
 
         let tmp_path = format!("{remote_path}.part");
         let event = format!("sftp:progress:{transfer_id}");
+        let throttle = ProgressThrottle::new();
         let result = async {
             let mut remote_file = self.sftp.create(&tmp_path).await.map_err(|e| {
                 AppError::sftp(
@@ -943,10 +994,12 @@ impl SftpHandle {
                 reader,
                 &mut remote_file,
                 |t| {
-                    let _ = host.emit(
-                        &event,
-                        serde_json::json!({ "transferred": t, "total": total }),
-                    );
+                    if throttle.should_emit(t, total) {
+                        let _ = host.emit(
+                            &event,
+                            serde_json::json!({ "transferred": t, "total": total }),
+                        );
+                    }
                 },
                 &cancel,
             )

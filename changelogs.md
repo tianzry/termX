@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-11-06 — #239 SFTP 传输进度条不显示 + 传输队列高度可拖拽（对齐 Netcatty SftpTransferQueue）
+
+- **需求**：定位「SFTP 传输进度条不显示」的真实原因（后端没发 / 前端没订阅 / 渲染被裁），修完后同一文件在 129 上截 0% / 中间 / 100% 三态；再把传输队列面板做成 Netcatty 的高度可拖拽视图。
+- **定位结论**（129 真实传输 + CDP 采样，非静态推断）：
+  1. **后端有发且单位正确**：`sftp:progress:<id>` 载荷为 `{ transferred, total }`，`total` 来自本地文件 / 远端 metadata（UI 入队不传 `size` 时也正确）；全页 SFTP 底部面板实测 queued → 1% → 2% → 30% → 100%，说明后端发射、前端订阅、行渲染均正常；`TransferQueueList` 的 `total = pr.total > 0 ? pr.total : item.size` 无单位错配。
+  2. **真正的「不显示」在终端侧栏**：`SftpSidePane` 此前只渲染 `SftpPaneView`，没有挂传输队列（Netcatty 的 `SftpSidePanel` 在 SFTP 面板下方常驻 `SftpTransferQueue`），因此从侧栏发起的传输只有顶栏全局弹窗可见，侧栏内看不到进度条。
+  3. **两处隐患**：后端每个 32KB 分块发一次进度（300MB ≈ 近万条事件）；前端只给 `running` 项订阅进度，入队瞬间切 running 时异步订阅回来已错过首帧，0% 帧可能丢失。
+- **修复**：
+  - `src-tauri/src/ssh/sftp.rs`：新增 `ProgressThrottle`（200ms，首帧立即发、最后一块强制发）并接入 `download_streaming` / `download_to_writer` / `upload_streaming` 三处进度发射；用 `Mutex` 而非 `Cell` 保存上次时间（进度闭包被 async future 捕获，`&Cell` 不满足 `Sync`/`Send`）。
+  - `src/sftp/useSftpTransferQueue.ts`：进度订阅范围由「仅 running」改为「所有非终态（queued/paused/conflict/running）」，终态才退订；进度事件按 `requestAnimationFrame` 合并成每帧一次 setState，避免大文件传输把队列组件重渲染数百次。
+  - `src/sftp/SftpSidePane.tsx`：外层加 `.nc-side-sftp-stack` 纵向 flex，文件面板 `flex:1` + 底部 `<SftpQueuePanel />`，与 Netcatty 侧栏结构一致；全页与侧栏共用同一个 `SftpQueuePanel`，改一处即可（另一处回归确认）。
+  - `src/sftp/SftpQueuePanel.tsx`：队列高度对齐 Netcatty —— 默认 220、最小 112、最大 480、且不超过视口 60%；顶部 12px 拖拽条（`GripHorizontal` 居中、`cursor: row-resize`），向上拖变高；拖动中 body 光标/禁选中，松手写 localStorage（`termx.sftp.transferPanelHeight.v1`）；**无双击复位**（与 Netcatty 一致）；面板高度改为内联 `height`，列表 `flex:1` 内部滚动。
+  - `src/styles.css`：移除 `.nc-sftp-queue` 固定 `max-height:220px`；新增拖拽条样式、列表 `flex:1/min-height:0`；行内名称 `min-width:0` 可压缩、大小/百分比/操作列不收缩、进度条最小 24px，配合 `.nc-side-sftp-stack` 保证窄栏不横向溢出。
+- **验证**（129 实机 CDP 9222，真实 300MB 上传）：
+  1. 侧栏路径：打开 129 SSH → 工具栏「打开 SFTP」→ 底部队列 0%（`b3-side-start.png`）→ 20% 中间态（`b3-side-mid.png`）→ 100% 完成（`b3-side-done.png`），同一文件；全页路径另存 `b3-p0/mid/done.png`。
+  2. 拖拽：220 → 向下 112（下限）→ 向上 480（上限）→ 再下拉仍 480，松手 localStorage 写入并在刷新后保留；面板底部始终贴住侧栏底、文件列表保留可见高度（`b3-side-resize/max/min.png`）。
+  3. 外壳回归：全页底部面板默认 220 正常；880×700 视口下侧栏、底部面板、顶栏传输弹窗均无横向溢出（行 `scrollWidth-clientWidth = 0`，弹窗右缘 778 < 880），见 `b3-side-narrow.png`、`b3-shell-wide/narrow.png`。分屏场景队列位于 `SftpView` 外壳层、不随窗格分屏重复渲染，结构上不受影响。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例全过；`npm run build` ✓；`cargo check` ✓（Rust 节流器）。
+- **踩坑**：CDP 拖拽测试若复用第一次的把手坐标，面板变高后把手已上移，后续按压落在列表上不会触发拖拽——每步须重新取 `getBoundingClientRect()`；`Browser.setWindowBounds` 在 Tauri 窗口不可靠，用 `Emulation.setDeviceMetricsOverride` 验证窄视口布局。
+
 ## 2026-11-06 — #238 顶栏「文件传输」按钮 + 全局传输中心（对齐 Netcatty GlobalSftpTransferCenter）
 
 - **需求**：顶栏右侧补文件传输进度入口，按 Netcatty 真实实现移植三态外观、数量徽标与点击行为，并与 `SftpQueuePanel` 说明复用关系；同时确认移除「锁定 / 快捷设置」后的顶栏间距。

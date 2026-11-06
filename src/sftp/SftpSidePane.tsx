@@ -15,6 +15,7 @@ import * as api from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
 import { getSettings, subscribeSettings } from "../settings/settingsStore";
 import { SftpPaneView } from "./SftpPaneView";
+import { SftpQueuePanel } from "./SftpQueuePanel";
 import type { RemoteConnection } from "./sftpModel";
 
 interface Props {
@@ -153,16 +154,20 @@ export function SftpSidePane({
   }
 
   return (
-    <SftpPaneView
-      connection={connection}
-      variant="side"
-      terminalCwd={terminalCwd}
-      onPathChange={(next) => {
-        pathRef.current = next;
-      }}
-      onRevealInTerminal={onRevealInTerminal}
-      onLocatePathInTerminal={onLocatePathInTerminal}
-      externalPath={externalPath}
-    />
+    // 对齐 Netcatty SftpSidePanel：文件列表在上、传输队列固定在下（队列可拖高）。
+    <div className="nc-side-sftp-stack">
+      <SftpPaneView
+        connection={connection}
+        variant="side"
+        terminalCwd={terminalCwd}
+        onPathChange={(next) => {
+          pathRef.current = next;
+        }}
+        onRevealInTerminal={onRevealInTerminal}
+        onLocatePathInTerminal={onLocatePathInTerminal}
+        externalPath={externalPath}
+      />
+      <SftpQueuePanel />
+    </div>
   );
 }

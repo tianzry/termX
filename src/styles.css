@@ -4446,13 +4446,35 @@ button:disabled {
 
 /* ── SFTP 传输队列面板（阶段 B，全局，双栏下方） ───────── */
 
+/* 高度由内联 style 控制（112–480px，视口 60% 封顶），对齐 Netcatty。 */
 .nc-sftp-queue {
   border-top: 1px solid hsl(var(--border));
   background: hsl(var(--background));
-  max-height: 220px;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 顶部拖拽条（Netcatty SftpTransferQueue：12px、居中 Grip、向上拖变高）。 */
+.nc-sftp-queue-resizer {
+  height: 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  color: hsl(var(--muted-foreground) / 0.7);
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+  touch-action: none;
+  user-select: none;
+}
+
+.nc-sftp-queue-resizer:hover,
+.nc-sftp-queue.is-dragging .nc-sftp-queue-resizer {
+  color: hsl(var(--foreground));
+  background: hsl(var(--secondary) / 0.4);
 }
 
 .nc-sftp-queue-header {
@@ -4463,6 +4485,7 @@ button:disabled {
   font-size: 11px;
   color: hsl(var(--muted-foreground));
   border-bottom: 1px solid hsl(var(--border) / 0.6);
+  flex-shrink: 0;
 }
 
 .nc-sftp-queue-title {
@@ -4518,7 +4541,10 @@ button:disabled {
 }
 
 .nc-sftp-queue-list {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .nc-sftp-queue-row {
@@ -4528,6 +4554,7 @@ button:disabled {
   padding: 3px 12px;
   font-size: 11px;
   color: hsl(var(--foreground));
+  min-width: 0;
 }
 
 .nc-sftp-queue-dir {
@@ -4537,6 +4564,8 @@ button:disabled {
 
 .nc-sftp-queue-name {
   max-width: 220px;
+  /* 侧栏窄宽度下允许压缩到 0，否则 nowrap 的最小内容宽度会把整行撑溢出。 */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4546,10 +4575,12 @@ button:disabled {
   color: hsl(var(--muted-foreground));
   min-width: 52px;
   text-align: right;
+  flex-shrink: 0;
 }
 
 .nc-sftp-queue-bar {
   flex: 1;
+  min-width: 24px;
   height: 4px;
   background: hsl(var(--muted));
   border-radius: 2px;
@@ -4571,6 +4602,7 @@ button:disabled {
   min-width: 40px;
   text-align: right;
   color: hsl(var(--muted-foreground));
+  flex-shrink: 0;
 }
 
 .nc-sftp-queue-note {
@@ -4592,6 +4624,7 @@ button:disabled {
 .nc-sftp-queue-actions {
   display: flex;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .nc-sftp-queue-btn {
@@ -12528,6 +12561,16 @@ html[data-theme="dark"] .nc-shell-icon.mono {
 }
 
 /* ── 侧栏 SFTP 变体（Netcatty SftpSidePanel 实测：5 列 / 44px 行 / 36px 状态栏）── */
+
+/* 文件列表 + 底部传输队列（对齐 Netcatty SftpSidePanel 内嵌 SftpTransferQueue）。 */
+.nc-side-sftp-stack {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 .nc-sftp-sidepanel {
   flex: 1;
