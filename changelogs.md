@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-11-06 — #233 侧栏「命令历史」点击后整栏关闭
+
+- **问题**：终端右侧栏已打开时，点击页签「命令历史」，整个侧栏直接消失，需要再点工具栏图标重开。
+- **根因**：`src/App.tsx` `changeSidePanelTool` 每次都新建 `notesOpenTabs` 对象（即使值没变），触发 `[activeTabId, notesOpenTabs]` 的同步 effect；该 effect 白名单仅 `sftp` / `scripts`，当前工具为 `history` 时被当作「非持久工具页」直接 `setTool(null)` 关闭。
+- **实现**：`setNotesOpenTabs` 改为「值未变复用 prev」，消除无意义对象抖动；同步 effect 白名单补 `history`，工具页常驻（对齐 Netcatty：页签切换只在同一侧栏内换视图），仅「笔记」保留按标签记忆。
+- **验证**：129 实机侧栏笔记 → 点击「历史」后侧栏保持打开、内容切到历史列表（截图 `evidence/af-F-history-panel.png`）。
+
 ## 2026-11-06 — #232 SFTP 工具栏与侧栏页签图标对齐 Netcatty（lucide 同套图标）
 
 - **Netcatty 取证**（`components/sftp/SftpPaneToolbar.tsx`、`TerminalSidePanel.tsx`）：工具栏依次使用 `Bookmark`（已收藏实心黄）、`SquareTerminal`（跳到终端目录）、`Terminal`（定位路径到终端）、`ClipboardCopy`（复制路径）、`ListTree/List`（视图切换）、`Rows3`（行密度）、`Search`（过滤）、`FolderPlus`（新建目录）、`FilePlus`（新建文件）、`Eye/EyeOff`（隐藏文件）、`RefreshCw`（刷新）、`MoreVertical`（更多）；侧栏页签为 `FolderTree` / `Play` / `History` / `NotebookText`。

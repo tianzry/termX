@@ -512,10 +512,13 @@ export default function App() {
   function changeSidePanelTool(next: SidePanelTool) {
     setTool(next);
     if (activeTabId) {
-      setNotesOpenTabs((prev) => ({
-        ...prev,
-        [activeTabId]: next === "notes",
-      }));
+      // 值未变时复用对象：避免 notesOpenTabs 抖动触发下面的同步 effect，
+      // 把「历史」等非笔记工具页误判成需要关闭侧栏（对齐 Netcatty 页签常驻）。
+      setNotesOpenTabs((prev) => {
+        const nextNotesOpen = next === "notes";
+        if (prev[activeTabId] === nextNotesOpen) return prev;
+        return { ...prev, [activeTabId]: nextNotesOpen };
+      });
     }
   }
 
@@ -529,7 +532,9 @@ export default function App() {
   useEffect(() => {
     if (!activeTabId) return;
     setTool((current) =>
-      current === "sftp" || current === "scripts"
+      // 工具页常驻（对齐 Netcatty 侧栏）：切换标签 / 点击其它工具页都不关闭；
+      // 只有「笔记」按标签记忆，未打开笔记的新标签才回落关闭。
+      current === "sftp" || current === "scripts" || current === "history"
         ? current
         : notesOpenTabs[activeTabId]
           ? "notes"
