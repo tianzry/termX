@@ -14,7 +14,7 @@
  * - 支持 SSH / 本地 / 串口 / Telnet 四种传输，各自独立连接与生命周期。
  */
 
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { ComposeBar } from "./terminal/ComposeBar";
@@ -77,8 +77,14 @@ import type {
 } from "./backend/client";
 import type { Tab } from "./workspaceModel";
 import { getSettings, subscribeSettings, updateSettings } from "./settings/settingsStore";
-import { cloneKeywordHighlightRules, type KeywordHighlightRule } from "./settings/settingsModel";
-import { cellOffsets, compileKeywordRules, findKeywordSpans } from "./terminal/keywordHighlight";
+import { cloneKeywordHighlightRules, normalizeHostKeywordHighlightRules, type KeywordHighlightRule } from "./settings/settingsModel";
+import {
+  cellOffsets,
+  compileKeywordRules,
+  findKeywordSpans,
+  mergeKeywordHighlightRules,
+} from "./terminal/keywordHighlight";
+import { subscribeHostKeywordHighlightChanged } from "./terminal/hostKeywordHighlight";
 import { readTerminalSelection } from "./Terminal";
 import {
   advanceIndeterminateConnectionProgress,
@@ -399,6 +405,7 @@ export function TerminalPane({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [highlightOpen, setHighlightOpen] = useState(false);
   const [highlightDraft, setHighlightDraft] = useState("");
+  const [hostHighlightDraft, setHostHighlightDraft] = useState("");
   /** 关键字高亮规则来自设置（设置页与工具栏浮层共享同一份，改后即时重绘）。 */
   const [highlightEnabled, setHighlightEnabled] = useState(
     () => getSettings().terminal.keywordHighlightEnabled,
@@ -406,6 +413,51 @@ export function TerminalPane({
   const [highlightRules, setHighlightRules] = useState<KeywordHighlightRule[]>(() =>
     cloneKeywordHighlightRules(getSettings().terminal.keywordHighlightRules),
   );
+  /**
+   * 主机级规则（schema v50，对齐 Netcatty Host.keywordHighlightRules）：
+   * 连接期间追加到全局规则，断开回落全局。
+   */
+  const [hostHighlightEnabled, setHostHighlightEnabled] = useState(false);
+  const [hostHighlightRules, setHostHighlightRules] = useState<KeywordHighlightRule[]>([]);
+
+  /**
+   * 拉取本主机的高亮规则；主机编辑器保存后广播 profileId，已开终端重拉
+   * （无需重启）。非 SSH/Telnet（无档案）恒为空，只用全局规则。
+   */
+  useEffect(() => {
+    const profileId = encodingProfileId;
+    if (!profileId) {
+      setHostHighlightEnabled(false);
+      setHostHighlightRules([]);
+      return;
+    }
+    let disposed = false;
+    const load = () => {
+      void api
+        .getProfile(profileId)
+        .then((p) => {
+          if (disposed) return;
+          setHostHighlightEnabled(p.keyword_highlight_enabled === true);
+          const next = normalizeHostKeywordHighlightRules(p.keyword_highlight_rules ?? []);
+          setHostHighlightRules((prev) =>
+            JSON.stringify(prev) === JSON.stringify(next) ? prev : next,
+          );
+        })
+        .catch(() => {
+          if (disposed) return;
+          setHostHighlightEnabled(false);
+          setHostHighlightRules([]);
+        });
+    };
+    load();
+    const unsubscribe = subscribeHostKeywordHighlightChanged((changed) => {
+      if (changed === profileId) load();
+    });
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [encodingProfileId]);
   /** 片段 / 脚本列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
   const [snippets, setSnippets] = useState<api.Snippet[]>([]);
   /** 自动触发用最新快照（异步回调里避免闭包旧值）。 */
@@ -1786,11 +1838,63 @@ export function TerminalPane({
     });
   }
 
+  /**
+   * 主机级规则持久化（对齐 Netcatty HostKeywordHighlightPopover 的 onUpdateHost）：
+   * 写回当前主机档案后，本终端按新规则立即重绘（本地 state 同步），
+   * 无需重启、也无需重新连接；断开后仍由 status 门槛回落全局。
+   */
+  function persistHostKeywordHighlight(patch: {
+    enabled?: boolean;
+    rules?: KeywordHighlightRule[];
+  }) {
+    const profileId = encodingProfileId;
+    if (!profileId) return;
+    const nextEnabled = patch.enabled ?? hostHighlightEnabled;
+    const nextRules = patch.rules ?? hostHighlightRules;
+    setHostHighlightEnabled(nextEnabled);
+    setHostHighlightRules(nextRules);
+    void api
+      .getProfile(profileId)
+      .then((p) =>
+        api.updateProfile({
+          ...p,
+          keyword_highlight_enabled: nextEnabled,
+          keyword_highlight_rules: nextRules.length > 0 ? nextRules : null,
+        }),
+      )
+      .catch(() => {
+        // 写库失败时回滚到档案里的真实值，避免 UI 与会话状态漂移。
+        void api.getProfile(profileId).then((p) => {
+          setHostHighlightEnabled(p.keyword_highlight_enabled === true);
+          setHostHighlightRules(
+            normalizeHostKeywordHighlightRules(p.keyword_highlight_rules ?? []),
+          );
+        });
+      });
+  }
+
+  /**
+   * 全局 + 主机规则合并（Netcatty 语义：主机追加、全局先匹配）；
+   * 主机规则的开关随连接状态联动 —— 断开后回落全局。
+   */
+  const effectiveHighlight = useMemo(
+    () =>
+      mergeKeywordHighlightRules(
+        highlightRules,
+        highlightEnabled,
+        hostHighlightRules,
+        hostHighlightEnabled && status === "connected",
+      ),
+    [highlightRules, highlightEnabled, hostHighlightRules, hostHighlightEnabled, status],
+  );
+
   /** 关键字高亮：按设置里的规则给命中片段着色（xterm decoration foregroundColor）。 */
   useEffect(() => {
     const term = controllerRef.current?.term;
     if (!term) return;
-    const compiled = highlightEnabled ? compileKeywordRules(highlightRules) : [];
+    const compiled = effectiveHighlight.enabled
+      ? compileKeywordRules(effectiveHighlight.rules)
+      : [];
     if (compiled.length === 0) return;
     // registerMarker / registerDecoration 属于 proposed API。
     term.options.allowProposedApi = true;
@@ -1854,7 +1958,7 @@ export function TerminalPane({
       for (const sub of subs) sub.dispose();
       clear();
     };
-  }, [highlightEnabled, highlightRules]);
+  }, [effectiveHighlight]);
 
   /** 脚本下拉菜单（终端工具栏「脚本」按钮）。 */
   const [scriptMenuOpen, setScriptMenuOpen] = useState(false);
@@ -3289,7 +3393,7 @@ export function TerminalPane({
                 return (
                   <div key={action} className="term-tool-more">
                     <button
-                      className={`term-tool-btn${highlightOpen || highlightRules.length > 0 ? " active" : ""}`}
+                      className={`term-tool-btn${highlightOpen || highlightRules.length > 0 || (hostHighlightEnabled && hostHighlightRules.length > 0) ? " active" : ""}`}
                       title={TERMINAL_TOOLBAR_TEXT.highlight.title}
                       onClick={() => setHighlightOpen((v) => !v)}
                     >
@@ -3380,6 +3484,123 @@ export function TerminalPane({
                               </button>
                             </div>
                           ))
+                        )}
+                        {/* 主机级规则：连接期间追加到全局，断开/关闭后回落全局。 */}
+                        {encodingProfileId && (
+                          <>
+                            <div className="term-menu-sep" />
+                            <div className="term-menu-label">本主机规则（追加到全局）</div>
+                            <div className="term-highlight-switch">
+                              <span>启用本主机规则</span>
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={hostHighlightEnabled}
+                                className={`term-highlight-toggle${hostHighlightEnabled ? " on" : ""}`}
+                                onClick={() =>
+                                  persistHostKeywordHighlight({
+                                    enabled: !hostHighlightEnabled,
+                                  })
+                                }
+                              >
+                                <span />
+                              </button>
+                            </div>
+                            {hostHighlightEnabled && (
+                              <>
+                                <div className="term-highlight-form">
+                                  <input
+                                    value={hostHighlightDraft}
+                                    placeholder="输入关键词后回车新增本主机规则"
+                                    onChange={(e) => setHostHighlightDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      const keyword = hostHighlightDraft.trim();
+                                      if (e.key !== "Enter" || !keyword) return;
+                                      const pattern = keyword.replace(
+                                        /[.*+?^${}()|[\]\\]/g,
+                                        "\\$&",
+                                      );
+                                      persistHostKeywordHighlight({
+                                        rules: [
+                                          ...hostHighlightRules,
+                                          {
+                                            id: `host-${Date.now().toString(36)}`,
+                                            label: keyword,
+                                            patterns: [pattern],
+                                            color: "#FF00AA",
+                                            enabled: true,
+                                          },
+                                        ],
+                                      });
+                                      setHostHighlightDraft("");
+                                    }}
+                                  />
+                                </div>
+                                {hostHighlightRules.length === 0 ? (
+                                  <div className="term-menu-empty">本主机尚无规则</div>
+                                ) : (
+                                  hostHighlightRules.map((rule) => (
+                                    <div
+                                      key={rule.id}
+                                      className={`term-highlight-row${rule.enabled ? "" : " is-off"}`}
+                                    >
+                                      <button
+                                        type="button"
+                                        className="term-highlight-rule"
+                                        title={
+                                          rule.enabled ? "点击停用该规则" : "点击启用该规则"
+                                        }
+                                        onClick={() =>
+                                          persistHostKeywordHighlight({
+                                            rules: hostHighlightRules.map((r) =>
+                                              r.id === rule.id
+                                                ? { ...r, enabled: !r.enabled }
+                                                : r,
+                                            ),
+                                          })
+                                        }
+                                      >
+                                        <span
+                                          className="term-highlight-dot"
+                                          style={{ background: rule.color }}
+                                        />
+                                        <span className="term-history-cmd">{rule.label}</span>
+                                      </button>
+                                      <input
+                                        type="color"
+                                        className="term-highlight-color"
+                                        title="改色后立即生效"
+                                        value={rule.color}
+                                        onChange={(e) =>
+                                          persistHostKeywordHighlight({
+                                            rules: hostHighlightRules.map((r) =>
+                                              r.id === rule.id
+                                                ? { ...r, color: e.target.value.toUpperCase() }
+                                                : r,
+                                            ),
+                                          })
+                                        }
+                                      />
+                                      <button
+                                        type="button"
+                                        className="term-highlight-remove"
+                                        title="移除该规则"
+                                        onClick={() =>
+                                          persistHostKeywordHighlight({
+                                            rules: hostHighlightRules.filter(
+                                              (r) => r.id !== rule.id,
+                                            ),
+                                          })
+                                        }
+                                      >
+                                        <Icon name="x" size={12} />
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </>
+                            )}
+                          </>
                         )}
                         <button
                           type="button"

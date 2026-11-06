@@ -8,10 +8,30 @@
 
 import type { KeywordHighlightRule } from "../settings/settingsModel";
 
-export interface CompiledKeywordRule {
+interface CompiledKeywordRule {
   id: string;
   color: string;
   patterns: RegExp[];
+}
+
+/**
+ * 合并「全局 + 主机」规则（对齐 Netcatty `terminalKeywordHighlightRules.ts`）：
+ * 主机规则是**追加**，不是替换；匹配时全局先规则先得，主机规则只补充全局未命中的区间。
+ * 总开关 = 全局开 || 主机开（主机断开时由调用方关闭 hostEnabled 以回落全局）。
+ */
+export function mergeKeywordHighlightRules(
+  globalRules: KeywordHighlightRule[],
+  globalEnabled: boolean,
+  hostRules: KeywordHighlightRule[],
+  hostEnabled: boolean,
+): { enabled: boolean; rules: KeywordHighlightRule[] } {
+  return {
+    enabled: globalEnabled || hostEnabled,
+    rules: [
+      ...(globalEnabled ? globalRules : []),
+      ...(hostEnabled ? hostRules : []),
+    ],
+  };
 }
 
 export interface KeywordHighlightSpan {

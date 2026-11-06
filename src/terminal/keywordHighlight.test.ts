@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_KEYWORD_HIGHLIGHT_RULES,
+  normalizeHostKeywordHighlightRules,
   normalizeKeywordHighlightRules,
   type KeywordHighlightRule,
 } from "../settings/settingsModel";
-import { compileKeywordRules, findKeywordSpans } from "./keywordHighlight";
+import { compileKeywordRules, findKeywordSpans, mergeKeywordHighlightRules } from "./keywordHighlight";
 
 const rule = (id: string, color: string, patterns: string[], enabled = true): KeywordHighlightRule => ({
   id,
@@ -88,5 +89,69 @@ describe("keywordHighlight", () => {
     expect(ipMac?.patterns).toEqual(DEFAULT_KEYWORD_HIGHLIGHT_RULES.find((r) => r.id === "ip-mac")?.patterns);
     expect(ipMac?.patterns.some((p) => p.length > 200)).toBe(true);
     expect(compileKeywordRules(normalized)).toHaveLength(7);
+  });
+
+  it("主机规则：空/非法 = 无主机规则，不回落内置", () => {
+    expect(normalizeHostKeywordHighlightRules(null)).toEqual([]);
+    expect(normalizeHostKeywordHighlightRules([])).toEqual([]);
+    expect(
+      normalizeHostKeywordHighlightRules([
+        { id: "x", label: "X", patterns: ["("], color: "red", enabled: true },
+      ]),
+    ).toEqual([]);
+    expect(
+      normalizeHostKeywordHighlightRules([
+        { id: "cover", label: "Cover", patterns: ["COVERED"], color: "#ff00aa", enabled: true },
+      ]),
+    ).toEqual([
+      { id: "cover", label: "Cover", patterns: ["COVERED"], color: "#FF00AA", enabled: true },
+    ]);
+  });
+});
+
+describe("mergeKeywordHighlightRules（全局 + 主机，Netcatty 追加语义）", () => {
+  const global = rule("error", "#F87171", ["\\berror\\b"]);
+  const host = rule("cover", "#FF00AA", ["COVERED"]);
+
+  it("两开关都关 = 不启用、无规则", () => {
+    expect(mergeKeywordHighlightRules([global], false, [host], false)).toEqual({
+      enabled: false,
+      rules: [],
+    });
+  });
+
+  it("开关打开但无规则时规则为空", () => {
+    expect(mergeKeywordHighlightRules([], false, [], true)).toEqual({
+      enabled: true,
+      rules: [],
+    });
+  });
+
+  it("主机规则追加在全局之后，不替换全局", () => {
+    const merged = mergeKeywordHighlightRules([global], true, [host], true);
+    expect(merged.enabled).toBe(true);
+    expect(merged.rules.map((r) => r.id)).toEqual(["error", "cover"]);
+  });
+
+  it("断开（主机关闭）回落全局；全局关闭时断开后完全不点亮", () => {
+    expect(
+      mergeKeywordHighlightRules([global], true, [host], false).rules.map((r) => r.id),
+    ).toEqual(["error"]);
+    expect(mergeKeywordHighlightRules([global], false, [host], false).enabled).toBe(false);
+  });
+
+  it("同输出在「全局主机」与「覆盖主机」命中不同规则", () => {
+    const text = "error: COVERED";
+    const globalOnly = compileKeywordRules(
+      mergeKeywordHighlightRules([global], true, [host], false).rules,
+    );
+    const covered = compileKeywordRules(
+      mergeKeywordHighlightRules([global], true, [host], true).rules,
+    );
+    expect(findKeywordSpans(text, globalOnly).map((s) => s.ruleId)).toEqual(["error"]);
+    expect(findKeywordSpans(text, covered).map((s) => s.ruleId)).toEqual([
+      "error",
+      "cover",
+    ]);
   });
 });

@@ -145,6 +145,21 @@ export function normalizeKeywordHighlightRules(raw: unknown): KeywordHighlightRu
   if (!Array.isArray(raw) || raw.length === 0) {
     return cloneKeywordHighlightRules(DEFAULT_KEYWORD_HIGHLIGHT_RULES);
   }
+  const out = sanitizeKeywordHighlightRules(raw);
+  return out.length > 0 ? out : cloneKeywordHighlightRules(DEFAULT_KEYWORD_HIGHLIGHT_RULES);
+}
+
+/**
+ * 主机级规则清洗（对齐 Netcatty `Host.keywordHighlightRules`）：
+ * 空 / 非法 = 没有主机规则（**不**回落到内置规则）。全局规则仍由
+ * `normalizeKeywordHighlightRules` 负责，二者在终端侧按「全局 + 主机追加」合并。
+ */
+export function normalizeHostKeywordHighlightRules(raw: unknown): KeywordHighlightRule[] {
+  if (!Array.isArray(raw)) return [];
+  return sanitizeKeywordHighlightRules(raw);
+}
+
+function sanitizeKeywordHighlightRules(raw: unknown[]): KeywordHighlightRule[] {
   const out: KeywordHighlightRule[] = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
@@ -163,7 +178,7 @@ export function normalizeKeywordHighlightRules(raw: unknown): KeywordHighlightRu
     out.push({ id, label, patterns, color, enabled: rule.enabled !== false });
     if (out.length >= MAX_KEYWORD_HIGHLIGHT_RULES) break;
   }
-  return out.length > 0 ? out : cloneKeywordHighlightRules(DEFAULT_KEYWORD_HIGHLIGHT_RULES);
+  return out;
 }
 
 /** 终端行为设置（字段名对齐 Netcatty domain/models/terminal.ts TerminalSettings）。 */

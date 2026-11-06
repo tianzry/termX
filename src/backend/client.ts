@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import type { KeywordHighlightRule } from "../settings/settingsModel";
 
 /**
  * termX 前端 ↔ Tauri Rust 后端的统一桥接层（NFC 契约）。
@@ -117,6 +118,13 @@ export interface Profile {
   telnet_username?: string | null;
   /** 字符集：`utf-8` / `gb18030`；null = utf-8。 */
   telnet_charset?: string | null;
+  /**
+   * 主机级关键字高亮开关（schema v50，对齐 Netcatty Host.keywordHighlightEnabled）：
+   * true = 连接期间追加主机规则；null / false = 不启用。断开后终端回落全局规则。
+   */
+  keyword_highlight_enabled?: boolean | null;
+  /** 主机级高亮规则（追加到全局规则之后，不替换全局）；null = 无主机规则。 */
+  keyword_highlight_rules?: KeywordHighlightRule[] | null;
 }
 
 /** 代理库条目（`list_proxy_profiles`），密码单独走 SecretStore。 */

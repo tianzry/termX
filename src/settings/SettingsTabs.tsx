@@ -930,7 +930,7 @@ function KeywordRuleDialog({
 }
 
 /** 规则列表：色块 + 标签 + 开关 + 内置/自定义的编辑、恢复、删除（对照 Netcatty KeywordHighlightRulesEditor）。 */
-function KeywordHighlightRulesEditor({
+export function KeywordHighlightRulesEditor({
   rules,
   onChange,
   t,

@@ -24,6 +24,13 @@ import {
 } from "react";
 import * as api from "./backend/client";
 import { updateSettings, useSettings } from "./settings/settingsStore";
+import { KeywordHighlightRulesEditor } from "./settings/SettingsTabs";
+import { settingsT } from "./settings/i18n";
+import {
+  normalizeHostKeywordHighlightRules,
+  type KeywordHighlightRule,
+} from "./settings/settingsModel";
+import { notifyHostKeywordHighlightChanged } from "./terminal/hostKeywordHighlight";
 import type {
   Credential,
   CredentialType,
@@ -275,6 +282,12 @@ type ComposerDraft = {
   proxy: ProxyDraft;
   /** 引用代理库条目；非空时以库配置为准，上面的内联 proxy 仅作回退。 */
   proxy_profile_id: string;
+  /**
+   * 主机级关键字高亮（schema v50）：连接期间追加到全局规则，断开回落全局。
+   * 未勾选 = 跟随全局（保存为 null）。
+   */
+  keyword_highlight_enabled: boolean;
+  keyword_highlight_rules: KeywordHighlightRule[];
 };
 
 /** 登录方式 + MFA → termX Credential 类型。auto→agent（先系统密钥再本地密钥）。 */
@@ -1673,11 +1686,24 @@ export function VaultView({
       totp_regex: "",
       proxy: { ...EMPTY_PROXY_DRAFT },
       proxy_profile_id: "",
+      keyword_highlight_enabled: false,
+      keyword_highlight_rules: [],
     });
     setNewMenu(false);
   }
 
+  /**
+   * 打开主机编辑器前先从 DB 取一份最新档案：终端内「主机关键词高亮」浮层也会
+   * 写回规则，列表缓存可能是旧的，直接用缓存保存会覆盖掉刚改的规则。
+   */
   function openComposerForEdit(p: Profile) {
+    void api
+      .getProfile(p.id)
+      .then((fresh) => openComposerForEditFresh(fresh))
+      .catch(() => openComposerForEditFresh(p));
+  }
+
+  function openComposerForEditFresh(p: Profile) {
     setComposerErr("");
     setShowPassword(false);
     setPassMasked(false);
@@ -1741,6 +1767,10 @@ export function VaultView({
       totp_regex: p.totp_regex ?? "",
       proxy: proxyDraftFromProfile(p),
       proxy_profile_id: p.proxy_profile_id ?? "",
+      keyword_highlight_enabled: p.keyword_highlight_enabled === true,
+      keyword_highlight_rules: normalizeHostKeywordHighlightRules(
+        p.keyword_highlight_rules ?? [],
+      ),
     });
     // 环境变量在独立表中，异步补齐（避免打开编辑器被 DB 查询阻塞）。
     void api
@@ -1909,6 +1939,9 @@ export function VaultView({
         protocol: "telnet",
         telnet_username: username || null,
         telnet_charset: d.terminal_encoding,
+        keyword_highlight_enabled: d.keyword_highlight_enabled,
+        keyword_highlight_rules:
+          d.keyword_highlight_rules.length > 0 ? d.keyword_highlight_rules : null,
       };
       const isEdit = profiles.some((p) => p.id === d.id);
       if (isEdit) {
@@ -1922,6 +1955,7 @@ export function VaultView({
         await api.createProfile(base);
         setOrder((prev) => [...prev, base.id]);
       }
+      notifyHostKeywordHighlightChanged(base.id);
       // 密码：只在用户名非空时保留（无用户名无法自动登录，密码随之清除）。
       if (!username) {
         await api.setProfileTelnetPassword(base.id, null);
@@ -2050,6 +2084,10 @@ export function VaultView({
         host_key_policy: hostKeyPolicyToProfile(d.host_key_policy),
         ...proxyProfileFields(d.proxy_profile_id ? EMPTY_PROXY_DRAFT : d.proxy),
         proxy_profile_id: d.proxy_profile_id || null,
+        keyword_highlight_enabled: d.keyword_highlight_enabled,
+        // 空规则 = null；开关关闭时**保留**规则（对齐 Netcatty：关开关不清规则）。
+        keyword_highlight_rules:
+          d.keyword_highlight_rules.length > 0 ? d.keyword_highlight_rules : null,
       };
       const isEdit = profiles.some((p) => p.id === d.id);
       if (isEdit) {
@@ -2063,6 +2101,8 @@ export function VaultView({
         await api.createProfile(base);
         setOrder((prev) => [...prev, base.id]);
       }
+      // 主机规则改了要让已开着的终端立即重拉档案（无需重启）。
+      notifyHostKeywordHighlightChanged(base.id);
       // 代理密码不落 Profile：引用代理库时清掉主机级密码（库条目自己存）；
       // 否则沿用 `proxy:<profile_id>`；undefined = 编辑时留空且原来有密码。
       if (d.proxy_profile_id) {
@@ -5364,6 +5404,53 @@ export function VaultView({
                   <span className="host-setting-label">分组级默认代理</span>
                   <span className="host-setting-hint">未移植</span>
                 </div>
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="sparkles" size={13} />
+                  <span>关键字高亮（本主机）</span>
+                  <HostHint text="连接期间在全局规则之后追加本主机规则，断开自动回落全局。对齐 Netcatty Host.keywordHighlightRules：追加不是替换、全局规则先匹配；保存后已打开的终端立即生效，无需重启。" />
+                  <span className="host-setting-hint" style={{ marginLeft: "auto" }}>
+                    {composer.keyword_highlight_enabled
+                      ? `${composer.keyword_highlight_rules.length} 条`
+                      : "跟随全局"}
+                  </span>
+                </div>
+                <div className="host-setting-row">
+                  <span className="host-setting-label">
+                    启用主机规则
+                    <HostHint text="关闭 = 只使用 设置 → 终端 的全局规则；开启后本主机规则与全局规则叠加。" />
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={composer.keyword_highlight_enabled}
+                    className={`host-switch${composer.keyword_highlight_enabled ? " on" : ""}`}
+                    onClick={() =>
+                      setComposer({
+                        ...composer,
+                        keyword_highlight_enabled: !composer.keyword_highlight_enabled,
+                      })
+                    }
+                  >
+                    <span className="host-switch-knob" />
+                  </button>
+                </div>
+                {composer.keyword_highlight_enabled && (
+                  <div
+                    className="host-key-policy-panel"
+                    style={{ padding: "2px 10px 6px" }}
+                  >
+                    <KeywordHighlightRulesEditor
+                      rules={composer.keyword_highlight_rules}
+                      onChange={(rules) =>
+                        setComposer({ ...composer, keyword_highlight_rules: rules })
+                      }
+                      t={(key, params) => settingsT(settings.language, key, params)}
+                    />
+                  </div>
+                )}
               </section>
 
               <section className="host-details-section">

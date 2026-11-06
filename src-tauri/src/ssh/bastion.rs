@@ -123,6 +123,8 @@ mod tests {
             host_key_policy: None,
             telnet_username: None,
             telnet_charset: None,
+            keyword_highlight_enabled: None,
+            keyword_highlight_rules: None,
         }
     }
 

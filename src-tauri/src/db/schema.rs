@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 49;
+const SCHEMA_VERSION: u32 = 50;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -999,6 +999,22 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    if version < 50 && table_exists(conn, "profiles")? {
+        // 主机级关键字高亮（对齐 Netcatty Host.keywordHighlightEnabled /
+        // keywordHighlightRules）。可空：NULL = 仅用全局规则，既有主机行为
+        // 完全不变；规则以 JSON 文本入库，随 sync 导出/导入一起迁移。
+        for (col, decl) in [
+            ("keyword_highlight_enabled", "INTEGER"),
+            ("keyword_highlight_rules", "TEXT"),
+        ] {
+            if !column_exists(conn, "profiles", col)? {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE profiles ADD COLUMN {col} {decl};"
+                ))?;
+            }
+        }
+    }
+
     if version < SCHEMA_VERSION {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -1335,6 +1351,37 @@ mod tests {
         for col in ["name", "host_ids", "layout", "columns", "interval", "sort_order"] {
             assert!(column_exists(&conn, "monitor_panels", col).unwrap(), "missing {col}");
         }
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_50_adds_profile_keyword_highlight_columns() {
+        // v49 老库：两列必须新增且可空，旧行保持 NULL（= 仅用全局规则）。
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, host_key_policy TEXT);
+             INSERT INTO profiles VALUES ('h', 'Legacy', NULL);
+             PRAGMA user_version = 49;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        assert!(column_exists(&conn, "profiles", "keyword_highlight_enabled").unwrap());
+        assert!(column_exists(&conn, "profiles", "keyword_highlight_rules").unwrap());
+        let (enabled, rules): (Option<i64>, Option<String>) = conn
+            .query_row(
+                "SELECT keyword_highlight_enabled, keyword_highlight_rules FROM profiles WHERE id = 'h'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(enabled, None);
+        assert_eq!(rules, None);
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();

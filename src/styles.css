@@ -5503,6 +5503,28 @@ button:disabled {
   justify-content: center;
 }
 
+/* 主机级规则的颜色胶囊：点一下就用系统取色器改色，改完立即重绘。 */
+.term-highlight-color {
+  width: 20px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-right: 4px;
+  padding: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.term-highlight-color::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.term-highlight-color::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
 .term-highlight-edit {
   display: flex;
   align-items: center;

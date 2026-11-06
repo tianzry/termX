@@ -52,7 +52,40 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         host_key_policy: row.get(42)?,
         telnet_username: row.get(43)?,
         telnet_charset: row.get(44)?,
+        keyword_highlight_enabled: row.get(45)?,
+        keyword_highlight_rules: parse_keyword_rules(row.get(46)?),
     })
+}
+
+/// 主机级高亮规则以 JSON 文本入库；NULL / 空 / 坏 JSON 一律落回 None
+/// （= 没有主机规则，只用全局规则），与 local_shell_args 同款容错。
+fn parse_keyword_rules(raw: Option<String>) -> Option<Vec<crate::models::KeywordHighlightRule>> {
+    let raw = raw.filter(|s| !s.trim().is_empty())?;
+    match serde_json::from_str::<Vec<crate::models::KeywordHighlightRule>>(&raw) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            log::warn!(
+                "failed to parse profile.keyword_highlight_rules JSON ({} bytes), ignoring: {e}",
+                raw.len()
+            );
+            None
+        }
+    }
+}
+
+fn keyword_rules_json(
+    rules: &Option<Vec<crate::models::KeywordHighlightRule>>,
+) -> Option<String> {
+    rules
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()))
+}
+
+/// `#RRGGBB`（允许小写）；与前端 normalize 的校验口径一致。
+fn is_hex_color(s: &str) -> bool {
+    s.len() == 7
+        && s.starts_with('#')
+        && s[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// local_shell_args 以 JSON 文本入库（`["-NoLogo"]` 之类）；NULL / 空 / 坏
@@ -100,7 +133,7 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, telnet_username, telnet_charset";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules";
 
 
 
@@ -153,6 +186,38 @@ fn validate_for_write(p: &Profile) -> AppResult<()> {
             serde_json::json!({ "category": category }),
         ));
     }
+    // 主机级关键字高亮规则：上限与前端一致（30 条 / 16 正则 / 每条 2000 字符），
+    // 拒绝非法颜色，避免同步导入或 CLI 写入把超大/坏数据塞进 DB。
+    if let Some(rules) = &p.keyword_highlight_rules {
+        if rules.len() > 30 {
+            return Err(AppError::config(
+                "profile_keyword_rules_too_many",
+                serde_json::json!({ "id": p.id, "count": rules.len() }),
+            ));
+        }
+        for rule in rules {
+            if rule.id.trim().is_empty() || rule.label.trim().is_empty() {
+                return Err(AppError::config(
+                    "profile_keyword_rule_invalid",
+                    serde_json::json!({ "id": p.id, "rule": rule.id }),
+                ));
+            }
+            if !is_hex_color(&rule.color) {
+                return Err(AppError::config(
+                    "profile_keyword_rule_color_invalid",
+                    serde_json::json!({ "id": p.id, "color": rule.color }),
+                ));
+            }
+            if rule.patterns.len() > 16
+                || rule.patterns.iter().any(|s| s.chars().count() > 2000)
+            {
+                return Err(AppError::config(
+                    "profile_keyword_rule_patterns_invalid",
+                    serde_json::json!({ "id": p.id, "rule": rule.id }),
+                ));
+            }
+        }
+    }
     // 代理字段：引用了代理库条目时由库侧校验，内联字段只作回退；
     // 否则只有填了类型才校验（旧数据 / 未用代理的主机保持空）。
     let library_ref = p
@@ -178,14 +243,15 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
     validate_for_write(p)?;
     let algorithms = algorithms_json(p)?;
     let local_shell_args = local_shell_args_json(&p.local_shell_args);
+    let keyword_rules = keyword_rules_json(&p.keyword_highlight_rules);
     conn.execute(
         "INSERT INTO profiles (id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, \
          sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, \
          protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, \
          proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, \
          ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, \
-         telnet_username, telnet_charset) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45) \
+         telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -207,7 +273,9 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          serial_charset=excluded.serial_charset, \
          distro=COALESCE(excluded.distro, distro), \
          host_key_policy=excluded.host_key_policy, \
-         telnet_username=excluded.telnet_username, telnet_charset=excluded.telnet_charset",
+         telnet_username=excluded.telnet_username, telnet_charset=excluded.telnet_charset, \
+         keyword_highlight_enabled=excluded.keyword_highlight_enabled, \
+         keyword_highlight_rules=excluded.keyword_highlight_rules",
         params![
             p.id,
             p.name,
@@ -253,7 +321,9 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.distro,
             p.host_key_policy,
             p.telnet_username,
-            p.telnet_charset
+            p.telnet_charset,
+            p.keyword_highlight_enabled,
+            keyword_rules
         ],
     )?;
     Ok(())
@@ -269,6 +339,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
     let conn = db.lock()?;
     let algorithms = algorithms_json(p)?;
     let local_shell_args = local_shell_args_json(&p.local_shell_args);
+    let keyword_rules = keyword_rules_json(&p.keyword_highlight_rules);
     conn.execute(
         "UPDATE profiles SET name=?1, host=?2, port=?3, credential_id=?4, bastion_profile_id=?5, init_command=?6, group_id=?7, algorithms=?8, \
          sftp_protocol=?9, sftp_sudo=?10, sftp_encoding=?11, icon_source=?12, icon_color=?13, totp_auto_submit=?14, totp_regex=?15, \
@@ -278,7 +349,8 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
          serial_parity=?33, serial_stop_bits=?34, serial_flow=?35, serial_local_echo=?36, serial_line_mode=?37, \
          serial_backspace=?38, serial_byte_backspace=?39, serial_charset=?40, \
          distro=COALESCE(?41, distro), host_key_policy=?42, \
-         telnet_username=?43, telnet_charset=?44 WHERE id=?45",
+         telnet_username=?43, telnet_charset=?44, \
+         keyword_highlight_enabled=?45, keyword_highlight_rules=?46 WHERE id=?47",
         params![
             p.name,
             p.host,
@@ -324,6 +396,8 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.host_key_policy,
             p.telnet_username,
             p.telnet_charset,
+            p.keyword_highlight_enabled,
+            keyword_rules,
             p.id
         ],
     )?;
@@ -422,6 +496,8 @@ mod tests {
             host_key_policy: None,
             telnet_username: None,
             telnet_charset: None,
+            keyword_highlight_enabled: None,
+            keyword_highlight_rules: None,
         }
     }
 
@@ -522,6 +598,60 @@ mod tests {
         p.host_key_policy = None;
         update(&db, &p).unwrap();
         assert_eq!(get(&db, "p1").unwrap().host_key_policy, None);
+    }
+
+    #[test]
+    fn host_keyword_highlight_roundtrip_and_clear() {
+        let db = Db::open_in_memory().unwrap();
+        let mut p = mk("p1", "alpha");
+        assert_eq!(p.keyword_highlight_enabled, None);
+        assert_eq!(p.keyword_highlight_rules, None);
+        insert(&db, &p).unwrap();
+        let got = get(&db, "p1").unwrap();
+        assert_eq!(got.keyword_highlight_enabled, None);
+        assert_eq!(got.keyword_highlight_rules, None);
+
+        p.keyword_highlight_enabled = Some(true);
+        p.keyword_highlight_rules = Some(vec![crate::models::KeywordHighlightRule {
+            id: "cover".into(),
+            label: "Cover".into(),
+            patterns: vec!["COVERED".into()],
+            color: "#FF00AA".into(),
+            enabled: true,
+        }]);
+        update(&db, &p).unwrap();
+        let got = get(&db, "p1").unwrap();
+        assert_eq!(got.keyword_highlight_enabled, Some(true));
+        let rules = got.keyword_highlight_rules.unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "cover");
+        assert_eq!(rules[0].color, "#FF00AA");
+        assert_eq!(rules[0].patterns, vec!["COVERED".to_string()]);
+
+        // 清回「仅全局」：两列都必须能回到 NULL。
+        p.keyword_highlight_enabled = None;
+        p.keyword_highlight_rules = None;
+        update(&db, &p).unwrap();
+        let got = get(&db, "p1").unwrap();
+        assert_eq!(got.keyword_highlight_enabled, None);
+        assert_eq!(got.keyword_highlight_rules, None);
+    }
+
+    #[test]
+    fn host_keyword_highlight_rejects_invalid_rules() {
+        let db = Db::open_in_memory().unwrap();
+        let mut bad = mk("p1", "alpha");
+        bad.keyword_highlight_rules = Some(vec![crate::models::KeywordHighlightRule {
+            id: "bad".into(),
+            label: "Bad".into(),
+            patterns: vec!["x".into()],
+            color: "red".into(),
+            enabled: true,
+        }]);
+        assert_eq!(
+            insert(&db, &bad).unwrap_err().code(),
+            "profile_keyword_rule_color_invalid"
+        );
     }
 
     #[test]

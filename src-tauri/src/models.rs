@@ -164,6 +164,33 @@ pub struct Profile {
     /// Telnet 主机字符集：`utf-8` / `gb18030`；None = utf-8。
     #[serde(default)]
     pub telnet_charset: Option<String>,
+    // ── 主机级关键字高亮（schema v50，对齐 Netcatty Host.keywordHighlightRules）──
+    /// 主机级高亮开关；None / false = 不启用主机规则（仅全局规则生效）。
+    /// 连接期间生效，断开后回落全局（由前端按连接状态判定）。
+    #[serde(default)]
+    pub keyword_highlight_enabled: Option<bool>,
+    /// 主机级高亮规则：DB 存 JSON 文本；None = 无主机规则。
+    /// 与全局规则是**追加**关系（对齐 Netcatty terminalKeywordHighlightRules）：
+    /// 全局先匹配、主机规则补充，不是替换。
+    #[serde(default)]
+    pub keyword_highlight_rules: Option<Vec<KeywordHighlightRule>>,
+}
+
+/// 关键字高亮规则（对齐 Netcatty `KeywordHighlightRule`）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeywordHighlightRule {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    /// `#RRGGBB`（大小写不敏感，前端统一转大写）。
+    pub color: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// 代理库条目（对齐 Netcatty `ProxyProfile` 的 label + config 扁平化）：

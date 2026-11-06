@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-11-06 — #221 主机级关键字高亮（Profile 字段 + schema v50 + 主机浮层/主机编辑器 + 断开回落）
+
+- **Netcatty 模型取证**：主机级 `host.keywordHighlightEnabled?` / `host.keywordHighlightRules?: KeywordHighlightRule[]`；与全局是**追加**语义（全局先匹配、主机规则补充），总开关 `globalEnabled || hostEnabled`；主机 popover 可增删规则 / 切 enabled / 清空（清空 = disabled + []）；关闭开关**保留**规则。**取代 #220「范围决策」中「主机级覆盖未实现」的记录**。
+- **后端（schema v50）**：`Profile` 增 `keyword_highlight_enabled: Option<bool>` / `keyword_highlight_rules: Option<Vec<KeywordHighlightRule>>`；`KeywordHighlightRule {id,label,patterns,color,enabled}` 定义在 `models.rs`。`db/schema.rs` v50 迁移对两列先 `column_exists` 再 ALTER（可空，NULL = 跟随全局）；`db/profile.rs` 47 列 upsert/update、`parse_keyword_rules`（坏 JSON 回落 None）、`keyword_rules_json`、写入校验（≤30 条 / id·label 非空 / `#RRGGBB` / 单规则 ≤16 正则且每条 ≤2000 字符），错误码 `profile_keyword_rules_too_many` / `_rule_invalid` / `_color_invalid` / `_patterns_invalid`。CLI / headless / sync / bastion / forward 等 Profile 构造点补齐两字段（旧库不受影响）。
+- **前端**：`settingsModel` 抽出 `sanitizeKeywordHighlightRules`，新增 `normalizeHostKeywordHighlightRules`（**空 = []，不回落内置**）；`keywordHighlight.ts` 新增 `mergeKeywordHighlightRules`（`enabled = globalEnabled || hostEnabled`，规则按全局→主机顺序追加）；新增 `terminal/hostKeywordHighlight.ts` 广播，终端与 Vault 保存后即时同步。
+  - `TerminalPane`：按 profileId 拉取主机开关/规则；高亮改用 `effectiveHighlight`，主机规则只在 `status === "connected"` 参与合并 → 断开自动回落全局；工具栏「高亮」浮层新增「本主机规则（追加到全局）」区块（开关 / 回车新增 / 逐条启用 / 取色 / 删除），乐观更新 + `updateProfile` 持久化，失败回滚重拉。
+  - `VaultView`：主机编辑器新增「关键字高亮（本主机）」分区（开关 + 复用 `KeywordHighlightRulesEditor`）；新建默认关闭/空，编辑从 profile 读取；保存时规则非空才落 JSON（**开关关闭也保留规则**），保存后广播。修复 `openComposerForEdit` 用缓存覆盖终端浮层最新改动的问题（改为先 `api.getProfile` 拉最新档案）。
+- **实机验证（129，debug + CDP 9222；`evidence/hl-host-verify.json`）**：
+  - 全局主机同一行：`globalDeco {base:5, after:7, delta:2}`、`globalPixels {red:217, magenta:0}`；覆盖主机（`host-cover-129` 规则 `COVERED → #FF00AA`）：`coverDeco {delta:4}`、`coverPixels {red:217, magenta:418}` → 同一输出不同着色（`hl-12-global-host.png` / `hl-13-cover-host.png`）。
+  - 热生效不重启：终端浮层改色 `#22CCCC` → `pixelsAfterTerminalColorChange {magenta:0, cyan:490}`；关主机开关 → `keywordSpans 4→2`、cyan 490→64（只剩全局 error 红）；再开 → 恢复 4 / 490；`persistedAfterTerminalEdits {enabled:true, rules:[color:"#22CCCC"]}`。
+  - 断开回落：`exit` 后 `decoAfterDisconnect {total:7, keywordSpans:2}`，COVERED 的 58px span 消失（`hl-18-cover-disconnected.png`）。
+  - Vault 编辑器：`hostEditorSection {found:true, headText:"关键字高亮（本主机） ⓘ 1 条", enabled:true, ruleRows:[{label:"Cover", color:"#22cccc"}]}`；保存后仍 `#22CCCC`（`hl-19-vault-host-editor.png`）。
+  - 截图：`hl-14-term-host-menu.png`（浮层追加区块）、`hl-15-cover-color-changed.png`（同一行 error 红 + COVERED 青）、`hl-16-cover-host-off.png`、`hl-17-cover-host-on.png`。
+- **踩坑**：① 切换 surface（Vault ↔ 终端）会重挂 pane、清空缓冲，验证热更新必须留在终端内用浮层操作；② 主机卡不在终端 surface 的 DOM，连前/连后要 `openVault()` 回到 Vault；③ Radix 风格 tab 激活挂 `onMouseDown`，CDP 里 `.click()` 无效，须 dispatch mousedown/mouseup；④ `foregroundColor` decoration 只在 canvas 描字，DOM 拿不到颜色，断言改为按 decoration 几何裁图后在页面内 canvas 统计像素。
+- **门禁**：`npm run test:run` 767 通过（69 文件）、`npm run build` 通过、`cargo test --lib` 960 通过、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #220 设置-关键字高亮（Netcatty 数据模型 + 设置/终端同一份规则 + 已开终端热更新）
 
 - **Netcatty 取证（数据模型）**：全局 `terminalKeywordHighlightEnabled` + `terminalKeywordHighlightRules: KeywordHighlightRule[]`，另有主机级覆盖 `host.keywordHighlightEnabled` / `host.keywordHighlightRules` 与主机 popover；规则字段 `{id,label,patterns:string[],color:#RRGGBB,enabled}`；内置 7 组（error/warning/ok/info/debug/ip-mac/unix-path）；匹配方式为「按行、忽略大小写、全局匹配、先规则优先级」；着色语义是 **前景色**（不改底色）；URL/IPV4/IPV6/MAC/Unix path 为预置正则常量；持久化在设置 JSON。工具栏「高亮」按钮与设置页读同一份规则。
