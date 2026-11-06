@@ -50,6 +50,67 @@ export function sortQueueForDisplay(items: TransferItem[]): TransferItem[] {
   });
 }
 
+/**
+ * 全局传输中心分类（对照 Netcatty `GlobalTransferBucket`）：
+ * active=运行中，queued=排队中，paused=已暂停，attention=需要处理（冲突 /
+ * 失败），completed=已完成（含取消 / 跳过等终态）。
+ */
+export type TransferBucket =
+  | "all"
+  | "active"
+  | "queued"
+  | "paused"
+  | "attention"
+  | "completed";
+
+export function transferBucket(
+  status: TransferStatus,
+): Exclude<TransferBucket, "all"> {
+  if (status === "running") return "active";
+  if (status === "queued") return "queued";
+  if (status === "paused") return "paused";
+  if (status === "conflict" || status === "failed") return "attention";
+  return "completed";
+}
+
+/** 按分类筛选；all 返回浅拷贝（不修改调用方数据）。 */
+export function bucketTransferItems(
+  items: TransferItem[],
+  bucket: TransferBucket,
+): TransferItem[] {
+  if (bucket === "all") return [...items];
+  return items.filter((item) => transferBucket(item.status) === bucket);
+}
+
+/**
+ * 顶栏传输按钮徽标（对照 Netcatty `getGlobalTransferBadge`）：
+ * - count = 未完成条数（排队 / 运行 / 暂停 / 待处理冲突）；
+ * - hasAttention = 存在冲突或失败项（按钮显示红点）。
+ * 已完成 / 已取消 / 已跳过只作为历史记录，不进徽标。
+ */
+export function transferBadge(items: TransferItem[]): {
+  count: number;
+  hasAttention: boolean;
+} {
+  let count = 0;
+  let hasAttention = false;
+  for (const item of items) {
+    if (item.status === "conflict") {
+      count += 1;
+      hasAttention = true;
+    } else if (item.status === "failed") {
+      hasAttention = true;
+    } else if (
+      item.status === "running" ||
+      item.status === "queued" ||
+      item.status === "paused"
+    ) {
+      count += 1;
+    }
+  }
+  return { count, hasAttention };
+}
+
 export function queueCounts(items: TransferItem[]): {
   active: number;
   finished: number;

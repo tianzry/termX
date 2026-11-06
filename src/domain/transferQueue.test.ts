@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TransferItem } from "../backend/client";
 import {
+  bucketTransferItems,
   canCancel,
   canPause,
   canResume,
@@ -9,6 +10,8 @@ import {
   progressPercent,
   queueCounts,
   sortQueueForDisplay,
+  transferBadge,
+  transferBucket,
   transferDisplayName,
 } from "./transferQueue";
 
@@ -170,6 +173,57 @@ describe("progressPercent", () => {
     expect(progressPercent(512, 1024)).toBe(50);
     expect(progressPercent(2048, 1024)).toBe(100);
     expect(progressPercent(-3, 100)).toBe(0);
+  });
+});
+
+describe("全局传输中心分类与徽标", () => {
+  it("状态 → 分类（失败与冲突进需要处理，终态进已完成）", () => {
+    expect(transferBucket("running")).toBe("active");
+    expect(transferBucket("queued")).toBe("queued");
+    expect(transferBucket("paused")).toBe("paused");
+    expect(transferBucket("conflict")).toBe("attention");
+    expect(transferBucket("failed")).toBe("attention");
+    expect(transferBucket("completed")).toBe("completed");
+    expect(transferBucket("cancelled")).toBe("completed");
+    expect(transferBucket("skipped")).toBe("completed");
+  });
+
+  it("按分类筛选；all 返回浅拷贝不改原数组", () => {
+    const items = [
+      item({ id: "r", status: "running" }),
+      item({ id: "q", status: "queued" }),
+      item({ id: "c", status: "conflict" }),
+      item({ id: "d", status: "completed" }),
+    ];
+    expect(bucketTransferItems(items, "active").map((i) => i.id)).toEqual(["r"]);
+    expect(bucketTransferItems(items, "attention").map((i) => i.id)).toEqual(["c"]);
+    expect(bucketTransferItems(items, "completed").map((i) => i.id)).toEqual(["d"]);
+    const all = bucketTransferItems(items, "all");
+    expect(all).toEqual(items);
+    expect(all).not.toBe(items);
+  });
+
+  it("徽标：未完成计数含冲突，失败只触发红点", () => {
+    expect(transferBadge([])).toEqual({ count: 0, hasAttention: false });
+    const badge = transferBadge([
+      item({ status: "running" }),
+      item({ status: "queued" }),
+      item({ status: "paused" }),
+      item({ status: "conflict" }),
+      item({ status: "failed" }),
+      item({ status: "completed" }),
+      item({ status: "cancelled" }),
+    ]);
+    expect(badge).toEqual({ count: 4, hasAttention: true });
+  });
+
+  it("徽标：全部完成后归零（三态里的「已完成」）", () => {
+    expect(
+      transferBadge([
+        item({ status: "completed" }),
+        item({ status: "skipped" }),
+      ]),
+    ).toEqual({ count: 0, hasAttention: false });
   });
 });
 

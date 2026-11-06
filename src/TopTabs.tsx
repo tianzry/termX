@@ -28,6 +28,7 @@ import type { DiscoveredShell, Group, Profile } from "./backend/client";
 import { isMonochromeShellIcon, shellIconSrc } from "./ui/shellIcons";
 import { DistroAvatar } from "./ui/DistroAvatar";
 import { QuickSwitcher } from "./QuickSwitcher";
+import { GlobalTransferCenter } from "./sftp/GlobalTransferCenter";
 import {
   resolveConnectionDotClass,
   type ConnectionStatus,
@@ -313,6 +314,8 @@ export function TopTabs({
         </div>
 
         <div className="nc-chrome">
+          {/* 全局文件传输入口（对齐 Netcatty：右侧工具区首位） */}
+          <GlobalTransferCenter />
           {notPortedUtilities.map((u) => (
             <button
               key={u.id}

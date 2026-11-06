@@ -4652,6 +4652,203 @@ button:disabled {
   }
 }
 
+/* ── 顶栏全局文件传输：按钮徽标 / 传输中心弹窗 ───────────── */
+
+.nc-transfer-toggle {
+  position: relative;
+}
+
+.nc-transfer-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 12px;
+  text-align: center;
+}
+
+.nc-transfer-dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: hsl(var(--destructive));
+}
+
+.nc-transfer-center {
+  position: fixed;
+  z-index: 80;
+  width: min(460px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--popover, var(--background)));
+  color: hsl(var(--popover-foreground, var(--foreground)));
+  box-shadow: 0 12px 32px hsl(var(--foreground) / 0.2);
+}
+
+.nc-transfer-center-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+}
+
+.nc-transfer-center-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.nc-transfer-center-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.nc-transfer-center-action {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nc-transfer-center-action:hover:not(:disabled) {
+  background: hsl(var(--foreground) / 0.1);
+  color: hsl(var(--foreground));
+}
+
+.nc-transfer-center-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.nc-transfer-center-action.danger {
+  color: hsl(var(--destructive));
+}
+
+.nc-transfer-center-tabs {
+  display: flex;
+  padding: 2px 8px 0;
+}
+
+.nc-transfer-center-tab {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 6px;
+  border: none;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.nc-transfer-center-tab:hover {
+  color: hsl(var(--foreground) / 0.8);
+}
+
+.nc-transfer-center-tab.active {
+  color: hsl(var(--primary));
+  font-weight: 500;
+}
+
+.nc-transfer-center-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+}
+
+.nc-transfer-center-tab-count {
+  margin-left: 4px;
+  opacity: 0.8;
+}
+
+.nc-transfer-center .nc-sftp-queue-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.nc-transfer-center .nc-sftp-queue-row {
+  padding: 6px 14px;
+}
+
+.nc-transfer-center-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 160px;
+  gap: 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.nc-transfer-center-error,
+.nc-transfer-center-hint {
+  padding: 4px 14px;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-transfer-center-error {
+  color: hsl(var(--destructive));
+}
+
+.nc-transfer-center-hint {
+  color: #d97706;
+}
+
+.nc-transfer-center-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 12px;
+  border-top: 1px solid hsl(var(--border) / 0.6);
+}
+
+.nc-transfer-center-clear {
+  border: none;
+  background: none;
+  padding: 2px 6px;
+  color: hsl(var(--muted-foreground));
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nc-transfer-center-clear:hover {
+  color: hsl(var(--foreground));
+}
+
 /* ── 终端右侧工具面板：36px 工具条 ───────────────────────── */
 
 .nc-aside {

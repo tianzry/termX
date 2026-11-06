@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-11-06 — #238 顶栏「文件传输」按钮 + 全局传输中心（对齐 Netcatty GlobalSftpTransferCenter）
+
+- **需求**：顶栏右侧补文件传输进度入口，按 Netcatty 真实实现移植三态外观、数量徽标与点击行为，并与 `SftpQueuePanel` 说明复用关系；同时确认移除「锁定 / 快捷设置」后的顶栏间距。
+- **Netcatty 取证**（`components/GlobalSftpTransferCenter.tsx` + `TopTabs.tsx` + `sftpTransferCenterStore`）：
+  - 三态由同一枚 `ArrowDownUp` 图标表达：未运行 = 纯图标；有未完成任务 = 右上角数量徽标（count 为排队/运行/暂停/中断等未完成条数，>99 显示 99+）；存在 attention/failed = 右上角红点；
+  - 点击展开「文件传输」弹窗：标题 + 暂停全部 / 恢复全部 / 取消全部 + 分类页签（全部 / 进行中 / 排队中 / 已暂停 / 需要处理 / 已完成，带计数）+ 空态「当前分类没有传输任务」；
+  - 数据全部由队列事件推送刷新（`sftp:queue_changed` 全量、`sftp:transfer_updated:<id>` 单条、`sftp:progress:<id>` 运行项字节进度），不做定时轮询。
+- **实现**：
+  - `src/sftp/useSftpTransferQueue.ts`：把原 `SftpQueuePanel` 的事件订阅抽成共享 hook（初始快照 + queue_changed + 按 id 订阅 transfer_updated + 可选 progress）；新增一次性 `refresh()` 供弹窗打开时对账；打开弹窗才订阅 progress，关闭即退订，避免每 32K 一次重渲染顶栏；
+  - `src/sftp/TransferQueueList.tsx`：抽出队列行渲染与行内暂停/恢复/取消，两个入口共用；完成态进度固定显示 100%（不再因进度缓存清空显示 0%）；
+  - `src/sftp/GlobalTransferCenter.tsx`：顶栏按钮 + 弹窗（批量暂停/恢复/取消、六个分类页签、空态、已完成页「清空已结束」）；弹窗用 fixed 定位锚在按钮右下，点外部 / Esc 关闭；
+  - `src/domain/transferQueue.ts`：新增 `transferBucket` / `bucketTransferItems` / `transferBadge`（+4 单测），徽标与分类语义对齐 Netcatty；
+  - `src/TopTabs.tsx`：右侧工具区首位挂载 `<GlobalTransferCenter />`；
+  - `src/sftp/SftpQueuePanel.tsx`：改为复用共享 hook 与行列表，保留并发数设置与冲突对话框，行为不变。
+- **复用关系**：不是复制两套队列。`SftpQueuePanel` 与 `GlobalTransferCenter` 共用同一个 `useSftpTransferQueue` 订阅源和同一个 `TransferQueueList` 行渲染，只是外壳不同：前者是 SFTP 视图底部常驻面板（含并发数、冲突答复），后者是顶栏全局入口（浏览 + 批量操作）。冲突解答仍由底部面板的 `SftpConflictDialog` 承担，弹窗内以「需要处理」分类与提示条呈现。
+- **踩坑（本轮实机暴露并修复）**：按 id 订阅 `sftp:transfer_updated:<id>` 的注册是异步的。原实现用 effect 的 `cancelled` 标记判断，effect 因「入队快照 → 对账快照」重跑时，仍在注册中的监听会被误退订，导致后续 running / completed 事件永久丢失（弹窗里下载已完成却一直显示进行中、徽标不清零）。改为用 `mounted` + `liveIds` 引用判断：只有条目已不在当前队列或组件已卸载才退订；同时给一次性对账快照加「事件代数」守卫，防止迟到的旧快照覆盖新事件（completed 被 running 回写）。
+- **验证**（129 实机 `tianzry@192.168.126.129`，CDP 9222，真实后端 `sftp_transfer_enqueue`）：
+  1. 初始无任务：按钮为纯 ⇅ 图标，无徽标 / 红点（`evidence/b21-idle.png`）；
+  2. 上传 2×260MB 至 `/tmp`：徽标显示 `2`，弹窗「全部 3 / 进行中 2」、两行 running 带进度条与暂停/取消（`evidence/b21-running.png`）；
+  3. 上传完成：徽标清零，行状态 completed、进度 100%（`evidence/b21-completed-upload.png`）；
+  4. 下载 260MB 至本地：徽标 `1`、行 running（`evidence/b21-running-download.png`）；
+  5. 全部完成：徽标清零，「已完成 3」页签列出三条 100% 记录，底部「清空已结束」（`evidence/b21-completed.png`）；下载文件字节数 272629760 与源一致。
+  - 顶栏间距：右侧工具区为 [文件传输, AI(未移植, 禁用), 同步, 设置]，按钮间距与既有 `.nc-icon-btn` 一致（实测 2px），「锁定 / 快捷设置」已不存在；徽标右缘与下一按钮左缘相接不重叠。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例全过；`npm run build` ✓。
+
 ## 2026-11-06 — #237 终端右侧栏分屏视图串台（上选笔记、下点 SFTP 被改回笔记）
 
 - **问题**：右侧栏开上下分屏后，上分屏选「笔记」，再点下分屏的「SFTP」页签，下分屏会被强制切回「笔记」，两个槽位无法各保持不同视图。
