@@ -1,4 +1,5 @@
 pub mod ai_command_blacklist;
+pub mod data_dir_migration;
 pub mod ai_conversation;
 pub mod ai_provider;
 pub mod ai_redact_rule;
@@ -66,10 +67,10 @@ fn configure_connection(conn: &Connection) -> AppResult<()> {
 impl Db {
     pub fn open(data_dir: &Path) -> AppResult<Self> {
         std::fs::create_dir_all(data_dir)?;
-        let path = data_dir.join("rssh.db");
+        let path = db_path(data_dir);
         let mut conn = Connection::open(path)?;
         // WAL: readers never block the writer. busy_timeout: three processes write
-        // this same ~/.rssh/rssh.db (GUI, headless server, `rssh` CLI). Without it,
+        // this same ~/.termX/termx.db (GUI, headless server, `termx` CLI). Without it,
         // a write that meets a peer's lock fails *instantly* with SQLITE_BUSY
         // instead of waiting — e.g. GUI autosaving AI history while the CLI runs
         // `config github pull` / `config webdav pull`. 5s covers any real
@@ -164,24 +165,36 @@ impl Db {
     }
 }
 
-/// Data dir: desktop uses `~/.rssh`, Android uses `app_data_dir` (handled
-/// by the caller via `tauri::path::PathResolver`).
+/// Data dir: desktop uses `~/.termX`（首次启动会从旧 `~/.rssh` 迁移），
+/// Android uses `app_data_dir` (handled by the caller via `tauri::path::PathResolver`).
 ///
 /// Returns an error (rather than panicking) when `$HOME` is unset — common
 /// in `systemd` units without `User=`, Docker `USER nobody`, or `scratch`
 /// containers. The old `.expect("...")` aborted the process before the
 /// CLI / GUI could surface a useful message.
 pub fn data_dir() -> AppResult<PathBuf> {
-    let mut p = dirs::home_dir().ok_or_else(|| {
+    let home = dirs::home_dir().ok_or_else(|| {
         AppError::config(
             "no_home_dir",
             serde_json::json!({
-                "hint": "HOME env var is unset; rssh cannot determine where to place ~/.rssh"
+                "hint": "HOME env var is unset; termX cannot determine where to place ~/.termX"
             }),
         )
     })?;
-    p.push(".rssh");
-    Ok(p)
+    Ok(data_dir_migration::resolve(&home))
+}
+
+/// 实际数据库文件：新目录用 `termx.db`；回退到旧目录时仍读 `rssh.db`。
+pub fn db_path(data_dir: &Path) -> PathBuf {
+    let new = data_dir.join("termx.db");
+    if new.exists() {
+        return new;
+    }
+    let legacy = data_dir.join("rssh.db");
+    if legacy.exists() {
+        return legacy;
+    }
+    new
 }
 
 #[cfg(test)]
@@ -195,7 +208,7 @@ mod with_exclusive_lock_tests {
     #[test]
     fn open_waits_for_a_concurrent_first_writer_before_enabling_wal() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("rssh.db");
+        let path = dir.path().join("termx.db");
         let blocker = Connection::open(path).unwrap();
         blocker
             .execute_batch(
@@ -223,7 +236,7 @@ mod with_exclusive_lock_tests {
     #[test]
     fn failed_schema_migration_rolls_back_every_schema_change() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("rssh.db");
+        let path = dir.path().join("termx.db");
         let conn = Connection::open(&path).unwrap();
         conn.execute_batch(
             "CREATE TABLE telnet_profiles (id TEXT PRIMARY KEY);\n\

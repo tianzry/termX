@@ -11,7 +11,7 @@
 //!       │     ├── KeyringMasterKey  ← keychain（macOS/iOS/Windows/Linux desktop）
 //!       │     └── FileMasterKey     ← <data_dir>/master.key（headless/Android）
 //!       │
-//!       └── DbStore  ← rssh.db 的 `secrets` 表（密文 base64）
+//!       └── DbStore  ← termx.db 的 `secrets` 表（密文 base64）
 //! ```
 //!
 //! 为什么不再像旧版那样直接走 keychain：
@@ -29,7 +29,8 @@
 //!   - 编译期 `#[cfg(...)]` 只排除没有原生后端的平台（例如 Android），
 //!     **运行期是否选 keyring 由 `try_open()` 真探测决定**，不是看 OS。
 //!
-//! Service 名固定 `rssh`，account 命名规则全平台、CLI/GUI 共用：
+//! Service 名固定 `termx`（旧 `rssh` service 做只读回退，迁移期保留），
+//! account 命名规则全平台、CLI/GUI 共用：
 //! - `cred:<credential_id>:secret`     凭证主 secret（密码或私钥 PEM）
 //! - `telnet:<profile_id>:login_script:<version>`  Telnet 登录脚本不可变版本
 //! - `setting:github_token`            GitHub PAT
@@ -75,8 +76,10 @@ const BACKEND_MARKER: &str = "master_key_backend";
 const BACKEND_KEYRING: &str = "keyring";
 const BACKEND_FILE: &str = "file";
 
-/// 服务名 — keychain 用，所有 rssh 数据都在这个 service 下。
-pub const SERVICE: &str = "rssh";
+/// 服务名 — keychain 用，所有 termX 数据都在这个 service 下。
+pub const SERVICE: &str = "termx";
+/// 改名前的旧 service；只读回退，迁移成功后保留一个发布周期再清理。
+pub const LEGACY_SERVICE: &str = "rssh";
 
 pub trait SecretStore: Send + Sync {
     fn get(&self, key: &str) -> AppResult<Option<String>>;
@@ -115,7 +118,7 @@ pub fn open(db: Arc<Db>, data_dir: &Path) -> AppResult<SecretSystem> {
     let recorded = db::settings::get(&db, BACKEND_MARKER)?;
 
     // 运行期探测：编译进 keyring crate 的平台 + 真能 probe 写读
-    let probed: Option<Arc<dyn SecretStore>> = probe_keyring();
+    let probed: Option<Arc<KeyringStore>> = probe_keyring();
 
     match (recorded.as_deref(), probed) {
         // ── sticky keyring + 可用 → 用 keyring ──
@@ -134,7 +137,7 @@ pub fn open(db: Arc<Db>, data_dir: &Path) -> AppResult<SecretSystem> {
                 "hint": "之前选过系统 keychain 存主密钥，现在 keychain 不可用。\
                          请检查系统 keychain（macOS Keychain Access / Windows \
                          Credential Manager / Linux Secret Service）是否正常，\
-                         然后重启 rssh。"
+                         然后重启 termX。"
             }),
         )),
 
@@ -145,7 +148,9 @@ pub fn open(db: Arc<Db>, data_dir: &Path) -> AppResult<SecretSystem> {
         // 在 — 仅升级路径会写 marker）。
         (Some(BACKEND_FILE), probed_for_migration) => {
             log::debug!("secret backend: file (sticky)");
-            Ok(build_file_system(db_store, data_dir, probed_for_migration))
+            let raw: Option<Arc<dyn SecretStore>> =
+                probed_for_migration.map(|kr| kr as Arc<dyn SecretStore>);
+            Ok(build_file_system(db_store, data_dir, raw))
         }
 
         // ── 首次启动：按 probe 结果选 + 写 marker ──
@@ -173,7 +178,7 @@ pub fn open(db: Arc<Db>, data_dir: &Path) -> AppResult<SecretSystem> {
 
 /// 运行期探测系统 keychain。`#[cfg(...)]` 排除编译不进 keyring crate 的平台
 /// （例如 Android），其他平台靠 `try_open()` 真探测（写 probe key + 读回 + 删）。
-fn probe_keyring() -> Option<Arc<dyn SecretStore>> {
+fn probe_keyring() -> Option<Arc<KeyringStore>> {
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -181,10 +186,7 @@ fn probe_keyring() -> Option<Arc<dyn SecretStore>> {
         target_os = "linux"
     ))]
     {
-        keyring_store::try_open().map(|kr| {
-            let arc: Arc<KeyringStore> = Arc::new(kr);
-            arc as Arc<dyn SecretStore>
-        })
+        keyring_store::try_open().map(Arc::new)
     }
     #[cfg(not(any(
         target_os = "macos",
@@ -200,7 +202,7 @@ fn probe_keyring() -> Option<Arc<dyn SecretStore>> {
 fn build_keyring_system(
     db: Arc<Db>,
     db_store: Arc<DbStore>,
-    keyring: Arc<dyn SecretStore>,
+    keyring: Arc<KeyringStore>,
 ) -> SecretSystem {
     // backend_label 直接透传 KeyringStore 的 OS-specific 名字（"macos-keychain"
     // 等），跟 PR #60 前 CLI/GUI 显示一致，不破坏 user-facing 字符串契约。
@@ -210,9 +212,10 @@ fn build_keyring_system(
     let mk_backend: Arc<dyn MasterKeyBackend> =
         Arc::new(KeyringMasterKey::new(keyring.clone(), db));
     let store: Arc<dyn SecretStore> = Arc::new(HybridStore::new(db_store, mk_backend, label));
+    let raw_keyring: Arc<dyn SecretStore> = keyring;
     SecretSystem {
         store,
-        raw_keyring: Some(keyring),
+        raw_keyring: Some(raw_keyring),
     }
 }
 
@@ -294,10 +297,10 @@ mod tests {
     // ── 服务名 ────────────────────────────────────────────────────
 
     #[test]
-    fn service_name_is_rssh() {
+    fn service_name_is_termx() {
         // keychain backend 用这个 service 名落键。CLI/GUI/任何外部工具
-        // (Keychain Access.app / secret-tool) 都按 "rssh" 找。
-        assert_eq!(SERVICE, "rssh");
+        // (Keychain Access.app / secret-tool) 都按 "termx" 找；旧 "rssh" 仅作回退。
+        assert_eq!(SERVICE, "termx");
     }
 
     // ── cred_secret_key 形状 ──────────────────────────────────────

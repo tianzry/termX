@@ -876,15 +876,15 @@ mod live_tests {
     /// 真实远端主机的文件操作全链路（默认档案 "129"）：
     /// 连接 → mkdir → upload → list/stat → rename → chmod → download 比对 → remove → rmdir。
     /// 仅当 TERMX_SFTP_LIVE=1 时运行：依赖真实网络 + 本机 keychain（读取与应用相同的
-    /// ~/.rssh DB / SecretStore 凭据），不纳入默认 `cargo test --lib` 门禁。
+    /// ~/.termX DB / SecretStore 凭据），不纳入默认 `cargo test --lib` 门禁。
     #[tokio::test]
     async fn live_sftp_file_ops_roundtrip() {
         if std::env::var("TERMX_SFTP_LIVE").as_deref() != Ok("1") {
             return;
         }
         let name = std::env::var("TERMX_SFTP_LIVE_PROFILE").unwrap_or_else(|_| "129".into());
-        let data_dir = dirs::home_dir().expect("home dir").join(".rssh");
-        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.rssh db"));
+        let data_dir = dirs::home_dir().expect("home dir").join(".termX");
+        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.termX db"));
         let secrets = crate::secret::open(db.clone(), &data_dir).expect("open secret store");
 
         let profile = crate::db::profile::list(&db)
@@ -1031,7 +1031,7 @@ mod live_tests {
     /// (a) 无同名直接完成（证 remote_exists 假分支在真实服务器不误判）；
     /// (b) skip 保留远端原内容；(c) rename 生成 `file (copy)` 副本；
     /// (d) replace 覆盖；(e) apply-to-all 对同批已冲突项回溯生效。
-    /// 与 roundtrip 相同门禁：仅 TERMX_SFTP_LIVE=1，凭据取自 ~/.rssh DB +
+    /// 与 roundtrip 相同门禁：仅 TERMX_SFTP_LIVE=1，凭据取自 ~/.termX DB +
     /// SecretStore（与应用同路径），密码不落明文、不进日志。
     #[tokio::test]
     async fn live_sftp_transfer_conflict() {
@@ -1039,8 +1039,8 @@ mod live_tests {
             return;
         }
         let name = std::env::var("TERMX_SFTP_LIVE_PROFILE").unwrap_or_else(|_| "129".into());
-        let data_dir = dirs::home_dir().expect("home dir").join(".rssh");
-        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.rssh db"));
+        let data_dir = dirs::home_dir().expect("home dir").join(".termX");
+        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.termX db"));
         let secrets = crate::secret::open(db.clone(), &data_dir).expect("open secret store");
 
         let profile = crate::db::profile::list(&db)
@@ -1256,15 +1256,15 @@ mod live_tests {
     /// 真实远端主机（默认档案 "129"）编辑器链路：
     /// 读 → 回写（覆盖已有文件，含收缩场景验证截断语义）→ 再读一致；
     /// 超限拒绝（真实 stat 尺寸 + guard）；二进制拒绝（NUL 采样）。
-    /// 凭据同走 ~/.rssh DB + SecretStore，密码不落明文；测后清理远端临时目录。
+    /// 凭据同走 ~/.termX DB + SecretStore，密码不落明文；测后清理远端临时目录。
     #[tokio::test]
     async fn live_sftp_editor_read_write_guards() {
         if std::env::var("TERMX_SFTP_LIVE").as_deref() != Ok("1") {
             return;
         }
         let name = std::env::var("TERMX_SFTP_LIVE_PROFILE").unwrap_or_else(|_| "129".into());
-        let data_dir = dirs::home_dir().expect("home dir").join(".rssh");
-        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.rssh db"));
+        let data_dir = dirs::home_dir().expect("home dir").join(".termX");
+        let db = Arc::new(crate::db::Db::open(&data_dir).expect("open ~/.termX db"));
         let secrets = crate::secret::open(db.clone(), &data_dir).expect("open secret store");
         let profile = crate::db::profile::list(&db)
             .expect("list profiles")

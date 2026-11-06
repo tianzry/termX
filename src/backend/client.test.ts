@@ -403,11 +403,11 @@ describe("手动会话日志保存路径", () => {
   });
 
   it("默认路径落在应用 recordings 目录", async () => {
-    mockedInvoke.mockResolvedValueOnce("C:\\Users\\x\\.rssh\\recordings");
+    mockedInvoke.mockResolvedValueOnce("C:\\Users\\x\\.termX\\recordings");
     await pickManualSessionLogPath("129_2026-11-03T23-43-06.txt", "txt");
     expect(mockedSave).toHaveBeenLastCalledWith({
       title: "保存会话日志",
-      defaultPath: "C:\\Users\\x\\.rssh\\recordings\\129_2026-11-03T23-43-06.txt",
+      defaultPath: "C:\\Users\\x\\.termX\\recordings\\129_2026-11-03T23-43-06.txt",
       filters: [{ name: "Text", extensions: ["txt"] }],
     });
   });

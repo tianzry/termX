@@ -266,6 +266,7 @@ pub fn run() {
             commands::settings::read_recording,
             commands::settings::recordings_dir,
             commands::settings::secret_backend,
+            commands::settings::storage_info,
             commands::settings::list_fonts,
             commands::settings::get_auto_launch,
             commands::settings::set_auto_launch,

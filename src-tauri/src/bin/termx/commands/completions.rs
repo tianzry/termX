@@ -60,7 +60,7 @@ fn complete_names(kind: NameKind, current: &OsStr) -> Vec<CompletionCandidate> {
     let Ok(data_dir) = termx_lib::db::data_dir() else {
         return Vec::new();
     };
-    complete_names_from_db(kind, current, &data_dir.join("rssh.db"))
+    complete_names_from_db(kind, current, &termx_lib::db::db_path(&data_dir))
 }
 
 fn complete_names_from_db(
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn database_candidates_are_read_only() {
         let directory = tempfile::tempdir().unwrap();
-        let database = directory.path().join("rssh.db");
+        let database = directory.path().join("termx.db");
         let connection = Connection::open(&database).unwrap();
         connection
             .execute_batch(

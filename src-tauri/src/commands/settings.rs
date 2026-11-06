@@ -72,6 +72,23 @@ pub fn secret_backend(state: State<AppState>) -> String {
     state.secret_store.backend_name().to_string()
 }
 
+/// 当前数据目录 / DB 路径 + 一次性迁移通知（设置页系统 tab 用）。
+#[derive(serde::Serialize)]
+pub struct StorageInfo {
+    pub data_dir: String,
+    pub db_path: String,
+    pub migration: Option<crate::db::data_dir_migration::DataDirMigrationReport>,
+}
+
+#[tauri::command]
+pub fn storage_info(state: State<AppState>) -> StorageInfo {
+    StorageInfo {
+        data_dir: state.data_dir.display().to_string(),
+        db_path: crate::db::db_path(&state.data_dir).display().to_string(),
+        migration: crate::db::data_dir_migration::consume_notice(&state.data_dir),
+    }
+}
+
 /// One installed font family + whether it is monospaced. The frontend uses
 /// `monospaced` as a client-side filter (the "monospace only" toggle) and
 /// prepends the chosen family to the terminal's base font stack.
@@ -177,7 +194,7 @@ pub fn read_recording_impl(state: &AppState, name: String) -> AppResult<String> 
     })
 }
 
-/// Fixed recordings directory: `<data_dir>/recordings` (`~/.rssh/recordings` on
+/// Fixed recordings directory: `<data_dir>/recordings` (`~/.termX/recordings` on
 /// desktop, the app data dir on Android). Not user-configurable — writes go
 /// through `recording_path_for` and reads (`list_recordings`, `read_recording`)
 /// resolve here, so they can never disagree on where a `.cast` file lives.
