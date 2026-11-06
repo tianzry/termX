@@ -237,15 +237,16 @@ pub async fn ssh_resize(
 /// 在已建立的 SSH 会话上跑一次性远程命令（`client::exec_once`），返回
 /// stdout/stderr/exit_code。命令对即用即弃——不保留任何状态，插件轮询停止
 /// 时无需清理。`timeout_ms` 缺省 10s，clamp 到 [1s, 60s]。
-#[tauri::command]
-pub async fn ssh_exec(
-    state: State<'_, AppState>,
-    session_id: String,
-    command: String,
+/// `ssh_exec` 的引擎实现：Tauri 命令与 headless dispatcher 共用同一逻辑。
+pub async fn ssh_exec_impl(
+    state: &AppState,
+    session_id: &str,
+    command: &str,
     timeout_ms: Option<u64>,
 ) -> AppResult<PluginExecResult> {
-    let session = get_session(&state, &session_id)?;
+    let session = session_handle(state, session_id)?;
     let ssh = session.ssh_handle().clone();
+    let command = command.to_string();
     // exec 会话沿用档案的「转发 Agent」开关（等价 `ssh -A host cmd`）。
     let agent_forwarding = crate::db::profile::get(&state.db, session.profile_id())
         .map(|p| p.agent_forwarding)
@@ -257,6 +258,16 @@ pub async fn ssh_exec(
         client::exec_once(&ssh, &command, timeout, agent_forwarding).await
     })
     .await
+}
+
+#[tauri::command]
+pub async fn ssh_exec(
+    state: State<'_, AppState>,
+    session_id: String,
+    command: String,
+    timeout_ms: Option<u64>,
+) -> AppResult<PluginExecResult> {
+    ssh_exec_impl(&state, &session_id, &command, timeout_ms).await
 }
 
 /// `tab_id` 只为未预留 session id 的旧客户端保留；新客户端的 prompt waiter

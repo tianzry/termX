@@ -166,7 +166,7 @@ mod tests {
     fn different_aad_yields_different_ciphertext() {
         // 同 key 同明文，不同 AAD，密文必不同；否则 AAD 没起作用。
         let k = key();
-        let a = encrypt(&k, "k1", b"same").unwrap();
+        encrypt(&k, "k1", b"same").unwrap();
         let b = encrypt(&k, "k2", b"same").unwrap();
         // body（密文部分）的差异源于 tag 不同（AAD 进 GHASH/Poly1305）
         // 简化断言：用 k1 的 AAD 解 b 应失败

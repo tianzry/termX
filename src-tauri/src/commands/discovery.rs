@@ -322,11 +322,24 @@ pub(crate) fn save_dynamic_discovery_sources_to_db(
     crate::db::settings::set(db, SOURCES_SETTING_KEY, &raw)
 }
 
+pub(crate) fn list_dynamic_discovery_sources_impl(
+    state: &AppState,
+) -> AppResult<Vec<DynamicDiscoverySource>> {
+    read_sources(state)
+}
+
 #[tauri::command]
 pub fn list_dynamic_discovery_sources(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<DynamicDiscoverySource>> {
-    read_sources(&state)
+    list_dynamic_discovery_sources_impl(&state)
+}
+
+pub(crate) fn save_dynamic_discovery_sources_impl(
+    state: &AppState,
+    sources: Vec<DynamicDiscoverySource>,
+) -> AppResult<()> {
+    save_dynamic_discovery_sources_to_db(&state.db, sources)
 }
 
 #[tauri::command]
@@ -334,11 +347,10 @@ pub fn save_dynamic_discovery_sources(
     state: State<'_, AppState>,
     sources: Vec<DynamicDiscoverySource>,
 ) -> AppResult<()> {
-    save_dynamic_discovery_sources_to_db(&state.db, sources)
+    save_dynamic_discovery_sources_impl(&state, sources)
 }
 
-#[tauri::command]
-pub async fn dynamic_discovery_tool_status(
+pub(crate) async fn dynamic_discovery_tool_status_impl(
     platform: DynamicDiscoveryPlatform,
 ) -> AppResult<DynamicDiscoveryToolStatus> {
     let args = match platform {
@@ -368,13 +380,26 @@ pub async fn dynamic_discovery_tool_status(
 }
 
 #[tauri::command]
-pub async fn list_dynamic_discovery_contexts(
+pub async fn dynamic_discovery_tool_status(
+    platform: DynamicDiscoveryPlatform,
+) -> AppResult<DynamicDiscoveryToolStatus> {
+    dynamic_discovery_tool_status_impl(platform).await
+}
+
+pub(crate) async fn list_dynamic_discovery_contexts_impl(
     platform: DynamicDiscoveryPlatform,
 ) -> AppResult<Vec<DynamicDiscoveryContext>> {
     match platform {
         DynamicDiscoveryPlatform::Docker => list_docker_contexts().await,
         DynamicDiscoveryPlatform::K8s => list_k8s_contexts().await,
     }
+}
+
+#[tauri::command]
+pub async fn list_dynamic_discovery_contexts(
+    platform: DynamicDiscoveryPlatform,
+) -> AppResult<Vec<DynamicDiscoveryContext>> {
+    list_dynamic_discovery_contexts_impl(platform).await
 }
 
 async fn list_docker_contexts() -> AppResult<Vec<DynamicDiscoveryContext>> {
@@ -415,12 +440,18 @@ async fn list_k8s_contexts() -> AppResult<Vec<DynamicDiscoveryContext>> {
     Ok(parse_k8s_contexts(&out.stdout, current.as_deref()))
 }
 
+pub(crate) async fn discover_dynamic_targets_impl(
+    state: &AppState,
+) -> AppResult<DynamicDiscoverySnapshot> {
+    let sources = read_sources(state)?;
+    discover_sources(sources).await
+}
+
 #[tauri::command]
 pub async fn discover_dynamic_targets(
     state: State<'_, AppState>,
 ) -> AppResult<DynamicDiscoverySnapshot> {
-    let sources = read_sources(&state)?;
-    discover_sources(sources).await
+    discover_dynamic_targets_impl(&state).await
 }
 
 async fn discover_sources(

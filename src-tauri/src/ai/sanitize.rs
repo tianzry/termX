@@ -122,10 +122,6 @@ pub struct Truncated {
     pub truncated_bytes: usize,
 }
 
-pub fn decode_lossy(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
 /// 头部完整保留 + 尾部截断。在 char boundary 切，避免截掉半个 UTF-8 字符。
 pub fn truncate(input: &str, max_bytes: usize) -> Truncated {
     if input.len() <= max_bytes {

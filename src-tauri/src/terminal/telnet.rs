@@ -1228,7 +1228,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut status = None;
+        let status;
         let mut output = String::new();
         loop {
             match rx.recv_timeout(Duration::from_secs(5)).unwrap() {

@@ -996,14 +996,6 @@ export function sftpList(
   return invoke<RemoteEntry[]>("sftp_list", { sftpId, path });
 }
 
-/** 读远端文件（内存 Vec<u8> → number[]）。 */
-export function sftpDownload(
-  sftpId: string,
-  path: string,
-): Promise<number[]> {
-  return invoke<number[]>("sftp_download", { sftpId, path });
-}
-
 export function sftpUpload(
   sftpId: string,
   path: string,

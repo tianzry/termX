@@ -244,6 +244,8 @@ fn rel_unix(full: &Path, root: &Path) -> String {
         .join("/")
 }
 
+/// 读远端文件到内存（`Vec<u8>` → 前端 number[]）。仅供 headless / CLI 的
+/// 小文件读取；桌面前端大文件一律走流式 `sftp_download_to`（避免 IPC 4× 膨胀）。
 #[tauri::command]
 pub async fn sftp_download(
     state: State<'_, AppState>,

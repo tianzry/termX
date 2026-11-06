@@ -261,6 +261,7 @@ pub async fn forward_rule_stop(
     .await
 }
 
+#[cfg_attr(not(feature = "server"), allow(dead_code))]
 pub async fn forward_rule_start_impl(
     state: &AppState,
     owner: &SessionOwner,
@@ -270,6 +271,7 @@ pub async fn forward_rule_start_impl(
     forward_rule_command_impl(state, owner, active_id, rule_index, true).await
 }
 
+#[cfg_attr(not(feature = "server"), allow(dead_code))]
 pub async fn forward_rule_stop_impl(
     state: &AppState,
     owner: &SessionOwner,

@@ -233,6 +233,11 @@ async fn handle_conn(stream: TcpStream, expected: String, state: Arc<AppState>) 
 }
 
 /// Synchronous command dispatch. Each arm mirrors the matching `#[tauri::command]`.
+///
+/// 有意不实现（GUI 专属，headless 无窗口 / 原生对话框）：
+/// `close_window_sessions`、`open_tab_in_new_window`、`pty_spawn_connector`、
+/// `set_app_icon_variant`、`set_window_background_blur`、`set_window_opacity`、
+/// `sftp_pick_*`（5 个）与 `sftp_save_file`。
 fn dispatch(
     state: &AppState,
     owner: &SessionOwner,
@@ -485,9 +490,52 @@ fn dispatch(
         )),
         "secret_backend" => Ok(json!(state.secret_store.backend_name())),
 
+        // ---- app lock（DB 校验器；前端门在两端一致） ----
+        "app_lock_state" => ok(crate::app_lock::state(&state.db)),
+        "app_lock_set_password" => ok(crate::app_lock::set_password(
+            &state.db,
+            optional_string_arg(&args, "currentPassword")?.as_deref(),
+            &arg::<String>(&args, "nextPassword")?,
+        )),
+        "app_lock_disable" => ok(crate::app_lock::disable(
+            &state.db,
+            &arg::<String>(&args, "currentPassword")?,
+        )),
+        "app_lock_unlock" => ok(crate::app_lock::unlock(
+            &state.db,
+            &arg::<String>(&args, "password")?,
+        )),
+        "app_lock_set_enabled" => ok(crate::app_lock::set_enabled(
+            &state.db,
+            arg::<bool>(&args, "enabled")?,
+        )),
+        "app_lock_set_timeout" => ok(crate::app_lock::set_timeout_minutes(
+            &state.db,
+            arg::<u64>(&args, "minutes")?,
+        )),
+
+        // ---- system clipboard（arboard；headless 同样可用） ----
+        "clipboard_read" => ok(crate::commands::window::clipboard_read()),
+        "clipboard_write" => ok(crate::commands::window::clipboard_write(
+            arg::<String>(&args, "text")?,
+        )),
+
         // ---- local PTY ----
         "list_shells" => Ok(json!(pty::available_shells())),
         "discover_shells" => Ok(json!(crate::terminal::shell_discovery::discover())),
+        "open_external_url" => ok(crate::commands::external::open_external_url_impl(
+            &arg::<String>(&args, "url")?,
+        )),
+        // 动态发现源（Docker / K8s）的读写在两端共用同一 DB helper。
+        "list_dynamic_discovery_sources" => ok(
+            crate::commands::discovery::list_dynamic_discovery_sources_impl(state),
+        ),
+        "save_dynamic_discovery_sources" => ok(
+            crate::commands::discovery::save_dynamic_discovery_sources_impl(
+                state,
+                arg::<Vec<crate::models::DynamicDiscoverySource>>(&args, "sources")?,
+            ),
+        ),
         "default_shell" => {
             let configured = crate::db::settings::get(&state.db, "local_shell")
                 .map_err(err_value)?
@@ -1068,6 +1116,29 @@ async fn dispatch_async(
 ) -> Result<Value, Value> {
     match cmd {
         "ssh_connect" => ssh_connect(state, owner, args, tx).await,
+        // 插件轮询 / 脚本调用：与 Tauri `ssh_exec` 同一 impl。
+        "ssh_exec" => ok(crate::commands::session::ssh_exec_impl(
+            state,
+            &arg::<String>(&args, "sessionId")?,
+            &arg::<String>(&args, "command")?,
+            args.get("timeoutMs").and_then(Value::as_u64),
+        )
+        .await),
+        "dynamic_discovery_tool_status" => ok(
+            crate::commands::discovery::dynamic_discovery_tool_status_impl(arg::<
+                crate::models::DynamicDiscoveryPlatform,
+            >(&args, "platform")?)
+            .await,
+        ),
+        "list_dynamic_discovery_contexts" => ok(
+            crate::commands::discovery::list_dynamic_discovery_contexts_impl(arg::<
+                crate::models::DynamicDiscoveryPlatform,
+            >(&args, "platform")?)
+            .await,
+        ),
+        "discover_dynamic_targets" => {
+            ok(crate::commands::discovery::discover_dynamic_targets_impl(state).await)
+        },
         // agent 探测是异步的（named pipe / unix socket 连接），与 Tauri 侧同款。
         "ssh_agent_status" => ok(crate::commands::keychain::ssh_agent_status_impl().await),
         // Async like the Tauri command, for the same reason: DNS + TCP connect

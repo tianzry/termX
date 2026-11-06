@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-11-06 — #217 剩余低危技术债清理（5 项关闭 / 2 项保留）
+
+- **范围**：2026-11-02 只读审计的低危项 #1/#5/#6/#7，另清 2 个测试编译告警；#2（两套主机表单，中危）与 #3（大文件职责，架构级）不属低危，保留不动。
+- **#1 headless dispatcher 缺口（已修）**：`server.rs` 补齐 15 条分支——`ssh_exec`（抽出 `session::ssh_exec_impl`，Tauri 命令与 headless 共用）、5 个动态发现命令（`discovery` 抽出 5 个 `*_impl`）、`open_external_url`（抽出 `external::open_external_url_impl`，改用 `tauri_plugin_opener::open_url` 自由函数，无 `AppHandle` 也能打开系统浏览器）、`app_lock` 6 命令、`clipboard_read/write`。`lib.rs` 224 个命令的覆盖缺口从 27 降到 12，剩余 12 条全部为 GUI 专属（`close_window_sessions`、`open_tab_in_new_window`、`pty_spawn_connector`、`set_app_icon_variant`、`set_window_background_blur`、`set_window_opacity`、`sftp_pick_*` ×5、`sftp_save_file`），已在 `server.rs` 文档注释中显式列为不实现及原因（headless 无窗口/原生对话框/图标）。
+- **#5 `sftp_download` 内存版（已修一半）**：删除前端零调用的 `sftpDownload` 封装；后端命令保留供 headless/CLI 小文件读取，并加文档约束「桌面前端大文件一律走流式 `sftp_download_to`」。彻底删除会破坏 headless 小文件读取，且改动收益低于风险。
+- **#6 零调用后端命令（已复核关闭）**：discovery / plugin / command_block / update / sync / AI / `reconcile_sessions` 均有 headless、CLI 或暂缓模块（#15/#26/#27）作为调用方，不是死代码；`clipboard_read/write` 本轮已补 headless 分支。保留，随模块接线。
+- **#7 dead-code 警告（已清零）**：删除 `sanitize::decode_lossy` 与 `app_lock.rs` 未用 `Arc` 导入；`cli_status_headless`、`forward_rule_start_impl` / `forward_rule_stop_impl` 仅在 `server` feature 下使用，加 `cfg_attr(not(feature = "server"), allow(dead_code))`；`ChatDelta::ToolStart/ToolArgs` 字段保留完整协议形状，加注释（待 #27）与 `allow(dead_code)`；另清 `secret/crypto.rs` 未用变量、`terminal/telnet.rs` 未读初值两个测试告警。`cargo check --all-targets`（默认与 `--features server`）零警告。
+- **保留项**：#2 两套主机表单收敛属中危、需产品确认统一入口；#3 大文件拆分按「相关维护时按职责拆分，不专项重写」的既定口径继续延后。
+- **门禁**：`npm run test:run` 753 通过、`npm run build` 通过、`cargo test --lib` 949 通过（新增 `open_external_url` 非 http(s) 拒绝用例）、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #216 129 SSH 全矩阵实机验证（逐项截图 + JSON 断言）
 
 - **验证方式**：`npm run tauri -- build --debug --no-bundle` 重建（dist 内嵌）后实跑 debug 版，真连 `tianzry@192.168.126.129:22`（密码认证），WebView2 CDP 9222 驱动；三支脚本 `evidence/audit16-01-toolbar-context.mjs`、`audit16-02-timestamps-compose.mjs`、`audit16-03-logs-autocomplete-split.mjs`，产物同名 `.json` + 31 张 `audit16-*.png`。

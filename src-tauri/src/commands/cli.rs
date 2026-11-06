@@ -152,6 +152,7 @@ pub fn cli_status(app: AppHandle) -> CliStatus {
 /// probe needs a Tauri `AppHandle`, which the headless server doesn't have;
 /// the embedded server prepends its own dir to the shell PATH instead, so it
 /// reports `bundled: false` and leaves install to the host (IDEA plugin / app).
+#[cfg_attr(not(feature = "server"), allow(dead_code))]
 pub fn cli_status_headless() -> CliStatus {
     build_status(find_installed(), false)
 }

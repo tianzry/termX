@@ -99,8 +99,10 @@ pub struct ModelInfo {
     pub display_name: Option<String>,
 }
 
-/// 流式增量回调。Text 用于 UI 实时渲染；其余仅供调试 / 暂不消费。
+/// 流式增量回调。Text 用于 UI 实时渲染；其余保留完整协议形状，
+/// 待 AI 侧栏（todo #27，暂缓）接入后再消费。
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ChatDelta {
     Text(String),
     ToolStart {

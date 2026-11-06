@@ -15,8 +15,6 @@
 //! 密文走 SecretStore 的路径相互独立。锁定是前端 UI 门（启动 / 失焦超时
 //! 后遮罩），不是文件系统加密。
 
-use std::sync::Arc;
-
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -240,6 +238,7 @@ pub fn set_timeout_minutes(db: &Db, minutes: u64) -> AppResult<AppLockState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn test_db() -> Arc<Db> {
         Arc::new(Db::open_in_memory().unwrap())

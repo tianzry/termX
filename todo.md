@@ -372,12 +372,16 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 > 来源：对照 netcatty 的只读审计（快照时间 2026-11-02 约 18:35）。此处只记录问题与建议动作，不代改代码。
 
 1. **headless dispatcher 注册缺口（违反 R4）**：`src-tauri/src/server.rs` 缺 `ssh_exec`、`known_hosts_list` / `known_hosts_remove`、5 个 discovery 命令、`open_external_url` 的分支 → JetBrains/headless 运行时这些命令会 command not found。建议：补齐 dispatcher 分支（`lib.rs` 侧均已注册）。
+   **【2026-11-06 ✅ 已关闭】** 已补 `ssh_exec`、5 个 discovery、`open_external_url`（改用 opener 自由函数），并顺带补 `app_lock` 6 个与 `clipboard_read/write`；`known_hosts_*` 此前已在。剩余 12 个为 GUI 专属（窗口/原生对话框/图标），在 `server.rs` 注释中显式列为不实现。
 2. **两套主机表单字段不一致**：`VaultView.tsx` 右侧新建面板与 `ConnectionManager.tsx` 弹窗各有一套 profile+credential 表单；后者有跳板机选择，前者建出来 `bastion_profile_id` 恒为 null → 同一操作两个入口两种能力，易产生数据不一致。建议：收敛为单一表单模型/组件。
 3. **大文件职责混杂**：前端 `VaultView.tsx`（86KB：导航+三视图+搜索排序+标签+多选+右键+拖拽+框选+快速连接+已知主机页）、`TerminalPane.tsx`（40KB：状态机+工具栏+菜单+弹窗编排）、`styles.css`（103KB）；后端 `commands/lifecycle.rs`（105KB）、`ai/sanitize.rs`（100KB）、`ai/session.rs`（95KB）、`server.rs`（76KB）、`sync/config.rs`（76KB）、`ssh/client.rs`（68KB）。建议：相关维护时按职责拆分，不专项重写。
 4. **前端无测试 runner（已解决 2026-11-02）**：已引入 Vitest 3 + jsdom（`vitest.config.ts` + `src/test/setup.ts`，9 个测试文件 / 71 用例，`npm run test:run` 全绿），覆盖 domain 纯逻辑 / workspaceModel / backend 桥接 / 工作区持久化 / 认证表单；门禁规则见 AGENTS.md R11，细节见 changelogs.md 同日条目。
 5. **sftp_download 内存版 IPC 膨胀**：返回 `number[]`，大文件约 4 倍膨胀；已有流式版 `sftpDownloadTo`。建议：内存版仅限小文件场景或移除。
+   **【2026-11-06 ✅ 已关闭】** 删除前端零调用的 `sftpDownload` 封装；后端命令保留给 headless/CLI 小文件读取并加文档约束，桌面前端统一走流式 `sftp_download_to`。
 6. **多组后端命令前端零调用**：discovery(5)、plugin(7)、command_block(3)、window(3：`open_tab_in_new_window` / `clipboard_read` / `clipboard_write`)、update（`fetch_latest_release_tag`）、sync(11)、AI（约 36）、`reconcile_sessions`。建议：随对应模块（#15/#26/#27 等）接线，或显式标 ⏸，避免长期死代码。
+   **【2026-11-06 ✅ 已关闭】** 复核结论：discovery/plugin/command_block/update/sync/AI/`reconcile_sessions` 由 headless、CLI 或暂缓模块（#15/#26/#27）使用，非死代码；`clipboard_read/write` 已补 headless 分支。保留不删，后续随模块接线。
 7. **cargo check 6 个 dead-code 警告**：`ai/llm.rs` 字段、`sanitize::decode_lossy`、`cli_status_headless`、`forward_rule_start_impl` / `forward_rule_stop_impl`（后两者疑似与 SSH 移植会话的快照时间差所致）。建议：移植收尾后复查清理。
+   **【2026-11-06 ✅ 已关闭】** 删除 `decode_lossy` 与 `app_lock` 未用导入，`cli_status_headless` / `forward_rule_*_impl` 加 `cfg_attr(not(feature="server"), allow(dead_code))`，`ChatDelta` 未消费字段加注释 + `allow`；另清两个测试警告（crypto 未用变量、telnet 未读初值）。`cargo check --all-targets`（含 server feature）零警告。
 8. **todo 口径冲突已修正**：P1 #14 原称「后端已有 getServerStats」不实（已改写）；#19 与「不移植」口径冲突（已标 ⏸）；#28/#29 与 plan.md 暂缓口径对齐（已标 ⏸）。
 
 ---
@@ -402,6 +406,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 2026-11-06 | #214 技术债（#208 review P2-7/8）：`toolbarLayout` 新增 `TOOLBAR_CAPABILITY_OF` / `TERMINAL_MORE_ACTIONS`，工具栏与 More 菜单的可见性/顺序由 spec 驱动；新增 `terminalActionText.ts` 作为工具栏/More/右键唯一文案来源，JSX 不再另写一套。 |
 | 2026-11-06 | #215 第二轮全应用比对：debug 实跑 + CDP 逐页截图；P1 无；P2 串口取消按钮补 outline 边框（已修并重建复测）；P3 为已知能力差异（Netcatty 独有 browser/ymodem/openSessionLog、右键上传下载、插件菜单）。Netcatty 实例无 CDP，逐页像素自动化列为未验证。 |
 | 2026-11-06 | #216 129 SSH 全矩阵实机验证：工具栏 13 项 + 关闭窗格、More 5 项、tab 三态点、右键 8/9 项与点击行为、时间戳对位/reflow/分屏独立、撰写栏多行与历史/Esc、`.cast` 即时落盘与日志页、自动补全 `l`/`ls `/↓/→/Tab、分屏连开 3 次稳定全部通过；P2 修复 `.cast` 录制中 0 字节（Recorder/TextLogRecorder 即时 flush）与右键粘贴字面量 `[200~`（`buildPastePayload` + `writeBulk`）；P3 记录 More「开始录制」内联文案、OSC7 Esc 未确认；门禁 753✓/build✓/948✓/tauri debug✓。 |
+| 2026-11-06 | #217 剩余低危技术债清理：headless dispatcher 补 15 条分支（ssh_exec / 5 discovery / open_external_url / app_lock 6 / clipboard 2），缺口 27→12（剩余全部 GUI 专属并在 server.rs 注释列明）；前端删除零调用 `sftpDownload`；dead-code 警告清零（删 decode_lossy/未用 Arc，server-only 函数加 cfg_attr allow，ChatDelta 加注释 allow，另清 2 个测试告警）；#6 复核为 headless/CLI/暂缓模块在用，保留；#2/#3 非低危保留；门禁 753✓/build✓/949✓/server✓/tauri debug✓。 |
 | 2026-11-02 | 十功能计划①本地终端完成：shell 发现 + 本地 shell 主机 CRUD + LocalShellPanel 1:1（对照运行中 Netcatty）；实机比对差异清零（下拉选中态 / local 实底蓝白头像含卡·树·切换器 / local 标签 chip）；子 agent review 两必须修复项（CM 过滤 local、切换器头像）已修；门禁 97/97 + cargo 全绿。 |
 | 2026-11-03 | 按用户指令顺序调整：下一功能=设置中心（#12 标 🟨），SFTP 延后（研究已落盘 Temp）；设置中心研究完成（Netcatty 源码地图+termX 现状+CU 顶栏/SFTP 取证），实现开工。 |
 | 2026-11-03 | 设置中心实现 + 门禁完成：5 tab（应用/外观/终端/快捷键/系统）1:1 + 3 占位（文件关联/AI/同步），全屏 overlay 承载（Netcatty 独立窗口形态差异记录在案）；新增 get_auto_launch/set_auto_launch（Windows 注册表，lib.rs + server.rs 双注册），复用 list_fonts/secret_backend；新增前端单测 12 例；门禁全绿（109/109 + build ✓ + cargo check ×2 + cargo test --lib 789✓）；实机比对与子 agent review 留下一轮。 |
