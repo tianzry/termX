@@ -175,3 +175,52 @@
 - `evidence/`：历史取证产物与已执行脚本；新验证脚本另起并改用 `termx.exe`。
 - `sync` 远端备份文件名 `rssh_backup.*`：兼容既有远端备份。
 - `TERMX_*` 既有环境变量、`termx.<域>.v<n>` localStorage 前缀、`com.termx.app` identifier、深链 scheme `termx`：本来就是 termX 口径。
+
+## 7. 实际落地（2026-11-06）
+
+本节记录盘点方案的最终执行结果与偏差；未列出的条目均按 §1–§3 落地。
+
+### 7.1 标识与构建
+
+| 项目 | 实际结果 |
+|---|---|
+| crate / lib | `termx` / `termx_lib`（`Cargo.toml`、`src-tauri/tests`） |
+| 二进制 | `termx`（GUI，`default-run`）、`termx-cli`（feature `cli`，源码在 `src/bin/termx/`）、`termx-server`（feature `server`） |
+| 版本 / identifier | `0.0.1` / `com.termx.app`（`tauri.conf.json`） |
+| 显示名 | 窗口标题 `termX`、CLI `about`、AI 本地分析窗口、iOS plist 说明、审计文件头均为 termX |
+| 安装包 | `termX_0.0.1_x64-setup.exe`（NSIS）、`termX_0.0.1_x64_en-US.msi`（MSI）；NSIS per-user 安装到 `%LOCALAPPDATA%\termX`，快捷方式 `termX.lnk`（开始菜单 + 桌面） |
+| 工作区脚本 | `build-debug.bat`、`.launch-termx.vbs` 指向 `target/debug/termx.exe` |
+| 深链 | schemes `ssh` / `telnet` / `termx`；窗口 label `termx-<uuid>`、冷启动注入键 `__termx_clone` |
+
+### 7.2 数据目录与迁移
+
+- `db::data_dir()` 经 `db/data_dir_migration.rs` 一次性迁移（`OnceLock` 守卫，GUI / CLI / server 共用）：
+  - `~/.termX` 已存在 → 直接用新目录，旧目录不动；
+  - 不存在且 `~/.rssh` 存在 → 同卷 `fs::rename` 原子移动；跨卷退化为复制 → 校验文件数 → 删除旧目录；
+  - 失败 → 回退读 `~/.rssh` 并告警，不阻断启动。
+- 目录内 DB 文件 `rssh.db` → `termx.db`（`db::db_path` 仍兼容旧文件名回退）；`recordings/`、`plugins/`、`master.key` 随目录移动。
+- 迁移报告写 `<data_dir>/.rename-migration.json`，设置 → 系统读取后删除并展示。
+- **实测（隔离副本，不动真实数据）**：`status=migrated` / mode `rename` / tables 23/23 / rows 334/334 / recordings 0/0 / `old_dir_removed=true`；设置-系统文案与实际一致。详见 [installer-verification.md](installer-verification.md)。
+
+### 7.3 兼容回退（按方案保留）
+
+| 项目 | 实际实现 |
+|---|---|
+| keychain service | 新 `termx`；未命中读 `LEGACY_SERVICE="rssh"`，命中懒迁移回写新 service |
+| master key | 新 `termx_master_key_v1`；未命中读 `rssh_master_key_v1` 后回写 |
+| 错误前缀 | `__termx_err__\|`；前端 `sshErrors.ts` 双前缀兼容 `__rssh_err__\|` |
+| 环境变量 | 新 `TERMX_DISABLE_WAYLAND_COMPAT` / `TERMX_KEEP_GBM_BACKEND` / `TERMX_WEB_SEARCH_PROVIDER`；旧 `RSSH_*` 保留一个发布周期回退读取 |
+| 远端同步备份 | `rssh_backup.json` / `rssh_backup.enc` / `.meta.json` 保持旧名，避免既有云备份“消失” |
+| 旧默认值 | 旧库中 `anonymous@rssh` 随 DB 保留；仅新建库写 `anonymous@termx` |
+
+### 7.4 与盘点方案的偏差
+
+- 盘点 §5 的 4 个提交按实际依赖合并为改名专项的连续提交（crate/二进制/显示名、数据目录与 keychain 迁移、文档与 AGENTS 同步），changelog 从 #218 起记录，未拆成额外的“回退单测”提交（回退逻辑的单测随实现提交）。
+- 安装包层面出现一个方案外结果：MSI 为 per-machine（写 HKLM `Software\Classes\ssh` 等 URL protocol），在非管理员会话无法静默安装（exit 1603 / Error 1925 与 1406）；NSIS 为 per-user 可全链路验证。详见 [installer-verification.md](installer-verification.md)。
+- `commands/cli.rs` 的“已安装命令”检查路径随二进制名改为 `termx` / `termx.exe`；`Programs\termx` 由 CLI 自装流程创建（不在安装包内）。
+
+### 7.5 验证结论
+
+- 改名后 `termx.exe` 全应用回归（浅/深、Vault 9 页、设置 8 tab、SSH/本地/Telnet/串口）通过，P1=0：[final-regression.md](final-regression.md)。
+- 门禁：前端 769（70 文件）、`npm run build`、Rust lib 960、`cargo build --features server`、debug 打包全绿；详见 README / changelogs #226。
+- 仍需人工确认：证书真实 CA 握手、Windows ssh-agent 转发、真实串口设备回环、原生文件对话框、MSI 管理员安装/卸载。

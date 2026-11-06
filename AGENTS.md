@@ -68,7 +68,7 @@ rg 'secret_store|SecretStore' src-tauri/src --files-with-matches
 
 ### R7. `db/schema.rs` 历史迁移块冻结，SCHEMA_VERSION 只增不改
 
-`version < N` 的块（建表 / ALTER / 旧 seed）跑过就永远保持原样；要改表结构或默认数据就开新版本块、递增 `SCHEMA_VERSION`（当前 32，核对：`rg 'SCHEMA_VERSION' src-tauri/src/db/schema.rs`）。同一 version 在不同时间产出两种表结构 = 迁移不再是版本的纯函数。一次性数据迁移（搬 secret、加列回填）放 `src-tauri/src/migration/`，必须幂等，GUI / CLI / server 启动都要跑到。
+`version < N` 的块（建表 / ALTER / 旧 seed）跑过就永远保持原样；要改表结构或默认数据就开新版本块、递增 `SCHEMA_VERSION`（当前 50，核对：`rg 'SCHEMA_VERSION' src-tauri/src/db/schema.rs`）。同一 version 在不同时间产出两种表结构 = 迁移不再是版本的纯函数。一次性数据迁移（搬 secret、加列回填）放 `src-tauri/src/migration/`，必须幂等，GUI / CLI / server 启动都要跑到。
 
 ### R8. Transport session 必须经过 lifecycle registry
 
@@ -141,7 +141,8 @@ npm run test                   # Vitest 监听模式（开发时用）
 npm run test:run               # 前端单元测试一次性跑完（门禁，见 R11）
 npm run test:coverage          # 前端测试覆盖率（v8）
 npm run tauri dev              # 本地 GUI（真机验证用这个）
-npm run tauri build            # release 打包
+npm run tauri build            # release 打包（Windows 产出 NSIS + MSI）
+npm run tauri -- build --debug --no-bundle   # debug 打包门禁（不产安装器）
 cargo check                    # 在 src-tauri/ 下，编译门禁
 cargo test --lib               # 无 GUI 冒烟（见下）
 cargo build --features cli --bin termx-cli
@@ -155,6 +156,8 @@ npm run build && cargo build --features server --bin termx-server   # 顺序不�
 - 后端有大量 `#[cfg(test)]` 单测（`rg -c '#\[cfg\(test\)\]' src-tauri/src` 核对）；关键无 GUI 冒烟：`local_pty_write_roundtrip`（PTY 回显链路）、`ssh_connect_to_local_sshd_roundtrip`（本地 sshd + 密钥认证，未设 env 时静默跳过）。
 - 前端单元测试 = **Vitest 3 + jsdom**：配置在 [vitest.config.ts](vitest.config.ts)（独立于 vite.config.ts，不碰 Tauri devServer），setup 在 `src/test/setup.ts`（jest-dom 匹配器 + 每个用例后 RTL cleanup）。在**仓库根目录**执行、前置 `npm install`：`npm run test:run` 一次性 / `npm test` 监听 / `npm run test:coverage` 覆盖率。
 - 前端测试范围：`src/domain/` 纯逻辑（sshErrors / sshConnectionTimeouts / hostKey / connectionProgress / vaultMarqueeSelection）、`workspaceModel.ts` 分屏树、`backend/client.ts`（mock `@tauri-apps/api` 验证 invoke 参数形状与 base64 编解码）、`backend/workspaceStore.ts`（localStorage 往返与损坏兜底）、`TerminalAuthDialog` 组件级交互。**约束（R11）**：不依赖真实网络 / SSH / Tauri 运行时，不写快照 / 像素测试；known_hosts 解析后端 Rust 已有测试，前端不重复。
+- 当前门禁基线（2026-11-06）：`npm run test:run` 70 文件 / 769 用例、`npm run build`、`cargo test --lib` 960、`cargo build --features server`、`npm run tauri -- build --debug --no-bundle` 全绿；`cargo test --lib` 的 `commands::plugin::tests::local_exec_caps_output_without_breaking_the_pipe` 偶发 10s 超时（重跑通过，既有 flake）。
+- 收尾验证记录：[docs/final-regression.md](docs/final-regression.md)（页面清单 / Netcatty 对照 / P1=0）、[docs/installer-verification.md](docs/installer-verification.md)（NSIS 全链路 + MSI 权限阻塞）。
 - CI：`.github/workflows/release.yml`（三平台构建 + Windows 签名）。
 
 ---
