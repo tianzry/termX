@@ -2376,6 +2376,15 @@ button {
   --nc-primary: var(--primary);
   --nc-radius: 8px;
   --nc-sidebar-w: 220px;
+
+  /* 工具栏共享尺寸（K）：终端顶栏与右侧栏顶栏同一套，改动只在这里。
+   * 取值来自终端顶部工具栏（28 高 / 24 按钮 / 12 图标，对齐 Netcatty 顶栏）。 */
+  --term-toolbar-height: 28px;
+  --term-toolbar-btn-size: 24px;
+  --term-toolbar-icon-size: 12px;
+  --term-toolbar-pad-x: 4px;
+  --term-toolbar-gap: 4px;
+  --term-toolbar-radius: 6px;
 }
 
 body {
@@ -4979,12 +4988,12 @@ button:disabled {
 
 .term-toolbar {
   flex-shrink: 0;
-  height: 28px;
+  height: var(--term-toolbar-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-  padding: 0 4px;
+  gap: var(--term-toolbar-gap);
+  padding: 0 var(--term-toolbar-pad-x);
   border-bottom: 1px solid hsl(var(--border) / 0.5);
   background: hsl(var(--background));
   color: hsl(var(--muted-foreground));
@@ -4998,14 +5007,14 @@ button:disabled {
   min-width: 3rem;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--term-toolbar-gap);
 }
 
 .term-toolbar-right {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--term-toolbar-gap);
 }
 
 .term-toolbar-title {
@@ -5018,19 +5027,32 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* 工具栏图标按钮尺寸的唯一来源：终端顶栏与右侧栏顶栏共用（K）。
+ * 颜色/底色仍由各自的规则定义，只共享外框与图标尺寸。 */
+.term-tool-btn,
+.nc-side-panel-tool {
+  width: var(--term-toolbar-btn-size);
+  height: var(--term-toolbar-btn-size);
+  border-radius: var(--term-toolbar-radius);
+}
+
+.term-tool-btn svg,
+.nc-side-panel-tool svg {
+  width: var(--term-toolbar-icon-size);
+  height: var(--term-toolbar-icon-size);
+  flex: none;
+}
+
 /* 工具栏图标按钮：对照 Netcatty Button size="icon"（h-6 w-6 rounded-md），
  * 常态透明、无悬停底色（Netcatty 的 buttonBase 显式 hover:bg-transparent），
  * 只保留激活态底色与录制态颜色。 */
 .term-tool-btn {
-  width: 24px;
-  height: 24px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: 6px;
   background: transparent;
   color: hsl(var(--muted-foreground));
   transition: background-color 150ms ease;
@@ -12536,14 +12558,15 @@ html[data-theme="dark"] .nc-shell-icon.mono {
   background: hsl(var(--primary) / 0.5);
 }
 
-/* 工具条：h-9（36px）+ px-1.5 py-1 + gap-1（Netcatty 实测）。 */
+/* 工具条：高度/内边距/间距使用顶部工具栏共享令牌（K）。 */
 .nc-side-panel-tabs {
   position: relative;
   flex-shrink: 0;
+  height: var(--term-toolbar-height);
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
+  gap: var(--term-toolbar-gap);
+  padding: 0 var(--term-toolbar-pad-x);
   border-bottom: 1px solid hsl(var(--border) / 0.7);
   background: hsl(var(--nc-bg-elev) / 0.5);
 }
@@ -12552,7 +12575,7 @@ html[data-theme="dark"] .nc-shell-icon.mono {
 .nc-side-panel-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--term-toolbar-gap);
   min-width: 0;
 }
 
@@ -12560,16 +12583,14 @@ html[data-theme="dark"] .nc-shell-icon.mono {
   margin-left: auto;
 }
 
-/* 工具按钮：25×28 / radius 8 / active = primary 24% + foreground。 */
+/* 工具按钮：外框/圆角/图标尺寸共用 `.term-tool-btn` 的共享令牌，
+ * active = primary 24% + foreground。 */
 .nc-side-panel-tool {
-  width: 28px;
-  height: 28px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
   padding: 0;
   border: none;
-  border-radius: 8px;
   background: transparent;
   color: hsl(var(--muted-foreground));
   cursor: pointer;

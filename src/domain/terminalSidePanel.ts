@@ -11,10 +11,10 @@
 export const SIDE_PANEL_MIN_WIDTH = 280;
 export const SIDE_PANEL_MAX_WIDTH = 1200;
 export const SIDE_PANEL_MIN_TERMINAL_WIDTH = 320;
-export const SIDE_PANEL_TOOL_BUTTON_WIDTH = 28;
+/** 单个工具按钮占位宽：按钮 24px + 间距 4px（与工具栏共享令牌一致）。 */
+export const SIDE_PANEL_TOOL_SLOT_WIDTH = 28;
 export const SIDE_PANEL_TOOLBAR_RESERVED_WIDTH = 200;
 export const SIDE_PANEL_DEFAULT_WIDTH = 420;
-export const SIDE_PANEL_TOOLBAR_HEIGHT = 36;
 
 /**
  * 侧栏可承载的工具页（对齐 Netcatty tab 顺序 sftp → browser → scripts →
@@ -61,7 +61,7 @@ export function getSidePanelMaxShownTools(panelWidth: number): number {
     1,
     Math.floor(
       (panelWidth - SIDE_PANEL_TOOLBAR_RESERVED_WIDTH) /
-        SIDE_PANEL_TOOL_BUTTON_WIDTH,
+        SIDE_PANEL_TOOL_SLOT_WIDTH,
     ),
   );
 }

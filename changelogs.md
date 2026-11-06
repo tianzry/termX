@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-11-06 — #245 终端顶部工具栏与右侧栏顶部工具栏尺寸统一（K）
+
+- **问题**：终端顶部工具栏 28px 高、24×24 按钮、12px 图标；右侧栏顶部工具栏 36px 高、28×28 按钮、15px 图标，两组视觉尺寸不一致。
+- **取证**（CDP 9222 / 9336 computed style）：
+  - termX 改前：顶栏 `height 28 / padding 0 4 / gap 4 / 按钮 24×24 radius 6 / 图标 12`；侧栏 `height 36（内联 SIDE_PANEL_TOOLBAR_HEIGHT）/ padding 4 6 / gap 4 / 按钮 28×28 radius 8 / 图标 15`。
+  - Netcatty 实际：`[data-section="terminal-toolbar"]` = 28px（`py-0.5` + `h-6` 按钮、`gap-1`、图标 12）；`[data-section="terminal-side-panel-tabs"]` = 36px（`h-9` + `h-7` 按钮、`px-1.5 py-1`、图标 15）。**Netcatty 自身两处并不等高。**
+  - 取舍：按用户「统一成同一套、取值以终端顶部工具栏为准」执行，两处统一为 28/24/12/padX 4/gap 4/radius 6；因此 termX 侧栏比 Netcatty 侧栏更紧凑（36/28/15 → 28/24/12），此处已在 changelog 说明，属有意偏离 Netcatty 值以保证 termX 内部一致。
+- **改动**：
+  1. `styles.css` `:root` 新增共享令牌 `--term-toolbar-height/btn-size/icon-size/pad-x/gap/radius`，顶栏与侧栏只引用令牌，不再各写一份像素。
+  2. 新增共享选择器 `.term-tool-btn, .nc-side-panel-tool { width/height/border-radius: var(...) }` 与 `.term-tool-btn svg, .nc-side-panel-tool svg { width/height: var(--term-toolbar-icon-size) }`；删除两处各自写死的 24/28、6/8 与图标尺寸。
+  3. `.term-toolbar` 高度/内边距/间距改用令牌；`.term-toolbar-right` gap 2 → 4（与左组/Netcatty `gap-1` 一致）。
+  4. `.nc-side-panel-tabs` 改为 `height: var(--term-toolbar-height)`、`padding: 0 var(--term-toolbar-pad-x)`；删除 `TerminalSidePanel.tsx` 内联高度与 `SIDE_PANEL_TOOLBAR_HEIGHT` 导出。
+  5. `SIDE_PANEL_TOOL_BUTTON_WIDTH` 更名为 `SIDE_PANEL_TOOL_SLOT_WIDTH`（值 28 = 按钮 24 + 间距 4），容量计算与测试数值不变。
+- **验证**（129 实机 SSH + 本地标签、侧栏打开）：
+  - 改后两处均 `28 高 / 24×24 按钮 / 12×12 图标 / radius 6 / padding 0 4 / gap 4`；终端顶栏 `scrollWidth==clientWidth` 646/646，侧栏工具条 553/553。
+  - 窄窗 900px（`Emulation.setDeviceMetricsOverride`）：终端顶栏 346/346，不裁切、不溢出；侧栏 553/553 正常。
+  - 侧栏左右分屏后工具条 553/553 无溢出。
+  - 证据：`fixK-before-after.png`（改前/改后）、`fixK-narrow.png`、`fixK-split.png`；量测对比：改前 28/24/12 vs 36/28/15，改后 28/24/12 两侧一致，Netcatty 28/24/12 vs 36/28/15（故未照抄侧栏值）。
+- **门禁**：`npx tsc --noEmit` ✓；`npm run test:run` 71 文件 / 790 用例 ✓；`npm run build` ✓。
+- **踩坑**：① 侧栏高度原先由 TS 常量以内联 style 写入，CSS 与 TS 两个来源；改为纯 CSS 令牌并删除常量，避免再次漂移。② 顶栏右组 gap 原为 2px，与 Netcatty `gap-1`(4px) 及左组不一致，本次一并统一。③ PowerShell 5 中把 `[Rectangle]::new()` 直接内联进 `Graphics.DrawImage` 的重载会偶发绑定到错误重载并报 image 为 null，合成截图时先存变量再传参即可。
+
 ## 2026-11-06 — #244 会话标签聚焦/非聚焦样式 + 关闭按钮对齐 Netcatty
 
 - **问题**：termX 的会话标签关闭按钮默认 `opacity:0`，只有 hover 或标签聚焦时才出现；Netcatty 是常显。且按钮默认内边距把 12px 的 X 横向压成 8×12，视觉上偏小；标签圆角 6px、串口/Telnet 图标底色也与 Netcatty 不一致。

@@ -26,7 +26,7 @@ describe("terminalSidePanel", () => {
     expect(clampSidePanelWidth(Number.NaN, 1600)).toBe(SIDE_PANEL_DEFAULT_WIDTH);
   });
 
-  it("最大内联工具数按按钮 28 / 预留 200 计算", () => {
+  it("最大内联工具数按槽位 28（按钮 24 + 间距 4）/ 预留 200 计算", () => {
     expect(getSidePanelMaxShownTools(420)).toBe(7);
     expect(getSidePanelMaxShownTools(280)).toBe(2);
     expect(getSidePanelMaxShownTools(100)).toBe(1);

@@ -23,7 +23,6 @@ import {
 } from "react";
 import type { Profile } from "../backend/client";
 import {
-  SIDE_PANEL_TOOLBAR_HEIGHT,
   SIDE_PANEL_TOOLS,
   SIDE_PANEL_WIDTH_STORAGE_KEY,
   clampSidePanelWidth,
@@ -283,7 +282,6 @@ export function TerminalSidePanel({
       <div
         className="nc-side-panel-tabs"
         data-section="terminal-side-panel-tabs"
-        style={{ height: SIDE_PANEL_TOOLBAR_HEIGHT }}
       >
         <div className="nc-side-panel-tools">
           {tabs.shown.map((name) => {
