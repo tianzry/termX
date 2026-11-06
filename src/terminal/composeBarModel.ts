@@ -135,3 +135,18 @@ export function buildComposePayload(text: string, bracketedPaste: boolean): stri
   }
   return `${normalized}\r`;
 }
+
+/**
+ * 粘贴内容（右键 / 快捷键）：只输入、不回车。
+ *
+ * 走 `term.paste()` 时 xterm 生成的 bracketed 序列会经过逐字兼容拆分，
+ * ESC 被丢弃后远端会把 `[200~` 当普通字符回显。这里与撰写栏一致，
+ * 直接构造整段字节交给 writeBulk。
+ */
+export function buildPastePayload(text: string, bracketedPaste: boolean): string {
+  const normalized = text.replace(/\r\n/g, "\r").replace(/\n/g, "\r");
+  if (bracketedPaste) {
+    return `\x1b[200~${normalized}\x1b[201~`;
+  }
+  return normalized;
+}

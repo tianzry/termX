@@ -71,6 +71,8 @@ impl Recorder {
             )
         })?;
         writeln!(writer, "{header_json}")?;
+        // 立即落盘头部，避免连接期间 .cast 一直是 0 字节（日志页看不到新会话）。
+        writer.flush()?;
 
         Ok(Self {
             writer,
@@ -100,6 +102,8 @@ impl Recorder {
         let event = serde_json::json!([elapsed, "o", chunk.as_ref()]);
         writeln!(self.writer, "{event}")?;
         self.pending.drain(..split);
+        // 每段输出即时落盘：会话进行中日志页就能看到内容，异常退出也不丢已记录部分。
+        self.writer.flush()?;
         Ok(())
     }
 
@@ -210,6 +214,7 @@ impl TextLogRecorder {
                 writer,
                 "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>session log</title></head><body><pre>"
             )?;
+            writer.flush()?;
         }
         Ok(Self {
             writer,
@@ -237,6 +242,8 @@ impl TextLogRecorder {
         let chunk = String::from_utf8_lossy(&self.pending[..split]).into_owned();
         self.write_chunk(&chunk)?;
         self.pending.drain(..split);
+        // 与 asciicast 保持一致：录制过程中即时可读，进程异常退出也不丢已写内容。
+        self.writer.flush()?;
         Ok(())
     }
 
@@ -480,10 +487,22 @@ mod tests {
     }
 
     #[test]
+    fn cast_visible_while_recording() {
+        // 日志页需要实时看到进行中的会话：头部与首段输出在 finish 之前就应落盘。
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("live.cast");
+        let mut r = Recorder::new(p.clone(), 80, 24).unwrap();
+        let head = std::fs::read_to_string(&p).unwrap();
+        assert!(head.contains("\"version\":2"), "header not flushed: {head:?}");
+        r.record(b"live").unwrap();
+        let body = std::fs::read_to_string(&p).unwrap();
+        assert!(body.contains("live"), "event not flushed: {body:?}");
+        r.finish().unwrap();
+    }
+
+    #[test]
     fn split_utf8_recovered_across_chunks() {
         // "中" = E4 B8 AD（3 字节），分两次喂入。最终输出必须完整无损。
-        // 这个测试**只**看 finish 后的最终状态——BufWriter 中间不刷盘，
-        // record 之间读文件不可靠。
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("c.cast");
         let mut r = Recorder::new(p.clone(), 80, 24).unwrap();

@@ -18,7 +18,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { ComposeBar } from "./terminal/ComposeBar";
-import { appendComposeHistory, buildComposePayload } from "./terminal/composeBarModel";
+import { appendComposeHistory, buildComposePayload, buildPastePayload } from "./terminal/composeBarModel";
 import { CommandHistoryPanel } from "./terminal/CommandHistoryPanel";
 import {
   readCommandHistory,
@@ -2933,7 +2933,10 @@ export function TerminalPane({
         }
       }
       const term = controllerRef.current?.term;
-      term?.paste(text);
+      const bracketed = Boolean(term?.modes.bracketedPasteMode);
+      const payload = buildPastePayload(text, bracketed);
+      if (transportRef.current?.writeBulk) transportRef.current.writeBulk(payload);
+      else transportRef.current?.write(payload);
       if (s.terminal.scrollOnPaste) term?.scrollToBottom();
       term?.focus();
     } catch {

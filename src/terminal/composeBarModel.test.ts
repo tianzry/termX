@@ -3,6 +3,7 @@ import {
   COMPOSE_BAR_DEFAULT_HEIGHT,
   appendComposeHistory,
   buildComposePayload,
+  buildPastePayload,
   canNavigateComposeHistory,
   clampComposeBarHeight,
   navigateComposeHistory,
@@ -140,5 +141,18 @@ describe("撰写栏发送内容", () => {
       "\x1b[200~a\nb\x1b[201~\r",
     );
     expect(buildComposePayload("single", true)).toBe("single\r");
+  });
+});
+
+describe("粘贴内容（不执行）", () => {
+  it("普通模式按 CR 归一且不追加回车", () => {
+    expect(buildPastePayload("ls -la", false)).toBe("ls -la");
+    expect(buildPastePayload("a\r\nb", false)).toBe("a\rb");
+    expect(buildPastePayload("a\nb", false)).toBe("a\rb");
+  });
+
+  it("bracketed paste 开启时整段包裹、不带回车", () => {
+    expect(buildPastePayload("PASTE", true)).toBe("\x1b[200~PASTE\x1b[201~");
+    expect(buildPastePayload("a\nb", true)).toBe("\x1b[200~a\rb\x1b[201~");
   });
 });

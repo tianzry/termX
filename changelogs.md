@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-11-06 — #216 129 SSH 全矩阵实机验证（逐项截图 + JSON 断言）
+
+- **验证方式**：`npm run tauri -- build --debug --no-bundle` 重建（dist 内嵌）后实跑 debug 版，真连 `tianzry@192.168.126.129:22`（密码认证），WebView2 CDP 9222 驱动；三支脚本 `evidence/audit16-01-toolbar-context.mjs`、`audit16-02-timestamps-compose.mjs`、`audit16-03-logs-autocomplete-split.mjs`，产物同名 `.json` + 31 张 `audit16-*.png`。
+- **工具栏（13 项 + 关闭窗格）**：左 5 = 复制主机地址 / 隐藏时间戳 / 系统监控 / 断开连接 / 重新连接当前会话；右 7 = 主机关键词高亮 / 打开 SFTP / 撰写栏 / 终端搜索 / 开始记录会话日志 / 运行脚本 / 笔记面板；再加「更多」= 13，另有「关闭当前窗格」（24×24）为第 14 个按钮。顺序与可见性完全由 `toolbarLayout` spec 派生。
+- **更多菜单（5 项）**：命令历史 / 配置目录追踪（已启用：/home/tianzry）/ 终端设置 / 开始录制 / 终端编码 UTF-8。逐项点开：历史面板 5 行、设置 overlay、OSC 7 对话框、编码子菜单 UTF-8·GB18030 均可见；开始录制后行文案变「停止录制」且出现 REC 徽标，停止后恢复。
+- **标签状态点与关闭按钮**：`.nc-tab-dot` 8×8，观测到 `connecting → connected`（`rgb(52,211,153)`），工具栏断开后变 `disconnected`（`rgb(244,63,94)`），重连回 connected；`.nc-tab-close` 20×20、`border-radius:50%`、opacity 1。
+- **右键菜单**：已连 8 项 = 复制（无选区时置灰）/ 粘贴 / 全选 / 打开 SFTP / 水平分屏 / 垂直分屏 / 清空缓冲区 / 关闭终端；断开后「打开 SFTP」置灰并新增「重新连接」（9 项）。点击行为全通：复制主机地址后 title 变「已复制主机地址」且剪贴板读到 `192.168.126.129`；全选产生 3 块选区并复制出 `PASTE-PROBE-216`；清空后标记行消失；水平分屏 1→2 窗格；关闭终端后标签数 0。
+- **时间戳**：开关两态（隐藏时间戳 → 显示时间戳）正常；gutter 行格式 `HH:MM:SS` 全通过、`missing` 为空；窄视口 1180×760 reflow 后仍对位（gutter 696 vs terminal 684，右侧无越界），恢复后 736=736；分屏两侧标签各自增长，A 侧标签序列在 B 输出后逐项不变（`aUnchanged:true`）。
+- **撰写栏**：两行同时发送 `COMPOSE-A-216` / `COMPOSE-B-216` 均在远端执行（bracketed paste）；↑ 取回两行历史、↓ 恢复到空草稿、Esc 收起。
+- **日志**：连接即生成 `129_<时间>.cast`（录制中 1774B，含 `AUTO-CAST-216`）；日志页可见（176 条，最新一条 27 事件 / 1.9 KiB）；详情页开始/结束/时长/路径齐全；手动日志经 `start_manual_session_log` 写自定义路径 `evidence/audit16-manual-log.txt`，81B 且含探针。
+- **自动补全**：`l` 出 `cls/cless/cln/clsblk`；`ls ` 出远端 6 个目录；`↓` 展开 `.cache/` 子项（`evolution/` 高亮选中）；`→` 下钻成 `ls /home/tianzry/.cache/evolution/`；`Tab` 放行并关闭候选。
+- **分屏稳定性（连开/关 3 次）**：每次「打开 2 窗格 → 关闭回 1」，原窗格 `data-session-id` 不变、标记文本不丢（`sidStable:true` / `markerKept:true` ×3）。
+- **P1**：无。
+- **P2（已修）**：
+  1. **`.cast` 录制期间恒为 0 字节**：`Recorder` / `TextLogRecorder` 的 `BufWriter` 只在 `finish` 落盘，连接期间日志页/导出读到空文件 → `new` 写完 header 后立即 `flush`，`record` 每次 drain 后 `flush`；新增单测 `cast_visible_while_recording`。实测录制中即 1774B。
+  2. **右键粘贴出现字面量 `[200~…[201~`**：原 `term.paste()` 的 bracketed 序列在逐字兼容拆分中丢失 ESC → 新增 `buildPastePayload`（CRLF/CR/LF 统一为 CR，bracketed 时整段 `\x1b[200~…\x1b[201~`）+ `writeBulk` 一次写入；补 4 个单测。实测粘贴行干净、无 `[200~`。历史面板中修复前的 `[200~PASTE-PROBE-216~` 条目属旧数据，不回写清理。
+- **P3（记录）**：更多菜单「开始录制」仍是 JSX 内联文案，未走 `terminalActionText.ts`（#214「单一文案源」残留）；OSC 7 对话框 Esc 是否可关未确认；Netcatty 独有能力差异（browser / ymodem / openSessionLog / 插件菜单）按既定范围不移植。
+- **未验证项与原因**：Netcatty 侧无 CDP，像素级并排仍不可自动化；断开用工具栏「断开连接」（等价 kill 会话），未做真实断网；`.cast` 仅验证本机 recordings 目录，未验证自定义录制目录；右键「复制」在有选区时的启用态未单独断言（已用全选后复制间接覆盖）。
+- 截图：`evidence/audit16-01-connected.png` … `audit16-31-split-3cycles.png`（31 张），数据 `evidence/audit16-01/02/03-*.json`。
+- 门禁：`npm run test:run` 753 通过、`npm run build` 通过（tsc + vite）、`cargo test --lib` 948 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #215 第二轮全应用比对（debug 实跑 + 逐页复核）
 
 - **比对方式**：`npm run tauri -- build --debug --no-bundle` 生成 debug 版并实跑（dist 内嵌，改前端必须重建才生效），WebView2 CDP 9222 逐页截图 + 量测，脚本 `evidence/audit15-compare.mjs`、`evidence/audit15-final-serial.mjs`；Netcatty 侧用运行实例 PrintWindow 截图 + 源码静态比对（其运行实例未开 CDP，无法逐页自动化）。
