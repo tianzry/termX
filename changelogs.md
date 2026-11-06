@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-11-06 — #218 rssh → termX 系统性改名（代码 / 数据迁移 / 文档）
+
+- **改名映射（实际落地）**：
+
+| 类别 | 旧 | 新 | 备注 |
+| --- | --- | --- | --- |
+| crate / lib | `rssh` / `rssh_lib` | `termx` / `termx_lib` | `Cargo.toml` + 全部 `use` |
+| GUI / CLI / headless 二进制 | `rssh` / `rssh-cli` / `rssh-server` | `termx` / `termx-cli` / `termx-server` | 目录 `src/bin/rssh` → `src/bin/termx`；安装目录 `Programs\termx` |
+| 数据目录 / DB | `~/.rssh` / `rssh.db` | `~/.termX` / `termx.db` | 首次启动自动迁移；旧目录回退时仍读 `rssh.db` |
+| 钥匙串 service / key | `rssh` / `rssh_master_key_v1` | `termx` / `termx_master_key_v1` | 读新未命中回退旧 service 并回写；旧条目保留 |
+| 内部协议 | `__rssh_err__` / `__rssh_clone` / `__rssh_ai_handoff` / `__rssh_done_` / `__RSSH_JSON__` | `__termx_err__` / … | 前端错误解码双前缀兼容 |
+| 环境变量 | `RSSH_APP` / `RSSH_DISABLE_WAYLAND_COMPAT` / `RSSH_KEEP_GBM_BACKEND` / `RSSH_WEB_SEARCH_PROVIDER` | `TERMX_*` | 新名优先，旧名读取回退 |
+| 显示名 / UA | `RSSH`、`RSSH — Local Analysis`、UA `rssh/` | `termX`、`termX — Local Analysis`、UA `termx/` | 窗口标题、clap about、CLI 帮助、iOS 用途说明 |
+
+- **迁移实现（`db/data_dir_migration.rs`）**：`db::data_dir()` 每次先做存在性检查，只有「旧目录存在且新目录不存在」才迁移。同卷 `rename(~/.rssh → ~/.termX.tmp-<ts>-<pid>)` → 目录内 `rssh.db*` 改名 → 原子 `rename` 到 `~/.termX`；跨卷（Windows errno 17 / Unix EXDEV）改为复制到 staging → 只读打开并比较表数/行数 → rename → 删旧目录。`rssh.db`、`-wal`、`-shm`、`.bak-*` 一起处理。任何校验/rename 失败都把 staging 还原回旧目录或删除副本，继续用旧目录并告警；崩溃留下的 staging 下次启动自动收尾。`~/.termX` 一旦存在即不覆盖；跨进程 `~/.termX.migration.lock` + 120s 陈旧锁保证可重入。
+- **一次性可观测**：迁移报告写入 `<data_dir>/.rename-migration.json`，设置页「系统」tab 新增「数据存储」区块，显示当前数据目录 / DB 路径；打开系统 tab 时读取并删除通知，展示「旧 → 新 / 模式 / 表 / 行 / 录制 / 旧目录是否清理」；失败状态展示原因并说明仍在使用旧目录。日志同时写 `data dir migrated ...`。
+- **钥匙串保留策略**：新 service 写入前先读旧 service；读到后懒回写新 service，**旧条目保留一个发布周期**（本次不删），避免迁移/回滚失败丢主密钥；显式 delete 时两个 service 都清，防止已删密钥被回退路径"复活"。**sync 远端备份文件名 `rssh_backup.*` 不变**（避免破坏既有远端快照）。
+- **实机迁移（旧 `~/.rssh` 真实数据）**：`mode=rename`，旧目录已删除；DB 23 表 / 301 行 → 23 表 / 301 行（表、行完全一致），录制 179 个 `.cast` 全部跟随；迁移后连 129（密码取自旧库 + 旧钥匙串）成功，自动日志新增 1 个 `.cast`（180），重启后 DB 23 表 / 302 行、`session_logs` 179 → 180、`profiles` 4、`proxy_profiles` 1、`notes` 5 全部仍在；日志页显示 180 条、最新 `129 2026-11-06 11:52`（29 事件）。截图 `evidence/rename-migrate-01-settings-system.png` ~ `05-restart-logs.png`，断言 `rename-migrate-verify.json` / `rename-migrate-restart.json` / `rename-migrate-notice.json`。
+- **未改名（有意保留）**：`changelogs.md` 历史条目、`docs/plan.md`、`docs/netcatty-tauri-migration.md`、`evidence/` 历史产物、sync 远端 `rssh_backup.*`、旧 `__rssh_err__` 前缀 / 旧 keychain service / 旧 master key 名（兼容回退）、`https://github.com/rssh-org/docs` 外部链接、回退旧目录时的 `rssh.db` 文件名。
+- **门禁**：`npm run test:run` 754 通过（新增旧错误前缀解码 1 例）、`npm run build` 通过、`cargo test --lib` 957 通过（新增数据迁移 7 例：成功改名/幂等/不覆盖新目录/空新目录回退/源库损坏回滚/staging 恢复/跨卷复制；另有 keyring 探针 1 例）、`cargo build --features server` 通过、`npm run tauri -- build --debug --no-bundle` 通过。
+
 ## 2026-11-06 — #217 剩余低危技术债清理（5 项关闭 / 2 项保留）
 
 - **范围**：2026-11-02 只读审计的低危项 #1/#5/#6/#7，另清 2 个测试编译告警；#2（两套主机表单，中危）与 #3（大文件职责，架构级）不属低危，保留不动。

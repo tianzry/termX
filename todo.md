@@ -391,11 +391,12 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 > 盘点详见 [docs/rename-rssh-termx.md](docs/rename-rssh-termx.md)。仓库内 73 文件 / 640 处，`evidence/` 25 文件 / 60 处（历史保留）。
 
 - [x] 盘点清单（docs/rename-rssh-termx.md）
-- [ ] 代码改名：crate `termx` / lib `termx_lib` / bin `termx`·`termx-cli`·`termx-server`；显示名、窗口标题、AI 窗口、iOS 用途说明、CLI 帮助/提示、错误前缀 `__termx_err__`（前端双前缀兼容）
-- [ ] 路径迁移：`~/.rssh` → `~/.termX`（移动 + 失败回退）、`rssh.db` → `termx.db`、keychain service `rssh` → `termx`（旧 service 双读 + 懒迁移）、`RSSH_*` 环境变量改 `TERMX_*` 并旧名回退
-- [ ] 文档与脚本：AGENTS、AI 设计文档/提示词、build-debug.bat、.launch-termx.vbs、changelog #218
-- [ ] 5 项门禁 + 129 实机迁移验证（连 129 / SFTP / 写日志 / 重启数据仍在，截图 + JSON）
-- 明确保留：`changelogs` 历史、`docs/plan.md`、迁移文档、`evidence/`、远端同步文件名 `rssh_backup.*`
+- [x] 代码改名：crate `termx` / lib `termx_lib` / bin `termx`·`termx-cli`·`termx-server`；显示名、窗口标题、AI 窗口、iOS 用途说明、CLI 帮助/提示、错误前缀 `__termx_err__`（前端双前缀兼容）
+- [x] 路径迁移：`~/.rssh` → `~/.termX`（同卷原子 rename / 跨卷复制校验 + 失败回退、staging 恢复、幂等 lock）、`rssh.db` → `termx.db`（含 `-wal`/`-shm`/`.bak-*`）、keychain service `rssh` → `termx`（旧 service 双读 + 懒迁移、旧条目保留一轮）、`RSSH_*` 环境变量改 `TERMX_*` 并旧名回退
+- [x] 可观测：系统 tab 显示数据目录/DB 路径 + 一次性迁移提示（`.rename-migration.json` 读取即删）
+- [x] 文档与脚本：AGENTS、AI 设计文档/提示词、build-debug.bat、.launch-termx.vbs、changelog #218
+- [x] 5 项门禁 + 129 实机迁移验证：DB 23 表/301 行不变，录制 179 全跟随，连 129 成功，重启后 302 行 / 日志 180 条仍在（截图 `evidence/rename-migrate-01..05`，JSON `rename-migrate-verify/restart/notice`）
+- 明确保留：`changelogs` 历史、`docs/plan.md`、迁移文档、`evidence/`、远端同步文件名 `rssh_backup.*`、旧 `__rssh_err__` / 旧 keychain service / `rssh-org` 外链
 
 ---
 

@@ -6,12 +6,12 @@
 ## 1. 用户硬约束（不可妥协）
 
 ### 1.1 命令执行边界
-- **所有用户输入都必须经过用户确认**。判断逻辑写在 rssh 进程内（Rust 侧），不依赖 LLM 自律。
-- 命令确认 UI 必须展示：命令本体、含义、副作用、来源标签 `[AI proposed]`。所有命令都是 LLM 通过工具调用产生，含义/副作用文案由 LLM 生成（不由 rssh 静态判断）。"可信"靠四道墙（见 1.4）保证，不靠标签区分。
+- **所有用户输入都必须经过用户确认**。判断逻辑写在 termx 进程内（Rust 侧），不依赖 LLM 自律。
+- 命令确认 UI 必须展示：命令本体、含义、副作用、来源标签 `[AI proposed]`。所有命令都是 LLM 通过工具调用产生，含义/副作用文案由 LLM 生成（不由 termx 静态判断）。"可信"靠四道墙（见 1.4）保证，不靠标签区分。
 
 ### 1.2 脱敏与审计
-- 远端命令输出可能含 token、密码、内网 IP。**必须在 rssh 本地脱敏后再发 LLM**。
-- 用户能审计每次发出的 payload。审计也是 rssh 程序的能力，不依赖 LLM。
+- 远端命令输出可能含 token、密码、内网 IP。**必须在 termx 本地脱敏后再发 LLM**。
+- 用户能审计每次发出的 payload。审计也是 termx 程序的能力，不依赖 LLM。
 - 和ai对话内容默认只在内存。提供"保存到文件"按钮，用户主动点击才落盘成人类可读文本。
 ```
   默认规则（正则）：
@@ -25,7 +25,7 @@
 - 处理顺序：bytes → 解码 UTF-8 → 脱敏 → 截断 → 入审计 → 入 LLM payload。审计里只存脱敏版，**不留原文拷贝**，避免审计落盘时反而泄露。
 - 远端编码可能是 GBK / Latin1。先解码到 UTF-8 再走脱敏正则；无效字节用 U+FFFD 替换。
 - "显示原始（仅本机）"按钮：原始字节缓存在 RAM，UI 索取时单独查询，不进任何文件。
-- 审计保存默认目录是用户文档目录（**不**默认建议工作目录或项目目录，防误提交到 git）；文件名形如 `rssh-diagnose-<session>-<ts>.log`。
+- 审计保存默认目录是用户文档目录（**不**默认建议工作目录或项目目录，防误提交到 git）；文件名形如 `termx-diagnose-<session>-<ts>.log`。
 
 ### 1.3 范围
 - **MVP：CPU 高 + 内存高 + 通用排障对话，三类场景。**
@@ -35,9 +35,9 @@
 
 ### 1.4 Skill 形态
 - **Skill = system prompt + 工具集合**，不做有限状态机。LLM 自由编排排查路径。
-- 安全不靠 prompt 自律，靠 rssh 进程内的"权限收紧"四道墙：
+- 安全不靠 prompt 自律，靠 termx 进程内的"权限收紧"四道墙：
   1. **shape validator**：拦截刷屏命令、无次数的循环采样、明显破坏性命令
-  2. **自动脱敏**：发往 LLM 前在 rssh 本地过滤
+  2. **自动脱敏**：发往 LLM 前在 termx 本地过滤
   3. **输出截断**：单命令默认 1MB 头部保留 + 尾部截断
   4. **每条命令用户确认**：无例外
 - LLM 只能通过工具调用产生命令提议（`run_command` / `download_file(使用SFTP)` / `analyze_locally`），不允许在自由文本里夹命令让用户复制粘贴。
@@ -51,21 +51,21 @@
 ### 1.6 刷屏命令
 - 不用依赖 ANSI 重绘的命令（top / htop / iotop / watch / vmstat 1）。
 - **不要硬编码映射表**。让 LLM 自己想批处理替代命令（例如：top -bn3 -d 1、ps -eo pid,pcpu,comm --sort=-pcpu | head -20），想不出来就让用户协助。
-- rssh 侧只做"形态校验"——拒绝执行明显的交互式刷屏命令（`top` 单独无任何批处理标志、`htop`、`watch` 等）和无次数的循环类命令（`vmstat 1` 而非 `vmstat 1 5`）。**不**按"必须有 -b"这种 Linux 专属特征判定，OS 适配交给 LLM。校验失败给 LLM 反馈，让它换一条。
+- termx 侧只做"形态校验"——拒绝执行明显的交互式刷屏命令（`top` 单独无任何批处理标志、`htop`、`watch` 等）和无次数的循环类命令（`vmstat 1` 而非 `vmstat 1 5`）。**不**按"必须有 -b"这种 Linux 专属特征判定，OS 适配交给 LLM。校验失败给 LLM 反馈，让它换一条。
 - **铁律：所有重复采样必须显式带次数**（`vmstat 1 5` 而非 `vmstat 1`）。形态校验器拦截。
 
 ### 1.7 不限于会话内分析
 - dump 类操作（heap dump、core dump、perf.data）产物可以从远端使用 download_file 到本地（可能有堡垒机链路，可以让用户协助），在用户本地电脑上分析。
 - 本地分析工具不存在时，引导用户安装，不替用户装。
-- dump 文件远端路径由 `download_file` 工具内拼装（`/tmp/rssh-heap-<pid>-<ts>.hprof`）；**LLM 只能选要不要 dump、dump 哪个 pid，不能编路径**。
+- dump 文件远端路径由 `download_file` 工具内拼装（`/tmp/termx-heap-<pid>-<ts>.hprof`）；**LLM 只能选要不要 dump、dump 哪个 pid，不能编路径**。
 - 下载前先 `ls -l` 拿大小，超过阈值（默认 100 MB）必须用户二次确认。
-- 下载到本地预定义目录（`<app_data>/rssh/diagnose/<session>/`），**绝不**写到当前工作目录或项目目录。
+- 下载到本地预定义目录（`<app_data>/termx/diagnose/<session>/`），**绝不**写到当前工作目录或项目目录。
 - 会话结束时主动询问是否删除本地 dump 文件（dump 含完整堆内存，留着是隐私风险）。
 - dump 文件本身是二进制，不发 LLM。本地分析工具（MAT / pprof / perf）的**文本输出**走和远端命令同一条脱敏管线后再发 LLM。
 
 ### 1.8 工具安装
 - **所有工具一律引导用户安装**：`perf` / `async-profiler` / `MAT` / `go pprof` 工具链 / `jstack` / `jmap` 等。
-- rssh **不**上传 binary 到远端，**不**替用户下载到本地。
+- termx **不**上传 binary 到远端，**不**替用户下载到本地。
 - 给出官方安装命令；远端安装命令仍走标准的"提议→确认"流程。
 
 ### 1.9 UI
@@ -76,10 +76,10 @@
 ### 1.10 会话约束
 - 同一 SSH session 同一时间只能开一个 AI 排障会话。
 - **支持本地 shell** 作为会话目标——本地进程吃 CPU/内存也能用同样的 skill 排查；走和 SSH 一致的 PTY 注入路径。
-- 本地 shell 模式下当前用户权限不够（macOS sandbox / 非 root）：LLM 通过命令探查识别后告知用户哪一步需要 sudo；**rssh 不替用户加 sudo**，让用户在确认弹窗里手动加。
+- 本地 shell 模式下当前用户权限不够（macOS sandbox / 非 root）：LLM 通过命令探查识别后告知用户哪一步需要 sudo；**termx 不替用户加 sudo**，让用户在确认弹窗里手动加。
 
 ### 1.11 BYOK
-- 用户自带 API key（Claude / OpenAI 兼容端点）。rssh 不内置 key、不碰计费。
+- 用户自带 API key（Claude / OpenAI 兼容端点）。termx 不内置 key、不碰计费。
 - 对话历史只在内存。不写入项目数据库，不参与 GitHub sync。
 - API key 存现有 keychain（`secret/keyring_store.rs`）；**绝不**明文落 SQLite 或配置文件。
 - BYOK endpoint URL 在 UI 上对用户可见（透明），HTTPS 验证不能关；使用代理时遵循系统代理设置，不暗中走第三方代理。
@@ -103,17 +103,17 @@
 - 单命令输出上限默认 1 MB，**头部完整保留 + 尾部截断**，明确告知用户截断了多少字节。这是兜底；优先在 1.5 上游聚合精简。
 
 ### 2.3 命令超时与僵尸进程
-- 单命令默认 60s 超时；LLM 可在 `run_command` 工具调用里通过 `timeout_s` 参数覆盖（如 `perf record sleep 30` 设 45s）；上限 300s 由 rssh 强制。
+- 单命令默认 60s 超时；LLM 可在 `run_command` 工具调用里通过 `timeout_s` 参数覆盖（如 `perf record sleep 30` 设 45s）；上限 300s 由 termx 强制。
 - 超时后**主动关闭 exec channel** 并尝试发信号回收。承认有时回收不彻底（如远端进程 detach），明确告知用户检查残留。
 
 ### 2.5 远端 OS 与版本识别
 - skill prompt 必须要求 LLM 第一步先识别远端：`uname -s` / `cat /etc/os-release` / `which <工具>`。
-- 远端 OS（Linux / macOS / *BSD）由 LLM 自适应——不同 OS 工具栈差异（`top -b` vs `top -l 1`、`/proc` vs `sysctl`、`ps` 参数等）由 LLM 在 prompt 引导下处理；rssh 不做 OS 分支，shape validator 不区分 OS（不 hardcode "必须有 -b" 这类 Linux 专属特征）。
+- 远端 OS（Linux / macOS / *BSD）由 LLM 自适应——不同 OS 工具栈差异（`top -b` vs `top -l 1`、`/proc` vs `sysctl`、`ps` 参数等）由 LLM 在 prompt 引导下处理；termx 不做 OS 分支，shape validator 不区分 OS（不 hardcode "必须有 -b" 这类 Linux 专属特征）。
 - Java：先识别 JDK 大版本，决定用 jstack 还是 jcmd。
-- 多个目标进程时 **prompt 必须要求 LLM 让用户选 PID**，不替用户猜；rssh 提供选 PID 的 UI 组件。
+- 多个目标进程时 **prompt 必须要求 LLM 让用户选 PID**，不替用户猜；termx 提供选 PID 的 UI 组件。
 
 ### 2.6 容器场景
-- 容器里的 Java/Go 进程在宿主上 PID 不同。MVP **明确不支持容器内排障**，引导用户先 `docker exec` / `kubectl exec` 进容器后用 rssh 连，或文档化此限制。
+- 容器里的 Java/Go 进程在宿主上 PID 不同。MVP **明确不支持容器内排障**，引导用户先 `docker exec` / `kubectl exec` 进容器后用 termx 连，或文档化此限制。
 
 ### 2.12 幂等 / 并发
 - 用户连续点确认两次：同一 `proposed_id` 已执行的请求**直接拒绝并返回原结果**，不重跑。
@@ -181,7 +181,7 @@ src/lib/ai/                 # 前端只读消费
 - **终端流内的命令边界标记**：复用现有 OSC 7337 框架（`src/lib/osc/handler.ts`），新增一个 OSC id（暂定 7338）：
   - `ai-mark:start:<cmd_id>` —— AI 注入命令前
   - `ai-mark:done:<cmd_id>:<exit_code>` —— 命令结束 + exit code
-  这两条是不可见的控制序列，不影响用户视觉，但 rssh 后端能精确识别 AI 命令边界、拿 exit code、定位 CommandBlock。
+  这两条是不可见的控制序列，不影响用户视觉，但 termx 后端能精确识别 AI 命令边界、拿 exit code、定位 CommandBlock。
 
 ### 4.3 命令执行：复用 PTY + CommandBlock，不另起 channel
 不另起 SSH exec channel，复用用户当前的 PTY（SSH session 的 shell channel 或本地 PTY）。**SSH session 和本地 shell 走完全同一条路径**——都是"往 PtyHandle 写字节，等 OSC 完成信号，按 CommandBlock marker 读 buffer"。
@@ -198,7 +198,7 @@ printf '\033]7338;ai-mark:done:<id>:%d\007' $?
 
 执行流：
 1. `ai::exec::run_via_pty(handle, cmd_id, cmd)` 把上面的字符串写进 `PtyHandle`
-2. rssh 后端 OSC 解析器收到 `ai-mark:start:<id>` 时记录起始 marker；收到 `done:<id>:<exit>` 时取范围内文本和 exit code
+2. termx 后端 OSC 解析器收到 `ai-mark:start:<id>` 时记录起始 marker；收到 `done:<id>:<exit>` 时取范围内文本和 exit code
 3. CommandBlock 自动给这次输入切片
 4. **UI 在执行期间禁用键盘输入**，避免用户按键和命令输出乱入；OSC done 信号到达后释放
 5. 后端拿到原始字节 → 解码 → 脱敏 → 截断 → 入审计 → 给 LLM
@@ -234,14 +234,14 @@ LLM 工具调用 → ProposedCommand
 
 ## 5. 决议记录（2026-04-26 Linus 拍板）
 
-1. ✅ **远端 OS**：MVP 支持任何 OS（Linux / macOS / *BSD）。OS 适配是 LLM 在 prompt 引导下的工作，rssh 不做 OS 分支，shape validator 不区分 OS。
-2. ✅ **容器场景**：MVP 不支持容器内进程感知（PID 命名空间问题）；引导用户先 `docker exec` / `kubectl exec` 进容器后再用 rssh 连。
-3. ✅ **本地 dump 目录**：`<app_data>/rssh/diagnose/<session>/` 自动管理；会话结束询问删除。
+1. ✅ **远端 OS**：MVP 支持任何 OS（Linux / macOS / *BSD）。OS 适配是 LLM 在 prompt 引导下的工作，termx 不做 OS 分支，shape validator 不区分 OS。
+2. ✅ **容器场景**：MVP 不支持容器内进程感知（PID 命名空间问题）；引导用户先 `docker exec` / `kubectl exec` 进容器后再用 termx 连。
+3. ✅ **本地 dump 目录**：`<app_data>/termx/diagnose/<session>/` 自动管理；会话结束询问删除。
 4. ✅ **AI 对话 / 审计面板**：右侧永驻可关，位置走 `sidebarPosition`。
 5. ✅ **LLM 客户端**：手写 reqwest（适配 Anthropic + OpenAI 兼容端点）。
 6. ✅ **shape validator 失败处理**：错误回给 LLM 让它重提，最多 2 次后向用户报错。
 7. ✅ **prompt 数量**：每场景一份独立 markdown（`cpu-java.md` / `cpu-go.md` / `mem-java.md` / `mem-go.md` / `general.md`）。
-8. ✅ **命令完成信号**：OSC 7338（复用 rssh 现有 OSC 框架）。
+8. ✅ **命令完成信号**：OSC 7338（复用 termx 现有 OSC 框架）。
 9. ✅ **AI 命令期间用户键入**：完全锁键盘，OSC done 信号到达后释放。
 10. ✅ **shape validator 破坏性命令清单**：写死 `rm` / `dd` / `mkfs` / `iptables` / `shutdown` / `reboot` / `kill` / `pkill` / `killall` / `mount` / `umount` / `chmod -R` / `chown -R` / `exec` / fork bomb 模式。LLM 提到这些一律拦死。
 11. ✅ **来源标签**：合并成单一 `[AI proposed]`。

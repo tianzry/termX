@@ -8,11 +8,11 @@
 
 ## 项目定位
 
-termX = **rssh 的 Rust 后端（Tauri 2）+ netcatty 风格的 React 前端**，目标是把 netcatty 的 SSH/终端管理能力搬到轻量桌面框架上。
+termX = **原 rssh 的 Rust 后端（Tauri 2）+ netcatty 风格的 React 前端**，目标是把 netcatty 的 SSH/终端管理能力搬到轻量桌面框架上。
 
-- **功能基准是 netcatty 源码**（`../Netcatty` 的 `components/`、`domain/`、`application/`），**不是 rssh 命令表**（见 [todo.md](todo.md) 开头）。
+- **功能基准是 netcatty 源码**（`../Netcatty` 的 `components/`、`domain/`、`application/`），**不是旧 rssh 命令表**（见 [todo.md](todo.md) 开头）。
 - 迁移方案与阶段计划：[docs/netcatty-tauri-migration.md](docs/netcatty-tauri-migration.md)、[docs/plan.md](docs/plan.md)。
-- Rust 底座整份复制自 rssh，**crate 名仍叫 `rssh` / `rssh_lib`，GUI 二进制仍叫 `rssh`**——迁移期刻意不 rename，避免改动扩散。看到 `rssh_*` 不要当成笔误去"修正"。
+- Rust 底座整份复制自 rssh。**2026-11-06 已完成改名**：crate `termx` / lib `termx_lib`、GUI 二进制 `termx`、CLI `termx-cli`、headless `termx-server`；旧 `~/.rssh` 会一次性迁移到 `~/.termX`。除历史文档/`rssh_backup.*`/keychain 回退外，看到 `rssh_*` 先核对是否遗漏。
 
 ---
 
@@ -56,7 +56,7 @@ rg '"[a-z_]+" =>' src-tauri/src/server.rs
 
 ### R5. 错误必须 i18n：`AppError` + `CodedMsg`，没有裸字符串逃生通道
 
-后端所有业务错误装 `CodedMsg { code, params }`，`Display` 序列化为 `__rssh_err__|{"code":...,"params":...}`（[error.rs](src-tauri/src/error.rs)）；前端 [domain/sshErrors.ts](src/domain/sshErrors.ts) 识别前缀解析。**不要在 Rust 里硬编码单一语言的用户文案**，也不要把裸 `String(e)` 展示给用户。
+后端所有业务错误装 `CodedMsg { code, params }`，`Display` 序列化为 `__termx_err__|{"code":...,"params":...}`（[error.rs](src-tauri/src/error.rs)）；前端 [domain/sshErrors.ts](src/domain/sshErrors.ts) 识别前缀解析。**不要在 Rust 里硬编码单一语言的用户文案**，也不要把裸 `String(e)` 展示给用户。
 
 ### R6. Secret 不进 DB 明文，只走 `secret/` 统一加密存储
 
@@ -112,13 +112,13 @@ rg 'resolve_session_id|ResourceReservation|activate' src-tauri/src/commands
 - localStorage key 约定：`termx.<域>.v<n>`（核对：`rg 'termx\.' src/`）。新增 key 沿用此前缀与版本号后缀。
 - Vite：端口 1420 / `build.target = "es2021"`（xterm 6.0 的 requestMode 用 logical assignment，降级 es2020 会丢 `let` 声明导致运行时 ReferenceError，见 [vite.config.ts](vite.config.ts) 注释）。
 
-### 后端（src-tauri，crate 名 `rssh`）
+### 后端（src-tauri，crate 名 `termx`）
 
 | 概念 | 在哪 | 说明 |
 |---|---|---|
-| GUI 二进制 `rssh` | `src/main.rs` + `src/lib.rs` | lib.rs 是 setup + `generate_handler!` 总表 |
-| CLI 二进制 `rssh-cli` | `src/bin/rssh/`，feature `cli` | **直接读写 DB / SecretStore，不经 Tauri command**；复用 `db/`、`secret/`、`sync::config` 共享函数 |
-| Headless `rssh-server` | `src/server_main.rs` + `src/server.rs`，feature `server` | WS JSON 协议 `{type:"invoke"/"response"/"event"}`；编译期嵌入 `../dist`，**构建前必须先 `npm run build`**；故意不放 `src/bin/`（Tauri bundler 会把 src/bin/* 自动当 app 二进制） |
+| GUI 二进制 `termx` | `src/main.rs` + `src/lib.rs` | lib.rs 是 setup + `generate_handler!` 总表 |
+| CLI 二进制 `termx-cli` | `src/bin/termx/`，feature `cli` | **直接读写 DB / SecretStore，不经 Tauri command**；复用 `db/`、`secret/`、`sync::config` 共享函数 |
+| Headless `termx-server` | `src/server_main.rs` + `src/server.rs`，feature `server` | WS JSON 协议 `{type:"invoke"/"response"/"event"}`；编译期嵌入 `../dist`，**构建前必须先 `npm run build`**；故意不放 `src/bin/`（Tauri bundler 会把 src/bin/* 自动当 app 二进制） |
 | 跨宿主抽象 | [emitter.rs](src-tauri/src/emitter.rs) `Host` | Tauri 包 AppHandle / Headless 包 sink 闭包，引擎代码不感知自己跑在哪个宿主；`b64_payload()` 是字节下行的唯一定义 |
 | 全局运行态 | `state.rs` `AppState` | db、secret_store、各 transport session map、auth/passphrase/host_key waiters |
 | command 层 | `src/commands/` | session/pty/sftp/serial/telnet/forward/profile/group/settings/sync/discovery/plugin/lifecycle/update/window… |
@@ -130,7 +130,7 @@ rg 'resolve_session_id|ResourceReservation|activate' src-tauri/src/commands
 | AI | `src/ai/` | llm（anthropic/deepseek/protocol）、tools、session、sanitize、redact_rules、command_blacklist、skills、audit |
 | 权限 | `src-tauri/capabilities/default.json` | Tauri v2 ACL，新增插件能力在这里加 |
 
-- 数据目录与插件 asset scope 仍指向 `~/.rssh/plugins`（tauri.conf.json）——rename 前不要改。
+- 数据目录与插件 asset scope 指向 `~/.termX/plugins`（tauri.conf.json）；首次启动会把旧 `~/.rssh` 迁到 `~/.termX`。
 
 ### 构建命令
 
@@ -144,8 +144,8 @@ npm run tauri dev              # 本地 GUI（真机验证用这个）
 npm run tauri build            # release 打包
 cargo check                    # 在 src-tauri/ 下，编译门禁
 cargo test --lib               # 无 GUI 冒烟（见下）
-cargo build --features cli --bin rssh-cli
-npm run build && cargo build --features server --bin rssh-server   # 顺序不能反，dist 被嵌入
+cargo build --features cli --bin termx-cli
+npm run build && cargo build --features server --bin termx-server   # 顺序不能反，dist 被嵌入
 ```
 
 工作区根目录的 `../build-debug.bat` 是 Windows debug 一键脚本：检查 NASM（aws-lc-sys 依赖）、设 `CARGO_INCREMENTAL=0`（规避 rustc 增量编译 ICE）、产物在 `src-tauri/target/debug/`。
@@ -161,9 +161,9 @@ npm run build && cargo build --features server --bin rssh-server   # 顺序不�
 
 ## 坑（Pitfalls）— 非显然，会咬人
 
-### P1. `rssh` 字面量是跨层 wire contract，不是笔误
+### P1. `termx` / 历史 `rssh` 字面量是跨层 wire contract，不是笔误
 
-二进制名、crate 名、`__rssh_err__` 错误前缀、事件名、`~/.rssh` 数据目录、打包产物 `rssh.exe` 全部沿用 rssh 命名。单点改名会炸另一头；rename 必须是一次专项（前后端 + 数据目录 + 打包一起）。
+二进制名、crate 名、`__termx_err__` 错误前缀、事件名、`~/.termX` 数据目录、打包产物 `termx.exe` 已统一为 termX；仅旧 `__rssh_err__` 前缀、旧 keychain service、`rssh_backup.*` 作为兼容回退保留。单点改名会炸另一头；再改名必须是一次专项（前后端 + 数据目录 + 打包一起）。
 
 ### P2. StrictMode 恢复 = PTY 双开
 
@@ -179,11 +179,11 @@ npm run build && cargo build --features server --bin rssh-server   # 顺序不�
 
 ### P5. CLI 与 headless 不走 Tauri command
 
-改表结构、改 SecretStore key、改 sync payload 时，**同时审 `src/bin/rssh/` 和 `server.rs` 两条路径**；只改 `commands/` wrapper 不会自动覆盖它们。改了同步 payload 要保证新客户端能读旧配置（单向兼容：旧→新映射，不反向冗余）。
+改表结构、改 SecretStore key、改 sync payload 时，**同时审 `src/bin/termx/` 和 `server.rs` 两条路径**；只改 `commands/` wrapper 不会自动覆盖它们。改了同步 payload 要保证新客户端能读旧配置（单向兼容：旧→新映射，不反向冗余）。
 
 ### P6. headless 构建顺序
 
-`rssh-server` 编译期嵌入 `../dist`；先 cargo 后 npm 会得到一个打进旧前端的二进制。CI/本地都要 `npm run build` 在前。
+`termx-server` 编译期嵌入 `../dist`；先 cargo 后 npm 会得到一个打进旧前端的二进制。CI/本地都要 `npm run build` 在前。
 
 ---
 
@@ -236,5 +236,5 @@ npm run build && cargo build --features server --bin rssh-server   # 顺序不�
 - 恢复 StrictMode（P2）
 - 新建分析/计划归档文档（R10）
 - 跳过 `npm run test:run` 交付前端逻辑改动、新增可测试逻辑不补测试（R11）
-- 擅自把 `rssh` 命名"顺手"改成 `termx`（P1）
+- 擅自把 `termx` 命名再"顺手"改成别的名字，或把兼容回退（`__rssh_err__` / 旧 keychain service / `rssh_backup.*`）一并删掉（P1）
 - 自创 UI 视觉而不对标 netcatty（Pr3）
