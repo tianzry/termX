@@ -7239,3 +7239,27 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 
 - **不做**：GBK 文件名往返（russh-sftp UTF-8 String 限制，上轮已定）；不做 Java 主窗口拆分（非 Java 栈）；不引入传输限速器（暂停窗口改用 200MB 大文件 + 并发 1）；不把虚拟化抽成通用组件。
 - **外部阻塞**：远端根分区 99%（余约 61MB），8×64MB 上传侧吞吐与万级大文件写盘无法测（并发验收走下载）；`.cast` 录制默认关闭为显式设置（本轮临时开启，已恢复 false），会话日志按 `.cast` 计量；30 分钟双会话并行被测进程级内存为合并值，无法按会话拆分；冷启动为构建后热缓存（无法清空系统文件缓存）。
+
+## 2026-11-07 — 首页 UI 7 项（分批独立提交）
+
+逐项实机量测（release + CDP 9222）后修改，每项独立 commit；证据截图在 `evidence/ui7/`。
+
+1. **最近连接排除临时本地终端**：`recentIds` 里的 `"__local"` 不再渲染卡片（Netcatty 同样只列存档主机）；最近区条件改为仅 `recentProfiles.length > 0`，顺带移除只服务该卡的本地 shell 名状态与请求（`f2583d5`）。
+   - 前：最近连接 6 张（含 1 张无 `data-host-id` 的「新建本地终端」卡，`before-vault.png`）；后：5 张全部为存档主机（`after-home.png`）。
+2. **主机卡标签右侧单行、高度一致**：标签从标题列移到右侧（`max-width:45%`、`nowrap`、`overflow:hidden`），删除 `:has(.vault-host-tags){height:auto}`（`d798291`）。
+   - 前：带标签卡 76px vs 无标签 68px；后：两者均 68px，标签位于卡片右侧（x=350，卡片 233–460）。
+3. **首页左侧导航深色**：`.vault-nav-item` 由 `muted-foreground` 改 `foreground`，对齐 Netcatty 侧栏（`e7c095e`）。
+   - 前：非选中项 `rgb(103,111,126)`；后：全部 `rgb(16,25,45)`（图标同色）。
+4. **终端工具栏浮层互斥 + 点外部关闭**：打开任一浮层前收起其它（更多/编码二级/脚本/高亮/监控），`mousedown` 落在 `.term-tool-more, .term-monitor-anchor` 之外即全部关闭（`b8fbb57`）。
+   - 前：先开高亮再开系统监控，两项同时可见（`before-popover-overlap.png`）；后：开脚本后「更多」计数为 0、脚本层唯一；点 xterm 后全部 0（`after-popover-mutual.png`）。
+5. **更多/标签菜单紧凑**：左侧「更多」宽 148→104、行高 36→30、菜单 padding 3/gap 0；标签菜单宽 236→200、padding 6→4、行高 32→28、行距 2→1、动作按钮 24→20；终端「更多」宽 192→156、gap 0；右侧栏溢出菜单 min-width 132→116、行高 28→26、gap 8→6（`33285c7`）。
+6. **SFTP 传输未读提醒同心**：计数徽标配 `attention` 时整体转红并加 `0 0 0 2px hsl(var(--nc-bg)/.6)` 浅白外圈（与终端标签状态点同款），不再叠加偏心红点；无计数时用同规格红点（`d63f5c9`）。
+   - 前：12px 徽标 + 独立 8px 红点（两位计数时圆心差 3px）；后：单圆 12px，徽标中心 (1094,12)，外圈 rgba(241,244,248,.6) 2px（`after-sftp-attention.png`）。
+7. **撰写栏固定片段配色**：改用 Netcatty `buildTheme()` 公式，`color-mix(in srgb, fg 6%, bg 94%)`，hover 12%/88%，颜色随终端主题（`763d8b7`）。
+   - 前：浅色主题 chip `rgb(225,228,234)`；后：`color(srgb .945 .948 .950)` ≈ rgb(241,242,242)（`before-compose-chips.png` / `after-compose-chips.png`）。
+
+### 门禁
+
+- `npm run test:run` 73 文件 / 826 用例 ✓；`npm run build` ✓。
+- `cargo check --lib` ✓；`cargo check --lib --features server` ✓；`cargo test --lib` 964 用例 ✓。
+- `npx tauri build --no-bundle` ✓（2m42s）；release 实机截图与量测均基于该构建。
