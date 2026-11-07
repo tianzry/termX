@@ -7059,3 +7059,33 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `npm run test:run`：65 文件 / 795 用例 ✓。
 - `npm run build`（tsc + vite）✓；`cargo check --no-default-features` ✓；`cargo build --release` ✓。
 
+## 2026-11-07 — 侧栏「标签筛选 / 更多」弹层被裁切修复
+
+### 现象与定位（不是 z-index 问题）
+
+- 终端侧栏工具条的「标签筛选」「更多」弹层只显示一截：菜单就地 `position:absolute; right:0`，锚点 `.nc-tree-tool-wrap` 只有 24px 宽且贴着窗口左缘，右对齐后左侧越出窗口。
+- 祖先链（运行时量测）：`.nc-tree-tool-wrap`(relative) → `.nc-sidebar-toolbar`(36px) → `.nc-sidebar` → `.nc-body` → **`.nc-shell { overflow: hidden }`**。`.nc-tree-tool-wrap` / `.nc-sidebar-toolbar` / `.nc-sidebar` 均无 overflow/contain/max-height/transform/filter；`.nc-sidebar-scroll` 虽有 `overflow-y:auto`，但它是 `.nc-sidebar` 的子节点而非菜单祖先。→ **唯一命中裁剪的节点是 `.nc-shell`，clip 为视口矩形**。
+- 弹层**未 portal 到 body**，定位参考的是 `.nc-tree-tool-wrap`（position:relative）。
+- 改前量测（1200×800）：`.nc-tree-more-menu` rect `[-14, 70, 134, 191]`（148×121，左侧 14px 被裁，可见 134/148）；`.vault-tag-menu` rect `[-154, 70, 82, 121]`（236×51，左侧 154px 被裁，可见 82/236 —— 即用户看到的「只有一截」）。
+
+### 修复
+
+- 新增 `src/domain/popoverPosition.ts` 纯函数 `placeAnchoredPopover`：左右在视口内收拢（8px margin）；下方不足且上方更宽松时**上翻**；上下都放不下时取空间更大一侧并限高（`maxHeight`，配合 `overflow-y:auto`）。
+- `HostSidebar.tsx` 新增 `AnchoredMenu`：`createPortal` 到 `document.body` + `position: fixed`；`useLayoutEffect` 量测（宽 `offsetWidth`、自然高 `scrollHeight`，避免限高后反复翻转）、`ResizeObserver` + `resize` + **捕获阶段 scroll** 重算，侧栏滚动跟手不跑位。移除仅供定位的 `.nc-tree-tool-wrap`。
+- 未改动任何祖先的 `overflow`，也未加/抬高 `z-index`。
+
+### 改后量测与验证（CDP 9222 实机）
+
+- 1200×800：more rect `[8, 70, 156, 191]`、tag rect `[8, 70, 244, 121]`；父节点 `BODY`、`position: fixed`；offLeft / offRight / offBottom 均为 0。
+- 侧栏滚动到 180px：按钮与菜单 rect 与滚动前**完全一致**（锚点未动，菜单跟手）。
+- 窄窗 900×720 / 720×720：more rect `[8,70,156,191]`、tag rect `[8,70,244,121]`，无溢出。
+- 深色（`data-theme=dark`）：rect 相同，弹层为深色 popover 背景、文字/图标对比正常；验证后已切回浅色。
+- 交互：点击「刷新列表」菜单关闭且侧栏正常；外部点击关闭；再次打开正常。
+- 上翻分支：侧栏工具条固定顶部，实际场景不可达，由 `popoverPosition.test.ts` 覆盖（锚点近底部 → `top = anchor.top - gap - height`）。
+- 截图：`evidence/sidebar-more-before.png` / `sidebar-more-after.png`、`sidebar-tag-before.png` / `sidebar-tag-after.png`（改前按原 absolute/right:0 结构与祖先链复现，rect 与改前量测一致）、`sidebar-more-scrolled.png`、`sidebar-more-900.png` / `sidebar-more-720.png`、`sidebar-tag-900.png` / `sidebar-tag-720.png`、`sidebar-more-dark.png` / `sidebar-tag-dark.png`。
+
+### 门禁
+
+- `npm run test:run`：72 文件 / 803 用例 ✓（含新增 `popoverPosition` 8 例）。
+- `npm run build`（tsc + vite）✓。本轮无 Rust 改动。
+

@@ -3237,11 +3237,7 @@ button:disabled {
   flex: 1;
 }
 
-/* 侧栏工具条弹出层锚点（标签筛选 / 更多菜单复用 vault-view-menu 样式）。 */
-.nc-tree-tool-wrap {
-  position: relative;
-}
-
+/* 侧栏工具条弹出层：portal 到 body 后由定点定位收拢进视口（见 HostSidebar）。 */
 .nc-tree-more-menu {
   width: 148px;
 }

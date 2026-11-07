@@ -6,8 +6,18 @@
  * 与 netcatty `TERMINAL_HOST_TREE_DEFAULT_WIDTH` 一致。
  */
 
-import { useEffect, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import type { Group, Profile } from "./backend/client";
+import { placeAnchoredPopover } from "./domain/popoverPosition";
 import { Icon } from "./ui/icons";
 import {
   collectHostTags,
@@ -40,6 +50,78 @@ function avatarHue(profile: Profile): number {
   return n;
 }
 
+/**
+ * 工具条浮层：portal 到 body + fixed 定位。
+ *
+ * 工具条按钮贴着窗口左缘，就地 absolute 的右对齐菜单会向左溢出，被
+ * `.nc-shell` 的 overflow:hidden 裁掉。所以浮层必须脱离侧栏祖先链，
+ * 坐标由 placeAnchoredPopover 收拢进视口；侧栏/窗口滚动与尺寸变化时重算。
+ */
+function AnchoredMenu({
+  anchor,
+  className,
+  children,
+}: {
+  anchor: HTMLElement | null;
+  className: string;
+  children: ReactNode;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const appliedKey = useRef("");
+  const [style, setStyle] = useState<CSSProperties>({ visibility: "hidden" });
+
+  const place = useCallback(() => {
+    const menu = menuRef.current;
+    if (!menu || !anchor) return;
+    const a = anchor.getBoundingClientRect();
+    // scrollHeight 取内容自然高度：内联 maxHeight 生效后 offsetHeight 会缩水，
+    // 用它判断上翻/限高会导致反复翻转。
+    const pos = placeAnchoredPopover(
+      { top: a.top, left: a.left, right: a.right, bottom: a.bottom },
+      { width: menu.offsetWidth, height: menu.scrollHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    const key = `${pos.left}|${pos.top}|${pos.maxHeight ?? ""}`;
+    if (appliedKey.current === key) return;
+    appliedKey.current = key;
+    setStyle({
+      left: pos.left,
+      top: pos.top,
+      maxHeight: pos.maxHeight ?? undefined,
+      overflowY: pos.maxHeight === null ? undefined : "auto",
+      visibility: "visible",
+    });
+  }, [anchor]);
+
+  useLayoutEffect(() => {
+    place();
+    const menu = menuRef.current;
+    const observer = menu ? new ResizeObserver(place) : null;
+    if (menu) observer?.observe(menu);
+    window.addEventListener("resize", place);
+    // capture：侧栏内部滚动容器也会触发，保证浮层跟手不跑位。
+    window.addEventListener("scroll", place, true);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [place]);
+
+  return createPortal(
+    <div
+      ref={menuRef}
+      className={className}
+      style={{ position: "fixed", right: "auto", bottom: "auto", ...style }}
+      // 阻止冒泡到 window 的关闭监听，否则 mousedown 先卸载菜单，click 不触发。
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
+}
+
 export function HostSidebar({
   profiles,
   groups,
@@ -55,6 +137,8 @@ export function HostSidebar({
   const [tagMenu, setTagMenu] = useState(false);
   const [moreMenu, setMoreMenu] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const tagButtonRef = useRef<HTMLButtonElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   /** 主机行右键菜单（按协议派生条目，对齐 Netcatty 主机树）。 */
   const [ctx, setCtx] = useState<{ profile: Profile; x: number; y: number } | null>(
     null,
@@ -116,109 +200,107 @@ export function HostSidebar({
         >
           <Icon name="search" size={14} />
         </button>
-        <div className="nc-tree-tool-wrap">
-          <button
-            className={`nc-tree-tool${selectedTags.length > 0 ? " active" : ""}`}
-            title="标签筛选"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => {
-              setMoreMenu(false);
-              setTagMenu((v) => !v);
-            }}
+        <button
+          ref={tagButtonRef}
+          className={`nc-tree-tool${selectedTags.length > 0 ? " active" : ""}`}
+          title="标签筛选"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => {
+            setMoreMenu(false);
+            setTagMenu((v) => !v);
+          }}
+        >
+          <Icon name="tag" size={14} />
+        </button>
+        {tagMenu && (
+          <AnchoredMenu
+            anchor={tagButtonRef.current}
+            className="vault-view-menu vault-tag-menu"
           >
-            <Icon name="tag" size={14} />
-          </button>
-          {tagMenu && (
-            <div
-              className="vault-view-menu vault-tag-menu"
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              {availableTags.length === 0 ? (
-                <div className="vault-tag-empty">当前主机还没有标签</div>
-              ) : (
-                availableTags.map((tag) => (
-                  <div className="vault-tag-row" key={tag}>
-                    <label className="vault-tag-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedTags.includes(tag)}
-                        onChange={() =>
-                          setSelectedTags((prev) =>
-                            prev.includes(tag)
-                              ? prev.filter((t) => t !== tag)
-                              : [...prev, tag],
-                          )
-                        }
-                      />
-                      <span>{tag}</span>
-                    </label>
-                  </div>
-                ))
-              )}
-              {selectedTags.length > 0 && (
-                <button
-                  className="vault-tag-clear"
-                  onClick={() => setSelectedTags([])}
-                >
-                  <Icon name="x" size={12} />
-                  清空筛选
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+            {availableTags.length === 0 ? (
+              <div className="vault-tag-empty">当前主机还没有标签</div>
+            ) : (
+              availableTags.map((tag) => (
+                <div className="vault-tag-row" key={tag}>
+                  <label className="vault-tag-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedTags.includes(tag)}
+                      onChange={() =>
+                        setSelectedTags((prev) =>
+                          prev.includes(tag)
+                            ? prev.filter((t) => t !== tag)
+                            : [...prev, tag],
+                        )
+                      }
+                    />
+                    <span>{tag}</span>
+                  </label>
+                </div>
+              ))
+            )}
+            {selectedTags.length > 0 && (
+              <button
+                className="vault-tag-clear"
+                onClick={() => setSelectedTags([])}
+              >
+                <Icon name="x" size={12} />
+                清空筛选
+              </button>
+            )}
+          </AnchoredMenu>
+        )}
         <button className="nc-tree-tool" title="本地终端" onClick={onLocal}>
           <Icon name="terminal" size={14} />
         </button>
-        <div className="nc-tree-tool-wrap">
-          <button
-            className={`nc-tree-tool${moreMenu ? " active" : ""}`}
-            title="更多"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => {
-              setTagMenu(false);
-              setMoreMenu((v) => !v);
-            }}
+        <button
+          ref={moreButtonRef}
+          className={`nc-tree-tool${moreMenu ? " active" : ""}`}
+          title="更多"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => {
+            setTagMenu(false);
+            setMoreMenu((v) => !v);
+          }}
+        >
+          <Icon name="chevron-down" size={14} />
+        </button>
+        {moreMenu && (
+          <AnchoredMenu
+            anchor={moreButtonRef.current}
+            className="vault-view-menu nc-tree-more-menu"
           >
-            <Icon name="chevron-down" size={14} />
-          </button>
-          {moreMenu && (
-            <div
-              className="vault-view-menu nc-tree-more-menu"
-              onMouseDown={(e) => e.stopPropagation()}
+            <button
+              onClick={() => {
+                setMoreMenu(false);
+                onOpenManager();
+              }}
             >
+              <Icon name="server" size={14} />
+              管理主机
+            </button>
+            <button
+              onClick={() => {
+                setMoreMenu(false);
+                onRefresh?.();
+              }}
+            >
+              <Icon name="refresh" size={14} />
+              刷新列表
+            </button>
+            {onClose && (
               <button
                 onClick={() => {
                   setMoreMenu(false);
-                  onOpenManager();
+                  onClose();
                 }}
               >
-                <Icon name="server" size={14} />
-                管理主机
+                <Icon name="x" size={14} />
+                收起侧栏
               </button>
-              <button
-                onClick={() => {
-                  setMoreMenu(false);
-                  onRefresh?.();
-                }}
-              >
-                <Icon name="refresh" size={14} />
-                刷新列表
-              </button>
-              {onClose && (
-                <button
-                  onClick={() => {
-                    setMoreMenu(false);
-                    onClose();
-                  }}
-                >
-                  <Icon name="x" size={14} />
-                  收起侧栏
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+            )}
+          </AnchoredMenu>
+        )}
         <span className="nc-tree-tool-spacer" />
         {onClose && (
           <button className="nc-tree-tool" title="收起主机侧栏" onClick={onClose}>

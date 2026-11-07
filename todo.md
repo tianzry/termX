@@ -60,6 +60,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 
 | 能力 | 状态 | 位置 |
 |---|---|---|
+| 侧栏「标签筛选 / 更多」弹层裁切修复（portal + 视口收拢/上翻） | ✅ | `src/HostSidebar.tsx`（`AnchoredMenu`：`createPortal` 到 body + `position:fixed`）、`src/domain/popoverPosition.ts` + `popoverPosition.test.ts`（8 例）；根因 `.nc-shell { overflow:hidden }` 裁掉向左越界的就地 absolute 菜单（changelogs 2026-11-07） |
 | 终端侧栏 SFTP 面板照抄 Netcatty（红圈 5 项排除 / 复用 SSH 会话通道 / 分屏与窄窗） | ✅ | `src/terminal/TerminalSidePanel.tsx`、`src/sftp/SftpSidePane.tsx`、`src/domain/terminalSidePanel.ts`、`evidence/sftp-panel/`（changelogs #227） |
 | 收尾全应用最终回归（浅/深 + 四类终端 + 设置 8 tab，P1=0） | ✅ | `docs/final-regression.md`、`evidence/final-regression.json` |
 | 收尾安装包验证（NSIS 安装/快捷方式/迁移/卸载残留；MSI 构建 + 权限阻塞说明） | ✅ | `docs/installer-verification.md` |
