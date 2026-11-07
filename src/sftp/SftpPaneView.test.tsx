@@ -70,3 +70,39 @@ describe("SftpPaneView 右键菜单", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
+
+describe("SftpPaneView 大目录虚拟滚动", () => {
+  it("超过阈值只渲染视口窗口，滚动后换窗口", async () => {
+    vi.mocked(api.localListDir).mockResolvedValue(
+      Array.from({ length: 500 }, (_, i) => ({
+        name: `f${i}.txt`,
+        kind: "file" as const,
+        size: 1,
+        mtime: 0,
+        hidden: false,
+      })),
+    );
+    render(<SftpPaneView connection={LOCAL} onPathChange={() => {}} />);
+    await waitFor(() =>
+      expect(
+        document.querySelectorAll('[data-sftp-row]').length,
+      ).toBeGreaterThan(0),
+    );
+    // 1 万行时代全量渲染会卡死；虚拟滚动只应挂载视口 + overscan。
+    expect(document.querySelectorAll('[data-sftp-row]').length).toBeLessThan(500);
+
+    const names = () =>
+      [...document.querySelectorAll('[data-sftp-row]')].map((r) =>
+        r.getAttribute("data-sftp-row"),
+      );
+    const before = names();
+    const list = document.querySelector(".nc-sftp-pane-list") as HTMLElement;
+    list.scrollTop = 28 * 200;
+    fireEvent.scroll(list);
+    await waitFor(() => expect(names()).not.toEqual(before));
+    const maxIndex = Math.max(
+      ...names().map((n) => Number((n || "").match(/^f(\d+)\.txt$/)?.[1] ?? -1)),
+    );
+    expect(maxIndex).toBeGreaterThan(150);
+  });
+});

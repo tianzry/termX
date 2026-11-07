@@ -224,6 +224,12 @@ export function SftpPaneView({
   const [viewMode, setViewMode] = useState<"list" | "tree">("list");
   /** 侧栏形态：紧凑行高（对齐 Netcatty listDensity）。 */
   const [compact, setCompact] = useState(false);
+  /** 大目录虚拟滚动：只渲染视口附近的行（对齐 Netcatty SftpPaneVirtualization）。 */
+  const listRef = useRef<HTMLDivElement>(null);
+  const virtualRef = useRef<HTMLDivElement>(null);
+  const [listScrollTop, setListScrollTop] = useState(0);
+  const [listViewport, setListViewport] = useState(0);
+  const [rowH, setRowH] = useState(side ? (compact ? 30 : 44) : 28);
   /** 侧栏书签：本机 + 全局（对齐 Netcatty 的 location / global 两套存储）。 */
   const [localBookmarks, setLocalBookmarks] = useState<SftpBookmark[]>(() =>
     readSftpBookmarks(
@@ -367,6 +373,30 @@ export function SftpPaneView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
+  // 虚拟滚动：视口高度跟随容器尺寸；换目录回顶（旧 scrollTop 落在新内容中段）。
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const sync = () => setListViewport(el.clientHeight);
+    sync();
+    // jsdom 无 ResizeObserver（单测环境），跳过观察即可。
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(sync);
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = 0;
+    setListScrollTop(0);
+  }, [path]);
+  // 行高按真实渲染量测：随侧栏/密度/主题变化，写死常量会让绝对定位错行。
+  useEffect(() => {
+    const el = virtualRef.current?.querySelector<HTMLElement>(".nc-sftp-pane-row");
+    if (!el) return;
+    const h = el.getBoundingClientRect().height;
+    if (h > 0 && Math.abs(h - rowH) > 0.5) setRowH(h);
+  }, [rowH, rows, viewMode, compact, side]);
+
   // ── 导航 / 工具行（面包屑、排序、隐藏开关）──────────────
 
   /** 过滤 + 排序后的可见行（隐藏开关 / 列头排序不触发重新加载）。 */
@@ -457,6 +487,23 @@ export function SftpPaneView({
     connection.kind === "local" ? localParent(path) : remoteParent(path);
   /** 「定位路径到终端」的 cd 命令；null = 当前路径不可注入（按钮禁用）。 */
   const locateTarget = resolveSftpLocateCdCommand(path);
+
+  // ── 虚拟滚动（对齐 Netcatty SftpPaneVirtualization）──────────
+  // 超过阈值只渲染视口 + overscan：1 万行全量 DOM 会让首屏/滚动帧时间失控。
+  const VIRTUAL_THRESHOLD = 200;
+  const OVERSCAN = 8;
+  const showParent = !error && !atRoot;
+  const virtualize = viewMode === "list" && visibleRows.length > VIRTUAL_THRESHOLD;
+  const totalRows = visibleRows.length + (showParent ? 1 : 0);
+  const startIndex = virtualize
+    ? Math.max(0, Math.floor(listScrollTop / rowH) - OVERSCAN)
+    : 0;
+  const endIndex = virtualize
+    ? Math.min(
+        totalRows,
+        Math.ceil((listScrollTop + listViewport) / rowH) + OVERSCAN,
+      )
+    : totalRows;
 
   // ── 传输（入队到全局队列，进度在 SftpQueuePanel 展示） ──
 
@@ -1138,6 +1185,34 @@ export function SftpPaneView({
     </div>
   );
 
+  /** 上级目录行（列表 / 虚拟滚动共用同一份标记）。 */
+  const parentRowNode = (
+    <div
+      className={
+        selected === ".." ? "nc-sftp-pane-row selected" : "nc-sftp-pane-row"
+      }
+      onClick={() => setSelected("..")}
+      onDoubleClick={() => void load(parent)}
+    >
+      <span className="nc-sftp-pane-row-cell-name">
+        {side ? (
+          <span className="nc-sftp-row-icon dir">
+            <Icon name="folder" size={14} />
+          </span>
+        ) : (
+          <Icon name="folder" size={14} />
+        )}
+        <span className="nc-sftp-pane-row-name">..</span>
+      </span>
+      <span className="nc-sftp-pane-row-cell-num" />
+      <span className="nc-sftp-pane-row-cell-num" />
+      <span className="nc-sftp-pane-row-cell-num">
+        {side ? "folder" : ""}
+      </span>
+      {side && <span className="nc-sftp-pane-row-cell-owner">--</span>}
+    </div>
+  );
+
   /** 树视图：递归渲染（过滤 / 排序对每一层生效）。 */
   const renderTreeRows = (items: Row[], dir: string, depth: number): React.ReactNode[] =>
     sortSftpRows(
@@ -1501,6 +1576,7 @@ export function SftpPaneView({
       </div>
 
       <div
+        ref={listRef}
         className={
           dropHint !== null
             ? "nc-sftp-pane-list drop-active"
@@ -1509,6 +1585,7 @@ export function SftpPaneView({
         tabIndex={0}
         onContextMenu={openBlankMenu}
         onKeyDown={onListKeyDown}
+        onScroll={(e) => setListScrollTop(e.currentTarget.scrollTop)}
         onDragOver={onListDragOver}
         onDragLeave={onListDragLeave}
         onDrop={onListDrop}
@@ -1523,38 +1600,43 @@ export function SftpPaneView({
         {!error && !busy && visibleRows.length === 0 && (
           <div className="nc-sftp-pane-hint">空目录</div>
         )}
-        {!error && !atRoot && (
-          <div
-            className={
-              selected === ".."
-                ? "nc-sftp-pane-row selected"
-                : "nc-sftp-pane-row"
-            }
-            onClick={() => setSelected("..")}
-            onDoubleClick={() => void load(parent)}
-          >
-            <span className="nc-sftp-pane-row-cell-name">
-              {side ? (
-                <span className="nc-sftp-row-icon dir">
-                  <Icon name="folder" size={14} />
-                </span>
-              ) : (
-                <Icon name="folder" size={14} />
-              )}
-              <span className="nc-sftp-pane-row-name">..</span>
-            </span>
-            <span className="nc-sftp-pane-row-cell-num" />
-            <span className="nc-sftp-pane-row-cell-num" />
-            <span className="nc-sftp-pane-row-cell-num">
-              {side ? "folder" : ""}
-            </span>
-            {side && <span className="nc-sftp-pane-row-cell-owner">--</span>}
-          </div>
-        )}
+        {!error && !atRoot && !virtualize && parentRowNode}
         {!error &&
-          (side && viewMode === "tree"
-            ? renderTreeRows(visibleRows, path, 0)
-            : visibleRows.map((row) => renderRow(row, row.name)))}
+          (side && viewMode === "tree" ? (
+            renderTreeRows(visibleRows, path, 0)
+          ) : virtualize ? (
+            <div
+              ref={virtualRef}
+              className="nc-sftp-virtual"
+              style={{ position: "relative", height: totalRows * rowH }}
+            >
+              {Array.from({ length: Math.max(0, endIndex - startIndex) }, (_, i) => {
+                const index = startIndex + i;
+                const row =
+                  index === 0 && showParent
+                    ? null
+                    : visibleRows[index - (showParent ? 1 : 0)];
+                if (!row && !(index === 0 && showParent)) return null;
+                return (
+                  <div
+                    key={row ? row.name : ".."}
+                    className="nc-sftp-virtual-row"
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      top: index * rowH,
+                      height: rowH,
+                    }}
+                  >
+                    {row ? renderRow(row, row.name) : parentRowNode}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            visibleRows.map((row) => renderRow(row, row.name))
+          ))}
       </div>
 
       {/* 底部状态栏（对齐 Netcatty SftpPaneFileList）：左侧项数/选中数，右侧当前路径 */}
