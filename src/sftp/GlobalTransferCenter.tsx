@@ -143,11 +143,19 @@ export function GlobalTransferCenter() {
       >
         <ArrowDownUp size={16} />
         {badge.count > 0 && (
-          <span className="nc-transfer-badge">
+          <span
+            className={
+              badge.hasAttention
+                ? "nc-transfer-badge attention"
+                : "nc-transfer-badge"
+            }
+          >
             {badge.count > 99 ? "99+" : badge.count}
           </span>
         )}
-        {badge.hasAttention && <span className="nc-transfer-dot" aria-hidden="true" />}
+        {badge.count === 0 && badge.hasAttention && (
+          <span className="nc-transfer-dot" aria-hidden="true" />
+        )}
       </button>
 
       {open && (

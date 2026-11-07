@@ -4955,14 +4955,24 @@ button:disabled {
   text-align: center;
 }
 
+/* 需要用户处理时：徽标整体变红并加浅白外圈（与终端标签状态点同款），
+ * 不再额外叠一个偏心的红点。 */
+.nc-transfer-badge.attention {
+  background: #f43f5e;
+  color: #ffffff;
+  box-shadow: 0 0 0 2px hsl(var(--nc-bg) / 0.6);
+}
+
+/* 无未完成计数、仅需关注时的独立红点（同样带浅白外圈）。 */
 .nc-transfer-dot {
   position: absolute;
-  top: 0;
-  right: 0;
-  width: 8px;
-  height: 8px;
+  top: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
   border-radius: 999px;
-  background: hsl(var(--destructive));
+  background: #f43f5e;
+  box-shadow: 0 0 0 2px hsl(var(--nc-bg) / 0.6);
 }
 
 .nc-transfer-center {
