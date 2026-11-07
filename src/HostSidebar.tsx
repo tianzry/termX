@@ -215,7 +215,7 @@ export function HostSidebar({
         {tagMenu && (
           <AnchoredMenu
             anchor={tagButtonRef.current}
-            className="vault-view-menu vault-tag-menu"
+            className="vault-view-menu vault-tag-menu vault-tag-menu-compact"
           >
             {availableTags.length === 0 ? (
               <div className="vault-tag-empty">当前主机还没有标签</div>

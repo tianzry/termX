@@ -9313,6 +9313,13 @@ button:disabled {
   gap: 1px;
 }
 
+/* 侧栏「标签」浮层：宽度贴合最长标签，不再固定 200px 留出大段空白 */
+.vault-tag-menu-compact {
+  width: max-content;
+  min-width: 104px;
+  max-width: 200px;
+}
+
 .vault-tag-search {
   display: flex;
   align-items: center;
