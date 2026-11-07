@@ -11,6 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, As
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use russh_sftp::protocol::OpenFlags;
+use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult};
 use crate::models::Credential;
@@ -31,6 +32,22 @@ const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(200);
 /// 这里用 16 × 64KB ≈ 1MB 在途窗口，实测足以打满局域网链路。
 const PIPELINE_WINDOW: usize = 16;
 const PIPELINE_CHUNK: usize = 65536;
+
+/// 远端临时文件路径：同目录下 `.termx-<hash>.part`。
+///
+/// 不采用 `<目标>.part`：目标名可达 255 字节（ext4/OpenSSH 上限），再拼 5 字节
+/// 后缀会让单段文件名超限，上传直接失败（实测 255 字节名 + `.part` → Bad message）。
+/// 用目标路径的短哈希作临时名，既确定（暂停/恢复可复用），又不会超长。
+fn remote_partial_path(target: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(target.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    let dir = match target.rsplit_once('/') {
+        Some((dir, _)) => dir,
+        None => "",
+    };
+    format!("{dir}/.termx-{}.part", &digest[..16])
+}
 
 /// 进度节流器。用 `Mutex` 而不是 `Cell`：进度闭包会被 async 任务捕获，
 /// future 要满足 Send，`&Cell` 不满足 Sync，会直接编译失败。
@@ -538,7 +555,8 @@ impl SftpHandle {
     }
 
     /// 同主机复制单个文件：远端读 → 远端写，64 KiB 分块流式，内存占用恒定。
-    /// 目标先写 `<dst>.part`，成功后替换，避免中断留下半截文件（与 upload_streaming 同策略）。
+    /// 目标先写同目录短名临时文件，成功后替换，避免中断留下半截文件
+    /// （与 upload_streaming 同策略；长文件名不会因后缀超限）。
     /// 目录复制暂不支持（前端只对文件提供入口），由调用方回 `sftp_io_failed`。
     pub async fn copy_file(&self, src: &str, dst: &str) -> AppResult<u64> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -561,7 +579,7 @@ impl SftpHandle {
             }
         }
 
-        let tmp = format!("{dst}.part");
+        let tmp = remote_partial_path(dst);
         let mut src_file = self.sftp.open(src).await.map_err(|e| {
             AppError::sftp(
                 "sftp_io_failed",
@@ -992,13 +1010,13 @@ impl SftpHandle {
     /// caller opens the reader differs. `total` is the source size for progress
     /// (0 if unknown).
     ///
-    /// Atomicity (remote-side, platform-independent): stream to
-    /// `<remote_path>.part`, then rename on full success. Cancel / read-error /
-    /// write-error leave only a partial `.part` (cleaned up below) — never a
-    /// truncated file at the real path, and never a *destroyed* pre-existing
-    /// remote file (raw `create(remote_path)` truncates the target the instant
-    /// it opens, so a mid-transfer failure on an overwrite lost the original
-    /// irrecoverably).
+    /// Atomicity (remote-side, platform-independent): stream to a same-directory
+    /// temp file (`.termx-<hash>.part`, see `remote_partial_path`), then rename on
+    /// full success. Cancel / read-error / write-error leave only a partial temp
+    /// file (cleaned up below) — never a truncated file at the real path, and never
+    /// a *destroyed* pre-existing remote file (raw `create(remote_path)` truncates
+    /// the target the instant it opens, so a mid-transfer failure on an overwrite
+    /// lost the original irrecoverably).
     pub async fn upload_streaming<R>(
         &self,
         reader: &mut R,
@@ -1020,7 +1038,7 @@ impl SftpHandle {
             }
         }
 
-        let tmp_path = format!("{remote_path}.part");
+        let tmp_path = remote_partial_path(remote_path);
         let event = format!("sftp:progress:{transfer_id}");
         let throttle = ProgressThrottle::new();
         let result = async {
@@ -1090,12 +1108,12 @@ impl SftpHandle {
         Ok((meta.size.unwrap_or(0), meta.mtime.map(|v| v as i64)))
     }
 
-    /// 删除远端 `.part` 断点文件（取消 / 冲突重开时使用）。
+    /// 删除远端断点文件（取消 / 冲突重开时使用）。
     pub async fn remove_remote_partial(&self, remote_path: &str) {
-        let _ = self.sftp.remove_file(format!("{remote_path}.part")).await;
+        let _ = self.sftp.remove_file(remote_partial_path(remote_path)).await;
     }
 
-    /// 断点续传上传：从 `start_offset` 续写远端 `.part`，多句柄流水线并发。
+    /// 断点续传上传：从 `start_offset` 续写远端临时文件，多句柄流水线并发。
     ///
     /// `checkpoint` 在每批成功后更新为「连续已写入的绝对偏移」，暂停/取消时
     /// 调用方读取该值即可精确续传；绝不重新 create+truncate（除首传偏移 0）。
@@ -1118,7 +1136,7 @@ impl SftpHandle {
                 self.mkdir_p(parent).await?;
             }
         }
-        let tmp_path = format!("{remote_path}.part");
+        let tmp_path = remote_partial_path(remote_path);
         let event = format!("sftp:progress:{transfer_id}");
         let throttle = ProgressThrottle::new();
 
