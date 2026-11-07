@@ -39,6 +39,8 @@ import {
 } from "lucide-react";
 import * as api from "../backend/client";
 import { userVisibleError } from "../domain/sshErrors";
+import { registerSftpTargetReveal } from "./revealTarget";
+import { transferTargetDir } from "../domain/transferQueue";
 import { SftpEditorDialog } from "../editor/EditorDialog";
 import { isKnownBinaryFile } from "../editor/editorFile";
 import { useSettings } from "../settings/settingsStore";
@@ -332,6 +334,27 @@ export function SftpPaneView({
     void load(externalPath.path);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalPath?.key]);
+
+  // 「打开目标目录」：上传任务的远端目标由已打开的同会话面板认领并导航。
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const remoteSftpId =
+    connection.kind === "remote" ? connection.sftpId : null;
+  const remoteSessionId =
+    connection.kind === "remote" ? connection.sessionId ?? null : null;
+  useEffect(() => {
+    if (!remoteSftpId) return;
+    return registerSftpTargetReveal((item) => {
+      if (item.direction !== "upload") return false;
+      // 同一 SSH 会话可开多条 SFTP 通道（终端侧栏 / SFTP 视图各一条），
+      // 按会话 id 匹配才能跨面板认领；通道 id 仅作为独立 SFTP 连接的兜底。
+      const sameSession =
+        remoteSessionId !== null && item.session_id === remoteSessionId;
+      if (!sameSession && item.sftp_id !== remoteSftpId) return false;
+      void loadRef.current(transferTargetDir(item));
+      return true;
+    });
+  }, [remoteSftpId, remoteSessionId]);
 
   // 设置里的隐藏文件默认值即时生效（覆盖面板内临时开关）。
   useEffect(() => {

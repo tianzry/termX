@@ -7026,3 +7026,36 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `npm run test:run`：65 文件 / 730 用例 ✓。
 - `npm run build` ✓；`cargo check` ✓（本轮后端无改动）。
 - review 修复单独提交 `ae2c362`。
+
+## 2026-11-07 — SFTP 传输专项：进度视图字段 / 行尾动作 / 打开目标目录 / 断点续传 / 吞吐（#228–#230）
+
+### #228 P1 传输进度视图字段、行尾动作与「打开目标目录」（UI）
+
+- 底部队列行（panel，`SftpTransferItem` 等价物）：20px 状态图标 + 12px 文件名 + 11px 方向箭头 + 11px muted 目标目录；右侧 `speed • bytes/total • pct%`（10px mono，`ml-auto max-w-[50%]`）；进度条 6px，左缩进 28px（对齐 Netcatty `mt-2 ml-7 h-1.5`）；暂停/冲突条为琥珀色，脚注「已暂停，可从此处续传」。
+- 顶栏弹窗行（center，`GlobalSftpTransferCenter` 等价物）：28px 方向图标盒（rounded bg-muted）+ 12px 文件名 + 10px `源 → 目标` + 动作区 + 6px 条 + 10px 右侧百分比 + 10px 状态行 `bytes · speed · ETA`；失败行追加 destructive 错误行。
+- 速率/剩余时间：前端 3 秒滑动窗口平均（`averageSpeed` + rAF 合并 setState），避免抖动；完成后保留最后一帧用于顶栏明细，底部队列在终态隐藏速率（与 Netcatty `effectiveSpeed > 0` 一致）；ETA <1KB/s 或 >48h 隐藏。
+- 动作显隐矩阵：进行中→暂停+取消；已暂停→恢复+取消；失败→重试+移除；已完成/已取消→`打开目标目录`（底部队列）+移除；顶栏「打开目标目录」在所有状态常驻（对齐 Netcatty `SftpTransferItem.tsx` 334/348/355/400/417/436 行）。`title="打开目标目录"`，folder-open 图标。
+- 新增 `src/sftp/revealTarget.ts`：下载 → `local_open_path` 打开本地落盘目录；上传 → 遍历已打开 SFTP 面板，按 **SSH 会话 id** 匹配（同一会话可开多条 SFTP 通道）后跳转到目标目录；目录不存在/被移动 → 「无法打开目标目录（目录可能已被移动或删除）」；无匹配面板 → 「目标目录所属的 SFTP 会话未打开，请先打开该会话的 SFTP 面板」。
+- 实测：`ui-panel-running.png`（底部队列运行态：`45.5 MB/s • 82.0 MB / 100.0 MB • 82% • 剩余 1s`）、`ui-center-running.png`（顶栏运行态）、`ui-center-completed.png`（已完成：100.0% + 打开目标目录 + 移除）、`ui-panel-completed-clean.png`、`resume-1-paused.png`（暂停态）、`ui-reveal-upload-after.png`（上传项跳转 `home / tianzry` → `home / tianzry / ntx-bench`）、`ui-reveal-boundary.png`（目录被删后的错误提示）。
+- 实测 DOM：行 padding 10px/12px；字号 12/11/10px；进度条高 6px；底部队列已完成行含 `data-action="reveal"` 且 `title=打开目标目录`。
+
+### #229 P1 断点续传（暂停 → 恢复从偏移续写，不重头开始）
+
+- 新增持久化 `checkpoint` / `source_mtime`（schema v51）；上传写远端 `.part`，仅首次创建时截断，暂停/恢复保留已打开句柄与 `.part`；恢复用 `seek(start_offset)` 续写，不再 `create+truncate`；下载从本地已写长度续写并按远端 offset 请求。
+- 续传边界：源文件大小/mtime 变化 → `sftp_resume_source_changed` 明确报错、清空偏移并删除 `.part` 重来；取消/失败清理 `.part`，暂停保留；会话离线（应用重启后）→ `sftp_resume_session_offline`，UI 行内标注不支持跨重启续传；失败项可「重试」（`sftp_transfer_retry`）。
+- 进度与偏移对齐：上传用 `BTreeMap` 记录各块完成情况，只推进**连续成功前缀**作为 checkpoint，避免进度回跳/超 100%；下载用重排缓冲按序落盘，`checkpoint = 已落盘长度`。
+- 129 实测（100MB，release）：31.13%（32,636,928 B）暂停，`.part` 保留 → 恢复从 31.1MB 继续（首帧即 31.1MB，未回跳）→ 完成 100%，最终大小 104,857,600、SHA256 与本地一致、无残留 `.part`；断言 JSON `evidence/resume-assert.json`，截图 `resume-1-paused.png` / `resume-2-resumed.png` / `resume-3-completed.png`。
+
+### #230 P1 SFTP 吞吐（连续流水线 + 构建类型对照）
+
+- 上传/下载改为**连续流水线**：16 个远端句柄 + 64KB 块，任一时刻最多 16 条写/读请求在途，完成即补；移除原先「整批 `join_all` 栅栏」导致的空档（HTTP 式往返停顿）。
+- **根因定位**：此前验收里 9.41MB/s（上传）/2.4MB/s（下载）是 **debug 构建**（`tauri dev` / 调试包，`opt-level=0`）下的实测；同一 100MB 文件、同一 129 服务器，**release 构建** 127.55MB/s（0.784s）/ 58.51MB/s（1.709s），Netcatty（ssh2 64×32KB）155MB/s（0.645s）/ 68MB/s（1.46s）→ 达 Netcatty 的 82% / 86%，即「几秒内传完」。
+- 参数扫描（release，100MB，`sftp_debug_pipeline` 临时开关，已移除）：窗口 1 → 37.1/16.8MB/s；4 → 120.0/59.9；16（默认）→ 134.6/63.2；64 → 132.8/59.8；块 32KB → 132.1/56.0；128KB → 106.0/66.7。→ 默认 16 × 64KB 已接近上限，继续增大无收益。
+- 结论：无需调 SSH `window_size/maximum_packet_size`（256KB/2MB 与 2MB 实测无差别）；瓶颈在调试构建的未优化加解密/协议路径，而非并发或分块配置。发布包（release）性能达标。
+- 证据：`evidence/bench-sftp-baseline.mjs`（release 输出）、`bench-ssh2-params.mjs`（ssh2 同机基准）、`bench-sftp-sweep.mjs`（窗口/块扫描）、`resume-assert.json`。
+
+### 门禁
+
+- `npm run test:run`：65 文件 / 795 用例 ✓。
+- `npm run build`（tsc + vite）✓；`cargo check --no-default-features` ✓；`cargo build --release` ✓。
+

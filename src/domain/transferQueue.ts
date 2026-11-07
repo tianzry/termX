@@ -142,6 +142,123 @@ export function canCancel(status: TransferStatus): boolean {
   );
 }
 
+/** 行尾「移除」：仅终态（已完成 / 失败 / 已取消 / 已跳过）。 */
+export function canDismiss(status: TransferStatus): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "skipped"
+  );
+}
+
+/** 行尾「重试」：仅失败项（对齐 Netcatty failed → RefreshCw）。 */
+export function canRetry(status: TransferStatus): boolean {
+  return status === "failed";
+}
+
+/** 传输的「目标文件」绝对路径（上传=远端、下载=本地）。 */
+export function transferTargetPath(item: TransferItem): string {
+  return item.direction === "upload" ? item.remote_path : item.local_path;
+}
+
+/** 传输的「源文件」绝对路径。 */
+export function transferSourcePath(item: TransferItem): string {
+  return item.direction === "upload" ? item.local_path : item.remote_path;
+}
+
+/** 目录部分（同时兼容远端 "/" 与 Windows "\\"）。 */
+export function parentPath(path: string): string {
+  const norm = path.replace(/\\/g, "/");
+  const i = norm.lastIndexOf("/");
+  if (i < 0) return path;
+  return norm.slice(0, i) || "/";
+}
+
+/** 目标目录（「打开目标目录」的落点，对齐 Netcatty getTransferTargetDirectory）。 */
+export function transferTargetDir(item: TransferItem): string {
+  return parentPath(transferTargetPath(item));
+}
+
+/** 传输显示用字节格式（对齐 Netcatty `formatTransferBytes`：1 位小数、无 TB）。 */
+export function formatTransferBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(
+    units.length - 1,
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+  );
+  const size = bytes / Math.pow(1024, i);
+  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+/** 速率格式（对齐 Netcatty `formatSpeed`）。 */
+export function formatTransferSpeed(bytesPerSecond: number): string {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "";
+  if (bytesPerSecond >= 1024 * 1024) {
+    return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+  }
+  return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+}
+
+/**
+ * 剩余时间估算（对齐 Netcatty）：剩余字节 <= 0 或速率 < 1KB/s 时返回 null，
+ * 超过 48h 的离谱值也隐藏（避免速率抖动时闪出一个巨大数字）。
+ */
+export function estimateTransferEtaSeconds(
+  remainingBytes: number,
+  speedBytesPerSec: number,
+): number | null {
+  if (!Number.isFinite(remainingBytes) || remainingBytes <= 0) return null;
+  if (!Number.isFinite(speedBytesPerSec) || speedBytesPerSec < 1024) return null;
+  const seconds = Math.ceil(remainingBytes / speedBytesPerSec);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  if (seconds > 48 * 3600) return null;
+  return seconds;
+}
+
+/** 剩余时间文案（对齐 Netcatty `formatTransferEta`）。 */
+export function formatTransferEta(seconds: number | null | undefined): string | null {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+export interface SpeedSample {
+  /** 采样时刻（毫秒，任意单调时钟，例如 performance.now()）。 */
+  at: number;
+  /** 累计已传字节。 */
+  bytes: number;
+}
+
+/**
+ * 滑动窗口平均速率（bytes/s）：窗口默认 3s，取窗口内最早样本的差分，
+ * 至少需要 0.5s 跨度才给出结果（否则返回 0），避免前几帧速率乱跳。
+ * 字节回退（续传偏移重排）视为无效样本返回 0。
+ */
+export function averageSpeed(samples: SpeedSample[], windowMs = 3000): number {
+  if (samples.length < 2) return 0;
+  const last = samples[samples.length - 1];
+  const cutoff = last.at - windowMs;
+  let first = samples[samples.length - 2];
+  for (const s of samples) {
+    if (s.at >= cutoff) {
+      first = s;
+      break;
+    }
+  }
+  const dt = (last.at - first.at) / 1000;
+  if (dt < 0.5) return 0;
+  const delta = last.bytes - first.bytes;
+  if (delta <= 0) return 0;
+  return delta / dt;
+}
+
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
 
 /** 0 / 负数 = 未知大小 → 空串（不定长进度条不显示字节）。 */

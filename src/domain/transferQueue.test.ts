@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { TransferItem } from "../backend/client";
 import {
+  averageSpeed,
   bucketTransferItems,
   canCancel,
+  canDismiss,
   canPause,
   canResume,
+  canRetry,
+  estimateTransferEtaSeconds,
   formatBytes,
+  formatTransferBytes,
+  formatTransferEta,
+  formatTransferSpeed,
   pickActiveConflict,
   progressPercent,
   queueCounts,
@@ -30,6 +37,9 @@ function item(patch: Partial<TransferItem>): TransferItem {
     overwrite: false,
     error: null,
     created_at: 0,
+    checkpoint: 0,
+    source_mtime: null,
+    session_live: true,
     ...patch,
   };
 }
@@ -142,6 +152,67 @@ describe("按钮可用性", () => {
     expect(canCancel("failed")).toBe(false);
     expect(canCancel("cancelled")).toBe(false);
     expect(canCancel("skipped")).toBe(false);
+  });
+
+  it("移除：仅终态；重试：仅失败（对齐 Netcatty 行尾按钮）", () => {
+    expect(canDismiss("completed")).toBe(true);
+    expect(canDismiss("failed")).toBe(true);
+    expect(canDismiss("cancelled")).toBe(true);
+    expect(canDismiss("skipped")).toBe(true);
+    expect(canDismiss("running")).toBe(false);
+    expect(canDismiss("paused")).toBe(false);
+    expect(canRetry("failed")).toBe(true);
+    expect(canRetry("completed")).toBe(false);
+    expect(canRetry("cancelled")).toBe(false);
+  });
+});
+
+describe("传输字段格式", () => {
+  it("字节：0 给 0 B，非 0 一位小数", () => {
+    expect(formatTransferBytes(0)).toBe("0 B");
+    expect(formatTransferBytes(512)).toBe("512 B");
+    expect(formatTransferBytes(1024)).toBe("1.0 KB");
+    expect(formatTransferBytes(1536)).toBe("1.5 KB");
+    expect(formatTransferBytes(100 * 1024 * 1024)).toBe("100.0 MB");
+  });
+
+  it("速率：小于 1MB/s 用 KB/s，否则 MB/s；0 为空", () => {
+    expect(formatTransferSpeed(0)).toBe("");
+    expect(formatTransferSpeed(1536)).toBe("1.5 KB/s");
+    expect(formatTransferSpeed(10 * 1024 * 1024)).toBe("10.0 MB/s");
+  });
+
+  it("剩余时间：剩余 <=0 或速率过低为 null；超过 48h 隐藏", () => {
+    expect(estimateTransferEtaSeconds(0, 1024)).toBeNull();
+    expect(estimateTransferEtaSeconds(100, 512)).toBeNull();
+    expect(estimateTransferEtaSeconds(100 * 1024 * 1024, 10 * 1024 * 1024)).toBe(10);
+    expect(estimateTransferEtaSeconds(600 * 1024 * 1024, 1024)).toBeNull();
+    expect(formatTransferEta(6)).toBe("6s");
+    expect(formatTransferEta(65)).toBe("1m 5s");
+    expect(formatTransferEta(3600)).toBe("1h 0m");
+    expect(formatTransferEta(null)).toBeNull();
+  });
+
+  it("滑动平均速率：窗口内差分；不足 0.5s 或回退为 0", () => {
+    expect(
+      averageSpeed([
+        { at: 0, bytes: 0 },
+        { at: 1000, bytes: 1024 },
+      ]),
+    ).toBe(1024);
+    expect(
+      averageSpeed([
+        { at: 0, bytes: 0 },
+        { at: 300, bytes: 1024 },
+      ]),
+    ).toBe(0);
+    expect(
+      averageSpeed([
+        { at: 0, bytes: 2048 },
+        { at: 1000, bytes: 1024 },
+      ]),
+    ).toBe(0);
+    expect(averageSpeed([{ at: 0, bytes: 0 }])).toBe(0);
   });
 });
 

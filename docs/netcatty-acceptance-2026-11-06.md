@@ -92,3 +92,58 @@
 - SFTP 深路径：冲突 replace/skip/rename + applyToAll、暂停/恢复/取消、并发上限、递归、符号链接、权限位、异常编码文件名、断线重连队列。
 - 多标签/多窗口：工作区恢复、标签记忆、分屏状态重启后正确性。
 - 性能补测：万级目录列举与滚动、并发传输 UI、30 分钟以上会话日志/内存曲线。
+
+## 追加批次：SFTP 传输 P1 专项（2026-11-07）
+
+范围：`#228` 进度视图字段 + 行尾动作 + 打开目标目录（UI）；`#229` 断点续传；`#230` 吞吐。三项独立 commit。
+
+### 1. 进度视图字段（底部队列 / 顶栏弹窗）
+
+| 位置 | 元素与字段顺序 | 尺寸/样式 |
+| --- | --- | --- |
+| 底部队列行 | 状态图标 → 方向图标 → 文件名 → 箭头 → 目标目录 → （右侧）速率 • 已传/总量 • 百分比 • 剩余 | 图标 20px；文件名 12px medium；箭头/目录 11px（目录 muted）；右侧 10px mono 右对齐；条高 6px、左缩进 28px、track secondary/80；暂停条琥珀 |
+| 顶栏弹窗行 | 28px 方向图标盒 → 文件名 + `源 → 目标` → 动作区 → 进度条 + 百分比 → 状态行（`已传/总量 · 速率 · ETA`）→ 失败错误行 | 名称 12px；路径 10px muted；条 6px flex-1；百分比 10px mono `w-12` 右对齐；状态/明细 10px；错误 10px destructive |
+
+- 速率与 ETA：3 秒滑动窗口平均 + rAF 合并刷新，数值不抖动；完成后底部队列隐藏速率（对齐 Netcatty `effectiveSpeed > 0`），顶栏保留最后一帧；ETA <1KB/s 或 >48h 隐藏。
+- 实测（`evidence/ui-panel-running.png`）：底部队列运行态显示 `45.5 MB/s • 82.0 MB / 100.0 MB • 82% • 剩余 1s`；`ui-center-running.png` 顶栏同字段。
+
+### 2. 行尾动作矩阵与「打开目标目录」
+
+| 状态 | 底部面板 | 顶栏弹窗 |
+| --- | --- | --- |
+| 进行中 | 暂停 + 取消 | 暂停 + 取消 + 打开目标目录 |
+| 已暂停 | 恢复 + 取消 | 恢复 + 取消 + 打开目标目录 |
+| 失败 | 重试 + 移除 | 重试 + 移除 + 打开目标目录 |
+| 已完成 / 已取消 | 打开目标目录 + 移除 | 打开目标目录 + 移除 |
+
+- 打开目标目录：`title=打开目标目录`，folder-open 图标；下载 → 打开本地落盘目录；上传 → 跳转对应 SFTP 面板到目标目录（按 **SSH 会话 id** 匹配，同一会话多条 SFTP 通道都能认领）。
+- 边界：本地目录不存在/被移动 → 红字「无法打开目标目录（目录可能已被移动或删除）」；上传时无匹配面板 → 「目标目录所属的 SFTP 会话未打开，请先打开该会话的 SFTP 面板」；两种情况均不静默失败。
+- 实测：上传项点击后左栏 `home / tianzry` → `home / tianzry / ntx-bench`（`ui-reveal-upload-after.png`）；删除落盘目录后点击出现上述报错（`ui-reveal-boundary.png`）。
+
+### 3. 断点续传
+
+- 129 / 100MB / release：写入 31.13%（32,636,928 B）时暂停，远端 `.part` 保留 → 恢复首帧即 31.1MB（未回跳）→ 完成 100%；远端最终大小 104,857,600、SHA256 与本地一致、无残留 `.part`。断言：`evidence/resume-assert.json`；截图 `resume-1-paused.png` / `resume-2-resumed.png` / `resume-3-completed.png`。
+- 源变化（大小/mtime）→ `sftp_resume_source_changed` 重新开始；取消/失败清理 `.part`，暂停保留；应用重启后会话离线 → `sftp_resume_session_offline`，UI 明确标注不支持跨重启续传（未做伪续传）。
+
+### 4. 吞吐
+
+| 场景 | 上传 | 下载 |
+| --- | --- | --- |
+| termX debug（`tauri dev`，本轮前基线） | 9.41MB/s | 2.40MB/s |
+| termX debug（流水线改造后） | 13.7MB/s | 7.9MB/s |
+| termX release（本次，100MB） | **127.55MB/s（0.784s）** | **58.51MB/s（1.709s）** |
+| Netcatty（ssh2-sftp-client 64×32KB） | 155MB/s（0.645s） | 68MB/s（1.46s） |
+
+- 根因：此前「十几秒」的实测来自 **debug 构建**（`opt-level=0`，加解密/协议路径未优化）。同机同文件 release 达 Netcatty 的 82% / 86%，满足「几秒内传完」。
+- 代码侧已完成连续流水线（16 句柄 × 64KB、完成即补、无整批栅栏）；release 窗口扫描：1 → 37/17MB/s，4 → 120/60，16（默认）→ 135/63，64 → 133/60；块 32KB/128KB 无增益。故不再调窗口/包大小。
+- 证据：`evidence/bench-sftp-baseline.mjs`、`bench-ssh2-params.mjs`、`bench-sftp-sweep.mjs`。
+
+### 5. 门禁
+
+- `npm run test:run` 65 文件 / 795 用例 ✓；`npm run build` ✓；`cargo check --no-default-features` ✓；`cargo build --release` ✓。
+
+### 6. 未完成 / 外部条件
+
+- **Netcatty 实机并排截图未取得**：本机 Netcatty 进程未以 `--remote-debugging-port` 启动（无 CDP），窗口被他窗口遮挡且当前仅有本地 shell、未配置 129 主机；若重启其 UI 进行主机配置会干扰用户正在使用的实例。字段/尺寸对照已以 Netcatty 源码与 DOM 规格逐项核对（见第 1 节表格），实机并排截图留待 Netcatty 可自动化时补。
+- 断点续传不支持跨应用重启（已按用户要求改为 UI 明确标注，而非静默假装续传）。
+

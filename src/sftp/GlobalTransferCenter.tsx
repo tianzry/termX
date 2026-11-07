@@ -53,7 +53,7 @@ export function GlobalTransferCenter() {
   const popoverRef = useRef<HTMLDivElement>(null);
 
   // 弹窗关闭时不订阅字节进度，避免每 32K 一次重渲染顶栏。
-  const { items, progress, refresh } = useSftpTransferQueue({
+  const { items, progress, speed, refresh } = useSftpTransferQueue({
     subscribeProgress: open,
   });
   const badge = transferBadge(items);
@@ -232,6 +232,8 @@ export function GlobalTransferCenter() {
             <TransferQueueList
               items={displayed}
               progress={progress}
+              speed={speed}
+              variant="center"
               onError={setError}
             />
           )}

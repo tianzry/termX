@@ -11,6 +11,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../backend/client";
 import type { TransferItem, TransferProgress } from "../backend/client";
+import { averageSpeed } from "../domain/transferQueue";
+import type { SpeedSample } from "../domain/transferQueue";
 
 /** 终态（不需要再收字节进度）的状态集合。 */
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
@@ -20,9 +22,14 @@ const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   "skipped",
 ]);
 
+/** 速率滑动窗口（对齐 Netcatty 的稳定速度采样，避免每帧乱跳）。 */
+const SPEED_WINDOW_MS = 3000;
+
 export interface SftpTransferQueueFeed {
   items: TransferItem[];
   progress: Record<string, TransferProgress>;
+  /** 每项滑动平均速率（bytes/s）；终态不再更新，组件按状态决定是否展示。 */
+  speed: Record<string, number>;
   /** 一次性对账快照（打开弹窗时用；不轮询）。 */
   refresh: () => void;
 }
@@ -32,6 +39,7 @@ export function useSftpTransferQueue({
 }: { subscribeProgress?: boolean } = {}): SftpTransferQueueFeed {
   const [items, setItems] = useState<TransferItem[]>([]);
   const [progress, setProgress] = useState<Record<string, TransferProgress>>({});
+  const [speed, setSpeed] = useState<Record<string, number>>({});
   const refresh = useCallback(() => {
     void api.sftpTransferList().then(setItems).catch(() => {});
   }, []);
@@ -122,17 +130,33 @@ export function useSftpTransferQueue({
   const liveActive = useRef(new Set<string>());
   /** 未落盘的进度（每帧最多合并一次 setState）。 */
   const pendingProgress = useRef(new Map<string, TransferProgress>());
+  /** 每项速率采样（滑动窗口），与进度同帧合并。 */
+  const speedSamples = useRef(new Map<string, SpeedSample[]>());
+  const pendingSpeed = useRef(new Map<string, number>());
   const progressFrame = useRef<number | null>(null);
   const flushProgress = useCallback(() => {
     progressFrame.current = null;
-    if (pendingProgress.current.size === 0) return;
+    if (pendingProgress.current.size === 0 && pendingSpeed.current.size === 0) {
+      return;
+    }
     const patch = pendingProgress.current;
     pendingProgress.current = new Map();
-    setProgress((prev) => {
-      const next = { ...prev };
-      for (const [id, p] of patch) next[id] = p;
-      return next;
-    });
+    const speedPatch = pendingSpeed.current;
+    pendingSpeed.current = new Map();
+    if (patch.size > 0) {
+      setProgress((prev) => {
+        const next = { ...prev };
+        for (const [id, p] of patch) next[id] = p;
+        return next;
+      });
+    }
+    if (speedPatch.size > 0) {
+      setSpeed((prev) => {
+        const next = { ...prev };
+        for (const [id, v] of speedPatch) next[id] = v;
+        return next;
+      });
+    }
   }, []);
   useEffect(() => {
     const subs = progressSubs.current;
@@ -140,10 +164,13 @@ export function useSftpTransferQueue({
     if (!subscribeProgress) {
       liveActive.current = new Set();
       pendingProgress.current.clear();
+      pendingSpeed.current.clear();
+      speedSamples.current.clear();
       if (subs.size > 0) {
         for (const u of subs.values()) u();
         subs.clear();
         setProgress({});
+        setSpeed({});
       }
       return;
     }
@@ -157,6 +184,15 @@ export function useSftpTransferQueue({
         // 后端每 32K 发一条（已按 200ms 节流）；再按 rAF 合并成每帧一次
         // setState，避免一次传输把整个队列组件重渲染几百次。
         pendingProgress.current.set(id, p);
+        const now =
+          typeof performance !== "undefined" ? performance.now() : Date.now();
+        const list = speedSamples.current.get(id) ?? [];
+        list.push({ at: now, bytes: p.transferred });
+        // 只保留窗口内样本（+1 个窗口外样本作为差分起点）。
+        const cutoff = now - SPEED_WINDOW_MS;
+        while (list.length > 2 && list[0].at < cutoff) list.shift();
+        speedSamples.current.set(id, list);
+        pendingSpeed.current.set(id, averageSpeed(list, SPEED_WINDOW_MS));
         if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
           if (progressFrame.current === null) {
             progressFrame.current = window.requestAnimationFrame(flushProgress);
@@ -169,23 +205,43 @@ export function useSftpTransferQueue({
         else subs.set(id, u);
       });
     }
-    const stale: string[] = [];
     for (const [id, u] of subs) {
       if (!activeIds.has(id)) {
         u();
         subs.delete(id);
-        pendingProgress.current.delete(id);
-        stale.push(id);
+        // 终态保留最后一帧进度与速率：完成后显示最终大小 / 100%，
+        // 不因退订而回退到空进度条。
       }
     }
-    if (stale.length > 0) {
-      setProgress((prev) => {
-        const next = { ...prev };
-        for (const id of stale) delete next[id];
-        return next;
-      });
-    }
   }, [items, subscribeProgress, flushProgress]);
+
+  // 已从队列中彻底移除（dismiss / clear finished）的项：连同进度与速率一起清理。
+  useEffect(() => {
+    const allIds = new Set(items.map((i) => i.id));
+    for (const id of [...speedSamples.current.keys()]) {
+      if (!allIds.has(id)) speedSamples.current.delete(id);
+    }
+    for (const id of [...pendingProgress.current.keys()]) {
+      if (!allIds.has(id)) pendingProgress.current.delete(id);
+    }
+    for (const id of [...pendingSpeed.current.keys()]) {
+      if (!allIds.has(id)) pendingSpeed.current.delete(id);
+    }
+    setProgress((prev) => {
+      const keys = Object.keys(prev);
+      if (!keys.some((id) => !allIds.has(id))) return prev;
+      const next = { ...prev };
+      for (const id of keys) if (!allIds.has(id)) delete next[id];
+      return next;
+    });
+    setSpeed((prev) => {
+      const keys = Object.keys(prev);
+      if (!keys.some((id) => !allIds.has(id))) return prev;
+      const next = { ...prev };
+      for (const id of keys) if (!allIds.has(id)) delete next[id];
+      return next;
+    });
+  }, [items]);
 
   // 卸载：释放全部订阅。
   useEffect(() => {
@@ -205,5 +261,5 @@ export function useSftpTransferQueue({
     };
   }, []);
 
-  return { items, progress, refresh };
+  return { items, progress, speed, refresh };
 }

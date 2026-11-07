@@ -74,7 +74,7 @@ function clampConcurrency(n: number): number {
 }
 
 export function SftpQueuePanel() {
-  const { items, progress } = useSftpTransferQueue();
+  const { items, progress, speed } = useSftpTransferQueue();
   // 并发数由设置中心「SFTP」tab 持有（单一来源），此处只做展示与调整入口。
   const settings = useSettings();
   const concurrency = settings.sftpTransferConcurrency;
@@ -214,7 +214,13 @@ export function SftpQueuePanel() {
         </div>
       </div>
 
-      <TransferQueueList items={sorted} progress={progress} onError={setError} />
+      <TransferQueueList
+        items={sorted}
+        progress={progress}
+        speed={speed}
+        variant="panel"
+        onError={setError}
+      />
 
       {activeConflict && (
         <SftpConflictDialog

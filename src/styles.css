@@ -4545,26 +4545,77 @@ button:disabled {
 
 .nc-sftp-queue-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 12px;
+  flex-direction: column;
+  padding: 10px 12px;
   font-size: 11px;
   color: hsl(var(--foreground));
   min-width: 0;
+  border-top: 1px solid hsl(var(--border) / 0.4);
+  background: hsl(var(--background) / 0.6);
+}
+
+.nc-sftp-queue-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nc-sftp-queue-statusbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  transform: translateY(-1px);
 }
 
 .nc-sftp-queue-dir {
   color: hsl(var(--muted-foreground));
   display: flex;
+  flex-shrink: 0;
 }
 
 .nc-sftp-queue-name {
-  max-width: 220px;
-  /* 侧栏窄宽度下允许压缩到 0，否则 nowrap 的最小内容宽度会把整行撑溢出。 */
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
   min-width: 0;
+  max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.nc-sftp-queue-arrow {
+  color: hsl(var(--muted-foreground) / 0.7);
+  flex-shrink: 0;
+}
+
+.nc-sftp-queue-target {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-sftp-queue-summary {
+  margin-left: auto;
+  max-width: 50%;
+  min-width: 0;
+  text-align: right;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nc-sftp-queue-size {
@@ -4575,23 +4626,188 @@ button:disabled {
 }
 
 .nc-sftp-queue-bar {
-  flex: 1;
-  min-width: 24px;
-  height: 4px;
-  background: hsl(var(--muted));
-  border-radius: 2px;
+  height: 6px;
+  background: hsl(var(--muted) / 0.8);
   overflow: hidden;
+}
+
+.nc-sftp-queue-bar-indent {
+  margin: 8px 0 0 28px;
 }
 
 .nc-sftp-queue-fill {
   height: 100%;
   background: hsl(var(--primary));
-  transition: width 0.2s linear;
+  transition: width 220ms linear;
 }
 
 .nc-sftp-queue-fill.indeterminate {
   width: 100%;
   animation: nc-sftp-queue-pulse 1.2s ease-in-out infinite;
+}
+
+.nc-sftp-queue-row[data-transfer-status="queued"] .nc-sftp-queue-fill {
+  background: hsl(var(--muted-foreground) / 0.5);
+  animation: nc-sftp-queue-pulse 1.2s ease-in-out infinite;
+}
+
+.nc-sftp-queue-row[data-transfer-status="paused"] .nc-sftp-queue-fill,
+.nc-sftp-queue-row[data-transfer-status="conflict"] .nc-sftp-queue-fill {
+  background: #d97706;
+}
+
+.nc-sftp-queue-footnote {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  min-width: 0;
+}
+
+.nc-sftp-queue-footnote.err {
+  color: hsl(var(--destructive));
+}
+
+/* ── 顶栏传输中心行（对齐 Netcatty GlobalSftpTransferCenter） ── */
+
+.nc-sftp-center-row {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: hsl(var(--foreground));
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+  min-width: 0;
+}
+
+.nc-sftp-center-row:last-child {
+  border-bottom: 0;
+}
+
+.nc-sftp-center-row:hover {
+  background: hsl(var(--muted) / 0.3);
+}
+
+.nc-sftp-center-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.nc-sftp-center-icon {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  flex-shrink: 0;
+}
+
+.nc-sftp-center-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.nc-sftp-center-name {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-sftp-center-paths {
+  margin-top: 2px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-sftp-center-barwrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.nc-sftp-center-barwrap .nc-sftp-queue-bar {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  border-radius: 999px;
+}
+
+.nc-sftp-center-barwrap .nc-sftp-queue-fill {
+  border-radius: 999px;
+}
+
+.nc-sftp-center-pct {
+  width: 48px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.nc-sftp-center-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+  min-width: 0;
+}
+
+.nc-sftp-center-state {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nc-sftp-center-row[data-transfer-status="failed"] .nc-sftp-center-state,
+.nc-sftp-center-row[data-transfer-status="conflict"] .nc-sftp-center-state {
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-center-detail {
+  min-width: 0;
+  max-width: 70%;
+  flex-shrink: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.nc-sftp-center-error {
+  margin-top: 4px;
+  font-size: 10px;
+  color: hsl(var(--destructive));
+}
+
+.nc-sftp-center-row[data-transfer-status="failed"] .nc-sftp-queue-fill {
+  background: hsl(var(--destructive));
+}
+
+.nc-sftp-center-row[data-transfer-status="paused"] .nc-sftp-queue-fill,
+.nc-sftp-center-row[data-transfer-status="conflict"] .nc-sftp-queue-fill {
+  background: #d97706;
 }
 
 .nc-sftp-queue-pct {
@@ -4635,6 +4851,15 @@ button:disabled {
 
 .nc-sftp-queue-btn:hover {
   color: hsl(var(--foreground));
+}
+
+.nc-sftp-queue-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.nc-sftp-queue-btn:disabled:hover {
+  color: hsl(var(--muted-foreground));
 }
 
 .nc-sftp-queue-btn.danger:hover {
@@ -4826,8 +5051,8 @@ button:disabled {
   overflow-y: auto;
 }
 
-.nc-transfer-center .nc-sftp-queue-row {
-  padding: 6px 14px;
+.nc-transfer-center .nc-sftp-center-row {
+  padding: 10px 14px;
 }
 
 .nc-transfer-center-empty {
