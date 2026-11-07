@@ -24,6 +24,19 @@ const TYPE_LABEL: Record<string, string> = {
   dynamic: "SOCKS5",
 };
 
+const STATUS_LABEL: Record<string, string> = {
+  starting: "连接中",
+  active: "运行中",
+  stopped: "未启动",
+  error: "错误",
+  stopping_error: "停止失败",
+};
+
+/** 规则/条目运行态文案（后端返回 snake_case 状态）；未知状态原样展示。 */
+export function forwardStatusLabel(status: string): string {
+  return STATUS_LABEL[status] ?? status;
+}
+
 export function ruleLabel(rule: Forward["rules"][number]): string {
   const type = TYPE_LABEL[rule.type] ?? rule.type;
   // 自定义监听地址（Netcatty bindAddress）直接展示；空 = 默认 loopback / sshd 默认。

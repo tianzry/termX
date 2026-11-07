@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import * as api from "./backend/client";
+import { forwardStatusLabel } from "./domain/forwardOverview";
 import { userVisibleError } from "./domain/sshErrors";
 import type { Forward, ForwardRule, ForwardStats } from "./backend/client";
 import { ForwardForm, type ForwardDraft } from "./ForwardForm";
@@ -68,27 +69,49 @@ export function ForwardPanel() {
     void refresh();
   }, []);
 
-  // 有运行中条目时 2s 轮询统计（对齐 Netcatty 的运行态自动刷新），不打断 busy。
+  // 有转发条目时 2s 轮询运行态（对齐 Netcatty 的运行态自动刷新），不打断 busy。
+  // 只轮询 stats 不够：意外断线后监督器会换一个 active_id 重新拉起，这里必须
+  // 同时对齐 active 列表，否则侧栏会一直停在“已断开”。
   const activeKey = Object.values(active)
     .map((a) => a.activeId)
     .join(",");
+  const forwardKey = forwards.map((f) => f.id).join(",");
   useEffect(() => {
-    if (!activeKey) return;
+    if (!forwardKey && !activeKey) return;
     let cancelled = false;
+    let syncing = false;
     const tick = async () => {
-      const snap = Object.entries(active);
-      for (const [fid, info] of snap) {
-        try {
-          const s = await api.forwardStats(info.activeId);
-          if (cancelled) return;
-          setActive((prev) =>
-            prev[fid]?.activeId === info.activeId
-              ? { ...prev, [fid]: { ...prev[fid], stats: s } }
-              : prev,
-          );
-        } catch {
-          /* 会话已断开时忽略，等待下一次 refresh */
+      if (syncing) return;
+      syncing = true;
+      try {
+        const act = await api.forwardActiveList();
+        if (cancelled) return;
+        const backend = act.map((a) => `${a.forward_id}:${a.active_id}`).sort().join(",");
+        const current = Object.entries(active)
+          .map(([fid, info]) => `${fid}:${info.activeId}`)
+          .sort()
+          .join(",");
+        if (backend !== current || act.some((a) => !a.stats.connected)) {
+          await refresh();
+          return;
         }
+        for (const [fid, info] of Object.entries(active)) {
+          try {
+            const s = await api.forwardStats(info.activeId);
+            if (cancelled) return;
+            setActive((prev) =>
+              prev[fid]?.activeId === info.activeId
+                ? { ...prev, [fid]: { ...prev[fid], stats: s } }
+                : prev,
+            );
+          } catch {
+            /* 会话刚断开：下一轮 active 列表对齐时处理 */
+          }
+        }
+      } catch {
+        /* 后端暂不可用：下一轮重试 */
+      } finally {
+        syncing = false;
       }
     };
     const timer = setInterval(() => void tick(), 2000);
@@ -97,7 +120,7 @@ export function ForwardPanel() {
       clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeKey]);
+  }, [activeKey, forwardKey]);
 
   /** 表单校验已在 ForwardForm 内完成，这里只落库并刷新。 */
   async function submitDraft(draft: ForwardDraft) {
@@ -367,7 +390,7 @@ export function ForwardPanel() {
                       }}
                     >
                       <span className="fwd-tag" data-status={status}>
-                        {status === "stopped" ? "未启动" : status}
+                        {forwardStatusLabel(status)}
                       </span>
                       <span style={{ color: "hsl(var(--foreground))", fontWeight: 500 }}>
                         {RULE_TYPE_LABEL[r.type]}
@@ -384,7 +407,9 @@ export function ForwardPanel() {
                         </span>
                       )}
                       {rs?.error && (
-                        <span style={{ color: "hsl(var(--destructive))" }}>{rs.error}</span>
+                        <span style={{ color: "hsl(var(--destructive))" }}>
+                          {userVisibleError(rs.error)}
+                        </span>
                       )}
                       {info && (
                         <>

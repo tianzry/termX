@@ -67,6 +67,25 @@ export function resetForwardSupervisorForTest(): void {
 }
 
 /**
+ * 把 `forward_active_list` 拆成「信道仍正常」与「会话已断但仍占在 registry 里」。
+ *
+ * 后者是意外断线（远端 sshd 被杀 / 网络断）留下的僵尸条目：后端只在
+ * `stats.connected` 置 false、规则置 error，不会自动从 active_forwards 移除。
+ * 若把它当成“运行中”，监督器永远不会重拉，auto_reconnect 形同虚设。
+ */
+export function splitActiveForwards(
+  active: api.ActiveForwardInfo[],
+): { live: Set<string>; stale: string[] } {
+  const live = new Set<string>();
+  const stale: string[] = [];
+  for (const info of active) {
+    if (info.stats.connected) live.add(info.forward_id);
+    else stale.push(info.active_id);
+  }
+  return { live, stale };
+}
+
+/**
  * 一轮调度：返回本轮应调用 `forward_start` 的条目 id。
  * `activeIds` 来自 `forward_active_list`；`launching` 防止上一轮启动未完成时重复拉起。
  */
@@ -114,8 +133,14 @@ export function useForwardSupervisor(): void {
           api.forwardActiveList(),
         ]);
         if (stopped) return;
-        const activeIds = new Set(active.map((info) => info.forward_id));
-        const launches = planForwardTick(forwards, activeIds, state, launching);
+        const { live, stale } = splitActiveForwards(active);
+        // 僵尸会话必须先收掉，否则下一轮仍被算作运行中。等待 stop 返回再启动，
+        // 尽量减少「旧 listener 还没释放、新实例又绑定同端口」的窗口。
+        if (stale.length) {
+          await Promise.allSettled(stale.map((activeId) => api.forwardStop(activeId)));
+          if (stopped) return;
+        }
+        const launches = planForwardTick(forwards, live, state, launching);
         for (const id of launches) {
           launching.add(id);
           void api

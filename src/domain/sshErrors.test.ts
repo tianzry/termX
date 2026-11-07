@@ -90,6 +90,21 @@ describe("userVisibleError", () => {
     ).toContain("单层文件名");
   });
 
+  it("端口转发绑定/冲突错误码映射为中文", () => {
+    expect(
+      userVisibleError('__termx_err__|{"code":"ssh_port_bind_failed","params":{"port":19022,"err":"Address already in use (os error 10048)"}}'),
+    ).toBe("本地端口 19022 绑定失败（127.0.0.1）：Address already in use (os error 10048)");
+    expect(
+      userVisibleError('__termx_err__|{"code":"ssh_port_bind_failed","params":{"port":19022,"addr":"0.0.0.0","err":"denied"}}'),
+    ).toBe("本地端口 19022 绑定失败（0.0.0.0）：denied");
+    expect(
+      userVisibleError('__termx_err__|{"code":"ssh_tcpip_forward_failed","params":{"err":"administratively prohibited"}}'),
+    ).toContain("远端端口转发失败");
+    expect(
+      userVisibleError('__termx_err__|{"code":"fwd_duplicate_remote_port","params":{"port":8080}}'),
+    ).toContain("8080");
+  });
+
   it("未知 code 回退 params.err，再回退泛化文案", () => {
     expect(
       userVisibleError('__termx_err__|{"code":"not_a_real_code","params":{"err":"boom"}}'),

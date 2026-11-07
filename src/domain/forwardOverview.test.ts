@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   activeFor,
   formatBytes,
+  forwardStatusLabel,
   forwardSummary,
   groupForwardsByHost,
   ruleLabel,
@@ -14,6 +15,17 @@ const forward = (id: string, profile_id: string, name: string): Forward => ({
   profile_id,
   group_id: null,
   rules: [],
+});
+
+describe("forwardStatusLabel", () => {
+  it("把后端的 snake_case 运行态翻成中文，未知状态原样返回", () => {
+    expect(forwardStatusLabel("starting")).toBe("连接中");
+    expect(forwardStatusLabel("active")).toBe("运行中");
+    expect(forwardStatusLabel("stopped")).toBe("未启动");
+    expect(forwardStatusLabel("error")).toBe("错误");
+    expect(forwardStatusLabel("stopping_error")).toBe("停止失败");
+    expect(forwardStatusLabel("weird")).toBe("weird");
+  });
 });
 
 describe("forwardOverview", () => {

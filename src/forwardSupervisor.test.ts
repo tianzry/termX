@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Forward } from "./backend/client";
+import type { ActiveForwardInfo, Forward } from "./backend/client";
 import {
   FORWARD_RECONNECT_LIMIT,
   createForwardSupervisorState,
@@ -8,7 +8,14 @@ import {
   noteForwardStopped,
   planForwardTick,
   resetForwardSupervisorForTest,
+  splitActiveForwards,
 } from "./forwardSupervisor";
+
+const activeInfo = (forward_id: string, connected: boolean): ActiveForwardInfo => ({
+  active_id: `a-${forward_id}`,
+  forward_id,
+  stats: { bytes_tx: 0, bytes_rx: 0, connections: 0, connected, rules: [] },
+});
 
 const forward = (patch: Partial<Forward> = {}): Forward => ({
   id: "f1",
@@ -90,6 +97,28 @@ describe("planForwardTick", () => {
     }
     expect(runs.filter((n) => n === 1)).toHaveLength(FORWARD_RECONNECT_LIMIT);
     expect(state.desired.has("f1")).toBe(true);
+  });
+
+  it("信道已断的僵尸会话不计入运行中，能触发重连", () => {
+    const state = currentForwardSupervisorState();
+    noteForwardStarted("f1");
+    noteForwardStarted("f2");
+    const { live, stale } = splitActiveForwards([
+      activeInfo("f1", true),
+      activeInfo("f2", false),
+    ]);
+    expect(live).toEqual(new Set(["f1"]));
+    expect(stale).toEqual(["a-f2"]);
+
+    // f2 断线后重连；f1 仍活着，不被重复拉起。
+    expect(
+      planForwardTick(
+        [forward({ id: "f1", auto_reconnect: true }), forward({ id: "f2", auto_reconnect: true })],
+        live,
+        state,
+        new Set(),
+      ),
+    ).toEqual(["f2"]);
   });
 
   it("启动进行中的条目不重复拉起", () => {

@@ -218,6 +218,16 @@ const ERROR_MESSAGES: Record<
   serde_failed: (p) => `数据解析失败：${str(p, "err")}`,
   fwd_session_closed: () => "端口转发会话已关闭。",
   fwd_rule_stopped_unexpectedly: () => "端口转发规则意外停止。",
+  fwd_rule_not_found: () => "未找到端口转发规则。",
+  fwd_rules_empty: () => "端口转发至少需要一条规则。",
+  fwd_duplicate_remote_port: (p) => `远端端口 ${str(p, "port")} 已被本条目其他规则占用。`,
+  fwd_multiple_dynamic_remote_ports: () => "同一转发条目最多只能有一条动态远端端口规则。",
+  ssh_port_bind_failed: (p) => {
+    const addr = str(p, "addr") || "127.0.0.1";
+    return `本地端口 ${str(p, "port")} 绑定失败（${addr}）：${str(p, "err") || "地址已被占用"}`;
+  },
+  ssh_tcpip_forward_failed: (p) => `远端端口转发失败：${str(p, "err") || "服务器拒绝请求"}`,
+  ssh_cancel_tcpip_forward_failed: (p) => `取消远端端口转发失败：${str(p, "err") || "服务器拒绝请求"}`,
   // ── 更新检查 ──
   update_invalid_endpoint: () => "更新源地址无效（需要 http/https URL）。",
   update_http_failed: () => "无法访问更新源，请检查网络或地址。",

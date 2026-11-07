@@ -9,6 +9,7 @@ import * as api from "./backend/client";
 import { userVisibleError } from "./domain/sshErrors";
 import {
   activeFor,
+  forwardStatusLabel,
   forwardSummary,
   groupForwardsByHost,
   ruleLabel,
@@ -587,7 +588,7 @@ export function ForwardOverview() {
                                     : "hsl(var(--muted-foreground))",
                               }}
                             >
-                              {ruleStatus === "stopped" ? "未启动" : ruleStatus}
+                              {forwardStatusLabel(ruleStatus)}
                             </span>
                             <span style={{ color: "hsl(var(--foreground))" }}>
                               {ruleLabel(rule)}
@@ -596,11 +597,13 @@ export function ForwardOverview() {
                               <span>实际端口 {rs.effective_port}</span>
                             )}
                             {rs?.error && (
-                              <span style={{ color: "hsl(var(--destructive))" }}>{rs.error}</span>
+                              <span style={{ color: "hsl(var(--destructive))" }}>
+                                {userVisibleError(rs.error)}
+                              </span>
                             )}
                             {rs && (
                               <span>
-                                {rs.status}
+                                {forwardStatusLabel(rs.status)}
                                 {rs.connections > 0 ? ` · ${rs.connections} 连接` : ""}
                               </span>
                             )}
