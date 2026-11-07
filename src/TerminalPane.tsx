@@ -60,6 +60,8 @@ import {
   SNIPPETS_CHANGED_EVENT,
   isScriptSnippet,
   parseShortkey,
+  parseSnippetVariables,
+  previewSnippetCommand,
   resolveScriptTrigger,
   shortkeyMatches,
   snippetWritePlan,
@@ -367,6 +369,14 @@ export function TerminalPane({
   const [disconnectedDismissed, setDisconnectedDismissed] = useState(false);
   const [hostKeyInfo, setHostKeyInfo] = useState<HostKeyInfo | null>(null);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
+  /**
+   * 快捷键插入含 {{变量}} 的片段：先收集取值再写入。
+   * 与脚本页运行入口保持一致，避免把占位符原样发给 shell。
+   */
+  const [snippetVarPrompt, setSnippetVarPrompt] = useState<{
+    snippet: api.Snippet;
+    values: Record<string, string>;
+  } | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -877,6 +887,17 @@ export function TerminalPane({
   };
   // 句柄在注册时是稳定闭包，需通过 ref 拿到最新的连接状态与发送链路。
   runSnippetRef.current = insertSnippet;
+
+  /** 快捷键片段变量：填值后替换占位符再写入。 */
+  const submitSnippetVarPrompt = () => {
+    const pending = snippetVarPrompt;
+    if (!pending) return;
+    setSnippetVarPrompt(null);
+    insertSnippet({
+      ...pending.snippet,
+      command: previewSnippetCommand(pending.snippet.command, pending.values),
+    });
+  };
 
   /** 输入缓冲：命令历史与脚本录制共用；开始录制时清空步数。 */
   const inputBufferRef = useRef<ScriptRecordingBuffer>(createScriptRecordingBuffer());
@@ -3341,6 +3362,16 @@ export function TerminalPane({
         if (!hit) return;
         e.preventDefault();
         e.stopPropagation();
+        const vars = parseSnippetVariables(hit.command);
+        if (vars.length > 0) {
+          setSnippetVarPrompt({
+            snippet: hit,
+            values: Object.fromEntries(
+              vars.map((v) => [v.name, v.defaultValue ?? ""]),
+            ),
+          });
+          return;
+        }
         insertSnippet(hit);
       }}
     >
@@ -4455,6 +4486,38 @@ export function TerminalPane({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {snippetVarPrompt && (
+        <div className="modal-mask" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="modal">
+            <h3>填写变量</h3>
+            {Object.entries(snippetVarPrompt.values).map(([name, value], i) => (
+              <label key={name}>
+                {name}
+                <input
+                  type="text"
+                  autoFocus={i === 0}
+                  value={value}
+                  onChange={(e) =>
+                    setSnippetVarPrompt((cur) =>
+                      cur
+                        ? {
+                            ...cur,
+                            values: { ...cur.values, [name]: e.target.value },
+                          }
+                        : cur,
+                    )
+                  }
+                />
+              </label>
+            ))}
+            <div className="modal-actions">
+              <button onClick={submitSnippetVarPrompt}>运行</button>
+              <button onClick={() => setSnippetVarPrompt(null)}>取消</button>
+            </div>
           </div>
         </div>
       )}

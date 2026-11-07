@@ -13,7 +13,7 @@
 // - Snippet 无时间戳字段，newest / oldest 用数组顺序近似；
 // - 脚本语言仅 shell（nct.* JS 运行时未移植）。
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from "react";
 import {
   Check,
   CheckSquare,
@@ -57,6 +57,7 @@ import {
   formatShortkeyEvent,
   parseShortkey,
   parseSnippetVariables,
+  previewSnippetCommand,
   renameSnippetPackage,
   resolveScriptTrigger,
   scriptTriggerNote,
@@ -75,6 +76,9 @@ import "./snippets.css";
 
 type SnippetKind = "" | "script";
 type RunMode = "" | "paste" | "lineDelay";
+
+/** 拖拽载荷类型：把条目拖到分组卡片 / 面包屑上移动所属分组。 */
+const SNIPPET_DRAG_MIME = "application/x-termx-snippet";
 type ViewMode = "list" | "grid";
 
 type Draft = {
@@ -186,6 +190,11 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   const [scriptExpanded, setScriptExpanded] = useState(false);
   const [recording, setRecording] = useState(false);
   const [run, setRun] = useState<{ name: string; paneId: string } | null>(null);
+  const [varPrompt, setVarPrompt] = useState<{
+    snippet: Snippet;
+    fromPanel: boolean;
+    values: Record<string, string>;
+  } | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   /** 最新待提交/已提交列表：并发操作按它做增量，避免用过期快照覆盖。 */
   const latestRef = useRef<Snippet[]>([]);
@@ -289,6 +298,26 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   const packageTree = useMemo(() => buildSnippetPackageTree(snippets), [snippets]);
   const breadcrumb = useMemo(() => snippetBreadcrumb(pkgFilter), [pkgFilter]);
 
+  /** 把条目拖进分组卡片 / 「全部分组」面包屑即可移动（空组 = 未分组）。 */
+  const moveSnippetToPackage = (id: string, pkg: string) => {
+    const current = snippets.find((s) => s.id === id);
+    if (!current || (current.package || "").trim() === pkg) return;
+    persist((prev) => prev.map((s) => (s.id === id ? { ...s, package: pkg } : s)));
+    setNotice(`已移动到「${pkg || "未分组"}」`);
+  };
+  const dragOverPackage = (event: ReactDragEvent) => {
+    if (!event.dataTransfer.types.includes(SNIPPET_DRAG_MIME)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  };
+  const dropOnPackage = (event: ReactDragEvent, pkg: string) => {
+    if (!event.dataTransfer.types.includes(SNIPPET_DRAG_MIME)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const id = event.dataTransfer.getData(SNIPPET_DRAG_MIME);
+    if (id) moveSnippetToPackage(id, pkg);
+  };
+
   const filtered = useMemo(() => filterSnippets(snippets, query), [snippets, query]);
   const scoped = useMemo(() => {
     if (!pkgFilter) return filtered;
@@ -330,6 +359,16 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
     setDraft(toDraft(s));
   };
 
+  const sendSnippet = (s: Snippet, fromPanel = false) => {
+    if (!activeHandle?.runSnippet(s)) {
+      setNotice("脚本未能发送：终端未就绪。");
+      return;
+    }
+    setRun({ name: s.name, paneId: activeHandle.paneId });
+    setNotice(`已在活动终端运行「${s.name}」`);
+    if (fromPanel) setIsNew(false);
+  };
+
   const runScript = (s: Snippet, fromPanel = false) => {
     if (!activeHandle) {
       setNotice("先在终端打开一个已连接的会话，再回来运行脚本。");
@@ -339,13 +378,28 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
       setNotice("活动终端当前未连接，无法运行脚本。");
       return;
     }
-    if (!activeHandle.runSnippet(s)) {
-      setNotice("脚本未能发送：终端未就绪。");
+    // 命令里含 {{变量}} 时先收集取值，再替换成真实命令发送；缺省值预填。
+    const vars = parseSnippetVariables(s.command);
+    if (vars.length > 0) {
+      setVarPrompt({
+        snippet: s,
+        fromPanel,
+        values: Object.fromEntries(vars.map((v) => [v.name, v.defaultValue ?? ""])),
+      });
       return;
     }
-    setRun({ name: s.name, paneId: activeHandle.paneId });
-    setNotice(`已在活动终端运行「${s.name}」`);
-    if (fromPanel) setIsNew(false);
+    sendSnippet(s, fromPanel);
+  };
+
+  const confirmVarPrompt = () => {
+    if (!varPrompt) return;
+    const filled: Snippet = {
+      ...varPrompt.snippet,
+      command: previewSnippetCommand(varPrompt.snippet.command, varPrompt.values),
+    };
+    const prompt = varPrompt;
+    setVarPrompt(null);
+    sendSnippet(filled, prompt.fromPanel);
   };
 
   const controlRun = (action: "stop" | "pause" | "resume") => {
@@ -561,6 +615,11 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
           isSelected ? " is-selected" : ""
         }${draft?.id === s.id ? " is-active" : ""}`}
         data-snippet-id={s.id}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(SNIPPET_DRAG_MIME, s.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
         onClick={() => (multiSelect ? toggleSelected(s.id) : openEdit(s))}
         onContextMenu={(e) => openCtx(e, { type: "snippet", id: s.id })}
       >
@@ -603,6 +662,8 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
     <div
       key={p.path}
       className={`sn-row sn-pkg ${viewMode === "grid" ? "is-grid" : "is-list"}`}
+      onDragOver={dragOverPackage}
+      onDrop={(e) => dropOnPackage(e, p.path)}
       onClick={() => setPkgFilter(p.path)}
       onContextMenu={(e) => openCtx(e, { type: "package", path: p.path })}
     >
@@ -812,11 +873,23 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
         )}
 
         <div className="sn-breadcrumb">
-          <button onClick={() => setPkgFilter("")}>全部分组</button>
+          <button
+            onDragOver={dragOverPackage}
+            onDrop={(e) => dropOnPackage(e, "")}
+            onClick={() => setPkgFilter("")}
+          >
+            全部分组
+          </button>
           {breadcrumb.map((b) => (
             <span key={b.path}>
               <span className="sn-crumb-sep">/</span>
-              <button onClick={() => setPkgFilter(b.path)}>{b.name}</button>
+              <button
+                onDragOver={dragOverPackage}
+                onDrop={(e) => dropOnPackage(e, b.path)}
+                onClick={() => setPkgFilter(b.path)}
+              >
+                {b.name}
+              </button>
             </span>
           ))}
         </div>
@@ -1206,6 +1279,47 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
             <footer>
               <button className="sn-btn" onClick={() => setScriptExpanded(false)}>
                 关闭
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {varPrompt && (
+        <div className="sn-modal-backdrop" onClick={() => setVarPrompt(null)}>
+          <div className="sn-modal" onClick={(e) => e.stopPropagation()}>
+            <header>
+              <h3>填写变量</h3>
+              <button className="sn-icon-btn" onClick={() => setVarPrompt(null)}>
+                <X size={16} />
+              </button>
+            </header>
+            <div className="sn-var-list">
+              <p className="sn-hint">
+                运行「{varPrompt.snippet.name}」前请填写命令里的变量。
+              </p>
+              {Object.entries(varPrompt.values).map(([name, value]) => (
+                <label key={name} className="sn-var-row">
+                  <span>{name}</span>
+                  <input
+                    className="sn-input"
+                    value={value}
+                    autoFocus
+                    onChange={(e) =>
+                      setVarPrompt((prev) =>
+                        prev ? { ...prev, values: { ...prev.values, [name]: e.target.value } } : prev,
+                      )
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+            <footer>
+              <button className="sn-btn" onClick={() => setVarPrompt(null)}>
+                取消
+              </button>
+              <button className="sn-btn is-primary" onClick={confirmVarPrompt}>
+                运行
               </button>
             </footer>
           </div>
