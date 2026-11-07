@@ -3501,16 +3501,16 @@ export function VaultView({
         <span className="vault-host-card-main">
           <strong>{p.name}</strong>
           <span className="vault-host-card-sub">{subtitle(p)}</span>
-          {ownTags.length > 0 && (
-            <span className="vault-host-tags">
-              {ownTags.slice(0, 3).map((t) => (
-                <span key={t} className="vault-host-tag">
-                  {t}
-                </span>
-              ))}
-            </span>
-          )}
         </span>
+        {ownTags.length > 0 && (
+          <span className="vault-host-tags">
+            {ownTags.slice(0, 3).map((t) => (
+              <span key={t} className="vault-host-tag">
+                {t}
+              </span>
+            ))}
+          </span>
+        )}
         {!selectMode && (
           <button
             className="vault-host-edit"

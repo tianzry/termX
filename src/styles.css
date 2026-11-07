@@ -9388,15 +9388,20 @@ button:disabled {
   background: hsl(var(--primary) / 0.12);
 }
 
-/* 主机卡片上的标签 chip */
+/* 主机卡片上的标签 chip（右侧单行，固定卡片高度不被撑开） */
 .vault-host-tags {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 4px;
-  margin-top: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
 }
 
 .vault-host-tag {
+  flex: 0 0 auto;
   max-width: 9em;
   padding: 1px 6px;
   border-radius: 999px;
@@ -9407,15 +9412,6 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.vault-host-card:has(.vault-host-tags) {
-  height: auto;
-  min-height: 68px;
-}
-
-.vault-host-card.list:has(.vault-host-tags) {
-  min-height: 56px;
 }
 
 /* 键盘焦点 & 拖拽投放反馈 */
