@@ -174,6 +174,12 @@ pub struct Profile {
     /// 全局先匹配、主机规则补充，不是替换。
     #[serde(default)]
     pub keyword_highlight_rules: Option<Vec<KeywordHighlightRule>>,
+    // ── 主机级自动会话日志（schema v52）──
+    /// 建立会话时是否自动开始记录纯文本日志（`.log`）。
+    /// `None` / `Some(false)` = 不记录（默认）；仅 `Some(true)` 开启。
+    /// 日志目录与命名规则来自 设置 → 终端 的「会话日志」配置。
+    #[serde(default)]
+    pub auto_session_log: Option<bool>,
 }
 
 /// 关键字高亮规则（对齐 Netcatty `KeywordHighlightRule`）。

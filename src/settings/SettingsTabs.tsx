@@ -5,6 +5,7 @@
  * 未移植能力的控件保留但禁用 / 标注（范围决策见 changelogs 2026-11-03）。
  */
 
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import {
   appVersion,
@@ -1723,6 +1724,87 @@ export function TerminalTab() {
           <Toggle checked={s.verifyHostKeys} onChange={(v) => updateSettings({ verifyHostKeys: v })} />
         </Row>
       </Section>
+
+      <Section title={t("settings.sessionLogs.title")} hint={t("settings.sessionLogs.hint")}>
+        <Row title={t("settings.sessionLogs.description")} desc={t("settings.sessionLogs.autoPerHost")} />
+        <Row
+          title={t("settings.sessionLogs.directory")}
+          desc={t("settings.sessionLogs.directoryDesc")}
+        >
+          <div className="nc-set-inline">
+            <input
+              className="nc-set-input"
+              style={{ flex: "1 1 0", minWidth: 0, width: 260 }}
+              value={s.sessionLogs.directory}
+              placeholder={t("settings.sessionLogs.directoryPlaceholder")}
+              onChange={(e) =>
+                updateSettings({
+                  sessionLogs: { ...s.sessionLogs, directory: e.target.value },
+                })
+              }
+            />
+            <button
+              type="button"
+              className="nc-set-btn"
+              onClick={() => {
+                void open({ directory: true, multiple: false })
+                  .then((picked) => {
+                    if (typeof picked === "string" && picked) {
+                      updateSettings({
+                        sessionLogs: { ...s.sessionLogs, directory: picked },
+                      });
+                    }
+                  })
+                  .catch(() => {});
+              }}
+            >
+              <Icon name="folder" size={16} />
+              {t("settings.sessionLogs.directoryPick")}
+            </button>
+          </div>
+        </Row>
+        <Row
+          title={t("settings.sessionLogs.nameTemplate")}
+          desc={t("settings.sessionLogs.nameTemplateDesc")}
+        >
+          <input
+            className="nc-set-input"
+            style={{ width: 260 }}
+            value={s.sessionLogs.nameTemplate}
+            placeholder="{host}_{date}_{time}"
+            onChange={(e) =>
+              updateSettings({
+                sessionLogs: { ...s.sessionLogs, nameTemplate: e.target.value },
+              })
+            }
+          />
+        </Row>
+        <Row title={t("settings.sessionLogs.format")} desc={t("settings.sessionLogs.formatDesc")}>
+          <Select
+            value={s.sessionLogs.format}
+            onChange={(v) =>
+              updateSettings({ sessionLogs: { ...s.sessionLogs, format: v as typeof s.sessionLogs.format } })
+            }
+            options={[
+              { value: "txt", label: t("settings.sessionLogs.formatTxt") },
+              { value: "raw", label: t("settings.sessionLogs.formatRaw") },
+              { value: "html", label: t("settings.sessionLogs.formatHtml") },
+            ]}
+          />
+        </Row>
+        <Row
+          title={t("settings.sessionLogs.timestamps")}
+          desc={`${t("settings.sessionLogs.timestampsDesc")} ${t("settings.sessionLogs.timestampsUnsupported")}`}
+        >
+          <Toggle disabled checked={false} onChange={() => {}} />
+        </Row>
+        <Row title={t("settings.sessionLogs.clearAll")} desc={t("settings.sessionLogs.clearAllDesc")}>
+          <button className="nc-set-btn is-danger" disabled>
+            <Icon name="trash" size={16} />
+            {t("settings.sessionLogs.clearAll")}
+          </button>
+        </Row>
+      </Section>
     </div>
   );
 }
@@ -2430,48 +2512,6 @@ export function SystemTab() {
       <Section title={t("settings.system.crashLogs.title")} hint={t("settings.system.crashLogs.notPorted")}>
         <p className="nc-set-card-text">{t("settings.system.crashLogs.description")}</p>
         <p className="nc-set-empty">{t("settings.system.crashLogs.noLogs")}</p>
-      </Section>
-
-      <Section title={t("settings.sessionLogs.title")} hint={t("settings.sessionLogs.hint")}>
-        <Row title={t("settings.sessionLogs.description")} />
-        <Row title={t("settings.sessionLogs.enableAutoSave")} desc={t("settings.sessionLogs.enableAutoSaveDesc")}>
-          <Toggle
-            checked={s.sessionLogs.enabled}
-            onChange={(v) => {
-              updateSettings({ sessionLogs: { ...s.sessionLogs, enabled: v } });
-              // termX 的会话记录由后端 asciicast 录制实现，同步既有开关键。
-              void setSetting("recording_enabled", v ? "true" : "false").catch(() => {});
-            }}
-          />
-        </Row>
-        <Row title={t("settings.sessionLogs.format")} desc={t("settings.sessionLogs.formatDesc")}>
-          <Select
-            value={s.sessionLogs.format}
-            onChange={(v) =>
-              updateSettings({ sessionLogs: { ...s.sessionLogs, format: v as typeof s.sessionLogs.format } })
-            }
-            options={[
-              { value: "txt", label: t("settings.sessionLogs.formatTxt") },
-              { value: "raw", label: t("settings.sessionLogs.formatRaw") },
-              { value: "html", label: t("settings.sessionLogs.formatHtml") },
-            ]}
-          />
-        </Row>
-        <Row
-          title={t("settings.sessionLogs.timestamps")}
-          desc={`${t("settings.sessionLogs.timestampsDesc")} ${t("settings.sessionLogs.timestampsUnsupported")}`}
-        >
-          <Toggle disabled checked={false} onChange={() => {}} />
-        </Row>
-        <Row title={t("settings.sessionLogs.directory")}>
-          <span className="nc-set-value">{t("settings.sessionLogs.directoryDesc")}</span>
-        </Row>
-        <Row title={t("settings.sessionLogs.clearAll")} desc={t("settings.sessionLogs.clearAllDesc")}>
-          <button className="nc-set-btn is-danger" disabled>
-            <Icon name="trash" size={16} />
-            {t("settings.sessionLogs.clearAll")}
-          </button>
-        </Row>
       </Section>
 
       <Section title={t("settings.sessionRestore.title")}>

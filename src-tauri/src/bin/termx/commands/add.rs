@@ -96,6 +96,7 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         telnet_charset: None,
         keyword_highlight_enabled: None,
         keyword_highlight_rules: None,
+        auto_session_log: None,
     };
     termx_lib::db::profile::insert(conn, &p)?;
     println!("Profile '{}' created.", p.name);

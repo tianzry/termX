@@ -287,6 +287,11 @@ type ComposerDraft = {
    */
   keyword_highlight_enabled: boolean;
   keyword_highlight_rules: KeywordHighlightRule[];
+  /**
+   * 主机级自动会话日志（schema v52）：连接建立时自动写入纯文本 `.log`。
+   * 默认 false → 保存为 null（不记录）。
+   */
+  auto_session_log: boolean;
 };
 
 /** 登录方式 + MFA → termX Credential 类型。auto→agent（先系统密钥再本地密钥）。 */
@@ -1668,6 +1673,7 @@ export function VaultView({
       proxy_profile_id: "",
       keyword_highlight_enabled: false,
       keyword_highlight_rules: [],
+      auto_session_log: false,
     });
     setNewMenu(false);
   }
@@ -1751,6 +1757,7 @@ export function VaultView({
       keyword_highlight_rules: normalizeHostKeywordHighlightRules(
         p.keyword_highlight_rules ?? [],
       ),
+      auto_session_log: p.auto_session_log === true,
     });
     // 环境变量在独立表中，异步补齐（避免打开编辑器被 DB 查询阻塞）。
     void api
@@ -1922,6 +1929,7 @@ export function VaultView({
         keyword_highlight_enabled: d.keyword_highlight_enabled,
         keyword_highlight_rules:
           d.keyword_highlight_rules.length > 0 ? d.keyword_highlight_rules : null,
+        auto_session_log: d.auto_session_log ? true : null,
       };
       const isEdit = profiles.some((p) => p.id === d.id);
       if (isEdit) {
@@ -2068,6 +2076,7 @@ export function VaultView({
         // 空规则 = null；开关关闭时**保留**规则（对齐 Netcatty：关开关不清规则）。
         keyword_highlight_rules:
           d.keyword_highlight_rules.length > 0 ? d.keyword_highlight_rules : null,
+        auto_session_log: d.auto_session_log ? true : null,
       };
       const isEdit = profiles.some((p) => p.id === d.id);
       if (isEdit) {
@@ -5393,6 +5402,28 @@ export function VaultView({
                     />
                   </div>
                 )}
+              </section>
+
+              <section className="host-details-section">
+                <div className="host-details-section-head">
+                  <Icon name="file-text" size={13} />
+                  <span>自动记录会话日志</span>
+                  <HostHint text="开启后，本主机每次建立会话都会自动写入一份可打印纯文本 .log（ANSI 控制序列自动剥离）。保存目录与命名规则在「设置 → 终端 → 会话日志」中配置；重名自动加序号，不会覆盖已有文件。默认关闭。" />
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={composer.auto_session_log}
+                    className={`host-switch host-auto-log-switch${composer.auto_session_log ? " on" : ""}`}
+                    onClick={() =>
+                      setComposer({
+                        ...composer,
+                        auto_session_log: !composer.auto_session_log,
+                      })
+                    }
+                  >
+                    <span className="host-switch-knob" />
+                  </button>
+                </div>
               </section>
 
               <section className="host-details-section">

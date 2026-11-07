@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 51;
+const SCHEMA_VERSION: u32 = 52;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -1027,6 +1027,15 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
                     "ALTER TABLE sftp_transfer_queue ADD COLUMN {col} {decl};"
                 ))?;
             }
+        }
+    }
+
+    if version < 52 && table_exists(conn, "profiles")? {
+        // 主机级「自动记录会话日志」开关。可空：NULL = 关闭（默认不录），
+        // 老库升级只加列、不写默认值，既有主机升级后不会突然开始落盘；
+        // 显式 0 = 用户关闭，1 = 开启。会话建立时由连接层读取。
+        if !column_exists(conn, "profiles", "auto_session_log")? {
+            conn.execute_batch("ALTER TABLE profiles ADD COLUMN auto_session_log INTEGER;")?;
         }
     }
 

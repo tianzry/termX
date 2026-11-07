@@ -54,6 +54,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         telnet_charset: row.get(44)?,
         keyword_highlight_enabled: row.get(45)?,
         keyword_highlight_rules: parse_keyword_rules(row.get(46)?),
+        auto_session_log: row.get(47)?,
     })
 }
 
@@ -133,7 +134,7 @@ fn algorithms_json(p: &Profile) -> AppResult<String> {
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules, auto_session_log";
 
 
 
@@ -250,8 +251,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, \
          proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, \
          ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, \
-         telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47) \
+         telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules, auto_session_log) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -275,7 +276,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          host_key_policy=excluded.host_key_policy, \
          telnet_username=excluded.telnet_username, telnet_charset=excluded.telnet_charset, \
          keyword_highlight_enabled=excluded.keyword_highlight_enabled, \
-         keyword_highlight_rules=excluded.keyword_highlight_rules",
+         keyword_highlight_rules=excluded.keyword_highlight_rules, \
+         auto_session_log=excluded.auto_session_log",
         params![
             p.id,
             p.name,
@@ -323,7 +325,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.telnet_username,
             p.telnet_charset,
             p.keyword_highlight_enabled,
-            keyword_rules
+            keyword_rules,
+            p.auto_session_log
         ],
     )?;
     Ok(())
@@ -350,7 +353,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
          serial_backspace=?38, serial_byte_backspace=?39, serial_charset=?40, \
          distro=COALESCE(?41, distro), host_key_policy=?42, \
          telnet_username=?43, telnet_charset=?44, \
-         keyword_highlight_enabled=?45, keyword_highlight_rules=?46 WHERE id=?47",
+         keyword_highlight_enabled=?45, keyword_highlight_rules=?46, auto_session_log=?47 WHERE id=?48",
         params![
             p.name,
             p.host,
@@ -398,6 +401,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.telnet_charset,
             p.keyword_highlight_enabled,
             keyword_rules,
+            p.auto_session_log,
             p.id
         ],
     )?;
@@ -498,6 +502,7 @@ mod tests {
             telnet_charset: None,
             keyword_highlight_enabled: None,
             keyword_highlight_rules: None,
+            auto_session_log: None,
         }
     }
 
@@ -554,6 +559,24 @@ mod tests {
         let got = get(&db, "p1").unwrap();
         assert_eq!(got.protocol, "ssh");
         assert!(got.local_shell.is_none());
+    }
+
+    #[test]
+    fn auto_session_log_roundtrips_null_false_true() {
+        let db = Db::open_in_memory().unwrap();
+        // NULL（默认）读回 None。
+        insert(&db, &mk("p1", "alpha")).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().auto_session_log, None);
+        // 显式 true 持久化。
+        let mut on = mk("p1", "alpha");
+        on.auto_session_log = Some(true);
+        update(&db, &on).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().auto_session_log, Some(true));
+        // 显式 false 与 NULL 都表示关闭，但 true→None 必须清掉。
+        let mut off = mk("p1", "alpha");
+        off.auto_session_log = None;
+        update(&db, &off).unwrap();
+        assert_eq!(get(&db, "p1").unwrap().auto_session_log, None);
     }
 
     #[test]

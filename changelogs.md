@@ -7447,4 +7447,42 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
   `sent=260 got=260 equal=true`（证明句柄已释放）；再重开卡片获得新 sid 并写 `LOOP-A`
   回显正常。
 
+## 2026-11-07 — 会话日志重构（前半段）：默认不录 + 主机级开关 + 目录/命名设置
+
+- **语义反转**：自动会话日志从「默认就录（asciicast）」改为「默认不录」。新增
+  `profiles.auto_session_log`（schema v52，可空，NULL/0 视为关闭，仅 1 自动记录）。SSH / Telnet
+  / 串口按主机档案开关判定；本地 shell 与无档案的临时连接固定不自动记录（工具栏手动开始留待
+  下一批，本轮未动工具栏按钮与日志页）。
+- **落盘格式**：自动日志改为可打印纯文本 `.log`（`ActiveTextLog` + `TextLogFormat::Text`、无
+  时间戳），ANSI 控制序列在写入层剥离，跨块 UTF-8 仍完整；行完整性不受前端「仅显示匹配行」
+  过滤影响（过滤只在渲染路径，后端落盘链路不经过）。
+- **设置-终端**：新增「会话日志」区（自系统 tab 迁入终端 tab）：默认保存目录（文本输入 +
+  「选择文件夹」原生目录选择）、日志命名规则模板；占位符 `{host}` / `{title}` / `{protocol}` /
+  `{date}` / `{time}` / `{datetime}`；非法字符 `/ \ . : * ? " < > |` 与控制字符替换为 `_`，
+  空模板回落 `session`，Windows 保留名加 `session_` 前缀，长度上限 120；重名自动 `-2` / `-3`
+  递增，绝不覆盖已有文件。
+- **旧数据**：`~/.termX/recordings` 下已有 `.cast` 保持原位、不迁移不删除；**日志页后续批次只
+  扫描新目录（设置中的默认保存目录，默认 `~/.termX/logs`）里的 `.log`**，旧 `.cast` 不再出现
+  在日志页。
+- **实测（release + CDP 9222，129 SSH）**：
+  - 开关关（NULL）：连接并关闭后测试目录不存在，0 文件；
+  - 开关开（true）：会话建立即生成 `.log`（`verify_129_20261108_003121.log`）；
+  - ANSI：`printf '\x1b[31mREDLINE\x1b[0m\nplain-one...'` → 文件无 ESC 字节（`HAS_ESC=False`），
+    含 REDLINE / plain-one/two/three，共 27 行且完整；
+  - 自定义目录 + 模板 `verify_{host}_{date}_{time}` 生效（文件生成在新目录）；
+  - 固定模板 `same_{host}` 连续两次 → `same_129.log` 与 `same_129-2.log`（均 622 B，未覆盖）；
+  - 非法模板 `bad/{host}:*?"<>|` → `bad_129.log`，无子目录逃逸；
+  - UI：主机编辑器 `.host-auto-log-switch` 读 true → 关 → 保存后 DB `null`，重开显示 false；
+    再开 → 保存 `true`。设置-终端页编辑目录/模板后 `get_setting` 即时持久化。
+- **门禁**：`npm run test:run` 841✓(74 文件)、`npm run build`✓、`cargo check --lib`✓、
+  `cargo check --lib --features server`✓、`cargo test --lib` 973✓、
+  `npx tauri build --no-bundle`✓。
+- **踩坑**：
+  - Tauri command 参数不支持 doc comment，`serial_open` / `telnet_open` 新增 `profile_id` 只能
+    用普通 `//` 注释；
+  - 主机编辑器有 7 处 `.host-switch`，自动化必须给自动日志开关唯一类
+    `host-auto-log-switch`，否则点到 MFA 开关；
+  - 录制文件被进程占用时 `Get-ChildItem.Length` 显示 0、`ReadAllBytes` 报占用，需关闭标签或
+    用 `Get-Content` 读取。
+
 

@@ -266,9 +266,17 @@ export interface NetworkProxySettings {
 }
 
 export interface SessionLogsSettings {
+  /** 旧 Netcatty 自动保存开关；termX 改为「按主机档案」控制，恒为 false。 */
   enabled: boolean;
   format: SessionLogFormat;
   timestamps: boolean;
+  /** 自动日志目录；空串 = 默认 `<data_dir>/logs`。 */
+  directory: string;
+  /**
+   * 日志命名模板，支持 `{host}` / `{title}` / `{protocol}` / `{date}`
+   * / `{time}` / `{datetime}`；非法字符由后端清洗，重名自动加序号。
+   */
+  nameTemplate: string;
 }
 
 export interface AppSettings {
@@ -446,7 +454,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   localShellSidePanelAutoOpenPane: "files",
   verifyHostKeys: true,
   networkProxy: { mode: "system", url: "", bypass: "" },
-  sessionLogs: { enabled: true, format: "txt", timestamps: false },
+  sessionLogs: {
+    enabled: false,
+    format: "txt",
+    timestamps: false,
+    directory: "",
+    nameTemplate: "{host}_{date}_{time}",
+  },
   sshDebugLogsEnabled: false,
   sftpDoubleClickBehavior: "open",
   sftpShowHiddenFiles: false,
@@ -703,6 +717,8 @@ export function normalizeSettings(raw: unknown): AppSettings {
       enabled: pickBool(logsRaw.enabled, d.sessionLogs.enabled),
       format: pickOne(logsRaw.format, ["txt", "raw", "html"] as const, d.sessionLogs.format),
       timestamps: pickBool(logsRaw.timestamps, d.sessionLogs.timestamps),
+      directory: pickStr(logsRaw.directory, d.sessionLogs.directory),
+      nameTemplate: pickStr(logsRaw.nameTemplate, d.sessionLogs.nameTemplate),
     },
     sshDebugLogsEnabled: pickBool(r.sshDebugLogsEnabled, d.sshDebugLogsEnabled),
     sftpDoubleClickBehavior: pickOne(

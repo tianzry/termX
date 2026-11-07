@@ -38,6 +38,7 @@ export function SerialHostPanel({ initial, onClose, onSaved }: Props) {
     serialFormFromProfile(initial),
   );
   const [baudText, setBaudText] = useState(String(initial.serial_baud ?? 115200));
+  const [autoLog, setAutoLog] = useState(initial.auto_session_log === true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const errors = serialFormErrors(form);
@@ -74,6 +75,8 @@ export function SerialHostPanel({ initial, onClose, onSaved }: Props) {
         port: 0,
         protocol: "serial",
         ...serialProfileSnapshot(form),
+        // 默认为 null（不记录）；仅显式开启才落 true。
+        auto_session_log: autoLog ? true : null,
       };
       await api.updateProfile(next);
       onSaved(next);
@@ -300,6 +303,16 @@ export function SerialHostPanel({ initial, onClose, onSaved }: Props) {
                 <option key={charset} value={charset} />
               ))}
             </datalist>
+          </div>
+
+          <div className="serial-check-row">
+            <label htmlFor="serial-panel-auto-log">自动记录会话日志</label>
+            <input
+              type="checkbox"
+              id="serial-panel-auto-log"
+              checked={autoLog}
+              onChange={(e) => setAutoLog(e.target.checked)}
+            />
           </div>
         </div>
       </div>

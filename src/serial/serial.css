@@ -94,6 +94,22 @@
   gap: 8px;
 }
 
+.serial-check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #16202b;
+}
+
+.serial-check-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent, #2563eb);
+}
+
 .serial-refresh {
   display: inline-flex;
   align-items: center;

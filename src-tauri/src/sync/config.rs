@@ -921,6 +921,7 @@ mod tests {
             telnet_charset: None,
             keyword_highlight_enabled: None,
             keyword_highlight_rules: None,
+            auto_session_log: None,
         }
     }
 

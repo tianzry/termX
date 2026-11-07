@@ -253,32 +253,153 @@ pub fn build_recording_path(state: &AppState, name: &str) -> std::path::PathBuf 
     path
 }
 
-/// 自动录制开关的判据：未写入时默认开启（对齐 Netcatty 的默认自动记录）。
-fn recording_enabled_value(value: Option<&str>) -> bool {
-    value.map(|v| v == "true").unwrap_or(true)
+/// 自动会话日志默认命名模板：主机名 + 日期 + 时间。
+pub const SESSION_LOG_NAMING_DEFAULT: &str = "{host}_{date}_{time}";
+
+/// 从 设置 → 终端 的 `settings.center.v1` 读取日志目录与命名模板。
+/// 目录留空 = `<data_dir>/logs`；模板留空 = `SESSION_LOG_NAMING_DEFAULT`。
+/// 读取失败一律回落默认值（记录是 best-effort，不能阻断连接）。
+fn session_log_config(state: &AppState) -> (Option<std::path::PathBuf>, String) {
+    const SETTINGS_KEY: &str = "settings.center.v1";
+    let fallback = (None, SESSION_LOG_NAMING_DEFAULT.to_string());
+    let Ok(Some(raw)) = crate::db::settings::get(&state.db, SETTINGS_KEY) else {
+        return fallback;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return fallback;
+    };
+    let logs = &value["sessionLogs"];
+    let dir = logs["directory"].as_str().unwrap_or("").trim();
+    let template = logs["nameTemplate"].as_str().unwrap_or("").trim();
+    (
+        if dir.is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(dir))
+        },
+        if template.is_empty() {
+            SESSION_LOG_NAMING_DEFAULT.to_string()
+        } else {
+            template.to_string()
+        },
+    )
 }
 
-/// 自动录制路径：`recording_enabled`, ensures the fixed recordings dir exists
-/// (owner-only on Unix), and stamps the file with a path-safe profile name +
-/// timestamp. `None` when recording is disabled. The single source of truth
-/// for where a new `.cast` is born — both desktop `ssh_connect` and the
-/// headless server route through here, so they can never build the path
-/// differently.
-pub fn recording_path_for(
-    state: &AppState,
-    profile_name: &str,
-) -> AppResult<Option<std::path::PathBuf>> {
-    let enabled = recording_enabled_value(
-        crate::db::settings::get(&state.db, "recording_enabled")?.as_deref(),
-    );
-    if !enabled {
-        return Ok(None);
+/// 默认日志目录：用户未配置时为 `<data_dir>/logs`（新目录；旧
+/// `<data_dir>/recordings` 下的 `.cast` 保持原样，不迁移、不再写入）。
+pub fn session_log_dir(state: &AppState) -> std::path::PathBuf {
+    match session_log_config(state).0 {
+        Some(dir) => dir,
+        None => state.data_dir.join("logs"),
     }
-    Ok(Some(build_recording_path(state, profile_name)))
 }
 
-/// 手动录制的路径：不受 `recording_enabled` 影响 —— 用户点了「开始录制」，
-/// 就应当开始，而不是被自动录制开关挡住。
+/// 命名模板占位符 → 实际值，并按文件名规则清洗（去掉路径分隔符、
+/// Windows 保留字符与控制字符），保证结果只落在目标目录内。
+fn render_session_log_stem(
+    template: &str,
+    host: &str,
+    title: &str,
+    protocol: &str,
+    now: chrono::DateTime<chrono::Local>,
+) -> String {
+    let rendered = template
+        .replace("{host}", host)
+        .replace("{title}", title)
+        .replace("{protocol}", protocol)
+        .replace("{datetime}", &now.format("%Y%m%d_%H%M%S").to_string())
+        .replace("{date}", &now.format("%Y%m%d").to_string())
+        .replace("{time}", &now.format("%H%M%S").to_string());
+    let cleaned: String = rendered
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | '.' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let cleaned = cleaned.trim().trim_matches('_').trim();
+    let mut stem: String = cleaned.chars().take(120).collect();
+    // Windows 保留设备名（CON / PRN / AUX / NUL / COM1…）不能作为文件名。
+    let upper = stem.to_ascii_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || upper
+            .strip_prefix("COM")
+            .or_else(|| upper.strip_prefix("LPT"))
+            .is_some_and(|n| n.len() == 1 && n.as_bytes()[0].is_ascii_digit())
+    {
+        stem = format!("session_{stem}");
+    }
+    if stem.is_empty() {
+        "session".to_string()
+    } else {
+        stem
+    }
+}
+
+/// 同名不覆盖：已存在时依次尝试 `<stem>-2.log`、`<stem>-3.log`…
+fn unique_session_log_path(dir: &std::path::Path, stem: &str) -> std::path::PathBuf {
+    let mut path = dir.join(format!("{stem}.log"));
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("{stem}-{n}.log"));
+        n += 1;
+    }
+    path
+}
+
+/// 按设置的目录 + 命名模板生成一个全新的 `.log` 路径（纯文本日志）。
+pub fn build_session_log_path(
+    state: &AppState,
+    host: &str,
+    title: &str,
+    protocol: &str,
+) -> std::path::PathBuf {
+    let (configured_dir, template) = session_log_config(state);
+    let dir = configured_dir.unwrap_or_else(|| session_log_dir(state));
+    if std::fs::create_dir_all(&dir).is_err() {
+        // 自定义目录不可写时退回默认目录，避免自动记录静默丢失。
+        let fallback = session_log_dir(state);
+        if std::fs::create_dir_all(&fallback).is_ok() {
+            let stem = render_session_log_stem(&template, host, title, protocol, chrono::Local::now());
+            return unique_session_log_path(&fallback, &stem);
+        }
+    }
+    let stem = render_session_log_stem(&template, host, title, protocol, chrono::Local::now());
+    unique_session_log_path(&dir, &stem)
+}
+
+/// 主机级自动日志入口：只有档案显式开启 `auto_session_log` 才返回路径。
+/// SQLite 读取失败 / 路径构造异常都按「不记录」处理，连接照常建立。
+pub fn auto_session_log_path(
+    state: &AppState,
+    profile: &crate::models::Profile,
+) -> Option<std::path::PathBuf> {
+    if profile.auto_session_log != Some(true) {
+        return None;
+    }
+    Some(build_session_log_path(
+        state,
+        &profile.name,
+        &profile.name,
+        &profile.protocol,
+    ))
+}
+
+/// 按档案 id 查询自动日志路径（串口 / Telnet 命令只知道 profileId）。
+pub fn auto_session_log_path_for_profile_id(
+    state: &AppState,
+    profile_id: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    let id = profile_id?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let profile = crate::db::profile::get(&state.db, id).ok()?;
+    auto_session_log_path(state, &profile)
+}
+
+/// 手动录制的路径：用户点了「开始录制」就应当开始，不受自动记录配置影响。
 pub fn recording_path_for_manual(state: &AppState, name: &str) -> AppResult<std::path::PathBuf> {
     Ok(build_recording_path(state, name))
 }
@@ -474,15 +595,116 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        build_recording_path, is_safe_recording_name, recording_dir, recording_enabled_value,
-        safe_recording_stem,
+        build_recording_path, build_session_log_path, is_safe_recording_name, recording_dir,
+        render_session_log_stem, safe_recording_stem, session_log_dir,
     };
 
     #[test]
-    fn recording_defaults_to_enabled_until_user_disables_it() {
-        assert!(recording_enabled_value(None));
-        assert!(recording_enabled_value(Some("true")));
-        assert!(!recording_enabled_value(Some("false")));
+    fn session_log_naming_defaults_to_host_date_time() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path().to_path_buf());
+        assert_eq!(session_log_dir(&state), temp.path().join("logs"));
+        let path = build_session_log_path(&state, "Prod Web", "Prod Web", "ssh");
+        assert_eq!(path.parent(), Some(temp.path().join("logs").as_path()));
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        assert!(stem.starts_with("Prod Web_"), "default template: {stem}");
+        assert_eq!(path.extension().unwrap(), "log");
+    }
+
+    #[test]
+    fn session_log_template_placeholders_are_rendered() {
+        let now = chrono::Local::now();
+        let stem = render_session_log_stem(
+            "{protocol}-{host}-{title}-{date}-{time}",
+            "srv1",
+            "生产库",
+            "ssh",
+            now,
+        );
+        assert_eq!(
+            stem,
+            format!(
+                "ssh-srv1-生产库-{}-{}",
+                now.format("%Y%m%d"),
+                now.format("%H%M%S")
+            )
+        );
+    }
+
+    /// 非法字符清洗后仍必须只是单个文件名（不能借 `..` / 分隔符逃出目录）。
+    #[test]
+    fn session_log_template_illegal_chars_are_cleaned() {
+        let now = chrono::Local::now();
+        let stem = render_session_log_stem("../../etc:pass*?<>|", "h", "t", "ssh", now);
+        assert!(!stem.contains('/') && !stem.contains('\\') && !stem.contains(':'));
+        assert!(!stem.contains(".."));
+        assert!(!stem.starts_with('.'));
+        assert!(!stem.is_empty());
+        let stem = render_session_log_stem("", "h", "t", "ssh", now);
+        assert_eq!(stem, "session", "空模板回退 session");
+        let stem = render_session_log_stem("CON", "h", "t", "ssh", now);
+        assert_eq!(stem, "session_CON");
+    }
+
+    /// 同名文件必须加序号，第二段日志不能覆盖第一段。
+    #[test]
+    fn session_log_paths_never_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path().join("fresh"));
+        let first = build_session_log_path(&state, "same", "same", "ssh");
+        std::fs::write(&first, b"line1\nline2\n").unwrap();
+        let second = build_session_log_path(&state, "same", "same", "ssh");
+        assert_ne!(first, second);
+        assert!(!second.exists());
+        assert!(second.file_name().unwrap().to_str().unwrap().ends_with("-2.log"));
+    }
+
+    #[test]
+    fn session_log_uses_configured_directory_and_template() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path().join("fresh"));
+        let custom = temp.path().join("custom logs");
+        crate::db::settings::set(
+            &state.db,
+            "settings.center.v1",
+            &serde_json::json!({
+                "sessionLogs": {
+                    "directory": custom.to_string_lossy(),
+                    "nameTemplate": "{host}_{protocol}_{date}"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let path = build_session_log_path(&state, "129", "129", "ssh");
+        assert_eq!(path.parent(), Some(custom.as_path()));
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        assert_eq!(
+            stem,
+            format!("129_ssh_{}", chrono::Local::now().format("%Y%m%d"))
+        );
+    }
+
+    /// 显式 NULL / false 都视为关闭，只有 Some(true) 才产生路径。
+    #[test]
+    fn auto_session_log_requires_explicit_true() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path().to_path_buf());
+        let mut profile: crate::models::Profile = serde_json::from_value(serde_json::json!({
+            "id": "p1",
+            "name": "alpha",
+            "host": "h.example",
+            "port": 22,
+            "credential_id": "c1"
+        }))
+        .unwrap();
+        assert_eq!(super::auto_session_log_path(&state, &profile), None);
+        profile.auto_session_log = Some(false);
+        assert_eq!(super::auto_session_log_path(&state, &profile), None);
+        profile.auto_session_log = Some(true);
+        let path = super::auto_session_log_path(&state, &profile).unwrap();
+        assert_eq!(path.extension().unwrap(), "log");
+        assert!(path.file_name().unwrap().to_str().unwrap().starts_with("alpha_"));
     }
 
     /// AppState without a real Tauri app: enough for path construction.

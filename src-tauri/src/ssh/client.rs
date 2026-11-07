@@ -1142,19 +1142,6 @@ mod tests {
     use super::*;
     use base64::{engine::general_purpose::STANDARD, Engine};
 
-    #[test]
-    fn recording_title_strips_timestamp_suffix() {
-        assert_eq!(
-            recording_title_from_path(Path::new("prod_web_20261103_215000.cast")),
-            "prod web"
-        );
-        // 只剩时间戳 → 空标题回退 "session"。
-        assert_eq!(
-            recording_title_from_path(Path::new("_20261103_215000.cast")),
-            "session"
-        );
-    }
-
     #[tokio::test]
     async fn connection_log_uses_base64_stream_payload() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1221,6 +1208,7 @@ mod tests {
                 telnet_charset: None,
                 keyword_highlight_enabled: None,
                 keyword_highlight_rules: None,
+                auto_session_log: None,
             },
             credential: Credential {
                 id: "credential".into(),
@@ -1236,7 +1224,7 @@ mod tests {
             rows: 24,
             app: app.clone(),
             owner,
-            recording_path: None,
+            auto_log_path: None,
             log_session_id: Some(session_id.clone()),
             prompt_session_id: Some(session_id.clone()),
             known_hosts_path: dir.path().join("known_hosts"),
@@ -1400,6 +1388,7 @@ mod tests {
                 telnet_charset: None,
                 keyword_highlight_enabled: None,
                 keyword_highlight_rules: None,
+                auto_session_log: None,
             },
             credential: Credential {
                 id: "smoke-credential".into(),
@@ -1415,7 +1404,7 @@ mod tests {
             rows: 24,
             app: app.clone(),
             owner,
-            recording_path: None,
+            auto_log_path: None,
             log_session_id: None,
             prompt_session_id: None,
             known_hosts_path: PathBuf::from(known_hosts_path),
@@ -1557,6 +1546,7 @@ mod tests {
                 telnet_charset: None,
                 keyword_highlight_enabled: None,
                 keyword_highlight_rules: None,
+                auto_session_log: None,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1565,7 +1555,7 @@ mod tests {
             rows: 24,
             app: app.clone(),
             owner,
-            recording_path: None,
+            auto_log_path: None,
             log_session_id: None,
             prompt_session_id: Some(session_id),
             known_hosts_path,
@@ -1677,6 +1667,7 @@ mod tests {
                 telnet_charset: None,
                 keyword_highlight_enabled: None,
                 keyword_highlight_rules: None,
+                auto_session_log: None,
             },
             credential,
             bastion_chain: Vec::new(),
@@ -1685,7 +1676,7 @@ mod tests {
             rows: 24,
             app: app.clone(),
             owner,
-            recording_path: None,
+            auto_log_path: None,
             log_session_id: None,
             prompt_session_id: Some(session_id.clone()),
             known_hosts_path: PathBuf::from(known_hosts),
@@ -2020,7 +2011,8 @@ pub struct ConnectParams {
     pub rows: u32,
     pub app: crate::emitter::Host,
     pub owner: crate::state::SessionOwner,
-    pub recording_path: Option<std::path::PathBuf>,
+    /// 主机档案开启自动日志时传入的 `.log` 路径；`None` = 不自动记录。
+    pub auto_log_path: Option<std::path::PathBuf>,
     pub log_session_id: Option<String>,
     pub prompt_session_id: Option<String>,
     pub known_hosts_path: PathBuf,
@@ -2042,7 +2034,7 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         rows,
         app,
         owner,
-        recording_path,
+        auto_log_path,
         log_session_id,
         prompt_session_id,
         known_hosts_path,
@@ -2156,18 +2148,21 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
 
     let (tx, rx) = mpsc::unbounded_channel();
 
-    // 录制槽：自动录制（settings 的 recording_enabled）与手动录制共用同一条链路。
-    // 手动开始 / 停止由命令层通过 handle.recorder_slot() 读写，session_task
-    // 只负责把输出字节写进当前槽里的 recorder。
+    // 录制槽：手动 asciicast 录制由命令层通过 handle.recorder_slot() 读写，
+    // session_task 只负责把输出字节写进当前槽里的 recorder。
+    // 自动记录改为纯文本 `.log`（去 ANSI），走独立的文本日志槽。
     let recorder_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveRecording>>> =
         Arc::new(StdMutex::new(None));
-    if let Some(path) = recording_path {
-        let title = recording_title_from_path(&path);
-        // 录制是 best-effort：建文件失败不能阻断连接（与阶段 A 一致）。
-        if let Ok(active) =
-            crate::terminal::recorder::ActiveRecording::new(path, cols, rows, title)
-        {
-            if let Ok(mut guard) = recorder_slot.lock() {
+    let text_log_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveTextLog>>> =
+        Arc::new(StdMutex::new(None));
+    if let Some(path) = auto_log_path {
+        // 记录是 best-effort：建文件失败不能阻断连接。
+        if let Ok(active) = crate::terminal::recorder::ActiveTextLog::new(
+            path,
+            crate::terminal::recorder::TextLogFormat::Text,
+            false,
+        ) {
+            if let Ok(mut guard) = text_log_slot.lock() {
                 *guard = Some(active);
             }
         }
@@ -2176,8 +2171,6 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
     let data_event = format!("ssh:data:{session_id}");
     let close_event = format!("ssh:close:{session_id}");
     let task_slot = recorder_slot.clone();
-    let text_log_slot: Arc<StdMutex<Option<crate::terminal::recorder::ActiveTextLog>>> =
-        Arc::new(StdMutex::new(None));
     let task_text_log_slot = text_log_slot.clone();
     tauri::async_runtime::spawn(async move {
         session_task(
@@ -2204,26 +2197,6 @@ pub async fn connect(params: ConnectParams) -> AppResult<ConnectResult> {
         // 握手已完成：banner 一定已经读到（或明确截获失败）。
         server_banner: banner_sink.lock().ok().and_then(|slot| slot.clone()),
     })
-}
-
-/// 自动录制的标题：文件名 stem 去掉末尾 `_YYYYmmdd_HHMMSS`（16 字符），
-/// 下划线还原为空格；空标题回退 "session"。
-fn recording_title_from_path(path: &Path) -> String {
-    let stem = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or_default();
-    let base = match stem.len().checked_sub(16) {
-        // 时间戳后缀 `_YYYYmmdd_HHMMSS` 固定 16 字节；非 ASCII 名称退化为整段。
-        Some(cut) if stem.is_char_boundary(cut) => &stem[..cut],
-        _ => stem,
-    };
-    let title = base.replace('_', " ").trim().to_string();
-    if title.is_empty() {
-        "session".to_owned()
-    } else {
-        title
-    }
 }
 
 // ---------------------------------------------------------------------------

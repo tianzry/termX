@@ -125,6 +125,11 @@ export interface Profile {
   keyword_highlight_enabled?: boolean | null;
   /** 主机级高亮规则（追加到全局规则之后，不替换全局）；null = 无主机规则。 */
   keyword_highlight_rules?: KeywordHighlightRule[] | null;
+  /**
+   * 主机级自动会话日志（schema v52）：true = 每次建立会话自动记录纯文本
+   * `.log`（目录/命名来自 设置 → 终端）；null / false = 不记录（默认）。
+   */
+  auto_session_log?: boolean | null;
 }
 
 /** 代理库条目（`list_proxy_profiles`），密码单独走 SecretStore。 */
@@ -1507,8 +1512,9 @@ export function serialOpen(
   port: string,
   config: SerialConfig,
   sessionId?: string,
+  profileId?: string,
 ): Promise<string> {
-  return invoke<string>("serial_open", { port, config, sessionId });
+  return invoke<string>("serial_open", { port, config, sessionId, profileId });
 }
 
 /** 串口写入：终端按键文本 → UTF-8 字节。 */
@@ -1581,6 +1587,7 @@ export function telnetOpen(
   inputNewline: string | null,
   sessionId?: string,
   credentials?: TelnetCredentials | null,
+  profileId?: string,
 ): Promise<string> {
   return invoke<string>("telnet_open", {
     host,
@@ -1591,6 +1598,7 @@ export function telnetOpen(
     sessionId,
     username: credentials?.username ?? null,
     password: credentials?.password ?? null,
+    profileId,
   });
 }
 

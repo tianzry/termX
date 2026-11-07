@@ -132,6 +132,25 @@ describe("normalizeSettings", () => {
     expect(s.networkProxy.url).toBe("http://x");
     expect(s.sessionLogs.format).toBe("txt");
   });
+
+  it("会话日志：默认不录 + 目录/命名规则归一化", () => {
+    expect(DEFAULT_SETTINGS.sessionLogs.enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.sessionLogs.directory).toBe("");
+    expect(DEFAULT_SETTINGS.sessionLogs.nameTemplate).toBe("{host}_{date}_{time}");
+    const s = normalizeSettings({
+      sessionLogs: {
+        enabled: "yes",
+        directory: "D:\\termx-logs",
+        nameTemplate: "{host}-{time}",
+      },
+    });
+    expect(s.sessionLogs.enabled).toBe(false);
+    expect(s.sessionLogs.directory).toBe("D:\\termx-logs");
+    expect(s.sessionLogs.nameTemplate).toBe("{host}-{time}");
+    const bad = normalizeSettings({ sessionLogs: { directory: 42, nameTemplate: {} } });
+    expect(bad.sessionLogs.directory).toBe("");
+    expect(bad.sessionLogs.nameTemplate).toBe("{host}_{date}_{time}");
+  });
 });
 
 describe("SFTP 设置", () => {

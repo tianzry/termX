@@ -57,19 +57,11 @@ pub fn pty_spawn(
         SessionKind::Pty,
         SessionOwner::Window(window.label().to_owned()),
     )?;
-    // 默认自动记录：spawn 前挂好两套录制槽（asciicast + 手动文本），
-    // sink 的每个输出块同时写入；关闭时刷盘。失败不阻塞连接。
-    let log_title = std::path::Path::new(&shell)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("本地终端")
-        .to_string();
+    // 本地 shell 没有主机档案：默认不自动记录，需要时由工具栏手动开始。
     let log_slots = crate::commands::session_logs::prepare_log_slots(
         &state,
         &session_id,
-        &log_title,
-        u32::from(cols),
-        u32::from(rows),
+        None,
     )
     .unwrap_or_default();
     let sink_slots = log_slots.clone();
@@ -188,9 +180,7 @@ pub fn pty_spawn_connector(
     let log_slots = crate::commands::session_logs::prepare_log_slots(
         &state,
         &session_id,
-        "连接器会话",
-        u32::from(cols),
-        u32::from(rows),
+        None,
     )
     .unwrap_or_default();
     let sink_slots = log_slots.clone();

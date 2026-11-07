@@ -561,24 +561,22 @@ fn lifecycle_log_slots(
     Ok(record.log_slots.clone())
 }
 
-/// 非 SSH 传输在 spawn 前调用：拿到（并注册）本会话的两套槽位，
-/// 若自动录制开启则立刻创建 asciicast 文件，后续输出由 sink 写入。
+/// 非 SSH 传输在 spawn 前调用：拿到（并注册）本会话的两套槽位；
+/// `auto_log_path` 存在时（主机档案显式开启自动日志）立刻创建纯文本 `.log`，
+/// 后续输出由 sink 写入。手动 asciicast 录制槽位保持空闲，用户仍可手动开始。
 pub(crate) fn prepare_log_slots(
     state: &AppState,
     session_id: &str,
-    title: &str,
-    cols: u32,
-    rows: u32,
+    auto_log_path: Option<std::path::PathBuf>,
 ) -> AppResult<crate::terminal::recorder::LogSlots> {
     let slots = lifecycle_log_slots(state, session_id)?;
-    if let Some(path) = crate::commands::settings::recording_path_for(state, title)? {
-        if let Ok(active) = crate::terminal::recorder::ActiveRecording::new(
+    if let Some(path) = auto_log_path {
+        if let Ok(active) = crate::terminal::recorder::ActiveTextLog::new(
             path,
-            cols.clamp(2, 500),
-            rows.clamp(2, 500),
-            title.to_string(),
+            crate::terminal::recorder::TextLogFormat::Text,
+            false,
         ) {
-            if let Ok(mut guard) = locked(&slots.rec) {
+            if let Ok(mut guard) = locked(&slots.text) {
                 if guard.is_none() {
                     *guard = Some(active);
                 }

@@ -2165,8 +2165,7 @@ async fn ssh_connect(
     crate::commands::session::apply_ssh_runtime_settings(state).map_err(err_value)?;
     let init_command = profile.init_command.clone();
     let env_vars = crate::db::profile_env::list(&state.db, &profile.id).unwrap_or_default();
-    let recording_path =
-        crate::commands::settings::recording_path_for(state, &profile.name).map_err(err_value)?;
+    let auto_log_path = crate::commands::settings::auto_session_log_path(state, &profile);
     let emitter = headless_host(state, tx);
     let connection_owner = owner.clone();
 
@@ -2181,7 +2180,7 @@ async fn ssh_connect(
             rows,
             app: emitter,
             owner: connection_owner,
-            recording_path,
+            auto_log_path,
             log_session_id: effective_log_id,
             prompt_session_id,
             known_hosts_path,

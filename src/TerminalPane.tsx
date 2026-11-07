@@ -2980,7 +2980,13 @@ export function TerminalPane({
             onStatus(`${tab.title} 串口已断开`);
           }),
         );
-        const actual = await api.serialOpen(conn.session.port, conn.session.config, sid);
+        const actual = await api.serialOpen(
+          conn.session.port,
+          conn.session.config,
+          sid,
+          // 仅从已保存主机打开的串口带 profileId；临时连接不自动记录日志。
+          conn.profileId,
+        );
         if (!aliveRef.current || attempt !== attemptRef.current) {
           void api.serialClose(actual);
           return;
@@ -3079,6 +3085,8 @@ export function TerminalPane({
           conn.session.inputNewline,
           sid,
           credentials,
+          // 仅从已保存主机打开的 Telnet 带 profileId；临时连接不自动记录日志。
+          conn.session.profileId,
         );
         if (!aliveRef.current || attempt !== attemptRef.current) {
           void api.telnetClose(actual);

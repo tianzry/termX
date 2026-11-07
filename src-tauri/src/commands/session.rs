@@ -144,7 +144,8 @@ pub async fn ssh_connect(
         .unwrap_or(crate::ssh::client::DEFAULT_CONNECT_TIMEOUT);
     // 设置中心 → 终端 → 主机密钥校验策略 / 终端仿真类型。
     apply_ssh_runtime_settings(&state)?;
-    let recording_path = crate::commands::settings::recording_path_for(&state, &profile.name)?;
+    // 主机档案显式开启「自动记录会话日志」时才落 `.log`；默认不录。
+    let auto_log_path = crate::commands::settings::auto_session_log_path(&state, &profile);
 
     // Only pass log_session_id if verbose logging is enabled
     let prompt_session_id = requested_session_id
@@ -175,7 +176,7 @@ pub async fn ssh_connect(
             rows,
             app: host,
             owner,
-            recording_path,
+            auto_log_path,
             log_session_id: effective_log_id,
             prompt_session_id,
             known_hosts_path,
