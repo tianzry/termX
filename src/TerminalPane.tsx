@@ -569,19 +569,6 @@ export function TerminalPane({
     saveTerminalEncoding(encodingProfileId, encoding);
   }, [encoding, encodingProfileId]);
 
-  /** 「更多」菜单点外部关闭（对齐 Netcatty Popover 的 dismiss 行为）。 */
-  useEffect(() => {
-    if (!moreOpen) return;
-    const onDown = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest(".term-tool-more")) return;
-      setMoreOpen(false);
-      setEncodingMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [moreOpen]);
-
   /** 会话断开 / 重连时关闭系统监控浮层（轮询随组件卸载一起清理）。 */
   useEffect(() => {
     if (!isSsh || status !== "connected") setMonitorOpen(false);
@@ -2022,6 +2009,39 @@ export function TerminalPane({
   const [scriptMenuOpen, setScriptMenuOpen] = useState(false);
   const scriptSnippets = snippets.filter(isScriptSnippet);
 
+  /**
+   * 终端工具栏浮层互斥（对齐 Netcatty Popover）：打开某个浮层前先收起其它浮层，
+   * 点击浮层之外的任意位置（含其它工具栏按钮）全部关闭。
+   */
+  const closeAllToolbarPopovers = () => {
+    setMoreOpen(false);
+    setEncodingMenuOpen(false);
+    setScriptMenuOpen(false);
+    setHighlightOpen(false);
+    setMonitorOpen(false);
+  };
+  const closeOtherToolbarPopovers = (
+    keep: "more" | "scripts" | "highlight" | "monitor",
+  ) => {
+    if (keep !== "more") {
+      setMoreOpen(false);
+      setEncodingMenuOpen(false);
+    }
+    if (keep !== "scripts") setScriptMenuOpen(false);
+    if (keep !== "highlight") setHighlightOpen(false);
+    if (keep !== "monitor") setMonitorOpen(false);
+  };
+  useEffect(() => {
+    if (!(moreOpen || scriptMenuOpen || highlightOpen || monitorOpen)) return;
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".term-tool-more, .term-monitor-anchor")) return;
+      closeAllToolbarPopovers();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [moreOpen, scriptMenuOpen, highlightOpen, monitorOpen]);
+
   /** 右键菜单（位置相对窗格左上角）。 */
   const [menu, setMenu] = useState<{
     x: number;
@@ -3451,7 +3471,10 @@ export function TerminalPane({
                           ? `系统监控（${monitorDisabledReason}）`
                           : "系统监控"
                       }
-                      onClick={() => setMonitorOpen((v) => !v)}
+                      onClick={() => {
+                        closeOtherToolbarPopovers("monitor");
+                        setMonitorOpen((v) => !v);
+                      }}
                     >
                       <Icon name="activity" size={12} />
                     </button>
@@ -3511,6 +3534,7 @@ export function TerminalPane({
                       disabled={!encodingProfileId}
                       onClick={() => {
                         setHostHighlightError("");
+                        closeOtherToolbarPopovers("highlight");
                         setHighlightOpen((v) => !v);
                       }}
                     >
@@ -3754,7 +3778,10 @@ export function TerminalPane({
                           : "暂无脚本（到「脚本」页新建，类型选脚本）"
                       }
                       disabled={scriptSnippets.length === 0}
-                      onClick={() => setScriptMenuOpen((v) => !v)}
+                      onClick={() => {
+                        closeOtherToolbarPopovers("scripts");
+                        setScriptMenuOpen((v) => !v);
+                      }}
                     >
                       <Icon name="zap" size={12} />
                     </button>
@@ -3789,13 +3816,14 @@ export function TerminalPane({
             <button
               className="term-tool-btn"
               title="更多"
-              onClick={() =>
+              onClick={() => {
+                closeOtherToolbarPopovers("more");
                 setMoreOpen((v) => {
                   // 每次重新打开都收起二级菜单，和 Netcatty 的 Popover 一致。
                   if (!v) setEncodingMenuOpen(false);
                   return !v;
-                })
-              }
+                });
+              }}
             >
               <Icon name="more-vertical" size={12} />
             </button>
