@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-11-07 — 首页 UI 收尾三条（脚本提示 / 标签浮层 / 主机卡角标）
+
+### 修改
+
+- 脚本发送：删掉 `SnippetsView` 成功路径的 `setNotice("已在活动终端运行「…」")`。实测双击脚本树运行「窗口标题」后终端正常收到 `printf '\033]0;termX\007'`，页面顶部不再出现提示条。
+- 左侧栏「标签」浮层：`.vault-tag-menu` 固定 `width: 200px` 在短标签（`local`）时右侧留约 150px 空白；新增 `.vault-tag-menu-compact`（仅侧栏）：`width: max-content` + `min-width: 104px` + `max-width: 200px`。实测 200px → 104px，行尾空白 ~150px → ~1px；Vault 页带搜索的标签菜单不受影响。
+- 首页主机卡（仅带标签）：新增 `has-tags` 修饰类，标签 `position: absolute; top:6px; right:8px`，编辑按钮 `right:6px; bottom:2px`（列表态 1px）。实测卡片高度 68px 不变（无标签卡同样 68px、编辑按钮仍居中），主标题区宽度 36px → 119px；铅笔按钮与悬停终端图标底边相切不重叠。
+
+### 踩坑
+
+- 侧栏标签浮层与 Vault 页标签菜单共用 `.vault-tag-menu`，直接改宽度会连带影响搜索框（input 固有宽度决定 max-content），因此用独立修饰类限定作用域。
+
+---
+
 ## 2026-11-07 — #252 数据模块验收第三轮：钥匙串 / 代理 / 端口转发
 
 ### 修复
