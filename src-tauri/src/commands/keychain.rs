@@ -281,9 +281,16 @@ fn entry_from_disk(dir: &std::path::Path, name: &str, default_name: &str) -> Opt
     let mut key_type = String::new();
     let mut fingerprint = String::new();
     let mut public_key = None;
-    let mut encrypted = false;
 
-    // 优先同名 .pub（公钥信息，安全返回）；没有再试解析未加密私钥推导。
+    // 私钥解析一次：既用于判定是否加密，也可在缺少 `.pub` 时推导公钥。
+    // 注意 `.pub` 存在时也必须解析，否则加密标记会一直是 false。
+    let parsed = PrivateKey::from_openssh(&content).ok();
+    let encrypted = parsed
+        .as_ref()
+        .map(|k| k.is_encrypted())
+        .unwrap_or_else(|| content.contains("Proc-Type: 4,ENCRYPTED"));
+
+    // 优先同名 `.pub`（公钥信息，安全返回）；没有再用私钥推导。
     if let Ok(pub_text) = std::fs::read_to_string(dir.join(format!("{name}.pub"))) {
         if let Some((t, fp)) = public_key_meta(&pub_text) {
             key_type = t;
@@ -292,20 +299,15 @@ fn entry_from_disk(dir: &std::path::Path, name: &str, default_name: &str) -> Opt
         }
     }
     if key_type.is_empty() {
-        match PrivateKey::from_openssh(&content) {
-            Ok(k) => {
-                // from_openssh 对加密私钥也返回 Ok（保持加密态）；
-                // OpenSSH v1 的公钥部分明文存放，public_key() 仍可用，加密标记置位。
-                encrypted = k.is_encrypted();
-                if let Ok(line) = k.public_key().to_openssh() {
-                    if let Some((t, fp)) = public_key_meta(&line) {
-                        key_type = t;
-                        fingerprint = fp;
-                        public_key = Some(line);
-                    }
+        if let Some(k) = &parsed {
+            // OpenSSH v1 的公钥部分明文存放，加密私钥也能推导出 public_key。
+            if let Ok(line) = k.public_key().to_openssh() {
+                if let Some((t, fp)) = public_key_meta(&line) {
+                    key_type = t;
+                    fingerprint = fp;
+                    public_key = Some(line);
                 }
             }
-            Err(_) => {}
         }
     }
 
@@ -922,6 +924,22 @@ mod tests {
 
         assert!(import_file_key_in(&dir, "bad", "not a key", None).is_err());
         assert!(import_file_key_in(&dir, "empty", "   ", None).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_key_encrypted_with_pub_still_flags_encrypted() {
+        let dir = temp_ssh_dir();
+        generate_file_key_in(&dir, "enc-pub", "ED25519", None, Some("pw")).unwrap();
+        // `.pub` 存在时也必须解析私钥判加密，不能因为公钥已拿到就跳过。
+        assert!(dir.join("enc-pub.pub").exists());
+        let e = list_file_keys_in(&dir, "")
+            .unwrap()
+            .into_iter()
+            .find(|e| e.name == "enc-pub")
+            .unwrap();
+        assert!(e.encrypted);
+        assert_eq!(e.key_type, "ssh-ed25519");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
