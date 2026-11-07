@@ -1630,6 +1630,14 @@ async fn dispatch_async(
             let host = headless_host(state, tx);
             ok(crate::sftp::transfer_center::clear_finished(state, &host).await)
         }
+        "sftp_transfer_dismiss" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::dismiss(state, &host, &arg::<String>(&args, "transferId")?).await)
+        }
+        "sftp_transfer_retry" => {
+            let host = headless_host(state, tx);
+            ok(crate::sftp::transfer_center::retry(state, &host, arg(&args, "transferId")?).await)
+        }
 
         // ---- AI (settings + models + sessions + messaging + skills + audit) ----
         "ai_settings_get" => ok(crate::ai::commands::ai_settings_get_impl(

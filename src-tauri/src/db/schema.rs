@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 50;
+const SCHEMA_VERSION: u32 = 51;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -1010,6 +1010,21 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
             if !column_exists(conn, "profiles", col)? {
                 conn.execute_batch(&format!(
                     "ALTER TABLE profiles ADD COLUMN {col} {decl};"
+                ))?;
+            }
+        }
+    }
+
+    if version < 51 && table_exists(conn, "sftp_transfer_queue")? {
+        // 断点续传：checkpoint = 已连续写入的字节偏移（暂停后恢复从该处续写）；
+        // source_mtime = 首次开始时的源文件修改时间（恢复前校验源是否变化）。
+        for (col, decl) in [
+            ("checkpoint", "INTEGER NOT NULL DEFAULT 0"),
+            ("source_mtime", "INTEGER"),
+        ] {
+            if !column_exists(conn, "sftp_transfer_queue", col)? {
+                conn.execute_batch(&format!(
+                    "ALTER TABLE sftp_transfer_queue ADD COLUMN {col} {decl};"
                 ))?;
             }
         }

@@ -27,9 +27,13 @@ pub struct Row {
     pub overwrite: i64,
     pub error: Option<String>,
     pub created_at: i64,
+    /// 已连续写入的字节偏移（断点续传起点）。
+    pub checkpoint: i64,
+    /// 首次开始时的源文件修改时间（秒），用于恢复前校验源是否变化。
+    pub source_mtime: Option<i64>,
 }
 
-const COLS: &str = "id, sftp_id, batch_id, direction, local_path, remote_path, size, status, priority, seq, overwrite, error, created_at";
+const COLS: &str = "id, sftp_id, batch_id, direction, local_path, remote_path, size, status, priority, seq, overwrite, error, created_at, checkpoint, source_mtime";
 
 fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
     Ok(Row {
@@ -46,13 +50,15 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         overwrite: r.get(10)?,
         error: r.get(11)?,
         created_at: r.get(12)?,
+        checkpoint: r.get(13)?,
+        source_mtime: r.get(14)?,
     })
 }
 
 pub fn insert(db: &Db, r: &Row) -> AppResult<()> {
     let conn = db.lock()?;
     conn.execute(
-        &format!("INSERT INTO sftp_transfer_queue ({COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"),
+        &format!("INSERT INTO sftp_transfer_queue ({COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"),
         params![
             r.id,
             r.sftp_id,
@@ -67,6 +73,8 @@ pub fn insert(db: &Db, r: &Row) -> AppResult<()> {
             r.overwrite,
             r.error,
             r.created_at,
+            r.checkpoint,
+            r.source_mtime,
         ],
     )?;
     Ok(())
@@ -76,7 +84,7 @@ pub fn insert(db: &Db, r: &Row) -> AppResult<()> {
 pub fn update(db: &Db, r: &Row) -> AppResult<()> {
     let conn = db.lock()?;
     conn.execute(
-        "UPDATE sftp_transfer_queue SET sftp_id = ?2, batch_id = ?3, direction = ?4, local_path = ?5, remote_path = ?6, size = ?7, status = ?8, priority = ?9, seq = ?10, overwrite = ?11, error = ?12, created_at = ?13 WHERE id = ?1",
+        "UPDATE sftp_transfer_queue SET sftp_id = ?2, batch_id = ?3, direction = ?4, local_path = ?5, remote_path = ?6, size = ?7, status = ?8, priority = ?9, seq = ?10, overwrite = ?11, error = ?12, created_at = ?13, checkpoint = ?14, source_mtime = ?15 WHERE id = ?1",
         params![
             r.id,
             r.sftp_id,
@@ -91,9 +99,18 @@ pub fn update(db: &Db, r: &Row) -> AppResult<()> {
             r.overwrite,
             r.error,
             r.created_at,
+            r.checkpoint,
+            r.source_mtime,
         ],
     )?;
     Ok(())
+}
+
+/// 删除单行（终态行「移除」按钮）。
+pub fn delete_by_id(db: &Db, id: &str) -> AppResult<usize> {
+    let conn = db.lock()?;
+    let n = conn.execute("DELETE FROM sftp_transfer_queue WHERE id = ?1", params![id])?;
+    Ok(n)
 }
 
 /// 删除处于给定状态集合中的行；返回删除数量。

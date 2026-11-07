@@ -1909,6 +1909,14 @@ export interface TransferItem {
   /** 失败时的 i18n code（R5，前端经 sshErrors 映射中文）。 */
   error: string | null;
   created_at: number;
+  /** 已连续写入的字节偏移（暂停后从这里续传；0 = 从头）。 */
+  checkpoint: number;
+  /** 首次开始时的源文件修改时间（秒），恢复前校验源是否变化。 */
+  source_mtime: number | null;
+  /** 对应 SFTP 会话是否仍存活（false = 应用重启后的旧会话，不能续传）。 */
+  session_live: boolean;
+  /** 来源 SSH 会话 id（上传目标目录按会话匹配面板；重启后为 null）。 */
+  session_id?: string | null;
 }
 
 /** 入队请求。嵌套 struct 字段走 serde 原样 snake_case（R3）。 */
@@ -1970,6 +1978,16 @@ export function sftpResolveConflict(
 
 export function sftpTransferClearFinished(): Promise<void> {
   return invoke("sftp_transfer_clear_finished");
+}
+
+/** 移除单条终态任务（行尾 dismiss）。 */
+export function sftpTransferDismiss(transferId: string): Promise<void> {
+  return invoke("sftp_transfer_dismiss", { transferId });
+}
+
+/** 失败项重试（行尾 RefreshCw）。 */
+export function sftpTransferRetry(transferId: string): Promise<void> {
+  return invoke("sftp_transfer_retry", { transferId });
 }
 
 /** 单条传输状态变化事件（payload = 最新 TransferItem）。 */

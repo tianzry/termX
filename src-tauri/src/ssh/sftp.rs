@@ -1,12 +1,16 @@
 use std::collections::VecDeque;
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+
+use futures_util::stream::{FuturesUnordered, StreamExt};
+use russh_sftp::protocol::OpenFlags;
 
 use crate::error::{AppError, AppResult};
 use crate::models::Credential;
@@ -21,6 +25,12 @@ pub const CANCELLED_CODE: &str = "transfer_cancelled";
 /// 30MB 文件按 32KB 分块原本会发近千条事件，既拖慢 webview 也会让
 /// 进度条更新相互覆盖；首帧立即发出，最后一块（100%）强制发出。
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(200);
+
+/// 流水线并发窗口：每个远端句柄同一时刻只有一条在途请求，开 N 个句柄即可
+/// 维持 N 条并发请求。对齐 Netcatty（ssh2 fastXfer 默认 64 并发 / 32KB）；
+/// 这里用 16 × 64KB ≈ 1MB 在途窗口，实测足以打满局域网链路。
+const PIPELINE_WINDOW: usize = 16;
+const PIPELINE_CHUNK: usize = 65536;
 
 /// 进度节流器。用 `Mutex` 而不是 `Cell`：进度闭包会被 async 任务捕获，
 /// future 要满足 Send，`&Cell` 不满足 Sync，会直接编译失败。
@@ -1037,6 +1047,427 @@ impl SftpHandle {
                 Err(e)
             }
         }
+    }
+
+    /// 远端文件的大小与 mtime（秒），用于断点续传前校验源是否变化。
+    pub async fn remote_file_fingerprint(&self, remote_path: &str) -> AppResult<(u64, Option<i64>)> {
+        let meta = self.sftp.metadata(remote_path).await.map_err(|e| {
+            AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "metadata", "err": e.to_string() }),
+            )
+        })?;
+        Ok((meta.size.unwrap_or(0), meta.mtime.map(|v| v as i64)))
+    }
+
+    /// 删除远端 `.part` 断点文件（取消 / 冲突重开时使用）。
+    pub async fn remove_remote_partial(&self, remote_path: &str) {
+        let _ = self.sftp.remove_file(format!("{remote_path}.part")).await;
+    }
+
+    /// 断点续传上传：从 `start_offset` 续写远端 `.part`，多句柄流水线并发。
+    ///
+    /// `checkpoint` 在每批成功后更新为「连续已写入的绝对偏移」，暂停/取消时
+    /// 调用方读取该值即可精确续传；绝不重新 create+truncate（除首传偏移 0）。
+    pub async fn upload_streaming_resumable<R>(
+        &self,
+        reader: &mut R,
+        total: u64,
+        remote_path: &str,
+        host: &crate::emitter::Host,
+        transfer_id: &str,
+        cancel: Arc<AtomicBool>,
+        start_offset: u64,
+        checkpoint: Arc<AtomicU64>,
+    ) -> AppResult<u64>
+    where
+        R: AsyncRead + AsyncSeek + Unpin,
+    {
+        if let Some((parent, _)) = remote_path.rsplit_once('/') {
+            if !parent.is_empty() {
+                self.mkdir_p(parent).await?;
+            }
+        }
+        let tmp_path = format!("{remote_path}.part");
+        let event = format!("sftp:progress:{transfer_id}");
+        let throttle = ProgressThrottle::new();
+
+        reader.seek(SeekFrom::Start(start_offset)).await.map_err(|e| {
+            AppError::sftp("sftp_io_failed", json!({ "op": "seek", "err": e.to_string() }))
+        })?;
+
+        let remaining = if total > 0 {
+            total.saturating_sub(start_offset)
+        } else {
+            u64::MAX
+        };
+        let window = if total == 0 {
+            PIPELINE_WINDOW
+        } else {
+            ((remaining as usize) / PIPELINE_CHUNK).clamp(1, PIPELINE_WINDOW)
+        };
+
+        // 固定句柄池 + 连续流水线：任何时刻最多 window 条写请求在途，完成一条
+        // 立刻补下一条。之前是「整批栅栏」（join_all 等整批完成再发下一批），
+        // 高延迟链路上每批都要等最慢的一块 + 本地读盘空窗，实测把 16×64KB 的
+        // 并发窗口退化成接近串行（100MB 仅 12.8MB/s）。
+        let mut pool: VecDeque<russh_sftp::client::fs::File> = VecDeque::with_capacity(window);
+        for i in 0..window {
+            let mut flags = OpenFlags::WRITE | OpenFlags::CREATE;
+            if i == 0 && start_offset == 0 {
+                flags |= OpenFlags::TRUNCATE;
+            }
+            let file = self.sftp.open_with_flags(&tmp_path, flags).await.map_err(|e| {
+                AppError::sftp("sftp_io_failed", json!({ "op": "open", "err": e.to_string() }))
+            })?;
+            pool.push_back(file);
+        }
+
+        type WriteFuture = std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = (russh_sftp::client::fs::File, u64, u64, AppResult<()>),
+                    > + Send,
+            >,
+        >;
+        let mut inflight: FuturesUnordered<WriteFuture> = FuturesUnordered::new();
+        let mut next_read = start_offset;
+        let mut contig = start_offset;
+        let mut done: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+        let mut eof = false;
+        let mut cancelled = false;
+        let mut first_err: Option<AppError> = None;
+
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                cancelled = true;
+            }
+
+            // 补满在途窗口：读一块 → 交给一个空闲句柄。
+            while !cancelled && !eof && !pool.is_empty() {
+                let left = if total > 0 {
+                    total.saturating_sub(next_read)
+                } else {
+                    u64::MAX
+                };
+                if left == 0 {
+                    eof = true;
+                    break;
+                }
+                let want = left.min(PIPELINE_CHUNK as u64) as usize;
+                let mut buf = vec![0u8; want];
+                let mut filled = 0usize;
+                while filled < want {
+                    let n = reader.read(&mut buf[filled..]).await.map_err(|e| {
+                        AppError::sftp(
+                            "sftp_io_failed",
+                            json!({ "op": "read_source", "err": e.to_string() }),
+                        )
+                    })?;
+                    if n == 0 {
+                        break;
+                    }
+                    filled += n;
+                }
+                if filled == 0 {
+                    if total > 0 && next_read < total {
+                        // 源文件在传输期间变短：不能静默续传。
+                        first_err = Some(AppError::sftp(
+                            "sftp_resume_source_changed",
+                            json!({ "expected": total, "got": next_read }),
+                        ));
+                        cancelled = true;
+                    }
+                    eof = true;
+                    break;
+                }
+                if total > 0 && filled < want && next_read + (filled as u64) < total {
+                    first_err = Some(AppError::sftp(
+                        "sftp_resume_source_changed",
+                        json!({ "expected": total, "got": next_read + (filled as u64) }),
+                    ));
+                    cancelled = true;
+                    break;
+                }
+                buf.truncate(filled);
+                let mut f = pool.pop_front().expect("pool 非空由循环条件保证");
+                let off = next_read;
+                let len = filled as u64;
+                next_read += len;
+                inflight.push(Box::pin(async move {
+                    let res = async {
+                        f.seek(SeekFrom::Start(off)).await.map_err(|e| {
+                            AppError::sftp(
+                                "sftp_io_failed",
+                                json!({ "op": "seek", "err": e.to_string() }),
+                            )
+                        })?;
+                        f.write_all(&buf).await.map_err(|e| {
+                            AppError::sftp(
+                                "sftp_io_failed",
+                                json!({ "op": "write", "err": e.to_string() }),
+                            )
+                        })
+                    }
+                    .await;
+                    (f, off, len, res)
+                }));
+            }
+
+            if inflight.is_empty() {
+                break;
+            }
+            let Some((f, off, len, res)) = inflight.next().await else {
+                break;
+            };
+            pool.push_back(f);
+            if let Err(e) = res {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+                cancelled = true;
+                continue;
+            }
+            if first_err.is_none() && !cancelled {
+                // 检查点只推进「连续成功」前缀：乱序完成的块先记账，等前面的
+                // 块也成功后再一起前移，避免续传偏移跳过失败的块。
+                done.insert(off, len);
+                while let Some(l) = done.remove(&contig) {
+                    contig += l;
+                }
+                checkpoint.store(contig, Ordering::SeqCst);
+                if throttle.should_emit(contig, total) {
+                    let _ =
+                        host.emit(&event, json!({ "transferred": contig, "total": total }));
+                }
+            }
+        }
+
+        for mut f in std::mem::take(&mut pool) {
+            let _ = f.shutdown().await;
+        }
+        checkpoint.store(contig, Ordering::SeqCst);
+        if let Some(e) = first_err {
+            let _ = host.emit(&event, json!({ "transferred": contig, "total": total }));
+            return Err(e);
+        }
+        if cancelled || cancel.load(Ordering::SeqCst) {
+            return Err(AppError::sftp(CANCELLED_CODE, json!({})));
+        }
+        if total > 0 && contig < total {
+            return Err(AppError::sftp(
+                "sftp_resume_source_changed",
+                json!({ "expected": total, "got": contig }),
+            ));
+        }
+
+        let _ = self.sftp.remove_file(remote_path).await;
+        self.sftp.rename(&tmp_path, remote_path).await.map_err(|e| {
+            AppError::sftp("sftp_io_failed", json!({ "op": "rename", "err": e.to_string() }))
+        })?;
+        checkpoint.store(contig, Ordering::SeqCst);
+        let _ = host.emit(
+            &event,
+            json!({ "transferred": contig, "total": if total > 0 { total } else { contig } }),
+        );
+        Ok(contig)
+    }
+
+    /// 断点续传下载：从 `start_offset` 续写本地 `.part`，多句柄流水线并发读。
+    /// 本地 `.part` 长度必须与 `start_offset` 一致，否则返回明确错误而不是
+    /// 静默覆盖（调用方负责重新开始）。
+    pub async fn download_streaming_resumable(
+        &self,
+        remote_path: &str,
+        dst: &mut tokio::fs::File,
+        total: u64,
+        host: &crate::emitter::Host,
+        transfer_id: &str,
+        cancel: Arc<AtomicBool>,
+        start_offset: u64,
+        checkpoint: Arc<AtomicU64>,
+    ) -> AppResult<u64> {
+        if total > 0 && start_offset > total {
+            return Err(AppError::sftp(
+                "sftp_resume_mismatch",
+                json!({ "expected": total, "offset": start_offset }),
+            ));
+        }
+        let local_len = dst
+            .metadata()
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        if start_offset == 0 {
+            if local_len > 0 {
+                dst.set_len(0).await.map_err(|e| {
+                    AppError::sftp(
+                        "sftp_io_failed",
+                        json!({ "op": "truncate_local", "err": e.to_string() }),
+                    )
+                })?;
+            }
+        } else if local_len != start_offset {
+            return Err(AppError::sftp(
+                "sftp_resume_mismatch",
+                json!({ "expected": start_offset, "actual": local_len }),
+            ));
+        }
+        dst.seek(SeekFrom::Start(start_offset)).await.map_err(|e| {
+            AppError::sftp("sftp_io_failed", json!({ "op": "seek_local", "err": e.to_string() }))
+        })?;
+
+        let remaining = if total > 0 {
+            total.saturating_sub(start_offset)
+        } else {
+            u64::MAX
+        };
+        let window = if total == 0 {
+            PIPELINE_WINDOW
+        } else {
+            ((remaining as usize) / PIPELINE_CHUNK).clamp(1, PIPELINE_WINDOW)
+        };
+        let mut pool: VecDeque<russh_sftp::client::fs::File> = VecDeque::with_capacity(window);
+        for _ in 0..window {
+            let file = self.sftp.open(remote_path).await.map_err(|e| {
+                AppError::sftp("sftp_io_failed", json!({ "op": "open", "err": e.to_string() }))
+            })?;
+            pool.push_back(file);
+        }
+
+        let event = format!("sftp:progress:{transfer_id}");
+        let throttle = ProgressThrottle::new();
+
+        // 连续流水线读：保持 window 条读请求在途，完成即补；收到的块按偏移
+        // 进重排缓冲，只按顺序落盘并推进 checkpoint。
+        type ReadFuture = std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = (russh_sftp::client::fs::File, u64, usize, AppResult<Vec<u8>>),
+                    > + Send,
+            >,
+        >;
+        let mut inflight: FuturesUnordered<ReadFuture> = FuturesUnordered::new();
+        let mut pending: std::collections::BTreeMap<u64, Vec<u8>> =
+            std::collections::BTreeMap::new();
+        let mut next_req = start_offset;
+        let mut write_pos = start_offset;
+        let mut eof = false;
+        let mut cancelled = false;
+        let mut first_err: Option<AppError> = None;
+
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                cancelled = true;
+            }
+            while !cancelled && !eof && !pool.is_empty() {
+                let left = if total > 0 {
+                    total.saturating_sub(next_req)
+                } else {
+                    u64::MAX
+                };
+                if left == 0 {
+                    eof = true;
+                    break;
+                }
+                let want = left.min(PIPELINE_CHUNK as u64) as usize;
+                let mut f = pool.pop_front().expect("pool 非空由循环条件保证");
+                let off = next_req;
+                next_req += want as u64;
+                inflight.push(Box::pin(async move {
+                    let res = async {
+                        f.seek(SeekFrom::Start(off)).await.map_err(|e| {
+                            AppError::sftp(
+                                "sftp_io_failed",
+                                json!({ "op": "seek", "err": e.to_string() }),
+                            )
+                        })?;
+                        let mut buf = vec![0u8; want];
+                        let mut filled = 0usize;
+                        while filled < want {
+                            let n = f.read(&mut buf[filled..]).await.map_err(|e| {
+                                AppError::sftp(
+                                    "sftp_io_failed",
+                                    json!({ "op": "read", "err": e.to_string() }),
+                                )
+                            })?;
+                            if n == 0 {
+                                break;
+                            }
+                            filled += n;
+                        }
+                        buf.truncate(filled);
+                        Ok(buf)
+                    }
+                    .await;
+                    (f, off, want, res)
+                }));
+            }
+
+            if inflight.is_empty() {
+                break;
+            }
+            let Some((f, off, want, res)) = inflight.next().await else {
+                break;
+            };
+            pool.push_back(f);
+            match res {
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                    cancelled = true;
+                }
+                Ok(data) => {
+                    if first_err.is_none() {
+                        if total > 0 && data.len() < want {
+                            // 远端在传输期间变短：明确报错，避免生成残缺文件。
+                            first_err = Some(AppError::sftp(
+                                "sftp_resume_source_changed",
+                                json!({ "off": off, "want": want, "got": data.len() }),
+                            ));
+                            cancelled = true;
+                        } else {
+                            if data.is_empty() {
+                                // 未知大小：读到 EOF。
+                                eof = true;
+                            } else {
+                                pending.insert(off, data);
+                            }
+                        }
+                    }
+                    while let Some(chunk) = pending.remove(&write_pos) {
+                        dst.write_all(&chunk).await.map_err(AppError::from)?;
+                        write_pos += chunk.len() as u64;
+                    }
+                    checkpoint.store(write_pos, Ordering::SeqCst);
+                    if throttle.should_emit(write_pos, total) {
+                        let _ =
+                            host.emit(&event, json!({ "transferred": write_pos, "total": total }));
+                    }
+                }
+            }
+        }
+
+        let _ = dst.flush().await;
+        for mut f in std::mem::take(&mut pool) {
+            let _ = f.shutdown().await;
+        }
+        checkpoint.store(write_pos, Ordering::SeqCst);
+        let _ = host.emit(&event, json!({ "transferred": write_pos, "total": total }));
+        if let Some(e) = first_err {
+            return Err(e);
+        }
+        if cancelled || cancel.load(Ordering::SeqCst) {
+            return Err(AppError::sftp(CANCELLED_CODE, json!({})));
+        }
+        if total > 0 && write_pos < total {
+            return Err(AppError::sftp(
+                "sftp_resume_source_changed",
+                json!({ "expected": total, "got": write_pos }),
+            ));
+        }
+        Ok(write_pos)
     }
 }
 

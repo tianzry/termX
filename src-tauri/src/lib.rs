@@ -403,7 +403,8 @@ pub fn run() {
             crate::sftp::transfer_center::sftp_transfer_set_concurrency,
             crate::sftp::transfer_center::sftp_transfer_resolve_conflict,
             crate::sftp::transfer_center::sftp_transfer_clear_finished,
-            // Local FS (SFTP dual-pane B1)
+            crate::sftp::transfer_center::sftp_transfer_dismiss,
+            crate::sftp::transfer_center::sftp_transfer_retry,
             commands::localfs::local_home,
             commands::localfs::local_list_drives,
             commands::localfs::local_list_dir,
