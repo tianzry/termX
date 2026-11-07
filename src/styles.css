@@ -2749,7 +2749,8 @@ button:disabled {
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: hsl(var(--muted-foreground));
+  /* 对齐 Netcatty：侧栏导航未选中态也用前景色（深色），不再用浅灰 muted。 */
+  color: hsl(var(--foreground));
   font: inherit;
   font-size: 13px;
   font-weight: 500;
