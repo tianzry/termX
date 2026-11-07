@@ -236,10 +236,212 @@ fn escape_html(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+const ANSI_BASE_COLORS: [&str; 16] = [
+    "#000000", "#cd0000", "#00cd00", "#cdcd00", "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
+    "#7f7f7f", "#ff0000", "#00ff00", "#ffff00", "#5c5cff", "#ff00ff", "#00ffff", "#ffffff",
+];
+
+fn ansi_palette(index: u32) -> Option<String> {
+    match index {
+        0..=15 => Some(ANSI_BASE_COLORS[index as usize].to_string()),
+        16..=231 => {
+            let i = index - 16;
+            let steps = [0u8, 95, 135, 175, 215, 255];
+            let r = steps[(i / 36) as usize];
+            let g = steps[((i % 36) / 6) as usize];
+            let b = steps[(i % 6) as usize];
+            Some(format!("#{r:02x}{g:02x}{b:02x}"))
+        }
+        232..=255 => {
+            let v = 8 + (index - 232) * 10;
+            Some(format!("#{v:02x}{v:02x}{v:02x}"))
+        }
+        _ => None,
+    }
+}
+
+/// HTML 导出用的 SGR 状态：把 asciicast 里的 ANSI 转成内联样式，
+/// 避免导出的文件里出现肉眼可见的 `[32m` 之类的控制片段。
+#[derive(Default, Clone)]
+struct SgrStyle {
+    fg: Option<String>,
+    bg: Option<String>,
+    bold: bool,
+    dim: bool,
+    italic: bool,
+    underline: bool,
+    inverse: bool,
+}
+
+impl SgrStyle {
+    fn apply(&mut self, params: &[u32]) {
+        if params.is_empty() {
+            *self = SgrStyle::default();
+            return;
+        }
+        let mut i = 0;
+        while i < params.len() {
+            match params[i] {
+                0 => *self = SgrStyle::default(),
+                1 => self.bold = true,
+                2 => self.dim = true,
+                3 => self.italic = true,
+                4 => self.underline = true,
+                7 => self.inverse = true,
+                22 => {
+                    self.bold = false;
+                    self.dim = false;
+                }
+                23 => self.italic = false,
+                24 => self.underline = false,
+                27 => self.inverse = false,
+                30..=37 => self.fg = ansi_palette(params[i] - 30),
+                39 => self.fg = None,
+                40..=47 => self.bg = ansi_palette(params[i] - 40),
+                49 => self.bg = None,
+                90..=97 => self.fg = ansi_palette(params[i] - 90 + 8),
+                100..=107 => self.bg = ansi_palette(params[i] - 100 + 8),
+                38 | 48 => {
+                    let foreground = params[i] == 38;
+                    let color = match params.get(i + 1) {
+                        Some(5) => params.get(i + 2).and_then(|n| ansi_palette(*n)),
+                        Some(2) => match (params.get(i + 2), params.get(i + 3), params.get(i + 4)) {
+                            (Some(r), Some(g), Some(b)) => {
+                                Some(format!("#{r:02x}{g:02x}{b:02x}"))
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if foreground {
+                        self.fg = color;
+                    } else {
+                        self.bg = color;
+                    }
+                    i += if params.get(i + 1) == Some(&5) { 2 } else { 4 };
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        self.fg.is_none()
+            && self.bg.is_none()
+            && !self.bold
+            && !self.dim
+            && !self.italic
+            && !self.underline
+            && !self.inverse
+    }
+
+    fn css(&self) -> String {
+        let mut fg = self.fg.clone();
+        let mut bg = self.bg.clone();
+        if self.inverse {
+            let swapped_fg = bg.clone().unwrap_or_else(|| "#e5e5e5".into());
+            let swapped_bg = fg.clone().unwrap_or_else(|| "#111111".into());
+            fg = Some(swapped_fg);
+            bg = Some(swapped_bg);
+        }
+        let mut parts = Vec::new();
+        if let Some(color) = fg {
+            parts.push(format!("color:{color}"));
+        }
+        if let Some(color) = bg {
+            parts.push(format!("background:{color}"));
+        }
+        if self.bold {
+            parts.push("font-weight:bold".into());
+        }
+        if self.italic {
+            parts.push("font-style:italic".into());
+        }
+        if self.underline {
+            parts.push("text-decoration:underline".into());
+        }
+        if self.dim {
+            parts.push("opacity:0.6".into());
+        }
+        parts.join(";")
+    }
+}
+
+fn flush_html_span(out: &mut String, buf: &mut String, style: &SgrStyle) {
+    if buf.is_empty() {
+        return;
+    }
+    let escaped = escape_html(buf);
+    buf.clear();
+    if style.is_default() {
+        out.push_str(&escaped);
+    } else {
+        out.push_str(&format!(
+            "<span style=\"{}\">{escaped}</span>",
+            style.css()
+        ));
+    }
+}
+
+/// 把带 ANSI 的终端文本转成 HTML：SGR 转内联样式，其余 CSI / OSC
+/// （光标移动、清屏、标题等）直接丢弃。
+fn ansi_to_html(text: &str) -> String {
+    let mut out = String::new();
+    let mut style = SgrStyle::default();
+    let mut buf = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            buf.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                let mut seq = String::new();
+                let mut final_char = None;
+                for c in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        final_char = Some(c);
+                        break;
+                    }
+                    seq.push(c);
+                }
+                if final_char == Some('m') {
+                    flush_html_span(&mut out, &mut buf, &style);
+                    let params: Vec<u32> = seq
+                        .split(';')
+                        .map(|part| part.parse::<u32>().unwrap_or(0))
+                        .collect();
+                    style.apply(&params);
+                }
+            }
+            Some(']') => {
+                // OSC：吞到 BEL 或 ESC \ 为止。
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' {
+                        break;
+                    }
+                    if c == '\u{1b}' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            // 单字符 ESC 序列（如 ESC 7 / ESC 8）丢弃。
+            Some(_) | None => {}
+        }
+    }
+    flush_html_span(&mut out, &mut buf, &style);
+    out
+}
+
 fn cast_to_html(content: &str) -> String {
     format!(
-        "<!doctype html>\n<html><head><meta charset=\"utf-8\"></head><body><pre>{}</pre></body></html>",
-        escape_html(&cast_to_text(content))
+        "<!doctype html>\n<html><head><meta charset=\"utf-8\"></head><body><pre style=\"white-space:pre-wrap\">{}</pre></body></html>",
+        ansi_to_html(&cast_to_text(content))
     )
 }
 
@@ -741,7 +943,8 @@ mod tests {
         assert!(html.contains("<meta charset=\"utf-8\">"));
         assert!(html.contains("&lt;b&gt;&amp;"));
         assert!(!html.contains("<b>&"));
-        assert!(html.contains("\u{1b}[31mred\u{1b}[0m"));
+        assert!(!html.contains('\u{1b}'));
+        assert!(html.contains("<span style=\"color:#cd0000\">red</span>"));
     }
 
     #[test]
