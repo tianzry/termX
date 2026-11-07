@@ -397,7 +397,19 @@ export function SftpPanel({ sshSessionId, terminalCwd = null }: Props) {
       status: "running",
     });
     try {
-      const files = await api.sftpWalkRemote(sftpId, remoteRoot);
+      const entries = await api.sftpWalkRemote(sftpId, remoteRoot);
+      const files = entries.filter((e) => !e.is_dir);
+      // 先建目录（含空目录），再传文件；深度浅的先建。
+      const dirs = entries
+        .filter((e) => e.is_dir)
+        .sort((a, b) => a.rel_path.split("/").length - b.rel_path.split("/").length);
+      for (const d of dirs) {
+        if (isCanceled(rowId)) {
+          patchRow(rowId, { status: "canceled", current: undefined });
+          return;
+        }
+        await api.localMkdir(`${trimSep(destRoot)}/${d.rel_path}`);
+      }
       const total = files.reduce((s, f) => s + f.size, 0);
       patchRow(rowId, { total });
       let done = 0;
@@ -507,7 +519,21 @@ export function SftpPanel({ sshSessionId, terminalCwd = null }: Props) {
       status: "running",
     });
     try {
-      const files = await api.walkLocalDir(localRoot);
+      const entries = await api.walkLocalDir(localRoot);
+      const files = entries.filter((e) => !e.is_dir);
+      // 先建远端目录（含空目录）；已存在的目录跳过，避免 create_dir 报错。
+      const dirs = entries
+        .filter((e) => e.is_dir)
+        .sort((a, b) => a.rel_path.split("/").length - b.rel_path.split("/").length);
+      for (const d of dirs) {
+        if (isCanceled(rowId)) {
+          patchRow(rowId, { status: "canceled", current: undefined });
+          return;
+        }
+        const rp = joinPath(cwd, d.rel_path);
+        const existing = await api.sftpStat(sftpId, rp).catch(() => null);
+        if (!existing) await api.sftpMkdir(sftpId, rp);
+      }
       const total = files.reduce((s, f) => s + f.size, 0);
       patchRow(rowId, { total });
       let done = 0;

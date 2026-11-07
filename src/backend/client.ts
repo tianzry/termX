@@ -1768,10 +1768,11 @@ export function forwardRuleStop(
   return invoke("forward_rule_stop", { activeId, ruleIndex });
 }
 
-/** 递归遍历结果：`rel_path` 统一用 '/'，`size` 为字节数。 */
+/** 递归遍历结果：`rel_path` 统一用 '/'，`size` 为字节数；`is_dir` 用于先建目录（含空目录）。 */
 export interface WalkEntry {
   rel_path: string;
   size: number;
+  is_dir: boolean;
 }
 
 export interface TransferProgress {
@@ -1781,7 +1782,7 @@ export interface TransferProgress {
 
 // ── SFTP 增强：流式传输 / 递归 / 原生选择框 ────────────────
 
-/** 递归列出远端目录下的全部文件（符号链接到目录会被跳过以防环）。 */
+/** 递归列出远端目录（含目录条目）；符号链接目录按真实路径去环后跟随。 */
 export function sftpWalkRemote(
   sftpId: string,
   remoteRoot: string,
@@ -1789,7 +1790,7 @@ export function sftpWalkRemote(
   return invoke<WalkEntry[]>("sftp_walk_remote_dir", { sftpId, remoteRoot });
 }
 
-/** 递归列出本地目录下的全部文件（`rel_path` 用 '/'）。 */
+/** 递归列出本地目录（含目录条目；`rel_path` 用 '/'）。 */
 export function walkLocalDir(localRoot: string): Promise<WalkEntry[]> {
   return invoke<WalkEntry[]>("walk_local_dir", { localRoot });
 }
@@ -1896,7 +1897,7 @@ export interface TransferItem {
   checkpoint: number;
   /** 首次开始时的源文件修改时间（秒），恢复前校验源是否变化。 */
   source_mtime: number | null;
-  /** 对应 SFTP 会话是否仍存活（false = 应用重启后的旧会话，不能续传）。 */
+  /** 对应 SFTP 会话是否仍存活（false = 断开/应用重启后的旧会话，不能续传或重试）。 */
   session_live: boolean;
   /** 来源 SSH 会话 id（上传目标目录按会话匹配面板；重启后为 null）。 */
   session_id?: string | null;

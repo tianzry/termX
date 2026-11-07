@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -109,6 +109,9 @@ pub struct FileStat {
 pub struct WalkEntry {
     pub rel_path: String,
     pub size: u64,
+    /// 目录条目（含空目录）：调用方需先行创建目录，再传文件，
+    /// 否则空目录在递归传输中会丢失。
+    pub is_dir: bool,
 }
 
 /// Maximum recursion depth, counting the root as depth 0. With CAP = 32 the
@@ -327,6 +330,11 @@ impl SftpHandle {
         let root_norm = root.trim_end_matches('/').to_string();
         let mut queue: VecDeque<(String, u32)> = VecDeque::new();
         queue.push_back((root.to_string(), 0));
+        // 已跟随过的真实目录：仅用于符号链接目录去环（普通目录树天然无环）。
+        let mut followed: HashSet<String> = HashSet::new();
+        if let Ok(real_root) = self.sftp.canonicalize(root).await {
+            followed.insert(real_root);
+        }
         let mut result: Vec<WalkEntry> = Vec::new();
 
         while let Some((dir, depth)) = queue.pop_front() {
@@ -352,11 +360,17 @@ impl SftpHandle {
                     .to_string();
                 let ft = e.file_type();
                 if ft.is_dir() {
+                    result.push(WalkEntry {
+                        rel_path: rel,
+                        size: 0,
+                        is_dir: true,
+                    });
                     queue.push_back((full, depth + 1));
                 } else if ft.is_file() {
                     result.push(WalkEntry {
                         rel_path: rel,
                         size: e.metadata().size.unwrap_or(0),
+                        is_dir: false,
                     });
                 } else if ft.is_symlink() {
                     // Follow once via STAT to learn what the target is.
@@ -365,9 +379,25 @@ impl SftpHandle {
                             result.push(WalkEntry {
                                 rel_path: rel,
                                 size: meta.size.unwrap_or(0),
+                                is_dir: false,
                             });
+                        } else if meta.file_type().is_dir() {
+                            // 下载语义对齐 Netcatty：跟随符号链接目录。
+                            // 以真实路径去环：链接回根/已跟随目标时跳过。
+                            let real = self
+                                .sftp
+                                .canonicalize(&full)
+                                .await
+                                .unwrap_or_else(|_| full.clone());
+                            if followed.insert(real) {
+                                result.push(WalkEntry {
+                                    rel_path: rel,
+                                    size: 0,
+                                    is_dir: true,
+                                });
+                                queue.push_back((full, depth + 1));
+                            }
                         }
-                        // symlink-to-dir: skip to avoid cycles.
                         // anything else (block/char/fifo): skip.
                     }
                     // metadata failure (e.g. broken symlink): silently skip.
