@@ -291,6 +291,12 @@ pub async fn ssh_disconnect(
             let _ = remove_owned_waiter(&state.host_key_waiters, tid, &owner);
         }
     }
+    // SSH 断开会级联关闭所属 SFTP 会话；同样立刻广播队列快照，让离线标注
+    // 与「恢复/重试」禁用即时生效。
+    if let Ok(snapshot) = crate::sftp::transfer_center::refreshed_snapshot(&state) {
+        use tauri::{Emitter as _, Manager as _};
+        let _ = window.app_handle().emit("sftp:queue_changed", snapshot);
+    }
     Ok(())
 }
 

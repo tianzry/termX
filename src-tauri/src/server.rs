@@ -1284,6 +1284,13 @@ async fn dispatch_async(
                     let _ = waiter_cancel_owned(&state.host_key_waiters, tid, owner);
                 }
             }
+            // SSH 断开级联关闭 SFTP 子会话：与 GUI 一致地广播队列快照。
+            if let Ok(snapshot) = crate::sftp::transfer_center::refreshed_snapshot(state) {
+                let _ = tx.send(Message::Text(
+                    json!({ "type": "event", "event": "sftp:queue_changed", "payload": snapshot })
+                        .to_string(),
+                ));
+            }
             Ok(Value::Null)
         }
         "ssh_auth_respond" => {
@@ -1481,6 +1488,13 @@ async fn dispatch_async(
             let sftp_id: String = arg(&args, "sftpId")?;
             crate::commands::lifecycle::close_resource(state, &sftp_id, SessionKind::Sftp, owner)
                 .map_err(err_value)?;
+            // 与 GUI sftp_close 同语义：断开即刷新并广播队列快照（离线标注）。
+            if let Ok(snapshot) = crate::sftp::transfer_center::refreshed_snapshot(state) {
+                let _ = tx.send(Message::Text(
+                    json!({ "type": "event", "event": "sftp:queue_changed", "payload": snapshot })
+                        .to_string(),
+                ));
+            }
             Ok(Value::Null)
         }
         "sftp_cancel_transfer" => {

@@ -368,7 +368,14 @@ pub async fn sftp_close(
         &sftp_id,
         SessionKind::Sftp,
         &SessionOwner::Window(window.label().to_owned()),
-    )
+    )?;
+    // 断开后立刻广播队列快照：前端用 `session_live` 渲染「会话离线」并禁用
+    // 恢复/重试，不能等下一次入队或队列操作把 handle 缓存刷新后才更新。
+    if let Ok(snapshot) = crate::sftp::transfer_center::refreshed_snapshot(&state) {
+        use tauri::{Emitter as _, Manager as _};
+        let _ = window.app_handle().emit("sftp:queue_changed", snapshot);
+    }
+    Ok(())
 }
 
 /// dialog plugin 的 FilePath → 本地 PathBuf。这里的命令仅在桌面注册，

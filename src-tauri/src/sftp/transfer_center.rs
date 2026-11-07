@@ -324,7 +324,20 @@ pub async fn enqueue(
 }
 
 pub async fn list(state: &AppState) -> AppResult<Vec<TransferItem>> {
-    state.transfer_center.snapshot()
+    refreshed_snapshot(state)
+}
+
+/// 会话集合变化（SFTP / 所属 SSH 断开）后刷新 handle 快照再取全量快照。
+/// `snapshot` 只用 `Inner::handles` 的缓存副本（worker 侧无 AppState），
+/// 因此断开后必须由调用方主动刷新，否则运行期断线仍显示 `session_live=true`
+/// （离线标注与「恢复/重试」禁用全靠这个字段）。
+pub fn refreshed_snapshot(state: &AppState) -> AppResult<Vec<TransferItem>> {
+    let center = &state.transfer_center;
+    {
+        let mut g = locked(&center.inner)?;
+        refresh_handles(&mut g, state);
+    }
+    center.snapshot()
 }
 
 pub async fn pause(state: &AppState, host: &Host, transfer_id: String) -> AppResult<()> {
