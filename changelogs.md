@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-11-07 — #252 数据模块验收第三轮：钥匙串 / 代理 / 端口转发
+
+### 修复
+
+- 钥匙串 P2：`entry_from_disk` 在 `.pub` 存在时直接跳过私钥解析，导致带 passphrase 的密钥 `encrypted` 恒 false（UI 误标未加密）。改为总是 `PrivateKey::from_openssh` 判加密，`.pub` 只负责优先提供 key_type/fingerprint/public_key；补单测 `file_key_encrypted_with_pub_still_flags_encrypted`。
+- 端口转发 P1（-R 语义）：`prepare_remote_rule` 用 `remote_port` 作为远端监听端口、`run_remote_rule` 用 `local_port` 作为本地目标端口，与 OpenSSH `-R` / Netcatty 相反。改为 `local_port` = 远端监听、`remote_host:remote_port` = 本地目标。
+- 端口转发 P2（端口冲突静默共享）：Windows 默认 `SO_REUSEADDR` 允许同地址端口二次绑定，两条转发同时 active 但只有后绑定的能收连接。新增 `bind_tcp`：socket2 建 socket + WinSock `setsockopt(SO_EXCLUSIVEADDRUSE)`（socket2 0.6 无该 API；windows-sys 0.52 未导出常量，值 -5 按 winsock2.h 内联）；Unix 仍 `SO_REUSEADDR`。补单测 `bind_listener_rejects_second_listener_on_same_port`。
+- 端口转发 P2（删除运行中条目）：`delete_forward` 只删 DB 行，listener 继续 accept 打进已删除规则。抽出 `delete_impl`（GUI 与 headless `server.rs` 共用），先按 `forward_id` 结束运行中会话（复用 `close_resource`，锁序 registry → active_forwards）再删行。
+- 端口转发 P1（自动重连失效）：意外断线后后端只把 `stats.connected` 置 false、规则置 error，僵尸会话仍留在 `active_forwards`，监督器把它当“运行中”永不重拉。`splitActiveForwards` 分出僵尸会话，tick 中先 `forward_stop` 收掉再用「存活集合」调度；补单测。
+- 端口转发 P3（文案未本地化）：`ForwardOverview` / `ForwardPanel` 直接渲染 `rs.error`（原始 `__termx_err__|...`）与英文状态；改走 `userVisibleError` + 新增 `forwardStatusLabel`（连接中/运行中/未启动/错误/停止失败）。
+- `ForwardPanel` 侧栏运行态轮询只拉 stats：重连换了 `active_id` 后侧栏停在“已断开”。改为每 2s 对齐 `forward_active_list`，不一致或出现断线即 `refresh()`。
+
+### 实测（release + CDP 9222，129 = 192.168.126.129）
+
+- 钥匙串：ED25519/ECDSA/RSA 生成、导入 `id_ed25519`、设默认、删除（私钥 + `.pub` 同清）；`.pub` 为目录时生成报 `io_error` 且私钥回滚不存在；ECDSA 带 passphrase `encrypted=true`；默认 `acc3-ed25519` 未授权时连接失败、authorized_keys 追加后 `whoami=tianzry`（真实用默认密钥）。
+- 代理：本地 HTTP CONNECT(:18080) 与 SOCKS5(:18081) 均真实连到 129；`no_proxy=192.168.126.129` + 错误密码仍直连成功；错密码 → `proxy_auth_required`、死端口 18099 → `proxy_connect_failed`；UI 新建/编辑/删除、改密码回读一致。
+- 端口转发：本地 19027 拿到 SSH banner（connections=1/rx 有值）、stop 后端口关闭；远程 19081（129 监听）→ 本地 echo 19090 回 `TERMX_FWD_OK`；同端口第二条规则 error=`ssh_port_bind_failed`（外部占用 19023 同样）；远端 19080 被 python 占用 → `ssh_tcpip_forward_failed`；`bind_address=127.0.0.1` 生效；运行中直接 `delete_forward` → active=0、行=0、端口已释放；杀 129 上 notty `sshd-session` 后 t+1s 出现 `connected=false`/error，t+2s 监督器换新 `active_id` 重连成功且 banner 恢复。
+- UI：Vault「端口转发」页显示「运行中 / 错误」与中文 `本地端口 19028 绑定失败（127.0.0.1）：…`，无 `__termx_err__` 原始串。
+
+### 门禁
+
+- `npm run test:run` 825✓；`npm run build`✓；`cargo check --no-default-features`✓；`cargo test --no-default-features` 956✓；`cargo build --release --no-default-features`✓。
+- 踩坑：只改前端时 `cargo build --release` 不重编（exe 未更新），需 touch `src/lib.rs` 触发 `generate_context!` 重新嵌入 dist，否则验收跑的是旧前端。
+
 ## 2026-11-07 — #251 移除 rssh → termX 旧数据迁移逻辑（未发布，无需兼容）
 
 ### 删除的文件与关键分支
