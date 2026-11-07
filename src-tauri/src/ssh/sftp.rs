@@ -205,6 +205,12 @@ impl SftpHandle {
         self.parent_ssh_id.as_deref()
     }
 
+    /// 测试专用：在链路中途关闭 SFTP 通道，模拟服务端/网络断线。
+    #[cfg(test)]
+    pub async fn close_for_test(&self) {
+        let _ = self.sftp.close().await;
+    }
+
     /// Open SFTP subsystem on an existing SSH connection.
     pub async fn from_handle(
         ssh_handle: &crate::ssh::client::SshHandle,
