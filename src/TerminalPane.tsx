@@ -78,7 +78,7 @@ import type {
   TerminalTransport,
 } from "./backend/client";
 import type { Tab } from "./workspaceModel";
-import { getSettings, subscribeSettings } from "./settings/settingsStore";
+import { getSettings, subscribeSettings, updateSettings } from "./settings/settingsStore";
 import { cloneKeywordHighlightRules, normalizeHostKeywordHighlightRules, type KeywordHighlightRule } from "./settings/settingsModel";
 import {
   cellOffsets,
@@ -461,10 +461,11 @@ export function TerminalPane({
 
   /**
    * 拉取本主机的高亮规则；主机编辑器保存后广播 profileId，已开终端重拉
-   * （无需重启）。非 SSH/Telnet（无档案）恒为空，只用全局规则。
+   * （无需重启）。主机级规则仅 SSH 有（主机编辑器也只对其可见）；
+   * 本地 / 串口 / Telnet 恒为空，只用全局规则。
    */
   useEffect(() => {
-    const profileId = encodingProfileId;
+    const profileId = sshProfileId;
     if (!profileId) {
       setHostHighlightEnabled(false);
       setHostHighlightRules([]);
@@ -496,7 +497,7 @@ export function TerminalPane({
       disposed = true;
       unsubscribe();
     };
-  }, [encodingProfileId]);
+  }, [sshProfileId]);
   /** 片段 / 脚本列表（P0 #5）：右键插入与快捷键，均只写入本窗格自己的会话。 */
   const [snippets, setSnippets] = useState<api.Snippet[]>([]);
   /** 自动触发用最新快照（异步回调里避免闭包旧值）。 */
@@ -1853,11 +1854,18 @@ export function TerminalPane({
   }, []);
 
   /**
+   * 工具栏浮层的目标规则集：仅 SSH 编辑主机级规则（主机级覆盖不回退）；
+   * 本地终端 / 串口 / Telnet 没有主机级规则，直接编辑全局规则，
+   * 着色仍走同一套 `effectiveHighlight`（与 SSH 完全一致）。
+   */
+  const highlightUiRules = sshProfileId ? hostHighlightRules : highlightRules;
+  const highlightUiEnabled = sshProfileId ? hostHighlightEnabled : highlightEnabled;
+
+  /**
    * 新增主机规则（对齐 Netcatty `addHostKeywordHighlightRule`）：
    * 名称 + 正则 + 颜色，正则先校验；新增后同时打开主机总开关。
    */
   function addHostHighlightRule() {
-    if (!encodingProfileId) return;
     const label = hostHighlightLabel.trim();
     const pattern = hostHighlightPattern.trim();
     if (!label || !pattern) return;
@@ -1873,7 +1881,7 @@ export function TerminalPane({
         : `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     persistHostKeywordHighlight({
       rules: [
-        ...hostHighlightRules,
+        ...highlightUiRules,
         { id, label, patterns: [pattern], color: hostHighlightColor, enabled: true },
       ],
       enabled: true,
@@ -1892,8 +1900,23 @@ export function TerminalPane({
     enabled?: boolean;
     rules?: KeywordHighlightRule[];
   }) {
-    const profileId = encodingProfileId;
-    if (!profileId) return;
+    const profileId = sshProfileId;
+    if (!profileId) {
+      // 本地终端 / 串口 / Telnet：没有主机级规则，浮层直接改全局规则，
+      // 与设置页共用同一份数据，改动即时同步到所有已开终端。
+      const nextEnabled = patch.enabled ?? highlightEnabled;
+      const nextRules = patch.rules ?? highlightRules;
+      setHighlightEnabled(nextEnabled);
+      setHighlightRules(nextRules);
+      updateSettings({
+        terminal: {
+          ...getSettings().terminal,
+          keywordHighlightEnabled: nextEnabled,
+          keywordHighlightRules: nextRules,
+        },
+      });
+      return;
+    }
     const nextEnabled = patch.enabled ?? hostHighlightEnabled;
     const nextRules = patch.rules ?? hostHighlightRules;
     setHostHighlightEnabled(nextEnabled);
@@ -3526,12 +3549,7 @@ export function TerminalPane({
                   <div key={action} className="term-tool-more">
                     <button
                       className="term-tool-btn"
-                      title={
-                        encodingProfileId
-                          ? TERMINAL_TOOLBAR_TEXT.highlight.title
-                          : "本机 / 串口终端不支持主机高亮规则"
-                      }
-                      disabled={!encodingProfileId}
+                      title={TERMINAL_TOOLBAR_TEXT.highlight.title}
                       onClick={() => {
                         setHostHighlightError("");
                         closeOtherToolbarPopovers("highlight");
@@ -3547,15 +3565,15 @@ export function TerminalPane({
                             {TERMINAL_TOOLBAR_TEXT.highlight.label}
                           </span>
                           <label className="term-highlight-enabled">
-                            <span>{hostHighlightEnabled ? "已启用" : "已禁用"}</span>
+                            <span>{highlightUiEnabled ? "已启用" : "已禁用"}</span>
                             <button
                               type="button"
                               role="switch"
-                              aria-checked={hostHighlightEnabled}
-                              className={`term-highlight-toggle${hostHighlightEnabled ? " on" : ""}`}
+                              aria-checked={highlightUiEnabled}
+                              className={`term-highlight-toggle${highlightUiEnabled ? " on" : ""}`}
                               onClick={() =>
                                 persistHostKeywordHighlight({
-                                  enabled: !hostHighlightEnabled,
+                                  enabled: !highlightUiEnabled,
                                 })
                               }
                             >
@@ -3563,13 +3581,20 @@ export function TerminalPane({
                             </button>
                           </label>
                         </div>
+                        {!sshProfileId && (
+                          <div className="term-highlight-hint">
+                            本类型终端没有主机级规则，这里编辑的是全局规则（同步到设置页）
+                          </div>
+                        )}
                         <div className="term-highlight-scroll">
-                          {hostHighlightRules.length === 0 ? (
+                          {highlightUiRules.length === 0 ? (
                             <div className="term-highlight-empty">
-                              此主机未定义自定义高亮规则
+                              {sshProfileId
+                                ? "此主机未定义自定义高亮规则"
+                                : "全局未定义高亮规则，可在下方添加"}
                             </div>
                           ) : (
-                            hostHighlightRules.map((rule) => (
+                            highlightUiRules.map((rule) => (
                               <div
                                 key={rule.id}
                                 className={`term-highlight-row${rule.enabled ? "" : " is-off"}`}
@@ -3582,7 +3607,7 @@ export function TerminalPane({
                                   title={rule.enabled ? "点击停用该规则" : "点击启用该规则"}
                                   onClick={() =>
                                     persistHostKeywordHighlight({
-                                      rules: hostHighlightRules.map((r) =>
+                                      rules: highlightUiRules.map((r) =>
                                         r.id === rule.id ? { ...r, enabled: !r.enabled } : r,
                                       ),
                                     })
@@ -3605,7 +3630,7 @@ export function TerminalPane({
                                     value={rule.color}
                                     onChange={(e) =>
                                       persistHostKeywordHighlight({
-                                        rules: hostHighlightRules.map((r) =>
+                                        rules: highlightUiRules.map((r) =>
                                           r.id === rule.id
                                             ? { ...r, color: e.target.value.toUpperCase() }
                                             : r,
@@ -3622,7 +3647,7 @@ export function TerminalPane({
                                   title="移除该规则"
                                   onClick={() =>
                                     persistHostKeywordHighlight({
-                                      rules: hostHighlightRules.filter((r) => r.id !== rule.id),
+                                      rules: highlightUiRules.filter((r) => r.id !== rule.id),
                                     })
                                   }
                                 >
@@ -3676,7 +3701,7 @@ export function TerminalPane({
                             <div className="term-highlight-error">{hostHighlightError}</div>
                           )}
                         </div>
-                        {hostHighlightRules.length > 0 && (
+                        {highlightUiRules.length > 0 && (
                           <div className="term-highlight-footer">
                             <button
                               type="button"

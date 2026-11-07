@@ -17,7 +17,7 @@ export interface TerminalActionText {
 
 /** 右侧工具栏内联按钮。 */
 export const TERMINAL_TOOLBAR_TEXT: Record<TerminalToolbarAction, TerminalActionText> = {
-  highlight: { label: "主机关键字高亮", title: "主机关键字高亮" },
+  highlight: { label: "关键字高亮", title: "关键字高亮" },
   sftp: { label: "打开 SFTP", title: "打开 SFTP" },
   compose: { label: "撰写栏", title: "撰写栏" },
   search: { label: "终端搜索", title: "终端搜索" },

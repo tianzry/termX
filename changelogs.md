@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-11-07 — 关键字高亮解除终端类型限制
+
+### 修改
+
+- 工具栏「关键字高亮」按钮去掉 `disabled={!encodingProfileId}`，四类终端（SSH / 本地 pty / 串口 / Telnet）统一可点；title 不再按类型写「不支持主机高亮规则」，`terminalActionText` 的标签统一为「关键字高亮」。
+- 浮层按 `sshProfileId` 分流：SSH 继续编辑主机级规则（主机覆盖不回退）；本地 / 串口 / Telnet 没有主机级规则，直接读写全局设置（`updateSettings({ terminal: { ...getSettings().terminal, ... } })` 浅合并），并与设置页共用同一份数据，改完立即热更新已开终端。
+- 主机规则加载 effect 由 `encodingProfileId` 收窄到 `sshProfileId`：Telnet（带来源档案）不再读取主机规则，避免“这些类型没有主机级规则”与实现不一致；SSH 主机档案分支原样保留。
+- 着色链路不变：仍是 `effectiveHighlight`（`mergeKeywordHighlightRules` 全局 + 主机追加）→ xterm `registerDecoration`，四类终端同一套实现。
+- 浮层无档案时显示提示「本类型终端没有主机级规则，这里编辑的是全局规则（同步到设置页）」；空态文案与底部添加区改按 `highlightUiRules` 判断。
+
+### 实测（release + CDP 9222）
+
+- 本地 Git Bash：`echo ERROR warning done` → ERROR `rgb(248,113,113)`、warning `rgb(251,191,36)`、done `rgb(52,211,153)`。Error 规则初始为关闭，浮层内开启后已有回滚区实时变红；页面重载后 Error 仍启用，重跑命令着色仍在。
+- COM4（9600-7E2 自环）：输入 `ERROR serial done` 回显，ERROR 红 / done 绿；浮层主开关关→ERROR 回落默认色、开→恢复红色，实时生效；重载后浮层仍列出全局 7 条规则（Error 启用）。
+- Telnet Echo 2324（本地 echo 服务）：连接收到 `TELNET ECHO READY`，输入 `ERROR done` 回显，ERROR 红 / done 绿；浮层显示全局规则与“无主机级规则”提示；重载后规则仍在，重新连接后着色命中。
+- 129-覆盖主机 SSH：浮层只列主机规则 `Cover / COVERED / #22CCCC`（无全局提示）；`echo COVERED ERROR done` 中 COVERED 青、ERROR 红（全局追加）、done 绿；重载后主机规则仍在且着色一致。
+- 备注：重载后同一 COM4 的前端重连被拒（后端仍持有串口句柄），与本次高亮改动无关；串口的着色与开关实时生效已在重载前完成验证，重载后的规则持久化通过浮层列表确认。
+
+### 门禁
+
+- `npm run test:run` 826✓（73 files）；`npm run build`✓；`cargo check --lib`✓；`cargo check --lib --features server`✓；`cargo test --lib` 968✓；`npx tauri build --no-bundle`✓。
+
+---
+
 ## 2026-11-07 — 首页 UI 收尾三条（脚本提示 / 标签浮层 / 主机卡角标）
 
 ### 修改

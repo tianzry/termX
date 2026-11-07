@@ -6237,6 +6237,14 @@ button:disabled {
   text-align: center;
 }
 
+/* 非 SSH 终端（本地 / 串口 / Telnet）：提示这里是全局规则 */
+.term-highlight-hint {
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: hsl(var(--muted-foreground));
+}
+
 .term-highlight-row {
   display: flex;
   align-items: center;
