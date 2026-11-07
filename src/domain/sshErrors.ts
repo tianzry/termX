@@ -145,6 +145,11 @@ const ERROR_MESSAGES: Record<
   sftp_extract_invalid_path: () => "归档路径无效，无法确定解压目录。",
   sftp_transfer_not_found: (p) => `未找到传输任务：${str(p, "id")}`,
   sftp_transfer_state_invalid: () => "传输任务当前状态不允许该操作。",
+  sftp_resume_session_offline: () =>
+    "会话已断开，无法续传；请重新连接后重新发起传输。",
+  sftp_resume_source_changed: () =>
+    "源文件在暂停期间已变化，已清空断点并从头传输。",
+  sftp_transfer_not_dismissable: () => "进行中的传输不能从列表移除，请先取消。",
   sftp_io_failed: (p) => `SFTP 操作失败（${str(p, "op")}）：${str(p, "err")}`,
   sftp_tree_too_deep: (p) =>
     `“${str(p, "path")}”目录层级过深（上限 ${str(p, "limit")} 层）。`,
@@ -200,7 +205,8 @@ const ERROR_MESSAGES: Record<
   proxy_socks5_failed: (p) => `SOCKS5 代理连接失败：${str(p, "err")}`,
   // ── 通用 ──
   db_error: (p) => `数据库错误：${str(p, "err")}`,
-  io_error: (p) => `读写错误：${str(p, "err")}`,
+  // 队列项只存裸 code（无 params）时也要给出可操作提示，不能留下空白冒号。
+  io_error: (p) => `读写错误：${str(p, "err") || "文件不可读写或不存在"}`,
   lock_poisoned: () => "内部锁异常，请重试。",
   name_empty: () => "名称不能为空。",
   pty_op_failed: (p) => `本地终端操作失败：${str(p, "err")}`,

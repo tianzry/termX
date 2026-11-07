@@ -240,7 +240,7 @@ export function TransferQueueList({
             : formatTransferBytes(transferred);
         const offline = item.session_live === false;
         const note = offline
-          ? "会话已断开：应用重启后不支持续传，请重新发起传输"
+          ? "会话已断开：无法续传/重试，请重新连接后重新发起传输"
           : item.status === "failed"
             ? item.error
               ? errorMessageFor(item.error)
