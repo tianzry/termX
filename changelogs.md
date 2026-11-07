@@ -7279,3 +7279,40 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - **复测**：COM4 自环 260 字节 `expect=260 got=260 equal=true firstDiff=-1`；
   1MB（2048 字节 pace 写入）`equal=true`，SHA-256 收发一致。
 
+### P0 修复：开启字符集时串口 RX 线程死循环（独立 commit）
+
+- **现象**：GUI 串口会话 `serial_write` 返回成功，但 RX 恒为 0（独立监听 `serial:data:<id>`
+  无任何事件）；`serial_close` 返回 ok 却没有 `serial:close` 事件，端口 10s+ 仍被占用
+  （再次打开报 `拒绝访问`）。诊断日志停在 `read 1 bytes`，`decode done` 之前。
+- **根因**：`Decoder::decode_to_string` 只能写进 `String` 的**剩余容量**。读线程每次
+  `text.clear()` 后容量为 0，首次调用必然 `OutputFull` 且 `read == 0`，循环原地打转：
+  读线程永不退出 → `try_clone` 的读句柄与写句柄克隆都不释放。headless 套件全绿是因为
+  默认 charset 为空（走透传分支，不建解码器），GUI 弹窗默认 `UTF-8` 才踩中。
+- **修复**：抽出 `decode_read`，先按最坏膨胀（每非法字节 → U+FFFD，3 字节）预留容量，
+  并在 `OutputFull` 且 `read == 0` 时继续扩容，保证每轮都有推进。补单测
+  `decode_with_charset_progresses_and_does_not_spin_on_empty_buffer`、
+  `decode_with_charset_transcodes_gbk_to_utf8`、`decode_without_charset_is_byte_exact`。
+- **复测（release 实机）**：COM4 自环 RX 正常（`GUI-RX-OK` 分 2 片到达并渲染）；
+  `serial_close` 触发 `serial:close` 且立刻可重开 COM4 并收 `REOPEN-OK`。
+
+### GUI 实测结果（release + CDP 9222）
+
+1. COM4 自环：115200 与 9600 均通（保存为主机后重连仍 9600/7E2）；RX 分片（
+   `["G", "UI-RX-OK\r\n"]`）内容/顺序正确。波特率不匹配：虚拟环回不按波特率传输，
+   COM2@9600 → COM3@115200 仍原样收到完整帧，**本机无法复现真实不匹配**（不记通过）。
+2. COM2↔COM3：两会话同时写 `FROM-COM2` / `FROM-COM3`，各自只收到对端那一帧，无串扰；
+   关闭 COM3 后 COM2 写入仍成功，重开 COM3 后 `AFTER-REOPEN` 正常到达（`evidence/serial/ui-04-com2-com3-cross.png`）。
+3. 参数组合：GUI 7E2 + 9600 连接成功并回显；headless 7E2 原样、5O1.5 按 5 位截断。
+4. 数据形态：GUI charset 空时 260 字节二进制逐字节一致（`firstDiff=-1`）、32KB 连发
+   `equal=true`；headless 1MB 一致。GUI 默认 UTF-8 属文本模式，二进制需清空字符集。
+5. 断开/重连：工具栏「断开连接」→ 中文「会话已结束」+「重连」按钮，重连后回显正常；
+   端口占用报 `打开串口 COM4 失败：拒绝访问。`（`ui-05-port-busy-error.png`）；
+   保存为主机「串口9600-7E2」参数（9600/7E2/COM4）落库并在卡片重连时还原（`ui-06-9600-7e2-saved-host.png`）。
+6. 串口会话：时间戳渲染且开关状态可切；右键菜单 7 项正常；右侧栏脚本树渲染并提示
+   「双击运行到当前终端」；手动会话日志经命令链路实测写出 `[00:00:00.067] LOG-LINE-1`
+   （原生保存对话框无法 CDP 自动化，按钮本身未点测）；自动登录串口弹窗无 UI 入口，后端已由
+   headless 注入 `nctuser\r`/`nctpass\r` 验证 complete。
+7. 已知不在本轮范围：串口工具栏「关键字高亮」为禁用态（title「本机 / 串口终端不支持主机高亮规则」），
+   待后续批次改造。
+
+
