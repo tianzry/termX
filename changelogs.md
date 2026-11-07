@@ -7263,3 +7263,19 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `npm run test:run` 73 文件 / 826 用例 ✓；`npm run build` ✓。
 - `cargo check --lib` ✓；`cargo check --lib --features server` ✓；`cargo test --lib` 964 用例 ✓。
 - `npx tauri build --no-bundle` ✓（2m42s）；release 实机截图与量测均基于该构建。
+
+## 2026-11-07 — 串口实测（本机 COM2/COM3 互环回、COM4 自环回）
+
+### P1 修复：串口二进制上行被 UTF-8 lossy 改写（独立 commit）
+
+- **现象**：headless `serial_write` 发送 260 字节二进制（0x00–0xFF + CRLF + 0x00/0xFF），
+  回读到 518 字节（实测中途快照 381），每字节高位字节变成 `EF BF BD`（`ï¿½`）。
+- **根因**：`SerialHandle::write` 对上行字节先做 `String::from_utf8_lossy`，再由
+  `encode_for_wire` 写回；charset 为空（字节透传）时仍走了文本往返，非法 UTF-8 字节
+  被替换为 U+FFFD 并膨胀 3 倍。
+- **修复**：新增 `encode_write_payload` —— charset 为空直接返回原始字节（二进制安全）；
+  仅配置了字符集时才做 UTF-8 文本 → 目标编码转码。补单测
+  `write_payload_without_charset_is_byte_exact`。
+- **复测**：COM4 自环 260 字节 `expect=260 got=260 equal=true firstDiff=-1`；
+  1MB（2048 字节 pace 写入）`equal=true`，SHA-256 收发一致。
+

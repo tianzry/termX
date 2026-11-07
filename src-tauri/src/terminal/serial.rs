@@ -172,6 +172,18 @@ fn encode_for_wire(charset: Option<&'static Encoding>, text: &str) -> Vec<u8> {
     out
 }
 
+/// 上行线路字节：charset 为空 = 原样透传，**必须先于任何文本转换返回**。
+/// 串口上行是字节通道（可写 0x00 / 0xFF / 任意二进制），一旦经过
+/// `from_utf8_lossy`，每个非法 UTF-8 字节都会被替换成 U+FFFD 并膨胀成 3 字节
+/// （实测 260 字节 → 518 字节），等于静默改写用户数据。
+/// 只有配置了字符集时，才把前端送来的 UTF-8 文本转码到目标编码。
+fn encode_write_payload(charset: Option<&'static Encoding>, data: &[u8]) -> Vec<u8> {
+    match charset {
+        None => data.to_vec(),
+        Some(_) => encode_for_wire(charset, &String::from_utf8_lossy(data)),
+    }
+}
+
 /// Trips the shared close flag when the last `SerialHandle` clone is dropped
 /// (tab closed / window closed → handle removed from the session map). Unlike a
 /// PTY there is no child process whose death yields EOF, and dropping the writer
@@ -221,7 +233,7 @@ impl SerialHandle {
         for action in actions {
             self.dispatch(action)?;
         }
-        let bytes = encode_for_wire(self.charset, &text);
+        let bytes = encode_write_payload(self.charset, data);
         locked(&self.writer)?.write_all(&bytes).map_err(serial_op_err)
     }
 
@@ -817,6 +829,21 @@ mod tests {
         let gbk = resolve_charset("GBK").unwrap().unwrap();
         // 😀 不在 GBK 字符集内 → 以 '?' 替代，不产生 NCR 垃圾
         assert_eq!(encode_for_wire(Some(gbk), "A\u{1F600}B"), b"A?B");
+    }
+
+    #[test]
+    fn write_payload_without_charset_is_byte_exact() {
+        // 二进制串口（charset 空）必须原样上线：0x00 / 0xFF / CRLF / 高位字节
+        // 一个都不能被 UTF-8 lossy 改写或膨胀。
+        let raw = [0x00, 0x01, 0x0d, 0x0a, 0x7f, 0x80, 0xc3, 0xff, 0xfe];
+        assert_eq!(encode_write_payload(None, &raw), raw.to_vec());
+        assert_ne!(
+            encode_write_payload(Some(resolve_charset("GBK").unwrap().unwrap()), &raw),
+            raw.to_vec()
+        );
+        // 配置字符集时仍按「UTF-8 文本 → 目标编码」转码
+        let gbk = resolve_charset("GBK").unwrap().unwrap();
+        assert_eq!(encode_write_payload(Some(gbk), "中".as_bytes()), b"\xD6\xD0");
     }
 
     #[cfg(target_os = "macos")]
