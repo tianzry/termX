@@ -421,6 +421,16 @@ export function ptyClose(sessionId: string): Promise<void> {
   return invoke("pty_close", { sessionId });
 }
 
+/**
+ * 页面重载后回收本窗口上一代页面遗留的会话 / 串口句柄。
+ * `activeIds` 是前端当前仍持有的全部会话 id；页面重载后为 []，
+ * 后端据此关闭不再可达的 session（含串口的独占句柄）。
+ * 仅作用于本窗口（SessionOwner::Window），多窗口互不影响。
+ */
+export function reconcileSessions(activeIds: string[]): Promise<number> {
+  return invoke<number>("reconcile_sessions", { activeIds });
+}
+
 /** 本机默认 shell（与 pty_spawn 同一套解析：local_shell 设置优先）。 */
 export function defaultShell(): Promise<string> {
   return invoke<string>("default_shell");

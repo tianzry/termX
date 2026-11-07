@@ -7374,4 +7374,18 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - **语义说明**：判定条件是「命中任一已启用规则」，内置 `unix-path` / URL / IP 规则同样参与
   过滤，因此含路径的命令行会被保留，与 grep 式「规则集即过滤条件」一致。
 
+## 2026-11-07 — 重载后回收遗留会话（串口句柄）
+
+- **现象**：webview reload 后重连同一 COM4，被后端仍持有的串口独占句柄拒绝（`拒绝访问`）。
+- **根因**：重载不销毁窗口，不触发 `Window` owner 的 `Destroyed` 释放；前端此前没有任何
+  `reconcile_sessions` 调用点（P3 预留的 reconcile-before-create 能力一直未接线），旧页面的
+  session map 与串口句柄无人回收。正常关闭路径本身会释放句柄，问题只在重载。
+- **修复**：`main.tsx` 启动时先 `await reconcileSessions([])`（新增 `client.ts` 封装
+  `reconcile_sessions`），渲染 `<App />` 之前清掉本窗口上一代页面遗留会话（含串口句柄）；
+  Workspace 的自动恢复连接在这之后才发起，不会误杀新会话。
+- **实测（release + CDP 9222）**：打开「串口9600-7E2」（COM4/9600/7E2）→ 自环写 `LOOP-A`
+  回显正常；`location.reload()` 后不重开前，用 PowerShell 独占打开 COM4 做 260 字节自环
+  `sent=260 got=260 equal=true`（证明句柄已释放）；再重开卡片获得新 sid 并写 `LOOP-A`
+  回显正常。
+
 
