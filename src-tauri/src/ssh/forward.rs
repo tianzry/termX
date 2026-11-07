@@ -178,13 +178,57 @@ enum RuleCommand {
 /// loopback-only behavior: IPv4 (127.0.0.1) required, IPv6 (::1) best-effort
 /// (skipped on hosts without an IPv6 stack). A non-empty address (Netcatty
 /// `bindAddress`, e.g. `0.0.0.0` or a LAN IP) binds that address only.
+///
+/// Windows 上必须使用 `SO_EXCLUSIVEADDRUSE`：默认/`SO_REUSEADDR` 语义允许同一
+/// 地址端口被重复绑定，两个转发条目会静默共享端口且只有后绑定的能收到连接，
+/// 端口冲突既不报错也不提示。Unix 继续使用 `SO_REUSEADDR`（避免 TIME_WAIT 干扰）。
+fn bind_tcp(addr: impl std::net::ToSocketAddrs) -> std::io::Result<TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let addr = addr.to_socket_addrs()?.next().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty bind address")
+    })?;
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{setsockopt, SOL_SOCKET};
+        // socket2 0.6 没有 set_exclusive_address_use（只有 set_reuse_address），
+        // 必须直接调 WinSock。rc == -1 即 SocketError，转成 io::Error 让调用方
+        // 统一报 ssh_port_bind_failed。
+        //
+        // windows-sys 0.52（与 serialport 共用同一副本）未导出该常量，
+        // 这里按 winsock2.h 的取值定义：SO_EXCLUSIVEADDRUSE = -5。
+        const SO_EXCLUSIVEADDRUSE: i32 = -5;
+        let on: i32 = 1;
+        let rc = unsafe {
+            setsockopt(
+                socket.as_raw_socket() as usize,
+                SOL_SOCKET,
+                SO_EXCLUSIVEADDRUSE,
+                &on as *const i32 as *const u8,
+                std::mem::size_of::<i32>() as i32,
+            )
+        };
+        if rc == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    #[cfg(not(windows))]
+    socket.set_reuse_address(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(1024)?;
+    socket.set_nonblocking(true)?;
+    let listener: std::net::TcpListener = socket.into();
+    TcpListener::from_std(listener)
+}
+
 async fn bind_listener(
     port: u16,
     bind_address: &str,
 ) -> AppResult<(TcpListener, Option<TcpListener>)> {
     let address = bind_address.trim();
     if !address.is_empty() && address != "127.0.0.1" {
-        let listener = TcpListener::bind((address, port)).await.map_err(|e| {
+        let listener = bind_tcp((address, port)).map_err(|e| {
             AppError::ssh(
                 "ssh_port_bind_failed",
                 json!({ "port": port, "addr": address, "err": e.to_string() }),
@@ -192,7 +236,7 @@ async fn bind_listener(
         })?;
         return Ok((listener, None));
     }
-    let v4 = TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| {
+    let v4 = bind_tcp((std::net::Ipv4Addr::LOCALHOST, port)).map_err(|e| {
         AppError::ssh(
             "ssh_port_bind_failed",
             json!({ "port": port, "err": e.to_string() }),
@@ -202,7 +246,7 @@ async fn bind_listener(
     // the same port for both families. If v4's port can't be read, skip v6
     // rather than risk binding it to a different (e.g. random) port.
     let v6 = match v4.local_addr() {
-        Ok(a) => TcpListener::bind(("::1", a.port())).await.ok(),
+        Ok(a) => bind_tcp((std::net::Ipv6Addr::LOCALHOST, a.port())).ok(),
         Err(_) => None,
     };
     Ok((v4, v6))
@@ -449,7 +493,8 @@ async fn run_remote_rule(
             message = channels.recv() => {
                 let Some(channel) = message else { break };
                 let target = rule.remote_host.clone();
-                let port = rule.local_port;
+                // 本地目标端口用 remote_port（local_port 是远端监听端口）。
+                let port = rule.remote_port;
                 let tx = tx.clone();
                 let rx = rx.clone();
                 let conns = conns.clone();
@@ -612,7 +657,9 @@ async fn prepare_remote_rule(
     handle: &russh::client::Handle<client::SshHandler>,
     routes: &client::ForwardedChannelRouter,
 ) -> AppResult<PreparedRule> {
-    let requested_port = rule.remote_port as u32;
+    // 远端转发与 OpenSSH `-R` / Netcatty 一致：local_port 是远端服务器上的监听端口，
+    // remote_host:remote_port 才是本地目标地址。不要用 remote_port 作为监听端口。
+    let requested_port = rule.local_port as u32;
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     if requested_port != 0 {
         {
@@ -1137,6 +1184,23 @@ mod tests {
             .await
             .expect("stop must allow the task to observe the disconnect signal")
             .unwrap();
+    }
+
+    /// 端口冲突必须报错而不是静默共享：Windows 默认 `SO_REUSEADDR` 语义允许
+    /// 同地址端口二次绑定，两个转发条目会同时 active 但只有一个能收连接，
+    /// 用户既要手动排查也看不到提示。`bind_tcp` 用 `SO_EXCLUSIVEADDRUSE` 后，
+    /// 第二次 `bind_listener` 必须返回 `ssh_port_bind_failed`。
+    #[test]
+    fn bind_listener_rejects_second_listener_on_same_port() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (first, _first_v6) = runtime.block_on(bind_listener(0, "127.0.0.1")).unwrap();
+        let port = first.local_addr().unwrap().port();
+        let second = runtime.block_on(bind_listener(port, "127.0.0.1"));
+        let err = second.err().expect("同端口二次绑定必须失败");
+        assert_eq!(err.code(), "ssh_port_bind_failed");
     }
 
     /// 起一对 loopback TCP socket：返回 (server_side, client_side)。

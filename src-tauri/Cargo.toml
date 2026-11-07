@@ -37,6 +37,7 @@ env_logger = "0.11"
 # exact-pins are gone with it.
 russh = "0.62.7"
 tokio = { version = "1", features = ["sync", "macros", "net", "io-util", "rt", "process", "time"] }
+socket2 = { version = "0.6", features = ["all"] }
 async-trait = "0.1"
 
 # headless ws server (optional; enabled by `--features server`)
@@ -128,6 +129,9 @@ windows-sys = { version = "0.52", features = [
     "Win32_Devices_Communication",
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
+    # 端口转发本地监听：setsockopt / SOL_SOCKET（SO_EXCLUSIVEADDRUSE 该版本未导出，
+    # 值在 forward.rs 内按 winsock2.h 定义）。
+    "Win32_Networking_WinSock",
     # 设置中心 · 外观：WS_EX_LAYERED + SetLayeredWindowAttributes 整窗透明度。
     "Win32_UI_WindowsAndMessaging",
 ] }

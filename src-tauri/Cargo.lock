@@ -6722,6 +6722,7 @@ dependencies = [
  "serialport",
  "sha1 0.10.6",
  "sha2 0.10.9",
+ "socket2",
  "tauri",
  "tauri-build",
  "tauri-plugin-deep-link",

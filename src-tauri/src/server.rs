@@ -351,8 +351,8 @@ fn dispatch(
             &state.db,
             &arg::<Forward>(&args, "forward")?,
         )),
-        "delete_forward" => ok(crate::db::forward::delete(
-            &state.db,
+        "delete_forward" => ok(crate::commands::forward::delete_impl(
+            &state,
             &arg::<String>(&args, "id")?,
         )),
 

@@ -28,7 +28,37 @@ pub fn update_forward(state: State<AppState>, forward: Forward) -> Result<(), Ap
 
 #[tauri::command]
 pub fn delete_forward(state: State<AppState>, id: String) -> Result<(), AppError> {
-    crate::db::forward::delete(&state.db, &id)
+    delete_impl(&state, &id)
+}
+
+/// 删除条目时兜底结束它的运行中会话。GUI 是「先 stop 再 delete」，但 CLI /
+/// headless 等入口不保证顺序；只删 DB 行会让 listener 继续 accept，并把流量
+/// 打进一条已经不存在的规则。已断开/未运行的条目找不到会话，静默跳过。
+pub fn delete_impl(state: &AppState, id: &str) -> AppResult<()> {
+    let running: Vec<(String, SessionOwner)> = {
+        // 锁顺序与 close_resource 一致：registry → active_forwards。
+        let registry = locked(&state.lifecycle_sessions)?;
+        let forwards = locked(&state.active_forwards)?;
+        forwards
+            .iter()
+            .filter(|(_, handle)| handle.forward_id() == id)
+            .filter_map(|(active_id, _)| {
+                registry
+                    .get(active_id.as_str())
+                    .filter(|record| record.kind == SessionKind::Forward)
+                    .map(|record| (active_id.clone(), record.owner.clone()))
+            })
+            .collect()
+    };
+    for (active_id, owner) in running {
+        let _ = crate::commands::lifecycle::close_resource(
+            state,
+            &active_id,
+            SessionKind::Forward,
+            &owner,
+        );
+    }
+    crate::db::forward::delete(&state.db, id)
 }
 
 // ---------------------------------------------------------------------------
