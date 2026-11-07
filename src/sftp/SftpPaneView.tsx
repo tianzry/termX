@@ -730,7 +730,11 @@ export function SftpPaneView({
     }
   };
 
-  /** 「创建副本」：按 `name (1)`、`name (2)` … 找第一个空位。 */
+  /**
+   * 「创建副本」：命名规则对齐 Netcatty `getDuplicateTarget`：
+   * `a.txt` → `a (copy).txt` → `a (copy 2).txt` …；无扩展名 / 前导点文件
+   * （`.bashrc`）按无扩展名处理；999 次仍撞名时用时间戳兜底。
+   */
   const copyWithUniqueName = async (sftpId: string, src: string, dst: string) => {
     const slash = dst.lastIndexOf("/");
     const dir = slash >= 0 ? dst.slice(0, slash) : "";
@@ -739,13 +743,19 @@ export function SftpPaneView({
     const stem = dot > 0 ? name.slice(0, dot) : name;
     const ext = dot > 0 ? name.slice(dot) : "";
     let candidate = dst;
-    for (let i = 1; i <= 100; i += 1) {
-      const probe = `${dir}/${stem} (${i})${ext}`;
+    let found = false;
+    for (let i = 1; i <= 999; i += 1) {
+      const suffix = i <= 1 ? " (copy)" : ` (copy ${i})`;
+      const probe = `${dir}/${stem}${suffix}${ext}`;
       const stat = await api.sftpStat(sftpId, probe).catch(() => null);
       if (!stat) {
         candidate = probe;
+        found = true;
         break;
       }
+    }
+    if (!found) {
+      candidate = `${dir}/${stem} (copy ${Date.now()})${ext}`;
     }
     await doCopy(sftpId, src, candidate);
   };

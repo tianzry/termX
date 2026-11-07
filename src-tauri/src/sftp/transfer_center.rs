@@ -46,8 +46,8 @@ use crate::state::AppState;
 pub const DEFAULT_CONCURRENCY: usize = 6;
 pub const MAX_CONCURRENCY: usize = 16;
 const CONCURRENCY_KEY: &str = "sftp_transfer_concurrency";
-/// 自动重命名尝试上限（防 `file (copy)`…(copy N) 死循环）。
-const MAX_RENAME_ATTEMPTS: u32 = 50;
+/// 自动重命名尝试上限（对齐 Netcatty `getDuplicateTarget`：1..999）。
+const MAX_RENAME_ATTEMPTS: u32 = 999;
 
 // ── 数据模型 ────────────────────────────────────────────────
 
@@ -951,10 +951,32 @@ async fn find_renamed_target(
             }
         }
     }
-    Err(AppError::sftp(
-        "sftp_io_failed",
-        json!({ "op": "auto rename", "err": "too many name conflicts" }),
-    ))
+    // Netcatty 兜底：`file (copy <时间戳>)`，避免极端同名场景直接失败。
+    let suffix = format!(" (copy {})", now_secs());
+    match item.direction {
+        Direction::Upload => {
+            let (dir, name) = split_remote(&item.remote_path);
+            Ok((
+                item.local_path.clone(),
+                join_remote_path(&dir, &duplicate_name_with_suffix(&name, &suffix)),
+            ))
+        }
+        Direction::Download => {
+            let path = PathBuf::from(&item.local_path);
+            let parent = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            Ok((
+                parent
+                    .join(duplicate_name_with_suffix(&name, &suffix))
+                    .display()
+                    .to_string(),
+                item.remote_path.clone(),
+            ))
+        }
+    }
 }
 
 /// Netcatty getDuplicateTarget 兼容：`report.txt` → `report (copy).txt` →
@@ -966,6 +988,10 @@ fn duplicate_name(name: &str, attempt: u32) -> String {
     } else {
         format!(" (copy {attempt})")
     };
+    duplicate_name_with_suffix(name, &suffix)
+}
+
+fn duplicate_name_with_suffix(name: &str, suffix: &str) -> String {
     match name.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => format!("{stem}{suffix}.{ext}"),
         _ => format!("{name}{suffix}"),
