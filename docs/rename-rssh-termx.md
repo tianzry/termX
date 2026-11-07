@@ -1,5 +1,9 @@
 # rssh → termX 标识改名盘点（2026-11-06）
 
+> **现状（2026-11-07）：改名已落地，旧数据迁移逻辑已整体移除（未发布，无需兼容）。**
+> `~/.rssh` 探测、`data_dir_migration` 模块与锁文件、钥匙串 `rssh` service 双读/懒回写与 `rssh_master_key_v1` 回退、`RSSH_*` 环境变量旧名回退、`__rssh_err__` 解码、设置页迁移报告、远端 `rssh_backup.*` 文件名均已删除；数据目录固定 `~/.termX`（不存在时自动创建），远端备份改 `termx_backup.*`。
+> 以下为当时的盘点与方案记录，保留用于追溯。
+
 > 本轮只盘点，不改代码。扫描范围：`g:\AiCode\termX\termX` 全仓（`git grep -i rssh`，含 `src-tauri` / `src` / 配置 / 文档 / 构建脚本）+ 工作区级 `build-debug.bat` / `.launch-termx.vbs` + `g:\AiCode\termX\evidence` 取证脚本。
 > 参考仓库 `g:\AiCode\termX\Netcatty` 不在改名范围。
 >
@@ -129,7 +133,9 @@
 | 错误前缀 | `__rssh_err__\|` | `__termx_err__\|` |
 | 环境变量 | `RSSH_*` | `TERMX_*` |
 
-## 3. 数据与兼容方案
+## 3. 数据与兼容方案（已废止，2026-11-07 整体移除）
+
+> 本节及 §3.1–§3.3 为历史方案记录；未发布前提下不再需要任何旧数据/钥匙串/备份文件名兼容，现状见文首。
 
 ### 3.1 目录与 DB（首次启动，GUI / headless / CLI 三端共用）
 
@@ -173,7 +179,7 @@
 
 - `changelogs.md`、`docs/plan.md`、`docs/netcatty-tauri-migration.md`、TODO 历史行：历史记录，保留可追溯性。
 - `evidence/`：历史取证产物与已执行脚本；新验证脚本另起并改用 `termx.exe`。
-- `sync` 远端备份文件名 `rssh_backup.*`：兼容既有远端备份。
+- ~~`sync` 远端备份文件名 `rssh_backup.*`：兼容既有远端备份。~~ 已废止（2026-11-07）：未发布、无既有远端备份，改为 `termx_backup.*`。
 - `TERMX_*` 既有环境变量、`termx.<域>.v<n>` localStorage 前缀、`com.termx.app` identifier、深链 scheme `termx`：本来就是 termX 口径。
 
 ## 7. 实际落地（2026-11-06）

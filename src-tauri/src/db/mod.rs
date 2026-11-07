@@ -1,5 +1,4 @@
 pub mod ai_command_blacklist;
-pub mod data_dir_migration;
 pub mod ai_conversation;
 pub mod ai_provider;
 pub mod ai_redact_rule;
@@ -165,7 +164,7 @@ impl Db {
     }
 }
 
-/// Data dir: desktop uses `~/.termX`（首次启动会从旧 `~/.rssh` 迁移），
+/// Data dir: desktop uses `~/.termX`（不存在时由 `Db::open` 创建），
 /// Android uses `app_data_dir` (handled by the caller via `tauri::path::PathResolver`).
 ///
 /// Returns an error (rather than panicking) when `$HOME` is unset — common
@@ -181,20 +180,12 @@ pub fn data_dir() -> AppResult<PathBuf> {
             }),
         )
     })?;
-    Ok(data_dir_migration::resolve(&home))
+    Ok(home.join(".termX"))
 }
 
-/// 实际数据库文件：新目录用 `termx.db`；回退到旧目录时仍读 `rssh.db`。
+/// 数据库文件固定为数据目录下的 `termx.db`。
 pub fn db_path(data_dir: &Path) -> PathBuf {
-    let new = data_dir.join("termx.db");
-    if new.exists() {
-        return new;
-    }
-    let legacy = data_dir.join("rssh.db");
-    if legacy.exists() {
-        return legacy;
-    }
-    new
+    data_dir.join("termx.db")
 }
 
 #[cfg(test)]
@@ -231,6 +222,23 @@ mod with_exclusive_lock_tests {
         blocker.execute_batch("COMMIT").unwrap();
 
         opener.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn initializes_with_only_the_new_data_dir_and_no_legacy_dir() {
+        let home = tempfile::tempdir().unwrap();
+        let data_dir = home.path().join(".termX");
+        assert!(!data_dir.exists());
+
+        Db::open(&data_dir).unwrap();
+
+        assert!(data_dir.join("termx.db").exists());
+        let home_entries: Vec<String> = std::fs::read_dir(home.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(home_entries, vec![".termX".to_string()]);
+        assert_eq!(db_path(&data_dir), data_dir.join("termx.db"));
     }
 
     #[test]

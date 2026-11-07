@@ -72,12 +72,11 @@ pub fn secret_backend(state: State<AppState>) -> String {
     state.secret_store.backend_name().to_string()
 }
 
-/// 当前数据目录 / DB 路径 + 一次性迁移通知（设置页系统 tab 用）。
+/// 当前数据目录 / DB 路径（设置页系统 tab 用）。
 #[derive(serde::Serialize)]
 pub struct StorageInfo {
     pub data_dir: String,
     pub db_path: String,
-    pub migration: Option<crate::db::data_dir_migration::DataDirMigrationReport>,
 }
 
 #[tauri::command]
@@ -85,7 +84,6 @@ pub fn storage_info(state: State<AppState>) -> StorageInfo {
     StorageInfo {
         data_dir: state.data_dir.display().to_string(),
         db_path: crate::db::db_path(&state.data_dir).display().to_string(),
-        migration: crate::db::data_dir_migration::consume_notice(&state.data_dir),
     }
 }
 

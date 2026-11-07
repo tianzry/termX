@@ -29,8 +29,7 @@
 //!   - 编译期 `#[cfg(...)]` 只排除没有原生后端的平台（例如 Android），
 //!     **运行期是否选 keyring 由 `try_open()` 真探测决定**，不是看 OS。
 //!
-//! Service 名固定 `termx`（旧 `rssh` service 做只读回退，迁移期保留），
-//! account 命名规则全平台、CLI/GUI 共用：
+//! Service 名固定 `termx`，account 命名规则全平台、CLI/GUI 共用：
 //! - `cred:<credential_id>:secret`     凭证主 secret（密码或私钥 PEM）
 //! - `telnet:<profile_id>:login_script:<version>`  Telnet 登录脚本不可变版本
 //! - `setting:github_token`            GitHub PAT
@@ -78,8 +77,6 @@ const BACKEND_FILE: &str = "file";
 
 /// 服务名 — keychain 用，所有 termX 数据都在这个 service 下。
 pub const SERVICE: &str = "termx";
-/// 改名前的旧 service；只读回退，迁移成功后保留一个发布周期再清理。
-pub const LEGACY_SERVICE: &str = "rssh";
 
 pub trait SecretStore: Send + Sync {
     fn get(&self, key: &str) -> AppResult<Option<String>>;
@@ -299,7 +296,7 @@ mod tests {
     #[test]
     fn service_name_is_termx() {
         // keychain backend 用这个 service 名落键。CLI/GUI/任何外部工具
-        // (Keychain Access.app / secret-tool) 都按 "termx" 找；旧 "rssh" 仅作回退。
+        // (Keychain Access.app / secret-tool) 都按 "termx" 找；不存在旧 service 回退。
         assert_eq!(SERVICE, "termx");
     }
 

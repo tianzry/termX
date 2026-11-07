@@ -8,8 +8,8 @@ use crate::error::{error_chain, AppError, AppResult};
 use crate::sync::metadata::SyncMetadata;
 use crate::sync::remote::RemoteBackup;
 
-const BACKUP_FILE: &str = "rssh_backup.enc";
-const METADATA_FILE: &str = "rssh_backup.meta.json";
+const BACKUP_FILE: &str = "termx_backup.enc";
+const METADATA_FILE: &str = "termx_backup.meta.json";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ERROR_BODY_LEN: usize = 2048;
 
@@ -402,7 +402,7 @@ mod tests {
     async fn push_succeeds_on_201() {
         let mut server = mockito::Server::new_async().await;
         let put = server
-            .mock("PUT", "/rssh_backup.enc")
+            .mock("PUT", "/termx_backup.enc")
             .with_status(201)
             .create_async()
             .await;
@@ -416,7 +416,7 @@ mod tests {
     async fn push_uses_correct_nested_path() {
         let mut server = mockito::Server::new_async().await;
         let put = server
-            .mock("PUT", "/termx/rssh_backup.enc")
+            .mock("PUT", "/termx/termx_backup.enc")
             .with_status(201)
             .match_header("authorization", "Basic dTpw")
             .create_async()
@@ -437,7 +437,7 @@ mod tests {
         };
         let body = metadata.to_json().unwrap();
         let _m = server
-            .mock("PUT", "/termx/rssh_backup.meta.json")
+            .mock("PUT", "/termx/termx_backup.meta.json")
             .match_header("authorization", "Basic dTpw")
             .match_body(body.as_str())
             .with_status(201)
@@ -458,7 +458,7 @@ mod tests {
         };
         let body = metadata.to_json().unwrap();
         let _m = server
-            .mock("GET", "/termx/rssh_backup.meta.json")
+            .mock("GET", "/termx/termx_backup.meta.json")
             .match_header("authorization", "Basic dTpw")
             .with_status(200)
             .with_body(body)
@@ -474,7 +474,7 @@ mod tests {
     async fn pull_metadata_returns_none_on_404() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
-            .mock("GET", "/rssh_backup.meta.json")
+            .mock("GET", "/termx_backup.meta.json")
             .with_status(404)
             .create_async()
             .await;
@@ -487,7 +487,7 @@ mod tests {
     async fn pull_metadata_rejects_invalid_json() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
-            .mock("GET", "/rssh_backup.meta.json")
+            .mock("GET", "/termx_backup.meta.json")
             .with_status(200)
             .with_body("not-json")
             .create_async()
@@ -502,7 +502,7 @@ mod tests {
     async fn pull_metadata_401_returns_auth_failed() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
-            .mock("GET", "/rssh_backup.meta.json")
+            .mock("GET", "/termx_backup.meta.json")
             .with_status(401)
             .create_async()
             .await;
@@ -529,7 +529,7 @@ mod tests {
     async fn pull_returns_body_on_200() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
-            .mock("GET", "/rssh_backup.enc")
+            .mock("GET", "/termx_backup.enc")
             .with_status(200)
             .with_body("encrypted-data")
             .create_async()
@@ -542,7 +542,7 @@ mod tests {
     async fn pull_not_found_on_404() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
-            .mock("GET", "/rssh_backup.enc")
+            .mock("GET", "/termx_backup.enc")
             .with_status(404)
             .create_async()
             .await;
@@ -555,7 +555,7 @@ mod tests {
     async fn push_401_returns_auth_failed() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
-            .mock("PUT", "/rssh_backup.enc")
+            .mock("PUT", "/termx_backup.enc")
             .with_status(401)
             .create_async()
             .await;
@@ -568,7 +568,7 @@ mod tests {
     async fn push_403_returns_auth_failed() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
-            .mock("PUT", "/rssh_backup.enc")
+            .mock("PUT", "/termx_backup.enc")
             .with_status(403)
             .create_async()
             .await;
@@ -620,7 +620,7 @@ mod tests {
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/termx/rssh_backup.enc")
+            .mock("PUT", "/termx/termx_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
@@ -653,7 +653,7 @@ mod tests {
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/termx/rssh_backup.enc")
+            .mock("PUT", "/termx/termx_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
@@ -700,7 +700,7 @@ mod tests {
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/dav/termx/rssh_backup.enc")
+            .mock("PUT", "/dav/termx/termx_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
@@ -749,7 +749,7 @@ mod tests {
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/a/b/rssh_backup.enc")
+            .mock("PUT", "/a/b/termx_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
@@ -784,7 +784,7 @@ mod tests {
             .create_async()
             .await;
         let put = server
-            .mock("PUT", "/termx/rssh_backup.enc")
+            .mock("PUT", "/termx/termx_backup.enc")
             .with_status(201)
             .expect(1)
             .create_async()
@@ -810,7 +810,7 @@ mod tests {
             .create_async()
             .await;
         let _file = server
-            .mock("GET", "/termx/rssh_backup.enc")
+            .mock("GET", "/termx/termx_backup.enc")
             .with_status(200)
             .with_body("encrypted-data")
             .expect(1)
@@ -841,7 +841,7 @@ mod tests {
             .create_async()
             .await;
         let _file = server
-            .mock("GET", "/termx/rssh_backup.enc")
+            .mock("GET", "/termx/termx_backup.enc")
             .with_status(404)
             .expect(1)
             .create_async()
@@ -890,7 +890,7 @@ mod tests {
     async fn api_error_names_the_failing_operation() {
         let mut server = mockito::Server::new_async().await;
         let _m = server
-            .mock("PUT", "/rssh_backup.enc")
+            .mock("PUT", "/termx_backup.enc")
             .with_status(500)
             .with_body("boom")
             .create_async()
@@ -900,7 +900,7 @@ mod tests {
         let err = sync.push("payload").await.unwrap_err();
         match err {
             AppError::Other(c) => {
-                assert_eq!(c.params["op"], "PUT /rssh_backup.enc");
+                assert_eq!(c.params["op"], "PUT /termx_backup.enc");
                 assert_eq!(c.params["status"], 500);
                 assert_eq!(c.params["msg"], "boom");
             }

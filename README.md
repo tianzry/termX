@@ -37,9 +37,9 @@ npm run build && cargo build --features server --bin termx-server   # 顺序不�
 
 ## 数据目录
 
-- 桌面端数据在 **`~/.termX`**：`termx.db`（SQLite，WAL）、`snippets.json`、`recordings/`、`plugins/`。
-- 首次启动自动从旧 `~/.rssh` 迁移：同卷优先原子重命名，跨卷退化为复制→删除；若 `~/.termX` 已存在则以新目录为准、旧目录原样保留。迁移结果在 **设置 → 系统** 展示（表/行/录制数量、旧目录是否清理）。
-- 卸载**不会删除** `~/.termX`（用户数据不属于安装产物）；旧版远端同步备份文件名 `rssh_backup.*` 刻意保留，改名不导致既有云备份“消失”。
+- 桌面端数据在 **`~/.termX`**：`termx.db`（SQLite，WAL）、`snippets.json`、`recordings/`、`plugins/`；目录不存在时启动自动创建。
+- 已移除 rssh → termX 的旧数据迁移逻辑（未发布，无需兼容）：不再探测 `~/.rssh`，钥匙串只读 `termx` service，远端备份文件名为 `termx_backup.*`。
+- 卸载**不会删除** `~/.termX`（用户数据不属于安装产物）。
 
 ## 测试与门禁
 

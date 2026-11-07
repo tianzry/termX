@@ -33,10 +33,7 @@ use state::AppState;
 
 #[cfg(target_os = "linux")]
 fn apply_linux_wayland_compat() {
-    // `RSSH_*` 旧名保留回退一个发布周期，便于既有脚本/桌面文件继续生效。
-    if std::env::var_os("TERMX_DISABLE_WAYLAND_COMPAT").is_some()
-        || std::env::var_os("RSSH_DISABLE_WAYLAND_COMPAT").is_some()
-    {
+    if std::env::var_os("TERMX_DISABLE_WAYLAND_COMPAT").is_some() {
         return;
     }
 
@@ -59,9 +56,7 @@ fn apply_linux_wayland_compat() {
     // GBM 后端兼容：全局导出的 GBM_BACKEND，尤其是 nvidia-drm，可能导致
     // Hyprland 下 GTK / WebKitGTK 报 "Failed to create GBM buffer"。Keep an
     // explicit opt-out for users whose stack needs this variable.
-    if std::env::var_os("TERMX_KEEP_GBM_BACKEND").is_none()
-        && std::env::var_os("RSSH_KEEP_GBM_BACKEND").is_none()
-    {
+    if std::env::var_os("TERMX_KEEP_GBM_BACKEND").is_none() {
         std::env::remove_var("GBM_BACKEND");
     }
 }

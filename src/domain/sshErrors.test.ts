@@ -15,11 +15,6 @@ describe("decodeAppError", () => {
     expect(decoded.message).toBe(raw);
   });
 
-  it("旧版 __rssh_err__| 前缀仍可解码（双前缀兼容）", () => {
-    const raw = '__rssh_err__|{"code":"ssh_auth_failed","params":{}}';
-    expect(decodeAppError(raw).code).toBe("ssh_auth_failed");
-  });
-
   it("JSON 损坏时回退原文", () => {
     const raw = "__termx_err__|{not json";
     expect(decodeAppError(raw)).toEqual({ message: raw });

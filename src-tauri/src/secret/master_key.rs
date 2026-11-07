@@ -31,8 +31,6 @@ use crate::error::{AppError, AppResult};
 /// keychain 里主密钥的 key 名。带 v1 后缀方便未来轮换。
 /// 不用 `setting:` 命名空间前缀 —— 这是 termX 自管的内部数据，不是 user-facing setting。
 const KEYRING_KEY_NAME: &str = "termx_master_key_v1";
-/// 改名前的旧 key 名；首次迁移时从旧 service 读回，旧条目保留一个发布周期。
-const LEGACY_KEYRING_KEY_NAME: &str = "rssh_master_key_v1";
 
 /// master.key 文件名（在 data_dir 里）。
 const FILE_NAME: &str = "master.key";
@@ -49,7 +47,7 @@ pub trait MasterKeyBackend: Send + Sync {
 // ── KeyringMasterKey ────────────────────────────────────────────────
 
 pub struct KeyringMasterKey {
-    /// 具体 `KeyringStore`（需要它的 `get_legacy` 读旧 service）。
+    /// 具体 `KeyringStore`（master key 走 raw store，不经过 HybridStore）。
     /// **绝不能**传 HybridStore，否则 HybridStore 找主密钥时又调回
     /// HybridStore.get 死循环。secret::open 内部保证只传 raw KeyringStore。
     keyring: Arc<KeyringStore>,
@@ -61,21 +59,6 @@ pub struct KeyringMasterKey {
 impl KeyringMasterKey {
     pub fn new(keyring: Arc<KeyringStore>, db: Arc<Db>) -> Self {
         Self { keyring, db }
-    }
-
-    /// 新 key 名未命中时尝试旧 key 名（旧 service 由 KeyringStore 内部回退）。
-    /// 读到后写入新 key 名，旧条目保留，避免迁移失败时丢主密钥。
-    fn load_legacy(&self) -> AppResult<Option<[u8; MASTER_KEY_LEN]>> {
-        let Some(b64) = self.keyring.get_legacy(LEGACY_KEYRING_KEY_NAME)? else {
-            return Ok(None);
-        };
-        let mk = decode_b64_master_key(&b64)?;
-        if let Err(e) = self.keyring.set(KEYRING_KEY_NAME, &b64) {
-            log::warn!("master key lazy migration write failed: {e}");
-        } else {
-            log::info!("master key lazily migrated from rssh to termx keychain entry");
-        }
-        Ok(Some(mk))
     }
 }
 
@@ -95,17 +78,11 @@ impl MasterKeyBackend for KeyringMasterKey {
         if let Some(b64) = self.keyring.get(KEYRING_KEY_NAME)? {
             return decode_b64_master_key(&b64);
         }
-        if let Some(mk) = self.load_legacy()? {
-            return Ok(mk);
-        }
         // 慢路径：跨进程互斥的临界区
         self.db.with_exclusive_lock(|| {
             // 持锁后二次 check：等锁期间别的进程可能已经写入
             if let Some(b64) = self.keyring.get(KEYRING_KEY_NAME)? {
                 return decode_b64_master_key(&b64);
-            }
-            if let Some(mk) = self.load_legacy()? {
-                return Ok(mk);
             }
             let mk = random_master_key()?;
             self.keyring.set(KEYRING_KEY_NAME, &STANDARD.encode(mk))?;

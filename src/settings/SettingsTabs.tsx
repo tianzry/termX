@@ -2282,30 +2282,6 @@ function AppLockSection() {
 
 // ── 系统 ──────────────────────────────────────────────────
 
-function migrationSummary(
-  m: NonNullable<StorageInfo["migration"]>,
-  t: (key: string, params?: Record<string, string | number>) => string,
-): string {
-  if (m.status === "migrated" || m.status === "recovered_staging") {
-    const mode = m.mode ? t(`settings.system.storage.migration.mode.${m.mode}`) : "—";
-    return t("settings.system.storage.migration.done", {
-      old: m.old_dir,
-      new: m.new_dir,
-      mode,
-      tables: m.tables_after ?? 0,
-      rows: m.rows_after ?? 0,
-      recordings: m.recordings_after ?? 0,
-      removed: m.old_dir_removed
-        ? t("settings.system.storage.migration.removed.yes")
-        : t("settings.system.storage.migration.removed.no"),
-    });
-  }
-  return t("settings.system.storage.migration.failed", {
-    dir: m.old_dir,
-    error: m.error ?? m.status,
-  });
-}
-
 export function SystemTab() {
   const s = useSettings();
   const t = useT();
@@ -2449,12 +2425,6 @@ export function SystemTab() {
             {storage?.db_path ?? "—"}
           </span>
         </Row>
-        {storage?.migration && (
-          <Row
-            title={t("settings.system.storage.migration.title")}
-            desc={migrationSummary(storage.migration, t)}
-          />
-        )}
       </Section>
 
       <Section title={t("settings.system.crashLogs.title")} hint={t("settings.system.crashLogs.notPorted")}>

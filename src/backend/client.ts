@@ -865,30 +865,13 @@ export function secretBackend(): Promise<string> {
   return invoke<string>("secret_backend");
 }
 
-/** 数据目录迁移报告（只读，设置页系统 tab 展示一次）。 */
-export interface DataDirMigrationReport {
-  status: string;
-  old_dir: string;
-  new_dir: string;
-  mode: string | null;
-  tables_before: number | null;
-  tables_after: number | null;
-  rows_before: number | null;
-  rows_after: number | null;
-  recordings_before: number | null;
-  recordings_after: number | null;
-  old_dir_removed: boolean;
-  error: string | null;
-  occurred_at: string;
-}
-
+/** 当前数据目录与数据库路径。 */
 export interface StorageInfo {
   data_dir: string;
   db_path: string;
-  migration: DataDirMigrationReport | null;
 }
 
-/** 当前数据目录 / DB 路径 + 一次性迁移通知（读取后后端删除通知文件）。 */
+/** 当前数据目录 / DB 路径。 */
 export function storageInfo(): Promise<StorageInfo> {
   return invoke<StorageInfo>("storage_info");
 }

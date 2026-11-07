@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-11-07 — #251 移除 rssh → termX 旧数据迁移逻辑（未发布，无需兼容）
+
+### 删除的文件与关键分支
+
+- 删除 `src-tauri/src/db/data_dir_migration.rs`（整个模块）：`~/.termX.migration.lock` 锁文件、staging/tmp 目录、`mode=rename|copy` 分支、跨卷复制回退、`rssh.db` 回退路径全部移除。
+- `src-tauri/src/db/mod.rs`：`data_dir()` 固定 `~/.termX`；`db_path()` 固定 `termx.db`；目录由 `Db::open` 的 `create_dir_all` 创建；不再探测 `~/.rssh`、无旧库分支。
+- 钥匙串：`secret/mod.rs` 删除 `LEGACY_SERVICE="rssh"`；`keyring_store.rs` 删除旧 service 双读、懒回写与删除时清旧条目；`master_key.rs` 删除 `rssh_master_key_v1` 回退读取；只保留 `termx` / `termx_master_key_v1`。
+- 环境变量：`lib.rs` 只读 `TERMX_DISABLE_WAYLAND_COMPAT` / `TERMX_KEEP_GBM_BACKEND`，`ai/web_search.rs` 只读 `TERMX_WEB_SEARCH_PROVIDER`；`RSSH_*` 旧名回退全部删除（代码中原本已无 `RSSH_APP`）。
+- 前端错误信封：`src/domain/sshErrors.ts` 只认 `__termx_err__|`，删除 `__rssh_err__|` 兼容解码；测试同步移除旧前缀用例。
+- 设置页迁移报告：`commands/settings.rs` 的 `StorageInfo.migration` 与 `consume_notice`、`src/backend/client.ts` 的 `DataDirMigrationReport`、`SettingsTabs.tsx` 的系统页迁移行、`i18n.ts` 7 条 `settings.system.storage.migration.*` 全部删除；`storage.hint` 改为「目录不存在时启动会自动创建」。
+- 同步备份文件名：`sync/github.rs` / `webdav.rs` 的 `rssh_backup.*` 改为 `termx_backup.*`。取舍：未发布、不存在既有远端备份，直接改名，不保留旧文件名读取（避免新文件继续以 rssh 命名）。
+- `ai/mod.rs` / `db/schema.rs`：清理残留的 rssh 组织 URL/注释。
+
+### 测试
+
+- 迁移相关单测随模块整体移除。
+- 新增 `db::with_exclusive_lock_tests::initializes_with_only_the_new_data_dir_and_no_legacy_dir`：临时 HOME 下无 `.termX` → `Db::open` 自动建目录与 `termx.db`，home 只出现 `.termX` 一个条目，`db_path` 为 `termx.db`。
+
+### 文案
+
+- `README.md`、`AGENTS.md`（项目定位 / 数据目录 / P1 契约 / 禁做清单）、`docs/rename-rssh-termx.md`（文首现状 + §3 废止标记 + §6 备份名条目）标注「已移除迁移逻辑（未发布，无需兼容）」；历史盘点与历史行保留不删。
+
+### 门禁与验证
+
+- `npx tsc --noEmit` ✓；`npm run test:run` 73 文件 / 822 用例 ✓；`npm run build` ✓；`cargo check --no-default-features` ✓；`cargo test --no-default-features` 954 ✓；`cargo build --release --no-default-features` ✓。
+- 实机：release 启动于无 `~/.rssh` 的机器，自动创建 `~/.termX/termx.db`；未创建/未访问 `~/.rssh`；默认密钥/密码连接 129 成功。
+- `git grep -i rssh` 剩余仅 `AGENTS.md`、`README.md`、`changelogs.md`、`todo.md` 与 `docs/` 历史文档（无代码命中）。
+- 踩坑：`secret::open` 的 master key 必须继续走 raw `KeyringStore`（不能传 HybridStore），删除 `get_legacy` 后该约束不变，否则会再引入「找主密钥递归」。
+
 ## 2026-11-07 — #250 P1 快捷键接入运行时（对照 Netcatty 分发层）
 
 ### 结构

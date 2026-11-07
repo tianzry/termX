@@ -330,10 +330,7 @@ pub async fn search(
     routing_key: &str,
 ) -> Result<WebSearchResponse, WebSearchError> {
     let query = build_query(input, redact_rules).map_err(WebSearchError::InvalidInput)?;
-    // 新名优先；`RSSH_WEB_SEARCH_PROVIDER` 为旧名回退（保留一个发布周期）。
-    let provider_override = std::env::var("TERMX_WEB_SEARCH_PROVIDER")
-        .or_else(|_| std::env::var("RSSH_WEB_SEARCH_PROVIDER"))
-        .ok();
+    let provider_override = std::env::var("TERMX_WEB_SEARCH_PROVIDER").ok();
     let provider = select_provider(routing_key, provider_override.as_deref());
     search_provider(provider, provider.endpoint(), &query).await
 }

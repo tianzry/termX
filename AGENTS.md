@@ -12,7 +12,7 @@ termX = **原 rssh 的 Rust 后端（Tauri 2）+ netcatty 风格的 React 前端
 
 - **功能基准是 netcatty 源码**（`../Netcatty` 的 `components/`、`domain/`、`application/`），**不是旧 rssh 命令表**（见 [todo.md](todo.md) 开头）。
 - 迁移方案与阶段计划：[docs/netcatty-tauri-migration.md](docs/netcatty-tauri-migration.md)、[docs/plan.md](docs/plan.md)。
-- Rust 底座整份复制自 rssh。**2026-11-06 已完成改名**：crate `termx` / lib `termx_lib`、GUI 二进制 `termx`、CLI `termx-cli`、headless `termx-server`；旧 `~/.rssh` 会一次性迁移到 `~/.termX`。除历史文档/`rssh_backup.*`/keychain 回退外，看到 `rssh_*` 先核对是否遗漏。
+- Rust 底座整份复制自 rssh。**2026-11-06 已完成改名**：crate `termx` / lib `termx_lib`、GUI 二进制 `termx`、CLI `termx-cli`、headless `termx-server`；**2026-11-07 已移除 rssh → termX 旧数据迁移逻辑（未发布，无需兼容）**，只使用 `~/.termX`。看到 `rssh_*` 先核对是否遗漏。
 
 ---
 
@@ -130,7 +130,7 @@ rg 'resolve_session_id|ResourceReservation|activate' src-tauri/src/commands
 | AI | `src/ai/` | llm（anthropic/deepseek/protocol）、tools、session、sanitize、redact_rules、command_blacklist、skills、audit |
 | 权限 | `src-tauri/capabilities/default.json` | Tauri v2 ACL，新增插件能力在这里加 |
 
-- 数据目录与插件 asset scope 指向 `~/.termX/plugins`（tauri.conf.json）；首次启动会把旧 `~/.rssh` 迁到 `~/.termX`。
+- 数据目录与插件 asset scope 指向 `~/.termX/plugins`（tauri.conf.json）；目录不存在时启动自动创建，不再探测旧目录。
 
 ### 构建命令
 
@@ -164,9 +164,9 @@ npm run build && cargo build --features server --bin termx-server   # 顺序不�
 
 ## 坑（Pitfalls）— 非显然，会咬人
 
-### P1. `termx` / 历史 `rssh` 字面量是跨层 wire contract，不是笔误
+### P1. `termx` 字面量是跨层 wire contract，不是笔误
 
-二进制名、crate 名、`__termx_err__` 错误前缀、事件名、`~/.termX` 数据目录、打包产物 `termx.exe` 已统一为 termX；仅旧 `__rssh_err__` 前缀、旧 keychain service、`rssh_backup.*` 作为兼容回退保留。单点改名会炸另一头；再改名必须是一次专项（前后端 + 数据目录 + 打包一起）。
+二进制名、crate 名、`__termx_err__` 错误前缀、事件名、`~/.termX` 数据目录、打包产物 `termx.exe` 已统一为 termX；旧 `__rssh_err__` 前缀、旧 keychain service、`rssh_backup.*` 等兼容回退已随「未发布」前提整体移除，不要再加回来。单点改名会炸另一头；再改名必须是一次专项（前后端 + 数据目录 + 打包一起）。
 
 ### P2. StrictMode 恢复 = PTY 双开
 
@@ -239,5 +239,5 @@ npm run build && cargo build --features server --bin termx-server   # 顺序不�
 - 恢复 StrictMode（P2）
 - 新建分析/计划归档文档（R10）
 - 跳过 `npm run test:run` 交付前端逻辑改动、新增可测试逻辑不补测试（R11）
-- 擅自把 `termx` 命名再"顺手"改成别的名字，或把兼容回退（`__rssh_err__` / 旧 keychain service / `rssh_backup.*`）一并删掉（P1）
+- 擅自把 `termx` 命名再"顺手"改成别的名字，或重新引入 rssh 旧数据/钥匙串/环境变量/备份文件名的兼容回退（P1）
 - 自创 UI 视觉而不对标 netcatty（Pr3）

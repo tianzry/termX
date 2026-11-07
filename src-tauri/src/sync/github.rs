@@ -7,8 +7,8 @@ use crate::sync::metadata::SyncMetadata;
 use crate::sync::remote::RemoteBackup;
 
 const API_BASE: &str = "https://api.github.com";
-const BACKUP_FILE: &str = "rssh_backup.json";
-const METADATA_FILE: &str = "rssh_backup.meta.json";
+const BACKUP_FILE: &str = "termx_backup.json";
+const METADATA_FILE: &str = "termx_backup.meta.json";
 
 /// GitHub 配置同步。
 pub struct GitHubSync {
@@ -282,7 +282,7 @@ mod tests {
         };
         let encoded = STANDARD.encode(metadata.to_json().unwrap());
         let _mock = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.meta.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.meta.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .match_header("authorization", "Bearer token")
             .with_status(200)
@@ -305,7 +305,7 @@ mod tests {
     async fn pull_metadata_returns_none_only_for_missing_file() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.meta.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.meta.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .with_status(404)
             .create_async()
@@ -326,7 +326,7 @@ mod tests {
     async fn pull_metadata_does_not_hide_authentication_errors() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.meta.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.meta.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .with_status(401)
             .with_body("bad credentials")
@@ -349,7 +349,7 @@ mod tests {
     async fn pull_metadata_rejects_invalid_metadata_json() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.meta.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.meta.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .with_status(200)
             .with_body(
@@ -388,10 +388,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pull_still_reads_legacy_backup_file() {
+    async fn pull_reads_termx_backup_file() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .with_status(200)
             .with_body(
@@ -419,7 +419,7 @@ mod tests {
     async fn push_reports_an_existing_file_probe_http_error() {
         let mut server = mockito::Server::new_async().await;
         let _get = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .with_status(401)
             .with_body("bad credentials")
@@ -441,16 +441,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn push_still_writes_legacy_backup_file() {
+    async fn push_writes_termx_backup_file() {
         let mut server = mockito::Server::new_async().await;
         let _get = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .with_status(404)
             .create_async()
             .await;
         let _put = server
-            .mock("PUT", "/repos/acme/config/contents/rssh_backup.json")
+            .mock("PUT", "/repos/acme/config/contents/termx_backup.json")
             .match_body(Matcher::PartialJson(serde_json::json!({
                 "content": STANDARD.encode("encrypted-backup"),
                 "branch": "main",
@@ -479,13 +479,13 @@ mod tests {
         };
         let encoded = STANDARD.encode(metadata.to_json().unwrap());
         let _get = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.meta.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.meta.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .with_status(404)
             .create_async()
             .await;
         let _put = server
-            .mock("PUT", "/repos/acme/config/contents/rssh_backup.meta.json")
+            .mock("PUT", "/repos/acme/config/contents/termx_backup.meta.json")
             .match_header("authorization", "Bearer token")
             .match_body(Matcher::PartialJson(serde_json::json!({
                 "content": encoded,
@@ -514,14 +514,14 @@ mod tests {
             config_digest: format!("sha256:{}", "c".repeat(64)),
         };
         let _get = server
-            .mock("GET", "/repos/acme/config/contents/rssh_backup.meta.json")
+            .mock("GET", "/repos/acme/config/contents/termx_backup.meta.json")
             .match_query(Matcher::UrlEncoded("ref".into(), "main".into()))
             .with_status(200)
             .with_body(serde_json::json!({ "sha": "existing-sha" }).to_string())
             .create_async()
             .await;
         let _put = server
-            .mock("PUT", "/repos/acme/config/contents/rssh_backup.meta.json")
+            .mock("PUT", "/repos/acme/config/contents/termx_backup.meta.json")
             .match_body(Matcher::PartialJson(serde_json::json!({
                 "sha": "existing-sha",
                 "branch": "main",

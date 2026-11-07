@@ -7,14 +7,13 @@
  * 都不把原始信封直接展示给用户。
  */
 
-/** `__rssh_err__|` 是改名前的旧信封；旧后端/旧日志仍可能带出，双前缀兼容。 */
-const ERROR_MARKERS = ["__termx_err__|", "__rssh_err__|"] as const;
+/** 后端 AppError 信封前缀。 */
+const ERROR_MARKER = "__termx_err__|";
 
 export function decodeAppError(raw: string): { code?: string; params?: Record<string, unknown>; message: string } {
-  const marker = ERROR_MARKERS.find((candidate) => raw.startsWith(candidate));
-  if (marker) {
+  if (raw.startsWith(ERROR_MARKER)) {
     try {
-      const parsed = JSON.parse(raw.slice(marker.length)) as {
+      const parsed = JSON.parse(raw.slice(ERROR_MARKER.length)) as {
         code?: string;
         params?: Record<string, unknown>;
       };
