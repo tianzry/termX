@@ -3472,7 +3472,7 @@ export function VaultView({
         data-host-id={p.id}
         className={`vault-host-card${compact ? " list" : ""}${
           isSelected ? " selected" : ""
-        }${focusId === p.id ? " focused" : ""}`}
+        }${focusId === p.id ? " focused" : ""}${ownTags.length > 0 ? " has-tags" : ""}`}
         role={selectMode ? "checkbox" : "button"}
         aria-checked={selectMode ? isSelected : undefined}
         tabIndex={0}

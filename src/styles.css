@@ -9461,6 +9461,31 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* 带标签的主机卡：标签移到右上角、编辑按钮移到右下角，卡片高度保持不变 */
+.vault-host-card.has-tags .vault-host-tags {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  max-width: calc(100% - 96px);
+  justify-content: flex-end;
+}
+
+.vault-host-card.has-tags .vault-host-edit {
+  position: absolute;
+  right: 6px;
+  bottom: 2px;
+}
+
+.vault-host-card.list.has-tags .vault-host-tags {
+  top: 4px;
+  right: 6px;
+}
+
+.vault-host-card.list.has-tags .vault-host-edit {
+  bottom: 1px;
+}
+
+
 /* 键盘焦点 & 拖拽投放反馈 */
 .vault-host-card.focused {
   outline: 2px solid hsl(var(--primary) / 0.45);
