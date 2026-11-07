@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use encoding_rs::{CoderResult, Encoding};
+use encoding_rs::{CoderResult, Decoder, Encoding};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::error::{locked, AppError, AppResult};
@@ -181,6 +181,36 @@ fn encode_write_payload(charset: Option<&'static Encoding>, data: &[u8]) -> Vec<
     match charset {
         None => data.to_vec(),
         Some(_) => encode_for_wire(charset, &String::from_utf8_lossy(data)),
+    }
+}
+
+/// 解码一次读到的字节：有字符集 → 增量解码为 UTF-8（事件契约不变，前端仍收
+/// UTF-8）；无字符集 → 原样字节。第二个返回值供自动登录检测器观察（无字符集
+/// 时按 lossy UTF-8 观察）。
+fn decode_read(decoder: Option<&mut Decoder>, chunk: &[u8], text: &mut String) -> (Vec<u8>, String) {
+    match decoder {
+        Some(dec) => {
+            text.clear();
+            // `decode_to_string` 只能写进 String 的**剩余容量**：刚 clear 的空串容量
+            // 为 0，首次调用必定返回 OutputFull 且 read == 0，循环原地打转（实测串口
+            // RX 一个字节都收不到、读线程永不退出，端口关闭后也不释放）。先按最坏膨
+            // 胀（每个非法字节 → U+FFFD，3 字节）预留；万一仍不够，下面在「零进展」
+            // 时继续扩容，保证每轮都有推进。
+            text.reserve(chunk.len().saturating_mul(3).saturating_add(8));
+            let mut rest = chunk;
+            loop {
+                let (result, read, _bad) = dec.decode_to_string(rest, text, false);
+                rest = &rest[read..];
+                if matches!(result, CoderResult::InputEmpty) {
+                    break;
+                }
+                if read == 0 {
+                    text.reserve(rest.len().saturating_mul(3).saturating_add(8));
+                }
+            }
+            (text.as_bytes().to_vec(), text.clone())
+        }
+        None => (chunk.to_vec(), String::from_utf8_lossy(chunk).into_owned()),
     }
 }
 
@@ -708,25 +738,7 @@ pub fn open(
                 }
                 Ok(n) => {
                     let chunk = &buf[..n];
-                    // 有字符集 → 增量解码为 UTF-8（事件契约不变，前端仍收 UTF-8）；
-                    // 透传 → 原样字节，检测器按 lossy UTF-8 观察。
-                    let (emit, decoded): (Vec<u8>, String) = match decoder.as_mut() {
-                        Some(dec) => {
-                            text.clear();
-                            let mut rest = chunk;
-                            loop {
-                                let (result, read, _bad) =
-                                    dec.decode_to_string(rest, &mut text, false);
-                                rest = &rest[read..];
-                                if matches!(result, CoderResult::InputEmpty) {
-                                    break;
-                                }
-                            }
-                            let emit = text.as_bytes().to_vec();
-                            (emit, text.clone())
-                        }
-                        None => (chunk.to_vec(), String::from_utf8_lossy(chunk).into_owned()),
-                    };
+                    let (emit, decoded) = decode_read(decoder.as_mut(), chunk, &mut text);
                     let actions = detector_check(&reader_detector, |d| d.feed(&decoded));
                     reader_sink(&sid, SerialOut::Data(emit));
                     dispatch_actions(actions, &reader_writer, &reader_sink, &sid, charset);
@@ -829,6 +841,41 @@ mod tests {
         let gbk = resolve_charset("GBK").unwrap().unwrap();
         // 😀 不在 GBK 字符集内 → 以 '?' 替代，不产生 NCR 垃圾
         assert_eq!(encode_for_wire(Some(gbk), "A\u{1F600}B"), b"A?B");
+    }
+
+    #[test]
+    fn decode_with_charset_progresses_and_does_not_spin_on_empty_buffer() {
+        // 回归：`decode_to_string` 只写 String 的剩余容量。刚 clear 的空串容量为
+        // 0，旧实现拿到 OutputFull + read == 0 后原地死循环 → 串口 RX 永远收不到
+        // 数据、读线程不退出（端口关闭也不释放）。这里用一个全新空串复现入口
+        // 条件，必须正常返回且一个字节不丢。
+        let mut dec = encoding_rs::UTF_8.new_decoder();
+        let mut text = String::new();
+        let (emit, decoded) = decode_read(Some(&mut dec), b"hello\r\n", &mut text);
+        assert_eq!(emit, b"hello\r\n");
+        assert_eq!(decoded, "hello\r\n");
+
+        // 非法 UTF-8 字节按 U+FFFD 替换（膨胀 3 字节），同样不能卡住。
+        let (emit, _decoded) = decode_read(Some(&mut dec), &[0xff, 0x00], &mut text);
+        assert_eq!(emit, b"\xEF\xBF\xBD\x00");
+    }
+
+    #[test]
+    fn decode_with_charset_transcodes_gbk_to_utf8() {
+        let gbk = resolve_charset("GBK").unwrap().unwrap();
+        let mut dec = gbk.new_decoder();
+        let mut text = String::new();
+        let (emit, decoded) = decode_read(Some(&mut dec), b"\xD6\xD0A", &mut text);
+        assert_eq!(decoded, "中A");
+        assert_eq!(emit, "中A".as_bytes());
+    }
+
+    #[test]
+    fn decode_without_charset_is_byte_exact() {
+        let raw = [0x00, 0x01, 0x0d, 0x0a, 0x7f, 0x80, 0xc3, 0xff, 0xfe];
+        let mut text = String::new();
+        let (emit, _decoded) = decode_read(None, &raw, &mut text);
+        assert_eq!(emit, raw.to_vec());
     }
 
     #[test]
