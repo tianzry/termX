@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-11-07 — 关键字高亮规则编辑与标准色块取色
+
+### 修改
+
+- **已保存规则可编辑（Netcatty 没有的能力）**：浮层规则行的名称区改为按钮（`term-highlight-info`），另加铅笔按钮（`term-highlight-edit`，行悬停显现，色块也改为进入编辑器）。点任一入口进入 `term-highlight-editor`：名称输入、逐行正则 textarea、颜色选择、启用开关，加实时预览与「取消 / 保存」。
+- 保存走原有 `persistHostKeywordHighlight`：本地 pty / 串口 / Telnet 写全局设置、SSH 写主机档案；`effectiveHighlight` 依赖变化后立即清空重建 decoration，已开终端实时重绘；重载后从 DB/档案重读。
+- 保存前抽出纯函数 `validateKeywordRuleDraft`（`terminal/keywordHighlight.ts`）：名称非空、至少一条匹配内容、逐条正则可编译；非法时浮层报具体条目且不落库（新增 4 个单测）。
+- **取色改「标准色块 + 自定义」**：`HighlightColorPicker` 给 11 个标准色块（黑 / 红 / 绿 / 黄 / 蓝 / 品红 / 青 / 白 + 橙 / 紫 / 灰），`role="radiogroup"` + `aria-checked`；选中态 = 一圈背景隔断 + accent 外环 + 按亮度取黑/白的对勾。原生取色器保留为补充入口：当前值不是标准色时该入口 `is-active` 并显示 hex，标准色时显示「自定义」。
+- 弹窗内 `HighlightRulePreview` 调真实匹配引擎（`compileKeywordRules` + `findKeywordSpans`）按当前配色渲染示例行，改色/改正则即时反映。
+
+### 踩坑
+
+- 浮层位于 `.term-tool-menu` 内，后者的 `button { height: 28px; border: none }` 把色块撑成 20×28 且吃掉边框（白块在浅色主题上完全不可见）。色块 / 规则信息按钮的规则必须带 `.term-highlight-menu` 前缀提升特异性，并显式 `height` / `border`。
+- hover 环原本用 accent 色，在蓝/青等相近色块上几乎看不出；改为前景色中性环（`hsl(var(--foreground)/0.45)`，2px），与选中双环区分且深浅主题都可见。
+- 本轮 release 实测时发现 GUI 进程会随执行它的 shell 结束被回收（job 对象连带）：验证期间用一个常驻后台 shell 持起 `termx.exe`，CDP 从其它 shell 连接即可稳定跨命令存活。
+
+### 实测（release + CDP 9222）
+
+- 本地 Git Bash 基线：`printf 'warning alpha\nwarnx beta\nplain one\n'` → `warning` 黄 `rgb(251,191,36)`，`warnx` 无色。
+- 编辑已存的 `Warning` → 名称 `WarnX`、正则 `\bwarnx\b`、点选「青」→ 保存：**同一批已渲染行即时变色**（`warnx` 青 `rgb(34,204,204)`，`warning` 的黄消失），新发 `warnx gamma` 同样着色。
+- 再进编辑器用自定义取色 `#FF00AA` → 保存：已有行与新行全部变 `rgb(255,0,170)`；「自定义」入口显示 hex 且 `is-active`。
+- 关闭规则启用 → 保存：可视区着色 span 数 0；再开 → 恢复着色（启用状态也可改）。
+- `location.reload()` 后回读：`warning` 规则为 `WarnX` / `\bwarnx\b` / `#FF00AA`；重开本地 shell 发 `warnx delta` 仍按自定义色着色（重载后保持）。
+- 深浅主题各截一张（选「青」展示选中态；分别悬停「蓝」「灰」展示中性 hover 环）：浅色 `shot-light-editor2.png` / `shot-light-hover2.png`，深色 `shot-dark-editor.png` / `shot-dark-hover.png`；色块均为 20×20、白块边框可辨。
+- 验证结束已还原：`Warning` 规则默认 4 条正则 / `#FBBF24` / 启用，主题 light。
+
+### 门禁
+
+- `npm run test:run` 830✓（73 files，新增 4 例）；`npm run build`✓；`cargo check --lib`✓；`cargo check --lib --features server`✓；`cargo test --lib` 968✓；`npx tauri build --no-bundle`✓。
+
+---
+
 ## 2026-11-07 — 关键字高亮解除终端类型限制
 
 ### 修改

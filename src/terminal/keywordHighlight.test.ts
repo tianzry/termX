@@ -5,7 +5,7 @@ import {
   normalizeKeywordHighlightRules,
   type KeywordHighlightRule,
 } from "../settings/settingsModel";
-import { compileKeywordRules, findKeywordSpans, mergeKeywordHighlightRules } from "./keywordHighlight";
+import { compileKeywordRules, findKeywordSpans, mergeKeywordHighlightRules, validateKeywordRuleDraft } from "./keywordHighlight";
 
 const rule = (id: string, color: string, patterns: string[], enabled = true): KeywordHighlightRule => ({
   id,
@@ -153,5 +153,25 @@ describe("mergeKeywordHighlightRules（全局 + 主机，Netcatty 追加语义�
       "error",
       "cover",
     ]);
+  });
+});
+
+describe("validateKeywordRuleDraft（编辑保存前校验）", () => {
+  it("合法草稿返回 null", () => {
+    expect(validateKeywordRuleDraft("WarnX", ["\\bwarnx\\b", "caution"])).toBeNull();
+  });
+
+  it("名称为空或全空白时拒绝", () => {
+    expect(validateKeywordRuleDraft("", ["x"])).toBe("名称不能为空");
+    expect(validateKeywordRuleDraft("   ", ["x"])).toBe("名称不能为空");
+  });
+
+  it("没有匹配内容时拒绝", () => {
+    expect(validateKeywordRuleDraft("WarnX", [])).toBe("至少需要一条匹配内容");
+  });
+
+  it("非法正则报出具体条目，且不放过任何一条", () => {
+    expect(validateKeywordRuleDraft("WarnX", ["[broken"])).toBe("无效的正则表达式：[broken");
+    expect(validateKeywordRuleDraft("WarnX", ["ok", "("])).toBe("无效的正则表达式：(");
   });
 });

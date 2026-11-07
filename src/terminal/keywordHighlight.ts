@@ -59,6 +59,23 @@ export function compileKeywordRules(rules: KeywordHighlightRule[]): CompiledKeyw
   return compiled;
 }
 
+/**
+ * 规则编辑草稿校验（浮层「保存」前调用）：名称必填、至少一条正则、逐条编译。
+ * 返回首条错误文案（直接展示给用户），全部合法返回 null。
+ */
+export function validateKeywordRuleDraft(label: string, patterns: string[]): string | null {
+  if (!label.trim()) return "名称不能为空";
+  if (patterns.length === 0) return "至少需要一条匹配内容";
+  for (const pattern of patterns) {
+    try {
+      new RegExp(pattern, "gi");
+    } catch {
+      return `无效的正则表达式：${pattern}`;
+    }
+  }
+  return null;
+}
+
 /** 单行匹配：返回不重叠区间（先规则先得）。 */
 export function findKeywordSpans(text: string, compiled: CompiledKeywordRule[]): KeywordHighlightSpan[] {
   if (!text || compiled.length === 0) return [];

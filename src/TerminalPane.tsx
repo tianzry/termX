@@ -14,7 +14,7 @@
  * - 支持 SSH / 本地 / 串口 / Telnet 四种传输，各自独立连接与生命周期。
  */
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { PanelRight } from "lucide-react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
@@ -85,6 +85,7 @@ import {
   compileKeywordRules,
   findKeywordSpans,
   mergeKeywordHighlightRules,
+  validateKeywordRuleDraft,
 } from "./terminal/keywordHighlight";
 import { subscribeHostKeywordHighlightChanged } from "./terminal/hostKeywordHighlight";
 import { readTerminalSelection } from "./Terminal";
@@ -321,6 +322,137 @@ function clockLabel(now: Date): string {
   return `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
 }
 
+/**
+ * 常用标准色块：黑/红/绿/黄/蓝/品红/青/白 + 橙/紫/灰。
+ * 深浅主题下都选中间明度，避免纯黑/纯白在另一种主题里糊成一片。
+ */
+const HIGHLIGHT_COLOR_SWATCHES: { name: string; color: string }[] = [
+  { name: "黑", color: "#111111" },
+  { name: "红", color: "#F87171" },
+  { name: "绿", color: "#34D399" },
+  { name: "黄", color: "#FBBF24" },
+  { name: "蓝", color: "#3B82F6" },
+  { name: "品红", color: "#EC4899" },
+  { name: "青", color: "#22CCCC" },
+  { name: "白", color: "#FFFFFF" },
+  { name: "橙", color: "#FB923C" },
+  { name: "紫", color: "#A78BFA" },
+  { name: "灰", color: "#94A3B8" },
+];
+
+/** 色块选中对勾的对比色：浅色块配深勾，深色块配白勾。 */
+function highlightCheckTone(hex: string): string {
+  const value = hex.replace("#", "");
+  if (value.length !== 6) return "#FFFFFF";
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#111111" : "#FFFFFF";
+}
+
+/**
+ * 颜色选择：一排标准色块点选；自定义取色是补充入口（原生取色器），
+ * 不再作为唯一方式。当前值不命中标准色时「自定义」块高亮并显示该颜色值。
+ */
+function HighlightColorPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  const normalized = value.toUpperCase();
+  const isStandard = HIGHLIGHT_COLOR_SWATCHES.some(
+    (swatch) => swatch.color.toUpperCase() === normalized,
+  );
+  return (
+    <div className="term-highlight-color-picker">
+      <div className="term-highlight-color-swatches" role="radiogroup" aria-label="规则颜色">
+        {HIGHLIGHT_COLOR_SWATCHES.map((swatch) => {
+          const selected = swatch.color.toUpperCase() === normalized;
+          return (
+            <button
+              key={swatch.color}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-label={swatch.name}
+              title={swatch.name}
+              className={`term-highlight-color-chip${selected ? " is-selected" : ""}`}
+              style={{ background: swatch.color }}
+              onClick={() => onChange(swatch.color)}
+            >
+              {selected && (
+                <Icon name="check" size={11} style={{ color: highlightCheckTone(swatch.color) }} />
+              )}
+            </button>
+          );
+        })}
+        <label
+          className={`term-highlight-color-custom${isStandard ? "" : " is-active"}`}
+          title="自定义颜色"
+        >
+          <input
+            type="color"
+            value={normalized}
+            onChange={(event) => onChange(event.target.value.toUpperCase())}
+            aria-label="自定义颜色"
+          />
+          {isStandard ? (
+            <Icon name="pencil" size={11} />
+          ) : (
+            <span className="term-highlight-color-dot" style={{ background: normalized }} />
+          )}
+          <span className="term-highlight-color-custom-text">
+            {isStandard ? "自定义" : normalized}
+          </span>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 规则实时预览：用真实匹配引擎（compileKeywordRules / findKeywordSpans）
+ * 对示例行着色，颜色改动即时反映；patterns 无法命中时仍显示色点与标签。
+ */
+function HighlightRulePreview({
+  label,
+  patterns,
+  color,
+}: {
+  label: string;
+  patterns: string[];
+  color: string;
+}) {
+  const text = `示例输出：${label || "关键字"}`;
+  const spans = findKeywordSpans(
+    text,
+    compileKeywordRules([{ id: "preview", label, patterns, color, enabled: true }]),
+  );
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  spans.forEach((span, index) => {
+    if (span.start > cursor) {
+      nodes.push(<span key={`t${index}`}>{text.slice(cursor, span.start)}</span>);
+    }
+    nodes.push(
+      <span key={`s${index}`} style={{ color: span.color, fontWeight: 600 }}>
+        {text.slice(span.start, span.end)}
+      </span>,
+    );
+    cursor = span.end;
+  });
+  if (cursor < text.length) nodes.push(<span key="tail">{text.slice(cursor)}</span>);
+  return (
+    <div className="term-highlight-preview">
+      <span className="term-highlight-preview-dot" style={{ background: color }} />
+      <span className="term-highlight-preview-caption">实时预览</span>
+      <span className="term-highlight-preview-text">{nodes}</span>
+    </div>
+  );
+}
+
 export function TerminalPane({
   tab,
   paneId,
@@ -445,6 +577,13 @@ export function TerminalPane({
   const [hostHighlightPattern, setHostHighlightPattern] = useState("");
   const [hostHighlightColor, setHostHighlightColor] = useState("#F87171");
   const [hostHighlightError, setHostHighlightError] = useState("");
+  /** 已有规则的编辑态：非 null 时浮层切到编辑器（名称 / 正则 / 颜色 / 启用）。 */
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [editRuleLabel, setEditRuleLabel] = useState("");
+  const [editRulePatterns, setEditRulePatterns] = useState("");
+  const [editRuleColor, setEditRuleColor] = useState("#F87171");
+  const [editRuleEnabled, setEditRuleEnabled] = useState(true);
+  const [editRuleError, setEditRuleError] = useState("");
   /** 关键字高亮规则来自设置（设置页与工具栏浮层共享同一份，改后即时重绘）。 */
   const [highlightEnabled, setHighlightEnabled] = useState(
     () => getSettings().terminal.keywordHighlightEnabled,
@@ -2042,6 +2181,52 @@ export function TerminalPane({
           );
         });
       });
+  }
+
+  /**
+   * 把已有规则填进编辑器草稿；列表条目的名称 / 正则区与色块都可点进来。
+   */
+  function beginEditHighlightRule(rule: KeywordHighlightRule) {
+    setHostHighlightError("");
+    setEditingRuleId(rule.id);
+    setEditRuleLabel(rule.label);
+    setEditRulePatterns(rule.patterns.join("\n"));
+    setEditRuleColor(rule.color);
+    setEditRuleEnabled(rule.enabled);
+    setEditRuleError("");
+  }
+
+  function resetHighlightEditor() {
+    setEditingRuleId(null);
+    setEditRuleError("");
+  }
+
+  /**
+   * 保存编辑：名称 / 逐行正则 / 颜色 / 启用状态一次性写回。
+   * 写入走 persistHostKeywordHighlight，本终端随即重绘；下一次重载从档案重读。
+   * 正则先整体校验，任一非法就不落库，避免把坏规则写进档案。
+   */
+  function saveEditedHighlightRule() {
+    if (!editingRuleId) return;
+    const label = editRuleLabel.trim();
+    const patterns = editRulePatterns
+      .split(/\r?\n/)
+      .map((pattern) => pattern.trim())
+      .filter(Boolean);
+    const error = validateKeywordRuleDraft(label, patterns);
+    if (error) {
+      setEditRuleError(error);
+      return;
+    }
+    persistHostKeywordHighlight({
+      rules: highlightUiRules.map((rule) =>
+        rule.id === editingRuleId
+          ? { ...rule, label, patterns, color: editRuleColor, enabled: editRuleEnabled }
+          : rule,
+      ),
+    });
+    setEditingRuleId(null);
+    setEditRuleError("");
   }
 
   /**
@@ -3654,6 +3839,8 @@ export function TerminalPane({
                       title={TERMINAL_TOOLBAR_TEXT.highlight.title}
                       onClick={() => {
                         setHostHighlightError("");
+                        setEditingRuleId(null);
+                        setEditRuleError("");
                         closeOtherToolbarPopovers("highlight");
                         setHighlightOpen((v) => !v);
                       }}
@@ -3701,6 +3888,78 @@ export function TerminalPane({
                             本类型终端没有主机级规则，这里编辑的是全局规则（同步到设置页）
                           </div>
                         )}
+                        {editingRuleId ? (
+                          <div className="term-highlight-editor">
+                            <div className="term-highlight-editor-head">
+                              <span className="term-highlight-editor-title">编辑规则</span>
+                              <label className="term-highlight-enabled">
+                                <span>{editRuleEnabled ? "启用" : "已停用"}</span>
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={editRuleEnabled}
+                                  className={`term-highlight-toggle${editRuleEnabled ? " on" : ""}`}
+                                  title={editRuleEnabled ? "点击停用该规则" : "点击启用该规则"}
+                                  onClick={() => setEditRuleEnabled((v) => !v)}
+                                >
+                                  <span />
+                                </button>
+                              </label>
+                            </div>
+                            <input
+                              className="term-highlight-edit-input"
+                              value={editRuleLabel}
+                              placeholder="规则名称"
+                              onChange={(e) => {
+                                setEditRuleLabel(e.target.value);
+                                setEditRuleError("");
+                              }}
+                            />
+                            <textarea
+                              className={`term-highlight-edit-patterns${editRuleError ? " is-invalid" : ""}`}
+                              value={editRulePatterns}
+                              rows={3}
+                              placeholder={"匹配内容（正则，每行一条）"}
+                              onChange={(e) => {
+                                setEditRulePatterns(e.target.value);
+                                setEditRuleError("");
+                              }}
+                            />
+                            <HighlightColorPicker
+                              value={editRuleColor}
+                              onChange={setEditRuleColor}
+                            />
+                            <HighlightRulePreview
+                              label={editRuleLabel}
+                              color={editRuleColor}
+                              patterns={editRulePatterns
+                                .split(/\r?\n/)
+                                .map((pattern) => pattern.trim())
+                                .filter(Boolean)}
+                            />
+                            {editRuleError && (
+                              <div className="term-highlight-error">{editRuleError}</div>
+                            )}
+                            <div className="term-highlight-editor-actions">
+                              <button
+                                type="button"
+                                className="term-highlight-cancel"
+                                onClick={resetHighlightEditor}
+                              >
+                                取消
+                              </button>
+                              <button
+                                type="button"
+                                className="term-highlight-save"
+                                onClick={saveEditedHighlightRule}
+                              >
+                                <Icon name="check" size={11} />
+                                保存
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
                         <div className="term-highlight-scroll">
                           {highlightUiRules.length === 0 ? (
                             <div className="term-highlight-empty">
@@ -3728,34 +3987,39 @@ export function TerminalPane({
                                     })
                                   }
                                 />
-                                <div className="term-highlight-info">
-                                  <div
+                                <button
+                                  type="button"
+                                  className="term-highlight-info"
+                                  title="点击编辑名称、匹配内容、颜色与启用状态"
+                                  onClick={() => beginEditHighlightRule(rule)}
+                                >
+                                  <span
                                     className="term-highlight-name"
                                     style={rule.enabled ? { color: rule.color } : undefined}
                                   >
                                     {rule.label}
-                                  </div>
-                                  <div className="term-highlight-pattern">
+                                  </span>
+                                  <span className="term-highlight-pattern">
                                     {rule.patterns.join(", ")}
-                                  </div>
-                                </div>
-                                <label className="term-highlight-swatch">
-                                  <input
-                                    type="color"
-                                    value={rule.color}
-                                    onChange={(e) =>
-                                      persistHostKeywordHighlight({
-                                        rules: highlightUiRules.map((r) =>
-                                          r.id === rule.id
-                                            ? { ...r, color: e.target.value.toUpperCase() }
-                                            : r,
-                                        ),
-                                      })
-                                    }
-                                    aria-label={`修改 ${rule.label} 的颜色`}
-                                  />
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="term-highlight-edit"
+                                  title="编辑该规则"
+                                  onClick={() => beginEditHighlightRule(rule)}
+                                >
+                                  <Icon name="pencil" size={10} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="term-highlight-swatch"
+                                  title={`编辑 ${rule.label} 的颜色`}
+                                  aria-label={`编辑 ${rule.label} 的颜色`}
+                                  onClick={() => beginEditHighlightRule(rule)}
+                                >
                                   <span style={{ background: rule.color }} />
-                                </label>
+                                </button>
                                 <button
                                   type="button"
                                   className="term-highlight-remove"
@@ -3780,16 +4044,11 @@ export function TerminalPane({
                               placeholder="标签（例如：错误）"
                               onChange={(e) => setHostHighlightLabel(e.target.value)}
                             />
-                            <label className="term-highlight-swatch term-highlight-swatch-lg">
-                              <input
-                                type="color"
-                                value={hostHighlightColor}
-                                onChange={(e) => setHostHighlightColor(e.target.value)}
-                                aria-label="选择规则颜色"
-                              />
-                              <span style={{ background: hostHighlightColor }} />
-                            </label>
                           </div>
+                          <HighlightColorPicker
+                            value={hostHighlightColor}
+                            onChange={setHostHighlightColor}
+                          />
                           <div className="term-highlight-add-row">
                             <input
                               value={hostHighlightPattern}
@@ -3812,10 +4071,17 @@ export function TerminalPane({
                               <Icon name="plus" size={12} />
                             </button>
                           </div>
+                          <HighlightRulePreview
+                            label={hostHighlightLabel}
+                            color={hostHighlightColor}
+                            patterns={hostHighlightPattern.trim() ? [hostHighlightPattern] : []}
+                          />
                           {hostHighlightError && (
                             <div className="term-highlight-error">{hostHighlightError}</div>
                           )}
                         </div>
+                          </>
+                        )}
                         {highlightUiRules.length > 0 && (
                           <div className="term-highlight-footer">
                             <button

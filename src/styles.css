@@ -6284,12 +6284,26 @@ button:disabled {
   background: hsl(var(--primary));
 }
 
-.term-highlight-info {
+/* 规则信息区改成按钮（点击进入编辑器）；显式 height:auto 抵消 .term-tool-menu button 的 28px。 */
+.term-highlight-menu .term-highlight-info {
   flex: 1;
+  height: auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 1px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.term-highlight-info:hover .term-highlight-name {
+  text-decoration: underline;
 }
 
 .term-highlight-name {
@@ -6310,41 +6324,51 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
-/* 颜色块：规则行 Netcatty w-6 h-4（24×16，圆角 4），添加区 w-7 h-7（28×28）。 */
-.term-highlight-swatch {
+/* 颜色块：规则行 24×16（圆角 4），点击进入编辑器选色。 */
+.term-highlight-menu .term-highlight-swatch {
   position: relative;
   width: 24px;
   height: 16px;
   flex: 0 0 auto;
+  padding: 0;
   border: 1px solid hsl(var(--border) / 0.5);
   border-radius: 4px;
   overflow: hidden;
+  background: transparent;
   cursor: pointer;
 }
 
-.term-highlight-swatch:hover {
-  border-color: hsl(var(--border));
-}
-
-.term-highlight-swatch.term-highlight-swatch-lg {
-  width: 28px;
-  height: 28px;
+.term-highlight-menu .term-highlight-swatch:hover {
+  border-color: hsl(var(--ring));
 }
 
 .term-highlight-swatch > span {
   position: absolute;
   inset: 0;
+  display: block;
 }
 
-.term-highlight-swatch input[type="color"] {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+/* 编辑入口：铅笔图标，行悬停才显现（与删除按钮同节奏）。 */
+.term-highlight-menu .term-highlight-edit {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0;
-  border: none;
+  color: hsl(var(--muted-foreground));
   opacity: 0;
-  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.term-highlight-row:hover .term-highlight-edit {
+  opacity: 1;
+}
+
+.term-highlight-menu .term-highlight-edit:hover {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
 }
 
 /* 删除按钮：Netcatty Trash2 10px，默认 opacity-0，行悬停才显现。 */
@@ -6440,6 +6464,223 @@ button:disabled {
 .term-highlight-error {
   font-size: 10px;
   color: hsl(var(--destructive));
+}
+
+/* 颜色选择：一排标准色块（点选即生效），自定义取色作为补充入口。 */
+.term-highlight-color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 选择器带 .term-highlight-menu 前缀：否则会被 .term-tool-menu button 的 28px/无边框覆盖。 */
+.term-highlight-menu .term-highlight-color-chip {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  /* 用前景色描边：白/黑块在深浅主题下都能看出边界。 */
+  border: 1px solid hsl(var(--foreground) / 0.22);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: box-shadow 120ms ease;
+}
+
+/* hover 用前景色中性环（不用强调色，否则蓝色块上的蓝环几乎看不出来）。 */
+.term-highlight-menu .term-highlight-color-chip:hover {
+  box-shadow: 0 0 0 2px hsl(var(--foreground) / 0.45);
+}
+
+/* 选中态双环：先垫一层背景色再套 ring，深浅主题下都能看清。 */
+.term-highlight-menu .term-highlight-color-chip.is-selected {
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 3px hsl(var(--ring));
+}
+
+.term-highlight-color-custom {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 5px;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.term-highlight-color-custom:hover {
+  border-color: hsl(var(--ring) / 0.8);
+  color: hsl(var(--foreground));
+}
+
+.term-highlight-color-custom.is-active {
+  border-style: solid;
+  border-color: hsl(var(--ring));
+  color: hsl(var(--foreground));
+}
+
+.term-highlight-color-custom input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.term-highlight-color-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 3px;
+}
+
+.term-highlight-color-custom-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* 实时预览：示例行用真实匹配引擎着色，颜色改动即时反映。 */
+.term-highlight-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 4px 8px;
+  border: 1px dashed hsl(var(--border) / 0.8);
+  border-radius: 5px;
+  background: hsl(var(--muted) / 0.18);
+  font-size: 11px;
+  overflow: hidden;
+}
+
+.term-highlight-preview-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.term-highlight-preview-caption {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-highlight-preview-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: hsl(var(--foreground));
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 规则编辑器：替换列表显示，输入样式与添加区对齐。 */
+.term-highlight-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.term-highlight-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.term-highlight-editor-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.term-highlight-edit-input,
+.term-highlight-edit-patterns {
+  width: 100%;
+  padding: 0 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 5px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 12px;
+}
+
+.term-highlight-edit-input {
+  height: 28px;
+}
+
+.term-highlight-edit-patterns {
+  padding: 6px 8px;
+  min-height: 54px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.term-highlight-edit-input:focus,
+.term-highlight-edit-patterns:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+}
+
+.term-highlight-edit-patterns.is-invalid {
+  border-color: hsl(var(--destructive));
+}
+
+.term-highlight-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.term-highlight-menu .term-highlight-cancel,
+.term-highlight-menu .term-highlight-save {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 5px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.term-highlight-menu .term-highlight-cancel {
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.term-highlight-menu .term-highlight-cancel:hover {
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+}
+
+.term-highlight-menu .term-highlight-save {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.term-highlight-menu .term-highlight-save:hover {
+  background: hsl(var(--primary) / 0.9);
 }
 
 /* 清空全部：Netcatty 右下角小号 ghost 按钮（h-6，仅内容宽度）。 */
