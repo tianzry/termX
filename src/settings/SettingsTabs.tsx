@@ -64,6 +64,10 @@ import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "./uiThemes";
 
 type TFn = (k: string, p?: Record<string, string | number>) => string;
 
+/** Option+方向键仅在 macOS 生效（与 Terminal.tsx 的 IS_MAC_PLATFORM 门控一致）。 */
+const IS_MAC =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform);
+
 /** 强调色色板（逐个对齐 Netcatty SettingsAppearanceTab ACCENT_COLORS）。 */
 const ACCENT_COLORS = [
   { name: "Sky", value: "199 89% 48%" },
@@ -1339,7 +1343,12 @@ export function TerminalTab() {
         <Row title={t("settings.terminal.keyboard.altAsMeta")} desc={t("settings.terminal.keyboard.altAsMeta.desc")}>
           <Toggle checked={term.altAsMeta} onChange={(v) => patch({ altAsMeta: v })} />
         </Row>
-        <Row title={t("settings.terminal.keyboard.optionArrowWordJump")} desc={t("settings.terminal.keyboard.optionArrowWordJump.desc")}>
+        <Row
+          title={t("settings.terminal.keyboard.optionArrowWordJump")}
+          desc={`${t("settings.terminal.keyboard.optionArrowWordJump.desc")}${
+            IS_MAC ? "" : ` ${t("settings.terminal.keyboard.macOnly")}`
+          }`}
+        >
           <Toggle
             checked={term.optionArrowWordJump}
             onChange={(v) => patch({ optionArrowWordJump: v })}
@@ -1386,6 +1395,7 @@ export function TerminalTab() {
         >
           <Select
             value={term.autocompleteHistoryScope}
+            disabled={!term.autocompleteEnabled}
             onChange={(v) =>
               patch({ autocompleteHistoryScope: v as typeof term.autocompleteHistoryScope })
             }
@@ -1798,10 +1808,7 @@ export function SftpTab() {
           title={t("settings.sftp.autoOpenSidebar")}
           desc={t("settings.sftp.autoOpenSidebar.desc")}
         >
-          <Toggle
-            checked={s.sidePanelAutoOpen}
-            onChange={(v) => updateSettings({ sidePanelAutoOpen: v })}
-          />
+          <Toggle disabled checked={false} onChange={() => {}} />
         </Row>
       </Section>
 
@@ -1924,6 +1931,7 @@ export function ShortcutsTab() {
 
   return (
     <div className="nc-set-page">
+      <p className="nc-set-hint">{t("settings.shortcuts.runtimeNotWired")}</p>
       <Section title={t("settings.shortcuts.section.scheme")}>
         <Row
           title={t("settings.shortcuts.scheme.label")}
@@ -2475,11 +2483,11 @@ export function SystemTab() {
             ]}
           />
         </Row>
-        <Row title={t("settings.sessionLogs.timestamps")} desc={t("settings.sessionLogs.timestampsDesc")}>
-          <Toggle
-            checked={s.sessionLogs.timestamps}
-            onChange={(v) => updateSettings({ sessionLogs: { ...s.sessionLogs, timestamps: v } })}
-          />
+        <Row
+          title={t("settings.sessionLogs.timestamps")}
+          desc={`${t("settings.sessionLogs.timestampsDesc")} ${t("settings.sessionLogs.timestampsUnsupported")}`}
+        >
+          <Toggle disabled checked={false} onChange={() => {}} />
         </Row>
         <Row title={t("settings.sessionLogs.directory")}>
           <span className="nc-set-value">{t("settings.sessionLogs.directoryDesc")}</span>
@@ -2530,7 +2538,14 @@ export function SystemTab() {
 
       <Section title={t("settings.sshDebugLogs.title")}>
         <Row title={t("settings.sshDebugLogs.enable")} desc={t("settings.sshDebugLogs.enableDesc")}>
-          <Toggle checked={s.sshDebugLogsEnabled} onChange={(v) => updateSettings({ sshDebugLogsEnabled: v })} />
+          <Toggle
+            checked={s.sshDebugLogsEnabled}
+            onChange={(v) => {
+              updateSettings({ sshDebugLogsEnabled: v });
+              // 后端读取 db 键 verbose_log 决定是否记录 SSH 调试日志，需同步写入。
+              void setSetting("verbose_log", v ? "true" : "false").catch(() => {});
+            }}
+          />
         </Row>
       </Section>
 

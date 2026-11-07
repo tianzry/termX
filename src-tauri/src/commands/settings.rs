@@ -388,8 +388,10 @@ mod auto_launch_impl {
             return false;
         };
         let out = out.to_lowercase();
+        // 值名与路径均按小写比较（注册表值名为 "termX"，直接 contains 会因大小写失配）。
+        let value_name = super::AUTO_LAUNCH_VALUE_NAME.to_lowercase();
         // 值存在且指向当前可执行文件才算启用（路径变化时自动失效）。
-        out.contains(super::AUTO_LAUNCH_VALUE_NAME) && out.contains(&exe)
+        out.contains(&value_name) && out.contains(&exe)
     }
 
     pub fn set(enabled: bool) -> bool {
