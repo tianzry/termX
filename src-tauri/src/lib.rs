@@ -116,7 +116,14 @@ pub fn run() {
             // PTY 模块本身就是桌面端独占（移动端没有 portable_pty）。
             #[cfg(desktop)]
             terminal::pty::init_available_shells();
+            let db_started = std::time::Instant::now();
             let db = Arc::new(db::Db::open(&data_dir)?);
+            // 启动耗时诊断：GUI 冷启动到可交互里数据库占比可直接量化。
+            log::info!(
+                "startup: db open took {} ms (data_dir={})",
+                db_started.elapsed().as_millis(),
+                data_dir.display()
+            );
             // secret::open 可能失败：sticky backend 标记 keyring 但 keychain 现在
             // 拿不到（系统 keychain 损坏 / D-Bus 挂等）→ 硬 fail 启动。silently
             // fallback file 会用新主密钥让旧密文全部解不开，比启动失败更危险。
