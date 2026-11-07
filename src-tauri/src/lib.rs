@@ -261,6 +261,7 @@ pub fn run() {
             commands::session_logs::stop_session_log,
             commands::session_logs::session_log_status,
             commands::session_logs::start_manual_session_log,
+            commands::session_logs::start_default_session_log,
             commands::session_logs::stop_manual_session_log,
             commands::session_logs::manual_session_log_status,
             commands::settings::reset_highlights,

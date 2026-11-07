@@ -865,6 +865,15 @@ fn dispatch(
                 state, &sid, &path, &format, timestamps,
             ))
         }
+        "start_default_session_log" => {
+            let sid: String = arg(&args, "sessionId")?;
+            let host: String = arg(&args, "host")?;
+            let title: String = arg(&args, "title")?;
+            let protocol: String = arg(&args, "protocol")?;
+            ok(crate::commands::session_logs::start_default_session_log_impl(
+                state, &sid, &host, &title, &protocol,
+            ))
+        }
         "stop_manual_session_log" => {
             let sid: String = arg(&args, "sessionId")?;
             ok(crate::commands::session_logs::stop_manual_session_log_impl(

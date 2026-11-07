@@ -705,9 +705,9 @@ export interface SessionLog {
   host_id: string | null;
   host_name: string;
   title: string;
-  /** 目前固定 "asciicast"。 */
+  /** 固定 "text"（剥 ANSI 的纯文本 `.log`）。 */
   format: string;
-  /** recordings 目录内的纯文件名（不含目录）。 */
+  /** 日志目录内的纯文件名（不含目录）。 */
   path: string;
   /** Unix 毫秒。 */
   started_at: number;
@@ -720,7 +720,7 @@ export interface SessionLog {
 
 export interface SessionLogDetail {
   log: SessionLog;
-  /** asciicast 原始内容（前端自行解析；保留 ANSI）。 */
+  /** `.log` 原始文本内容（已剥离 ANSI）。 */
   content: string;
 }
 
@@ -780,6 +780,21 @@ export function startManualSessionLog(
     path,
     format,
     timestamps,
+  });
+}
+
+/** 手动文本会话日志：按设置目录 + 命名模板新建 `.log`（不弹保存对话框）。 */
+export function startDefaultSessionLog(
+  sessionId: string,
+  host: string,
+  title: string,
+  protocol: string,
+): Promise<ManualSessionLogStatus> {
+  return invoke<ManualSessionLogStatus>("start_default_session_log", {
+    sessionId,
+    host,
+    title,
+    protocol,
   });
 }
 

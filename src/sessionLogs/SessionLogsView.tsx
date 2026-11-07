@@ -1,13 +1,11 @@
-// Vault「日志」页（会话日志阶段 A + B）。
-// 对照 Netcatty：日志本体是 recordings 目录里的 .cast 文件，反过来索引到本页列表；
-// 本页做浏览 / 彩色查看 / 导出落盘（Asciicast · 纯文本 · HTML）/ 删除。
-// 左栏 300px（刷新 / 搜索 / 主机 / 列表）+ 右侧详情，布局对齐 NotesView。
+// Vault「日志」页：只列出「设置 → 终端 → 会话日志」默认目录下的 `.log` 纯文本
+// （文件名 / 时间 / 大小），点开是纯文本阅读视图；删除与排序沿用既有交互。
+// 旧 `~/.termX/recordings` 里的 `.cast` 不再出现（不迁移、不删除文件）。
 import {
   useCallback,
   useEffect,
   useMemo,
   useState,
-  type CSSProperties,
 } from "react";
 import * as api from "../backend/client";
 import type { SessionLog, SessionLogDetail } from "../backend/client";
@@ -19,39 +17,18 @@ import {
   filterSessionLogs,
   formatLogDuration,
   formatLogSize,
-  parseAsciicast,
   sessionLogExportName,
-  sessionLogItemTitle,
   sortSessionLogsBy,
   type SessionLogSortDirection,
   type SessionLogSortKey,
 } from "./sessionLogsModel";
-import { parseAnsi, type AnsiSpan } from "./ansi";
 import "./sessionLogs.css";
 
-type ExportFormat = "cast" | "txt" | "html";
+type ExportFormat = "txt" | "html";
 
-/** 设置里的默认导出格式：raw / txt → txt，html → html。 */
+/** 设置里的默认导出格式：html → html，其余（raw / txt）→ txt。 */
 function defaultExportFormat(): "txt" | "html" {
   return getSettings().sessionLogs.format === "html" ? "html" : "txt";
-}
-
-/** AnsiSpan → 内联样式；inverse 交换前景 / 背景（缺省时用主题色兜底）。 */
-function ansiStyle(span: AnsiSpan): CSSProperties {
-  const color = span.inverse
-    ? span.bg ?? "hsl(var(--nc-bg))"
-    : span.fg;
-  const backgroundColor = span.inverse
-    ? span.fg ?? "hsl(var(--nc-fg))"
-    : span.bg;
-  return {
-    color,
-    backgroundColor,
-    fontWeight: span.bold ? 600 : undefined,
-    fontStyle: span.italic ? "italic" : undefined,
-    textDecoration: span.underline ? "underline" : undefined,
-    opacity: span.dim ? 0.6 : undefined,
-  };
 }
 
 function formatDateTime(ms: number | null | undefined): string {
@@ -111,8 +88,6 @@ export function SessionLogsView() {
   const [err, setErr] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SessionLog | null>(null);
   const [deleting, setDeleting] = useState(false);
-  /** 彩色（默认）/ 原文视图切换。 */
-  const [rawView, setRawView] = useState(false);
   /** 日志字号（对齐 Netcatty LogView 的字号定制，范围 9–22px）。 */
   const [fontSize, setFontSize] = useState(13);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -218,15 +193,6 @@ export function SessionLogsView() {
     setSortKey(key);
     setSortDir(key === "name" ? "asc" : "desc");
   }
-  const summary = useMemo(
-    () => (detail ? parseAsciicast(detail.content) : null),
-    [detail],
-  );
-  /** 彩色视图的 span 列表；解析成本只在详情变化时付一次。 */
-  const colored = useMemo(
-    () => (summary ? parseAnsi(summary.text) : []),
-    [summary],
-  );
 
   return (
     <div
@@ -295,7 +261,7 @@ export function SessionLogsView() {
                   className="session-logs-th col-session"
                   onClick={() => toggleSort("name")}
                 >
-                  会话 / 主机
+                  文件名
                   <SortMark active={sortKey === "name"} dir={sortDir} />
                 </button>
                 <button
@@ -337,7 +303,10 @@ export function SessionLogsView() {
                         : "暂无会话日志"}
                   </h3>
                   {!loading && !logs.length && (
-                    <p>在设置中开启自动保存后，新的会话会记录为 asciicast</p>
+                    <p>
+                      主机开启「自动记录会话日志」或工具栏手动开始后，新的
+                      `.log` 会写入设置里的默认目录
+                    </p>
                   )}
                   {!loading && logs.length > 0 && (
                     <p>试试换个关键词，或把主机筛选切回「全部主机」</p>
@@ -360,15 +329,16 @@ export function SessionLogsView() {
                   >
                     <div className="session-logs-cell col-session">
                       <div className="session-logs-avatar">
-                        <Icon name="server" size={16} />
+                        <Icon name="file-text" size={16} />
                       </div>
                       <div className="session-logs-cell-main">
-                        <strong title={log.host_name || log.title}>
-                          {log.host_name || log.title || "未命名会话"}
-                        </strong>
+                        <strong title={log.path}>{log.path || "未命名日志"}</strong>
                         <span>
-                          {sessionLogItemTitle(log) ??
-                            `asciicast · ${log.event_count} 事件`}
+                          {log.status === "recording"
+                            ? "记录中"
+                            : log.host_name && log.host_name !== log.path
+                              ? log.host_name
+                              : "纯文本日志"}
                         </span>
                       </div>
                     </div>
@@ -421,7 +391,7 @@ export function SessionLogsView() {
       >
         {detailLoading ? (
           <div className="session-logs-empty">加载中…</div>
-        ) : detail && summary ? (
+        ) : detail ? (
           <>
             <header className="session-logs-detail-head">
               <button
@@ -442,22 +412,8 @@ export function SessionLogsView() {
                 返回
               </button>
               <div className="session-logs-detail-title">
-                <h2>{detail.log.title || detail.log.path}</h2>
-                <p>{detail.log.host_name || "—"}</p>
-              </div>
-              <div className="session-logs-view-toggle">
-                <button
-                  className={rawView ? "" : "active"}
-                  onClick={() => setRawView(false)}
-                >
-                  彩色
-                </button>
-                <button
-                  className={rawView ? "active" : ""}
-                  onClick={() => setRawView(true)}
-                >
-                  原文
-                </button>
+                <h2>{detail.log.path || detail.log.title}</h2>
+                <p>{detail.log.host_name || "纯文本日志"}</p>
               </div>
               <div className="session-logs-zoom">
                 <button
@@ -497,9 +453,6 @@ export function SessionLogsView() {
                 </button>
                 {exportMenuOpen && (
                   <div className="session-logs-export-menu">
-                    <button onClick={() => void exportLog(detail.log, "cast")}>
-                      Asciicast（.cast）
-                    </button>
                     <button onClick={() => void exportLog(detail.log, "txt")}>
                       纯文本（.txt）
                     </button>
@@ -534,28 +487,18 @@ export function SessionLogsView() {
                 <strong>{formatLogDuration(detail.log.duration_ms)}</strong>
               </div>
               <div className="session-logs-stat">
-                <span>事件数</span>
-                <strong>{detail.log.event_count}</strong>
-              </div>
-              <div className="session-logs-stat">
                 <span>大小</span>
                 <strong>{formatLogSize(detail.log.size_bytes)}</strong>
               </div>
               <div className="session-logs-stat session-logs-path">
-                <span>路径</span>
+                <span>文件名</span>
                 <strong title={detail.log.path}>{detail.log.path}</strong>
               </div>
             </div>
 
             <div className="session-logs-content-wrap">
               <pre className="session-logs-content" style={{ fontSize }}>
-                {rawView
-                  ? summary.text
-                  : colored.map((span, index) => (
-                      <span key={index} style={ansiStyle(span)}>
-                        {span.text}
-                      </span>
-                    ))}
+                {detail.content}
               </pre>
             </div>
           </>
@@ -579,10 +522,10 @@ export function SessionLogsView() {
           >
             <h3 className="session-logs-delete-title">
               <Icon name="alert-triangle" size={18} />
-              删除“{deleteTarget.title || deleteTarget.path}”？
+              删除“{deleteTarget.path || deleteTarget.title}”？
             </h3>
             <p className="session-logs-delete-desc">
-              日志文件会从 recordings 目录移除，此操作不可撤销。
+              日志文件会从默认日志目录移除，此操作不可撤销。
             </p>
             <div className="modal-actions">
               <button

@@ -304,20 +304,8 @@ interface Props {
 const AUTH_RETRY_MESSAGE = "身份验证失败。请检查凭据后重试。";
 const PROGRESS_ATTEMPT_TIMEOUT_MESSAGE = "连接超时，请重试。";
 
-/** 会话日志默认文件名时间戳：对齐 Netcatty `YYYY-MM-DDTHH-mm-ss`。 */
-function safeFileStem(title: string): string {
-  const stem = title.replace(/[\\/:*?"<>|\s]+/g, "_").replace(/^_+|_+$/g, "");
-  return stem || "session";
-}
-
 function pad2(value: number): string {
   return String(value).padStart(2, "0");
-}
-
-function timestampSuffix(now: Date): string {
-  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}T${pad2(
-    now.getHours(),
-  )}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`;
 }
 
 function clockLabel(now: Date): string {
@@ -549,7 +537,8 @@ export function TerminalPane({
   const [osc7DialogOpen, setOsc7DialogOpen] = useState(false);
   const [osc7Busy, setOsc7Busy] = useState(false);
   /**
-   * 手动文本会话日志（Netcatty `sessionLog`）：后端把输出写进用户选的文本文件。
+   * 文本会话日志状态：后端把输出写成剥 ANSI 的 `.log`（默认目录 + 命名模板）。
+   * 主机「自动记录」与工具栏手动开始共用同一文本槽，按钮据此显示录制态。
    * 与「开始录制」（脚本录制）是两套独立能力，互不共享状态与产物。
    */
   const [sessionLog, setSessionLog] = useState<api.ManualSessionLogStatus | null>(
@@ -693,9 +682,8 @@ export function TerminalPane({
   }, []);
 
   /**
-   * 连接建立后拉取一次「手动文本会话日志」状态。它与 asciicast 自动录制
-   * （settings.recording_enabled）无关：自动录制仍写 .cast 进「日志」页，
-   * 手动会话日志写用户选择的文本文件。断开即清空，并结束脚本录制。
+   * 连接建立后拉取一次文本会话日志状态：主机自动记录开启时按钮直接进入
+   * 录制态；手动开始 / 停止也会用同一个 `.log` 槽。断开即清空并结束脚本录制。
    */
   useEffect(() => {
     const sid = status === "connected" ? sidRef.current : null;
@@ -1146,10 +1134,10 @@ export function TerminalPane({
   const inputBufferRef = useRef<ScriptRecordingBuffer>(createScriptRecordingBuffer());
 
   /**
-   * 工具栏「会话日志」（file-text）：Netcatty 语义 = 手动文本日志。
-   * 未录制时先弹保存对话框（默认目录为应用 recordings），再开始写；
-   * 录制中点击则停止。取消选择不产生错误态。
-   * 与「开始录制」（脚本录制）完全独立，不再共享录制槽。
+   * 工具栏「会话日志」（file-text）：未录制时按「设置 → 终端 → 会话日志」
+   * 的目录与命名模板新建 `.log`（不弹保存对话框）；录制中点击则停止。
+   * 四类会话都能手动开始 / 停止，与主机「自动记录」开关无关。
+   * 与「开始录制」（脚本录制）完全独立，不共享录制槽。
    */
   async function toggleManualSessionLog() {
     const sid = sidRef.current;
@@ -1164,12 +1152,14 @@ export function TerminalPane({
         onStatus(`会话日志已保存：${stopped.path}`);
         return;
       }
-      // Netcatty 默认：格式 txt（去 ANSI）、时间戳关闭、扩展名 .txt。
-      const defaultName = `${safeFileStem(tab.title)}_${timestampSuffix(new Date())}.txt`;
-      const path = await api.pickManualSessionLogPath(defaultName, "txt");
-      // 用户取消选择：直接结束，不进入错误态。
-      if (!path) return;
-      const rec = await api.startManualSessionLog(sid, path, "txt", false);
+      // 命名占位符的 host / title 取当前窗格可见信息；本地终端无远端主机时
+      // 回退到标签标题，保证生成的文件名仍可读。
+      const rec = await api.startDefaultSessionLog(
+        sid,
+        hostInfo.hostname || tab.title,
+        tab.title,
+        transportKind,
+      );
       setSessionLog(rec);
       onStatus(`开始记录会话日志：${rec.path}`);
     } catch (e) {
@@ -4197,16 +4187,20 @@ export function TerminalPane({
               case "sessionLog": {
                 const title = `${sessionLog ? "停止" : "开始"}${TERMINAL_TOOLBAR_TEXT.sessionLog.title}`;
                 return (
-                  // 四种传输都挂了文本日志槽：自动录制（.cast）与手动文本日志并行。
+                  // 四种传输都挂了文本日志槽：自动录制（.log）与手动日志共用同一槽。
                   <button
                     key={action}
                     className={`term-tool-btn${sessionLog ? " recording" : ""}`}
                     disabled={status !== "connected" || logBusy}
                     title={title}
                     aria-label={title}
+                    aria-pressed={sessionLog !== null}
                     onClick={() => void toggleManualSessionLog()}
                   >
                     <Icon name="file-text" size={12} />
+                    {sessionLog && (
+                      <span className="term-log-dot" aria-hidden="true" />
+                    )}
                   </button>
                 );
               }

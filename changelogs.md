@@ -7485,4 +7485,43 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
   - 录制文件被进程占用时 `Get-ChildItem.Length` 显示 0、`ReadAllBytes` 报占用，需关闭标签或
     用 `Get-Content` 读取。
 
+## 2026-11-08 — 会话日志重构（后半段）：工具栏状态机 + 录制红点 + 日志页扫 .log
+
+- **工具栏按钮状态机**：未连接禁用；每次点击先用 `manual_session_log_status` 查后端真实
+  状态，自动录制（主机开关开）与手动开始共用同一文本槽，按钮直接进入「录制态」；点击
+  停止，再点按「设置 → 终端 → 会话日志」的目录与命名模板新建下一个 `.log`，不再弹保存
+  对话框。四类会话（SSH / 本地 pty / 串口 / Telnet）均可手动开始停止，与主机开关无关。
+- **录制中标识**：新增独立 5×5px 红点 `.term-log-dot` 绝对定位在按钮右下角（距边 3px），
+  不改变 24×24 按钮尺寸、不挤压文档图标；`.term-tool-btn.recording` 增加底色 + 内描边
+  高亮；红点外圈用 `--background` 保证深浅主题均可见。
+- **日志页改扫默认目录**：`scan_session_logs` 只读 `session_log_dir` 下 `.log`；
+  `list_session_logs_impl` 直接返回扫描结果，旧 `.cast` 索引行不再混入；详情为纯文本
+  阅读（ANSI 已在写入层剥离），列表显示文件名 / 时间 / 大小，删除 / 排序沿用原交互；
+  导出仅保留 txt / html（cast 导出移除）；旧 `~/.termX/recordings` 文件原位保留、
+  不迁移不删除。
+- 新增 Tauri command `start_default_session_log`（含 headless 路由），保留
+  `start_manual_session_log` 供自定义路径；`recording_dir` 不再参与日志页。
+- **实测（release + CDP 9222，临时目录 `termx-logtest3`）**：
+  - 129 主机开关开：连接后按钮 `aria=停止记录会话日志`、`recording` 类、红点存在，
+    记录 `verify_129_...005121.log`；点一次停止 → 状态 null；再点生成第二个文件
+    `verify_192_168_126_129_...005150.log`；
+  - 本地 Git Bash 手动开始 → 生成 `verify_Git Bash_...log`，含 `TERMX_LOCAL_C` 回显、
+    无 ESC 字节；
+  - 串口 COM4 手动开始 → 停止后生成日志文件（无输出，0 B），日志页删除后列表与 DB
+    索引同步消失；
+  - 日志页只列本次 `.log`，legacy `~/.termX/recordings` 的 `.cast` 未出现；详情纯文本
+    可读，统计显示时长 / 大小 / 文件名；
+  - 红点实测 rect 5×5、距按钮右 / 下各 3px、按钮仍 24×24；深浅主题放大截图
+    `v_dot_dark_zoom2.png` / `v_dot_light_zoom.png`。
+- **门禁**：`npm run test:run` ✓、`npm run build`✓、`cargo check --lib`✓、
+  `cargo check --lib --features server`✓、`cargo test --lib`✓、
+  `npx tauri build --no-bundle`✓。
+- **踩坑**：
+  - 设置 store 的主题副作用只在 `updateSettings` / 启动加载时应用，直接 `set_setting`
+    写 DB 不会热切换主题；深浅主题截图需重启 release。
+  - 日志页进入详情后列表会被卸载，自动化需先点「返回」再点目标行。
+  - 终端命令文件用 PowerShell `Set-Content` 会带 BOM，首个命令可能变成
+    `command not found`；应使用 `[IO.File]::WriteAllText`。
+
+
 

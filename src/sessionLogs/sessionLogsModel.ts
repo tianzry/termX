@@ -84,7 +84,7 @@ export interface SessionLogFilter {
   host?: string;
 }
 
-/** query 匹配 title / host_name / status（大小写不敏感）；host 精确匹配。 */
+/** query 匹配 文件名 / title / host_name / status（大小写不敏感）；host 精确匹配。 */
 export function filterSessionLogs(
   logs: SessionLog[],
   filter: SessionLogFilter,
@@ -94,7 +94,7 @@ export function filterSessionLogs(
   return logs.filter((log) => {
     if (
       query &&
-      ![log.title, log.host_name, log.status]
+      ![log.path, log.title, log.host_name, log.status]
         .join(" ")
         .toLowerCase()
         .includes(query)
@@ -131,7 +131,7 @@ export type SessionLogSortKey = "time" | "duration" | "size" | "name";
 export type SessionLogSortDirection = "asc" | "desc";
 
 function logLabel(log: SessionLog): string {
-  return log.host_name.trim() || log.title.trim();
+  return log.path.trim() || log.host_name.trim() || log.title.trim();
 }
 
 /** 按指定列排序；同值用 id 升序兜底，不修改入参。 */

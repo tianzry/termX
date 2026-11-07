@@ -5313,6 +5313,8 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* 录制红点是绝对定位角标，不改按钮尺寸、不挤压图标本体。 */
+  position: relative;
   padding: 0;
   border: none;
   background: transparent;
@@ -5325,8 +5327,24 @@ button:disabled {
   background: transparent;
 }
 
+/* 录制中：高度高亮（底色 + 描边 + 红色图标），深浅主题共用主题色。 */
 .term-tool-btn.recording {
   color: hsl(var(--destructive));
+  background: hsl(var(--destructive) / 0.14);
+  box-shadow: inset 0 0 0 1px hsl(var(--destructive) / 0.45);
+}
+
+/* 录制红点：右下角独立角标（5px），外圈用工具栏底色保证两种主题都可见。 */
+.term-log-dot {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: hsl(var(--destructive));
+  box-shadow: 0 0 0 1.5px hsl(var(--background));
+  pointer-events: none;
 }
 
 .term-tool-btn.active {

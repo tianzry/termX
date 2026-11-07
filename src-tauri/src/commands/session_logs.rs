@@ -105,7 +105,7 @@ fn mtime_ms(path: &Path) -> i64 {
 
 /// 从 recordings 目录里的单个 `.cast` 文件构造索引行。
 /// 文件读不到（不存在 / 元数据失败）返回 None，扫描与"停止录制"共用同一逻辑。
-pub(crate) fn log_from_file(dir: &Path, filename: &str) -> Option<SessionLog> {
+pub(crate) fn cast_log_from_file(dir: &Path, filename: &str) -> Option<SessionLog> {
     let path = dir.join(filename);
     let size_bytes = std::fs::metadata(&path).ok()?.len() as i64;
     let stem = Path::new(filename)
@@ -137,9 +137,9 @@ pub(crate) fn log_from_file(dir: &Path, filename: &str) -> Option<SessionLog> {
     })
 }
 
-/// 收集当前仍在写的 asciicast 文件名。扫描时据此把索引行标成「进行中」，
+/// 收集当前仍在写的纯文本日志文件名。扫描时据此把索引行标成「进行中」，
 /// 否则列表只能等会话结束才看到状态变化。
-fn active_recording_names(state: &AppState) -> std::collections::HashSet<String> {
+fn active_text_log_names(state: &AppState) -> std::collections::HashSet<String> {
     use std::collections::HashSet;
 
     let mut names = HashSet::new();
@@ -147,7 +147,7 @@ fn active_recording_names(state: &AppState) -> std::collections::HashSet<String>
         let Ok(guard) = locked(&state.sessions) else {
             return names;
         };
-        guard.values().map(|handle| handle.recorder_slot()).collect()
+        guard.values().map(|handle| handle.text_log_slot()).collect()
     };
     for slot in ssh_slots {
         if let Ok(guard) = locked(&slot) {
@@ -160,7 +160,7 @@ fn active_recording_names(state: &AppState) -> std::collections::HashSet<String>
         let Ok(guard) = locked(&state.lifecycle_sessions) else {
             return names;
         };
-        guard.values().map(|record| record.log_slots.rec.clone()).collect()
+        guard.values().map(|record| record.log_slots.text.clone()).collect()
     };
     for slot in lifecycle_slots {
         if let Ok(guard) = locked(&slot) {
@@ -172,14 +172,51 @@ fn active_recording_names(state: &AppState) -> std::collections::HashSet<String>
     names
 }
 
-/// 扫描 recordings 目录并 upsert 索引。目录不存在返回空列表（首次使用即空态）。
-pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
-    let dir = crate::commands::settings::recording_dir(state);
+/// 从默认日志目录里的单个 `.log` 文件构造索引行。
+/// 时间戳取自文件系统（创建时间不可得时退回修改时间），时长即两者之差。
+fn text_log_from_file(dir: &Path, filename: &str) -> Option<SessionLog> {
+    let path = dir.join(filename);
+    let size_bytes = std::fs::metadata(&path).ok()?.len() as i64;
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(filename);
+    let title = title_from_stem(stem, filename);
+    let ended_at = mtime_ms(&path);
+    let started_at = std::fs::metadata(&path)
+        .and_then(|meta| meta.created().or_else(|_| meta.modified()))
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(ended_at);
+
+    Some(SessionLog {
+        id: format!("log:{filename}"),
+        session_id: String::new(),
+        host_id: None,
+        host_name: title.clone(),
+        title,
+        format: "text".into(),
+        path: filename.to_string(),
+        started_at,
+        ended_at: Some(ended_at),
+        duration_ms: (ended_at - started_at).max(0),
+        size_bytes,
+        event_count: 0,
+        status: "completed".into(),
+    })
+}
+
+/// 扫描「设置 → 终端 → 会话日志」默认目录下的 `.log` 文件并 upsert 索引。
+/// 目录不存在返回空列表（首次使用即空态）；旧 recordings 目录的 `.cast`
+/// 不再参与日志页（不迁移、不删除）。
+pub fn scan_session_logs(state: &AppState) -> AppResult<Vec<SessionLog>> {
+    let dir = crate::commands::settings::session_log_dir(state);
     if !dir.exists() {
         return Ok(vec![]);
     }
 
-    let active = active_recording_names(state);
+    let active = active_text_log_names(state);
     let mut logs = Vec::new();
     for entry in std::fs::read_dir(&dir)? {
         let Ok(entry) = entry else {
@@ -188,7 +225,7 @@ pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
         if !entry
             .path()
             .extension()
-            .map(|ext| ext == "cast")
+            .map(|ext| ext == "log")
             .unwrap_or(false)
         {
             continue;
@@ -196,7 +233,7 @@ pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
         let Ok(file_name) = entry.file_name().into_string() else {
             continue;
         };
-        let Some(mut log) = log_from_file(&dir, &file_name) else {
+        let Some(mut log) = text_log_from_file(&dir, &file_name) else {
             continue;
         };
         if active.contains(&file_name) {
@@ -209,244 +246,22 @@ pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
     Ok(logs)
 }
 
-/// 把 asciicast 中所有 `"o"` 事件的 chunk 拼成纯文本；ANSI 原样保留，
-/// 是否清洗由调用方决定（阶段 A 明确不清洗）。
-fn cast_to_text(content: &str) -> String {
-    let mut text = String::new();
-    for line in content.lines() {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        let Some(event) = value.as_array() else {
-            continue;
-        };
-        if event.len() < 3 || event[1].as_str() != Some("o") {
-            continue;
-        }
-        if let Some(chunk) = event[2].as_str() {
-            text.push_str(chunk);
-        }
-    }
-    text
-}
-
 fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
 
-const ANSI_BASE_COLORS: [&str; 16] = [
-    "#000000", "#cd0000", "#00cd00", "#cdcd00", "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
-    "#7f7f7f", "#ff0000", "#00ff00", "#ffff00", "#5c5cff", "#ff00ff", "#00ffff", "#ffffff",
-];
-
-fn ansi_palette(index: u32) -> Option<String> {
-    match index {
-        0..=15 => Some(ANSI_BASE_COLORS[index as usize].to_string()),
-        16..=231 => {
-            let i = index - 16;
-            let steps = [0u8, 95, 135, 175, 215, 255];
-            let r = steps[(i / 36) as usize];
-            let g = steps[((i % 36) / 6) as usize];
-            let b = steps[(i % 6) as usize];
-            Some(format!("#{r:02x}{g:02x}{b:02x}"))
-        }
-        232..=255 => {
-            let v = 8 + (index - 232) * 10;
-            Some(format!("#{v:02x}{v:02x}{v:02x}"))
-        }
-        _ => None,
-    }
-}
-
-/// HTML 导出用的 SGR 状态：把 asciicast 里的 ANSI 转成内联样式，
-/// 避免导出的文件里出现肉眼可见的 `[32m` 之类的控制片段。
-#[derive(Default, Clone)]
-struct SgrStyle {
-    fg: Option<String>,
-    bg: Option<String>,
-    bold: bool,
-    dim: bool,
-    italic: bool,
-    underline: bool,
-    inverse: bool,
-}
-
-impl SgrStyle {
-    fn apply(&mut self, params: &[u32]) {
-        if params.is_empty() {
-            *self = SgrStyle::default();
-            return;
-        }
-        let mut i = 0;
-        while i < params.len() {
-            match params[i] {
-                0 => *self = SgrStyle::default(),
-                1 => self.bold = true,
-                2 => self.dim = true,
-                3 => self.italic = true,
-                4 => self.underline = true,
-                7 => self.inverse = true,
-                22 => {
-                    self.bold = false;
-                    self.dim = false;
-                }
-                23 => self.italic = false,
-                24 => self.underline = false,
-                27 => self.inverse = false,
-                30..=37 => self.fg = ansi_palette(params[i] - 30),
-                39 => self.fg = None,
-                40..=47 => self.bg = ansi_palette(params[i] - 40),
-                49 => self.bg = None,
-                90..=97 => self.fg = ansi_palette(params[i] - 90 + 8),
-                100..=107 => self.bg = ansi_palette(params[i] - 100 + 8),
-                38 | 48 => {
-                    let foreground = params[i] == 38;
-                    let color = match params.get(i + 1) {
-                        Some(5) => params.get(i + 2).and_then(|n| ansi_palette(*n)),
-                        Some(2) => match (params.get(i + 2), params.get(i + 3), params.get(i + 4)) {
-                            (Some(r), Some(g), Some(b)) => {
-                                Some(format!("#{r:02x}{g:02x}{b:02x}"))
-                            }
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    if foreground {
-                        self.fg = color;
-                    } else {
-                        self.bg = color;
-                    }
-                    i += if params.get(i + 1) == Some(&5) { 2 } else { 4 };
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-    }
-
-    fn is_default(&self) -> bool {
-        self.fg.is_none()
-            && self.bg.is_none()
-            && !self.bold
-            && !self.dim
-            && !self.italic
-            && !self.underline
-            && !self.inverse
-    }
-
-    fn css(&self) -> String {
-        let mut fg = self.fg.clone();
-        let mut bg = self.bg.clone();
-        if self.inverse {
-            let swapped_fg = bg.clone().unwrap_or_else(|| "#e5e5e5".into());
-            let swapped_bg = fg.clone().unwrap_or_else(|| "#111111".into());
-            fg = Some(swapped_fg);
-            bg = Some(swapped_bg);
-        }
-        let mut parts = Vec::new();
-        if let Some(color) = fg {
-            parts.push(format!("color:{color}"));
-        }
-        if let Some(color) = bg {
-            parts.push(format!("background:{color}"));
-        }
-        if self.bold {
-            parts.push("font-weight:bold".into());
-        }
-        if self.italic {
-            parts.push("font-style:italic".into());
-        }
-        if self.underline {
-            parts.push("text-decoration:underline".into());
-        }
-        if self.dim {
-            parts.push("opacity:0.6".into());
-        }
-        parts.join(";")
-    }
-}
-
-fn flush_html_span(out: &mut String, buf: &mut String, style: &SgrStyle) {
-    if buf.is_empty() {
-        return;
-    }
-    let escaped = escape_html(buf);
-    buf.clear();
-    if style.is_default() {
-        out.push_str(&escaped);
-    } else {
-        out.push_str(&format!(
-            "<span style=\"{}\">{escaped}</span>",
-            style.css()
-        ));
-    }
-}
-
-/// 把带 ANSI 的终端文本转成 HTML：SGR 转内联样式，其余 CSI / OSC
-/// （光标移动、清屏、标题等）直接丢弃。
-fn ansi_to_html(text: &str) -> String {
-    let mut out = String::new();
-    let mut style = SgrStyle::default();
-    let mut buf = String::new();
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\u{1b}' {
-            buf.push(ch);
-            continue;
-        }
-        match chars.next() {
-            Some('[') => {
-                let mut seq = String::new();
-                let mut final_char = None;
-                for c in chars.by_ref() {
-                    if ('\u{40}'..='\u{7e}').contains(&c) {
-                        final_char = Some(c);
-                        break;
-                    }
-                    seq.push(c);
-                }
-                if final_char == Some('m') {
-                    flush_html_span(&mut out, &mut buf, &style);
-                    let params: Vec<u32> = seq
-                        .split(';')
-                        .map(|part| part.parse::<u32>().unwrap_or(0))
-                        .collect();
-                    style.apply(&params);
-                }
-            }
-            Some(']') => {
-                // OSC：吞到 BEL 或 ESC \ 为止。
-                while let Some(c) = chars.next() {
-                    if c == '\u{7}' {
-                        break;
-                    }
-                    if c == '\u{1b}' {
-                        if chars.peek() == Some(&'\\') {
-                            chars.next();
-                        }
-                        break;
-                    }
-                }
-            }
-            // 单字符 ESC 序列（如 ESC 7 / ESC 8）丢弃。
-            Some(_) | None => {}
-        }
-    }
-    flush_html_span(&mut out, &mut buf, &style);
-    out
-}
-
-fn cast_to_html(content: &str) -> String {
+/// `.log` 已是剥离 ANSI 的纯文本，导出 HTML 只需转义并包一层 `<pre>`。
+fn text_to_html(content: &str) -> String {
     format!(
         "<!doctype html>\n<html><head><meta charset=\"utf-8\"></head><body><pre style=\"white-space:pre-wrap\">{}</pre></body></html>",
-        ansi_to_html(&cast_to_text(content))
+        escape_html(content)
     )
 }
 
 fn validate_export_format(format: &str) -> AppResult<()> {
-    if matches!(format, "cast" | "txt" | "html") {
+    if matches!(format, "txt" | "html") {
         return Ok(());
     }
     Err(AppError::config(
@@ -456,8 +271,8 @@ fn validate_export_format(format: &str) -> AppResult<()> {
 }
 
 pub fn list_session_logs_impl(state: &AppState) -> AppResult<Vec<SessionLog>> {
-    scan_recordings(state)?;
-    crate::db::session_logs::list(&state.db)
+    // 文件是唯一事实源：直接返回本次扫描结果，旧 `.cast` 索引行不会混进来。
+    scan_session_logs(state)
 }
 
 pub fn get_session_log_impl(state: &AppState, id: &str) -> AppResult<SessionLogDetail> {
@@ -470,7 +285,7 @@ pub fn get_session_log_impl(state: &AppState, id: &str) -> AppResult<SessionLogD
             serde_json::json!({ "name": &log.path }),
         ));
     }
-    let full = crate::commands::settings::recording_dir(state).join(&log.path);
+    let full = crate::commands::settings::session_log_dir(state).join(&log.path);
     let content = std::fs::read_to_string(&full).map_err(|e| {
         AppError::other(
             "session_log_read_failed",
@@ -484,10 +299,9 @@ pub fn export_session_log_impl(state: &AppState, id: &str, format: &str) -> AppR
     validate_export_format(format)?;
     let detail = get_session_log_impl(state, id)?;
     match format {
-        "cast" => Ok(detail.content),
-        "txt" => Ok(cast_to_text(&detail.content)),
+        "txt" => Ok(detail.content),
         // 校验已限定集合，剩余分支只可能是 html。
-        _ => Ok(cast_to_html(&detail.content)),
+        _ => Ok(text_to_html(&detail.content)),
     }
 }
 
@@ -499,7 +313,7 @@ pub fn delete_session_log_impl(state: &AppState, id: &str) -> AppResult<()> {
             serde_json::json!({ "name": &log.path }),
         ));
     }
-    let full = crate::commands::settings::recording_dir(state).join(&log.path);
+    let full = crate::commands::settings::session_log_dir(state).join(&log.path);
     match std::fs::remove_file(&full) {
         Ok(()) => {}
         // 文件已经不在了（用户手工删过）不算失败；索引仍要清掉。
@@ -645,7 +459,7 @@ pub fn stop_session_log_impl(state: &AppState, session_id: &str) -> AppResult<Se
     active.recorder.finish()?;
 
     let dir = crate::commands::settings::recording_dir(state);
-    let log = log_from_file(&dir, &filename).ok_or_else(|| {
+    let log = cast_log_from_file(&dir, &filename).ok_or_else(|| {
         AppError::other(
             "session_log_read_failed",
             serde_json::json!({ "err": "cast file unreadable" }),
@@ -670,8 +484,8 @@ pub fn session_log_status_impl(
 
 // ── 手动文本会话日志（Netcatty `sessionLog`，独立于 asciicast 录制）──────
 //
-// 入口是终端工具栏的 file-text 按钮：点击后先弹系统保存对话框选路径，
-// 再把终端输出实时写进该文本文件（raw 保留 ANSI；txt/html 去掉 ANSI）。
+// 入口是终端工具栏的 file-text 按钮：默认按设置目录 + 命名模板新建 `.log`，
+// 不再弹保存对话框（保留 `start_manual_session_log` 供 headless / 自定义路径）。
 // 这条链路和「开始录制」（脚本录制）完全独立：没有共享槽位、没有互斥关系。
 
 fn manual_status_view(
@@ -741,6 +555,37 @@ pub fn stop_manual_session_log_impl(
     })?;
     let view = manual_status_view(&active);
     active.recorder.finish()?;
+    Ok(view)
+}
+
+/// 工具栏「开始会话日志」：不弹保存对话框，直接按「设置 → 终端 → 会话日志」
+/// 的目录与命名模板生成新的 `.log`，写入剥离 ANSI 的可打印纯文本。
+/// 四类会话（SSH / 本地 / 串口 / Telnet）都能手动开始，与主机开关无关。
+pub fn start_default_session_log_impl(
+    state: &AppState,
+    session_id: &str,
+    host: &str,
+    title: &str,
+    protocol: &str,
+) -> AppResult<ManualSessionLogStatus> {
+    let handle = slots_for(state, session_id)?;
+    let slot = handle.text;
+    let mut guard = locked(&slot)?;
+    if guard.is_some() {
+        return Err(AppError::config(
+            "session_log_already_recording",
+            serde_json::json!({ "session_id": session_id }),
+        ));
+    }
+    let path =
+        crate::commands::settings::build_session_log_path(state, host, title, protocol);
+    let active = crate::terminal::recorder::ActiveTextLog::new(
+        path,
+        crate::terminal::recorder::TextLogFormat::Text,
+        false,
+    )?;
+    let view = manual_status_view(&active);
+    *guard = Some(active);
     Ok(view)
 }
 
@@ -818,6 +663,17 @@ pub fn start_manual_session_log(
 }
 
 #[tauri::command]
+pub fn start_default_session_log(
+    state: State<'_, AppState>,
+    session_id: String,
+    host: String,
+    title: String,
+    protocol: String,
+) -> AppResult<ManualSessionLogStatus> {
+    start_default_session_log_impl(&state, &session_id, &host, &title, &protocol)
+}
+
+#[tauri::command]
 pub fn stop_manual_session_log(
     state: State<'_, AppState>,
     session_id: String,
@@ -871,94 +727,82 @@ mod tests {
         }
     }
 
-    fn write_cast(dir: &Path, name: &str, body: &str) {
+    fn write_log(dir: &Path, name: &str, body: &str) {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join(name), body).unwrap();
     }
 
-    const CAST: &str = "{\"version\":2,\"width\":80,\"height\":24,\"timestamp\":1700000000}\n\
-                         [0.5,\"o\",\"hello \\u001b[31mred\\u001b[0m <b>&\"]\n\
-                         [2.0,\"o\",\" world\"]\n";
+    const LOG_BODY: &str = "hello red <b>&\nworld\n";
 
     #[test]
-    fn scan_derives_title_duration_and_event_count() {
+    fn scan_lists_only_log_files_in_default_dir() {
         let temp = tempfile::tempdir().unwrap();
         let state = test_state(temp.path().to_path_buf());
-        write_cast(
+        let logs_dir = crate::commands::settings::session_log_dir(&state);
+        write_log(&logs_dir, "prod_web_20260603_120000.log", LOG_BODY);
+        // 旧 recordings 目录的 .cast 不再参与日志页。
+        write_log(
             &crate::commands::settings::recording_dir(&state),
-            "prod_web_20260603_120000.cast",
-            CAST,
+            "legacy_20260603_120000.cast",
+            "{\"version\":2}\n",
         );
 
-        let logs = scan_recordings(&state).unwrap();
+        let logs = scan_session_logs(&state).unwrap();
         assert_eq!(logs.len(), 1);
         let log = &logs[0];
-        assert_eq!(log.id, "cast:prod_web_20260603_120000.cast");
-        assert_eq!(log.path, "prod_web_20260603_120000.cast");
+        assert_eq!(log.id, "log:prod_web_20260603_120000.log");
+        assert_eq!(log.path, "prod_web_20260603_120000.log");
         assert_eq!(log.title, "prod web");
         assert_eq!(log.host_name, "prod web");
-        assert_eq!(log.started_at, 1_700_000_000_000);
-        assert_eq!(log.duration_ms, 2000);
-        assert_eq!(log.ended_at, Some(1_700_000_002_000));
-        assert_eq!(log.event_count, 2);
+        assert_eq!(log.format, "text");
+        assert_eq!(log.size_bytes, LOG_BODY.len() as i64);
         assert_eq!(log.status, "completed");
+        assert!(log.duration_ms >= 0);
+        assert!(log.ended_at.is_some());
     }
 
     #[test]
-    fn scan_skips_bad_lines_instead_of_failing() {
+    fn scan_returns_empty_when_default_dir_missing() {
         let temp = tempfile::tempdir().unwrap();
         let state = test_state(temp.path().to_path_buf());
-        write_cast(
-            &crate::commands::settings::recording_dir(&state),
-            "broken_20260603_120000.cast",
-            "{\"version\":2,\"width\":80,\"height\":24,\"timestamp\":1700000001}\nnot json\n[1.5,\"o\",\"ok\"]\n",
-        );
-
-        let logs = scan_recordings(&state).unwrap();
-        assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].event_count, 1);
-        assert_eq!(logs[0].duration_ms, 1500);
+        assert!(scan_session_logs(&state).unwrap().is_empty());
     }
 
     #[test]
-    fn export_txt_keeps_raw_ansi_and_html_escapes_markup() {
+    fn export_txt_returns_plain_text_and_html_escapes_markup() {
         let temp = tempfile::tempdir().unwrap();
         let state = test_state(temp.path().to_path_buf());
-        write_cast(
-            &crate::commands::settings::recording_dir(&state),
-            "prod_web_20260603_120000.cast",
-            CAST,
+        write_log(
+            &crate::commands::settings::session_log_dir(&state),
+            "prod_web_20260603_120000.log",
+            LOG_BODY,
         );
-        scan_recordings(&state).unwrap();
-        let id = "cast:prod_web_20260603_120000.cast";
+        scan_session_logs(&state).unwrap();
+        let id = "log:prod_web_20260603_120000.log";
 
         let txt = export_session_log_impl(&state, id, "txt").unwrap();
-        assert!(txt.contains("\u{1b}[31mred\u{1b}[0m"));
-        assert!(txt.contains("hello "));
-        assert!(txt.contains("<b>&"));
+        assert_eq!(txt, LOG_BODY);
 
         let html = export_session_log_impl(&state, id, "html").unwrap();
         assert!(html.contains("<meta charset=\"utf-8\">"));
         assert!(html.contains("&lt;b&gt;&amp;"));
         assert!(!html.contains("<b>&"));
-        assert!(!html.contains('\u{1b}'));
-        assert!(html.contains("<span style=\"color:#cd0000\">red</span>"));
     }
 
     #[test]
     fn export_rejects_unsupported_format() {
         let temp = tempfile::tempdir().unwrap();
         let state = test_state(temp.path().to_path_buf());
-        write_cast(
-            &crate::commands::settings::recording_dir(&state),
-            "prod_web_20260603_120000.cast",
-            CAST,
+        write_log(
+            &crate::commands::settings::session_log_dir(&state),
+            "prod_web_20260603_120000.log",
+            LOG_BODY,
         );
-        scan_recordings(&state).unwrap();
-        let id = "cast:prod_web_20260603_120000.cast";
+        scan_session_logs(&state).unwrap();
+        let id = "log:prod_web_20260603_120000.log";
 
         assert_eq!(
-            export_session_log_impl(&state, id, "pdf")
+            export_session_log_impl(&state, id, "cast")
                 .unwrap_err()
                 .code(),
             "session_log_format_invalid"
@@ -969,13 +813,13 @@ mod tests {
     fn delete_removes_file_and_index() {
         let temp = tempfile::tempdir().unwrap();
         let state = test_state(temp.path().to_path_buf());
-        let dir = crate::commands::settings::recording_dir(&state);
-        write_cast(&dir, "prod_web_20260603_120000.cast", CAST);
-        scan_recordings(&state).unwrap();
+        let dir = crate::commands::settings::session_log_dir(&state);
+        write_log(&dir, "prod_web_20260603_120000.log", LOG_BODY);
+        scan_session_logs(&state).unwrap();
 
-        let id = "cast:prod_web_20260603_120000.cast";
+        let id = "log:prod_web_20260603_120000.log";
         delete_session_log_impl(&state, id).unwrap();
-        assert!(!dir.join("prod_web_20260603_120000.cast").exists());
+        assert!(!dir.join("prod_web_20260603_120000.log").exists());
         assert_eq!(
             crate::db::session_logs::get(&state.db, id).unwrap_err().code(),
             "session_log_not_found"

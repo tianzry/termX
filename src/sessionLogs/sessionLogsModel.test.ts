@@ -164,9 +164,9 @@ describe("sessionLogsModel", () => {
 
   it("sortSessionLogsBy 按时间 / 时长 / 大小 / 会话名升降序排列", () => {
     const logs = [
-      log({ id: "b", host_name: "beta", started_at: 200, duration_ms: 5000, size_bytes: 2048 }),
-      log({ id: "a", host_name: "alpha", started_at: 300, duration_ms: 1000, size_bytes: 1024 }),
-      log({ id: "c", host_name: "gamma", started_at: 100, duration_ms: 3000, size_bytes: 4096 }),
+      log({ id: "b", path: "beta.log", started_at: 200, duration_ms: 5000, size_bytes: 2048 }),
+      log({ id: "a", path: "alpha.log", started_at: 300, duration_ms: 1000, size_bytes: 1024 }),
+      log({ id: "c", path: "gamma.log", started_at: 100, duration_ms: 3000, size_bytes: 4096 }),
     ];
     const ids = (list: SessionLog[]) => list.map((l) => l.id);
     expect(ids(sortSessionLogsBy(logs, "time", "asc"))).toEqual(["c", "b", "a"]);
