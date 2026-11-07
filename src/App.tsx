@@ -40,7 +40,23 @@ import {
   SettingsDialog,
   type SettingsTabId,
 } from "./settings/SettingsDialog";
-import { loadSettings, useSettings } from "./settings/settingsStore";
+import { loadSettings, updateSettings, useSettings } from "./settings/settingsStore";
+import { useGlobalHotkeys } from "./settings/useGlobalHotkeys";
+import {
+  PINNED_SFTP_TAB_ID,
+  PINNED_VAULT_TAB_ID,
+  buildNumberShortcutTabTargets,
+  clampFontSize,
+  indexOfShortcutTarget,
+  tabShortcutDigitFromEvent,
+  type MoveFocusDirection,
+} from "./settings/hotkeyRuntime";
+import {
+  DEFAULT_SETTINGS,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+} from "./settings/settingsModel";
+import type { KeyBinding } from "./settings/keyBindings";
 import type {
   Credential,
   DiscoveredShell,
@@ -160,6 +176,8 @@ export default function App() {
 
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  /** 快捷键 Ctrl/Cmd+J 打开快速切换器：nonce 驱动 TopTabs 内部状态。 */
+  const [quickSwitchSeq, setQuickSwitchSeq] = useState(0);
   const [restorePending, setRestorePending] = useState(false);
   /** 标签级连接状态（Workspace 按窗格聚合后上报，用于标签状态点）。 */
   const [tabStatuses, setTabStatuses] = useState<
@@ -608,6 +626,166 @@ export default function App() {
     });
   }
 
+  // ── 快捷键运行时（设置-快捷键 36 条绑定 → 应用动作）──────────────────────
+  // 参考 Netcatty AppHandlers / useGlobalHotkeys：改绑后下一次按键立即生效；
+  // 动作在当前上下文不适用时返回 false，不拦截按键（终端 / 浏览器行为放行）。
+
+  function activateShortcutTarget(targetId: string): boolean {
+    if (targetId === PINNED_VAULT_TAB_ID) {
+      setSurface("vault");
+      return true;
+    }
+    if (targetId === PINNED_SFTP_TAB_ID) {
+      setSurface("sftp");
+      return true;
+    }
+    setSurface(null);
+    workspaceRef.current?.activateTab(targetId);
+    return true;
+  }
+
+  function shortcutTabTargets(): string[] {
+    return buildNumberShortcutTabTargets({
+      showSftpTab: settings.showSftpTab,
+      shellOnlyTabNumberShortcuts: settings.shellOnlyTabNumberShortcuts,
+      sessionTabIds: tabs.map((t) => t.id),
+    });
+  }
+
+  function activeShortcutTargetId(): string | null {
+    if (surface === "vault") return PINNED_VAULT_TAB_ID;
+    if (surface === "sftp") return PINNED_SFTP_TAB_ID;
+    return activeTabId;
+  }
+
+  function adjustTerminalFontSize(delta: number | "reset"): boolean {
+    if (surface !== null) return false;
+    if (settings.disableTerminalFontZoom) return false;
+    const next =
+      delta === "reset" ? DEFAULT_SETTINGS.terminalFontSize : settings.terminalFontSize + delta;
+    updateSettings({
+      terminalFontSize: clampFontSize(
+        next,
+        MIN_TERMINAL_FONT_SIZE,
+        MAX_TERMINAL_FONT_SIZE,
+      ),
+    });
+    return true;
+  }
+
+  function handleGlobalHotkey(binding: KeyBinding, e: KeyboardEvent): boolean {
+    const terminalSurface = surface === null;
+    const activePane = terminalSurface ? activeHandle : null;
+
+    switch (binding.action) {
+      case "newTab":
+        openLocal();
+        return true;
+      case "closeTab":
+        if (settingsOpen) {
+          setSettingsOpen(false);
+          return true;
+        }
+        if (!terminalSurface || !activeTabId) return false;
+        workspaceRef.current?.closeTab(activeTabId);
+        return true;
+      case "closeSession":
+        if (!terminalSurface || !activeTabId) return false;
+        workspaceRef.current?.closePane();
+        return true;
+      case "switchToTab": {
+        const digit = tabShortcutDigitFromEvent(e);
+        if (digit === null) return false;
+        const target = shortcutTabTargets()[digit - 1];
+        return target ? activateShortcutTarget(target) : false;
+      }
+      case "nextTab":
+      case "prevTab": {
+        const targets = shortcutTabTargets();
+        if (targets.length === 0) return false;
+        const current = indexOfShortcutTarget(targets, activeShortcutTargetId());
+        const nextIndex =
+          binding.action === "nextTab"
+            ? (current + 1 + targets.length) % targets.length
+            : current <= 0
+              ? targets.length - 1
+              : current - 1;
+        return activateShortcutTarget(targets[nextIndex]);
+      }
+      case "splitHorizontal":
+      case "splitVertical":
+        if (!terminalSurface || !activeTabId) return false;
+        workspaceRef.current?.split(binding.action === "splitHorizontal" ? "horizontal" : "vertical");
+        return true;
+      case "moveFocus": {
+        if (!terminalSurface) return false;
+        const direction: MoveFocusDirection | null =
+          e.key === "ArrowUp"
+            ? "up"
+            : e.key === "ArrowDown"
+              ? "down"
+              : e.key === "ArrowLeft"
+                ? "left"
+                : e.key === "ArrowRight"
+                  ? "right"
+                  : null;
+        if (!direction) return false;
+        return workspaceRef.current?.moveFocus(direction) ?? false;
+      }
+      case "searchTerminal":
+        return activePane?.openSearch() ?? false;
+      case "copy":
+        return activePane?.copySelection() ?? false;
+      case "paste":
+        return activePane?.pasteClipboard() ?? false;
+      case "pasteSelection":
+        // X11 PRIMARY selection 语义；Windows / macOS 无对应通道，放行。
+        return false;
+      case "selectAll":
+        return activePane?.selectAllText() ?? false;
+      case "clearBuffer":
+        return activePane?.clearBuffer() ?? false;
+      case "increaseTerminalFontSize":
+        return adjustTerminalFontSize(1);
+      case "decreaseTerminalFontSize":
+        return adjustTerminalFontSize(-1);
+      case "resetTerminalFontSize":
+        return adjustTerminalFontSize("reset");
+      case "openSettings":
+        setSettingsOpen(true);
+        return true;
+      case "openLocal":
+        openLocal();
+        return true;
+      case "openSftp":
+        if (!settings.showSftpTab) return false;
+        setSurface("sftp");
+        return true;
+      case "quickSwitch":
+        setQuickSwitchSeq((n) => n + 1);
+        return true;
+      case "snippets":
+        if (!terminalSurface || !activeTabId) return false;
+        if (tool === "scripts") closeTool();
+        else toggleTool("scripts");
+        return true;
+      case "toggleSidePanel":
+        if (!terminalSurface || !activeTabId) return false;
+        toggleSidePanel();
+        return true;
+      case "toggleHostTree":
+        if (!terminalSurface || tabs.length === 0 || !settings.showHostTreeSidebar) return false;
+        setSideOpen((v) => !v);
+        return true;
+      default:
+        // open-hosts / port-forwarding / command-palette / new-workspace /
+        // toggle-opacity / toggle-pane-zoom：termX 尚无对应功能，放行不拦截。
+        return false;
+    }
+  }
+
+  useGlobalHotkeys(handleGlobalHotkey);
+
   return (
     <div
       className="nc-shell"
@@ -658,6 +836,7 @@ export default function App() {
           setSettingsOpen(true);
         }}
         onOpenSync={openVaultSync}
+        quickSwitchSeq={quickSwitchSeq}
       />
       {settingsOpen && (
         <SettingsDialog

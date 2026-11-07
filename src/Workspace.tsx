@@ -18,6 +18,10 @@ import {
 } from "react";
 import { TerminalPane, type PaneHandle } from "./TerminalPane";
 import {
+  resolveFocusTarget,
+  type MoveFocusDirection,
+} from "./settings/hotkeyRuntime";
+import {
   resolveTabConnectionStatus,
   type ConnectionStatus,
 } from "./terminal/connectionStatus";
@@ -60,6 +64,8 @@ export interface WorkspaceHandle {
   renameTab: (tabId: string, title: string) => void;
   split: (dir: SplitDir) => void;
   closePane: () => void;
+  /** Alt/Ctrl+箭头在分屏窗格间移动焦点；只有一个窗格返回 false。 */
+  moveFocus: (direction: MoveFocusDirection) => boolean;
   acceptRestore: () => void;
   skipRestore: () => void;
 }
@@ -464,6 +470,20 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
       closePane(tab.id, resolveActivePane(tab, paneMapRef.current));
     }, [closePane]);
 
+    const moveFocus = useCallback((direction: MoveFocusDirection) => {
+      const tabId = activeTabIdRef.current;
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab) return false;
+      const current = resolveActivePane(tab, paneMapRef.current);
+      const { panes } = layoutPanePlacements(tab.layout);
+      if (panes.length <= 1) return false;
+      const target = resolveFocusTarget(panes, current, direction);
+      if (!target) return false;
+      activatePane(tab.id, target);
+      handlesRef.current[target]?.focus();
+      return true;
+    }, [activatePane]);
+
     const setRatio = useCallback((tabId: string, splitId: string, r: number) => {
       setTabs((cur) =>
         cur.map((t) =>
@@ -540,10 +560,11 @@ export const Workspace = forwardRef<WorkspaceHandle, Props>(
           ),
         split: splitActive,
         closePane: closeActivePane,
+        moveFocus,
         acceptRestore,
         skipRestore,
       }),
-      [newTab, closeTab, closeOthers, closeLeft, closeRight, closeAll, reconnectTab, moveTab, splitActive, closeActivePane],
+      [newTab, closeTab, closeOthers, closeLeft, closeRight, closeAll, reconnectTab, moveTab, splitActive, closeActivePane, moveFocus],
     );
 
     // 启动时没有旧记录 → 立即进入可落盘状态

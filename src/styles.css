@@ -2539,6 +2539,25 @@ button:disabled {
   color: hsl(var(--primary));
 }
 
+/* 按住序号修饰键时的 1–9 角标（对照 Netcatty TabShortcutNumberBadge：
+ * h-3.5 min-w-3.5 rounded bg-foreground/10 text-[10px] font-semibold tabular-nums）。 */
+.nc-tab-shortcut-number {
+  height: 14px;
+  min-width: 14px;
+  padding: 0 2px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: hsl(var(--foreground) / 0.1);
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 .nc-session-tab-title {
   flex: 1;
   min-width: 0;

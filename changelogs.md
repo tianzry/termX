@@ -4,6 +4,39 @@
 
 ---
 
+## 2026-11-07 — #250 P1 快捷键接入运行时（对照 Netcatty 分发层）
+
+### 结构
+
+- `src/settings/hotkeyRuntime.ts`（纯逻辑）：`parseKeyCombo`、物理码优先的 `tabShortcutDigitFromEvent`、`matchesKeyBinding`（平台修饰键互斥、修饰键精确、大小写不敏感、`[1...9]`/`arrows` 展开）、`findMatchingBinding`（按 DEFAULT 表顺序 = 冲突优先级，跳过 DISABLED）、`buildNumberShortcutTabTargets`（Vault/SFTP + 会话标签，`shellOnlyTabNumberShortcuts` 只看会话标签）、`getShortcutModifierRequirements`/`isShortcutModifierHeld`、`findBindingConflicts`、`resolveFocusTarget`、录制态 `begin/endHotkeyCapture`。
+- `src/settings/useGlobalHotkeys.ts`：window keydown capture；输入框/textarea/contenteditable/Monaco 直接放行；xterm 隐藏 textarea 视为终端；SFTP 类绑定不分发；动作返回 false 时不 `preventDefault`（终端/浏览器行为继续）；Ctrl/Cmd+滚轮缩放（受 `disableTerminalFontZoom`）。
+- `src/settings/useShortcutModifierHeld.ts`：keydown/keyup 精确匹配 `[1...9]` 修饰键，blur/visibilitychange 清空。
+- App 动作映射：标签增删/切换/上下一个、分屏、窗格焦点、搜索、复制/粘贴/全选/清屏、字号增减与重置、设置、SFTP 标签、本地标签、快速切换、脚本侧栏、侧边栏、主机树。
+- `PaneHandle` 增加 `openSearch/toggleCompose/copySelection/pasteClipboard/selectAllText/clearBuffer`；Workspace 增加 `moveFocus`（按窗格矩形取方向最近邻）。
+- TopTabs 序号角标：按住 `switch-tab-1-9` 生效绑定的修饰键时，用 1–9 替换 Vault/SFTP/会话标签图标（样式 `h-3.5 min-w-3.5 rounded bg-foreground/10 text-[10px] font-semibold tabular-nums`）。
+- 删除 `settings.shortcuts.runtimeNotWired` 提示；快速切换器角标改为当前生效绑定文案。
+
+### 覆盖的绑定（36 条中可映射项）
+
+- 全接入：tab 6 条（含 `Ctrl/Cmd+[1...9]`）、`copy`/`paste`/`selectAll`/`clearBuffer`/`searchTerminal`/字号 3 条、`moveFocus`/`splitHorizontal`/`splitVertical`、`openLocal`/`openSftp`/`quickSwitch`/`snippets`/`toggleSidePanel`/`toggleHostTree`/`openSettings`。
+- 平台限制放行：`pasteSelection`（X11 PRIMARY，Windows/macOS 无通道）。
+- 未接入：`open-hosts`（默认 Disabled）、`portForwarding`、`commandPalette`、`newWorkspace`、`toggleOpacity`、`togglePaneZoom`、SFTP 5 条（SFTP 视图未提供键盘操作）、`closeSession` 以外无独立窗格 zoom。
+- 命令历史 / 撰写栏：36 条中没有对应绑定项；历史侧栏与撰写栏保持工具栏入口，分发层只保证不劫持其输入框、终端内 Ctrl 组合按 Netcatty 放行/拦截规则处理。
+
+### 实机验证（CDP 9222 + release exe）
+
+- 改绑 7 条并即时生效：新建 `Ctrl+Shift+N`、关闭 `Ctrl+Shift+Q`、搜索 `Alt+F`、分屏 `Ctrl+Shift+H`、侧边栏 `Alt+\`、快速切换 `Alt+J`、设置 `Ctrl+Shift+M`；旧组合均失效。
+- 重启两次后复验：新建/关闭/快速切换/设置在第一次重启后仍生效；搜索/分屏/侧边栏在重绑后第二次重启仍生效；`customKeyBindings` 持久化正确。
+- 序号角标：按住 Ctrl 显示 `1/2/3`（Vault/SFTP/会话），松开消失；`shellOnlyTabNumberShortcuts=true` 时只剩 `1`，关闭后恢复；重启后仍按设置。
+- 字号：`Ctrl+=` 增大、`Ctrl+0` 回落默认；打开「禁用终端缩放」后 `Ctrl+=` 不再改变字号。
+- 还原：`全部重置` 后 `customKeyBindings={}`，字号回到用户原值 15。
+
+### 单测 / 门禁
+
+- 新增 `hotkeyRuntime.test.ts` 20 例（匹配/平台互斥/`[1...9]`/arrows/禁用/冲突优先级/序号目标/修饰键/焦点）。
+- `npx tsc --noEmit` ✓；`npm run test:run` 73 文件 / 823 用例 ✓；`npm run build` ✓；`cargo check --no-default-features` ✓；`cargo build --release --no-default-features` ✓。
+- 踩坑：CDP 关闭快速切换需派发 `mousedown`（组件用 onMouseDown）；测试脚本按键后必须补发修饰键 keyup，否则序号角标保持；在 Vault/SFTP surface 下终端类动作返回 false，验证前需先建终端标签。
+
 ## 2026-11-06 — #249 严格验收（第三轮：设置项逐条）3 处偏差修复
 
 - **取证方式**：CDP 9222 实机，逐项改控件 → 立即读 DOM 状态 → 读后端 `settings.center.v1` → 真实连接验证行为（不只看代码）。设置快照是**顶层字段**（`sidePanelAutoOpen` / `sidePanelAutoOpenPane`），不是 `terminal.` 嵌套；此前探针按 `s.terminal.sidePanelAutoOpen` 读取会得到 undefined，已修正。

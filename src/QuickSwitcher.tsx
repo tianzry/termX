@@ -1,7 +1,7 @@
 /**
  * 快速切换器（对照 netcatty `components/QuickSwitcher.tsx`）。
  *
- * 顶部「+」与 Ctrl+J 共用一个入口：搜索框聚焦，下方按
+ * 顶部「+」与全局快捷键共用一个入口：搜索框聚焦，下方按
  * 「主机 → 标签页 → 本地 Shell」分组列出可打开的内容
  * （顺序对齐 Netcatty 的 pushHeader 顺序：hosts → tabs → shells）；
  * ↑↓ 选择、Enter 打开、Esc/点击外部关闭。
@@ -29,6 +29,8 @@ interface Props {
   tabs: Tab[];
   shells: DiscoveredShell[];
   showSftpTab: boolean;
+  /** 当前生效的快速切换快捷键（改绑后即时反映）。 */
+  shortcutHint?: string;
   onClose: () => void;
   onOpenVault: () => void;
   onOpenSftp: () => void;
@@ -65,6 +67,7 @@ export function QuickSwitcher({
   tabs,
   shells,
   showSftpTab,
+  shortcutHint = "Ctrl+J",
   onClose,
   onOpenVault,
   onOpenSftp,
@@ -246,12 +249,12 @@ export function QuickSwitcher({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <span className="qs-kbd">Ctrl+J</span>
+          <span className="qs-kbd">{shortcutHint}</span>
         </div>
 
         <div className="qs-jump">
           <span className="qs-jump-label">跳转到</span>
-          <span className="qs-kbd">Ctrl+J</span>
+          <span className="qs-kbd">{shortcutHint}</span>
           <span className="qs-workspace" title="termX 暂无工作区功能">
             <Icon name="plus" size={13} />
             新建工作区

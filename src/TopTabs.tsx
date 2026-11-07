@@ -22,6 +22,14 @@ import {
   Usb,
 } from "lucide-react";
 import { useSettings } from "./settings/settingsStore";
+import { DEFAULT_KEY_BINDINGS, effectiveBinding } from "./settings/keyBindings";
+import {
+  PINNED_SFTP_TAB_ID,
+  PINNED_VAULT_TAB_ID,
+  buildTabShortcutNumberById,
+  isBindingDisabled,
+} from "./settings/hotkeyRuntime";
+import { useShortcutModifierHeld } from "./settings/useShortcutModifierHeld";
 import type { Tab } from "./workspaceModel";
 import { Icon } from "./ui/icons";
 import type { DiscoveredShell, Group, Profile } from "./backend/client";
@@ -70,6 +78,8 @@ interface Props {
   onCloseAll: () => void;
   onReconnectTab: (id: string) => void;
   onMoveTab: (id: string, toIndex: number) => void;
+  /** 全局快捷键 Ctrl/Cmd+J：nonce 自增时打开快速切换器。 */
+  quickSwitchSeq?: number;
 }
 
 /** 会话标签 16px 图标容器：accent 15% 底 + accent 前景（Netcatty TOP_TAB 图标）。 */
@@ -141,6 +151,15 @@ function TabGlyph({ tab, profiles }: { tab: Tab; profiles: Profile[] }) {
   );
 }
 
+/** 按住序号修饰键时替换标签图标（对照 Netcatty TabShortcutNumberBadge）。 */
+function TabShortcutNumberBadge({ number }: { number: number }) {
+  return (
+    <span className="nc-tab-shortcut-number" aria-hidden="true">
+      {number}
+    </span>
+  );
+}
+
 /** 后端能力尚未移植：入口保留，禁用点击。 */
 const notPortedUtilities: Array<{
   id: string;
@@ -176,6 +195,7 @@ export function TopTabs({
   onCloseAll,
   onReconnectTab,
   onMoveTab,
+  quickSwitchSeq = 0,
 }: Props) {
   // 设置中心「外观 · 主机库」两个显示开关（对照 Netcatty showSftpTab /
   // showHostTreeSidebar）。
@@ -187,15 +207,8 @@ export function TopTabs({
   const dragId = useRef<string | null>(null);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "j" || e.key === "J")) {
-        e.preventDefault();
-        setQuickOpen((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+    if (quickSwitchSeq > 0) setQuickOpen(true);
+  }, [quickSwitchSeq]);
 
   useEffect(() => {
     if (!menu) return;
@@ -211,6 +224,35 @@ export function TopTabs({
   // 批量关闭项按「右键锚点」的位置判定可用性（对齐 Netcatty renderBulkCloseItems）。
   const menuIndex = menu ? tabs.findIndex((t) => t.id === menu.id) : -1;
 
+  // 标签 1–9 序号角标：按住切换标签绑定的修饰键时显示，松开隐藏。
+  const switchTabBinding = DEFAULT_KEY_BINDINGS.find((b) => b.action === "switchToTab");
+  const switchTabKey =
+    settings.showTabNumberBadges &&
+    switchTabBinding &&
+    !isBindingDisabled(settings, switchTabBinding.id)
+      ? effectiveBinding(switchTabBinding, settings, settings.hotkeyScheme)
+      : null;
+  const shortcutModifierHeld = useShortcutModifierHeld(
+    switchTabKey,
+    settings.hotkeyScheme,
+  );
+  const shortcutNumbers = shortcutModifierHeld
+    ? buildTabShortcutNumberById({
+        showSftpTab: settings.showSftpTab,
+        shellOnlyTabNumberShortcuts: settings.shellOnlyTabNumberShortcuts,
+        sessionTabIds: tabs.map((t) => t.id),
+      })
+    : new Map<string, number>();
+
+  const quickSwitchBinding = DEFAULT_KEY_BINDINGS.find((b) => b.action === "quickSwitch");
+  const quickSwitchHint =
+    quickSwitchBinding && !isBindingDisabled(settings, quickSwitchBinding.id)
+      ? effectiveBinding(quickSwitchBinding, settings, settings.hotkeyScheme).replace(
+          /\s*\+\s*/g,
+          "+",
+        )
+      : "未绑定";
+
   return (
     <>
     <header className="nc-topbar" data-section="top-tabs">
@@ -220,7 +262,11 @@ export function TopTabs({
             className={`nc-root-tab${surface === "vault" ? " active flat" : ""}`}
             onClick={onOpenVault}
           >
-            <FolderLock size={14} />
+            {shortcutNumbers.has(PINNED_VAULT_TAB_ID) ? (
+              <TabShortcutNumberBadge number={shortcutNumbers.get(PINNED_VAULT_TAB_ID)!} />
+            ) : (
+              <FolderLock size={14} />
+            )}
             <span>Vaults</span>
           </button>
           {settings.showSftpTab && (
@@ -228,7 +274,11 @@ export function TopTabs({
               className={`nc-root-tab${surface === "sftp" ? " active" : ""}`}
               onClick={onOpenSftp}
             >
-              <Folder size={14} />
+              {shortcutNumbers.has(PINNED_SFTP_TAB_ID) ? (
+                <TabShortcutNumberBadge number={shortcutNumbers.get(PINNED_SFTP_TAB_ID)!} />
+              ) : (
+                <Folder size={14} />
+              )}
               <span>SFTP</span>
             </button>
           )}
@@ -286,7 +336,11 @@ export function TopTabs({
                   onDuplicateTab(tab.id);
                 }}
               >
-                <TabGlyph tab={tab} profiles={profiles} />
+                {shortcutNumbers.has(tab.id) ? (
+                  <TabShortcutNumberBadge number={shortcutNumbers.get(tab.id)!} />
+                ) : (
+                  <TabGlyph tab={tab} profiles={profiles} />
+                )}
                 <span className="nc-session-tab-title">{tab.title}</span>
                 <span
                   className={`nc-tab-dot ${resolveConnectionDotClass(
@@ -474,6 +528,7 @@ export function TopTabs({
       tabs={tabs}
       shells={shells}
       showSftpTab={settings.showSftpTab}
+      shortcutHint={quickSwitchHint}
       onClose={() => setQuickOpen(false)}
       onOpenVault={onOpenVault}
       onOpenSftp={onOpenSftp}

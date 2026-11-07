@@ -252,6 +252,18 @@ export interface PaneHandle {
   suspend: () => boolean;
   /** 恢复：发送 fg + 回车。 */
   resume: () => boolean;
+  /** 打开终端内搜索框（快捷键 Ctrl/Cmd+F）。 */
+  openSearch: () => boolean;
+  /** 打开 / 关闭撰写栏（快捷键分发用）。 */
+  toggleCompose: () => boolean;
+  /** 复制当前选区；无选区返回 false（快捷键不拦截）。 */
+  copySelection: () => boolean;
+  /** 读取系统剪贴板并粘贴。 */
+  pasteClipboard: () => boolean;
+  /** 全选终端内容。 */
+  selectAllText: () => boolean;
+  /** 清屏（含回滚缓冲区）。 */
+  clearBuffer: () => boolean;
 }
 
 /** 自动打开侧栏时可落地的视图；Netcatty 的 theme/system/ai/browser 在 termX 未移植，忽略。 */
@@ -2214,6 +2226,38 @@ export function TerminalPane({
       resume: () => {
         if (!transportRef.current) return false;
         transportRef.current.write("fg\r");
+        return true;
+      },
+      openSearch: () => {
+        setSearchOpen(true);
+        return true;
+      },
+      toggleCompose: () => {
+        setComposeOpen((v) => !v);
+        return true;
+      },
+      copySelection: () => {
+        const term = controllerRef.current?.term;
+        if (!term) return false;
+        const text = readTerminalSelection(term, getSettings().terminal.normalizeTextOnCopy);
+        if (!text) return false;
+        void navigator.clipboard.writeText(text);
+        return true;
+      },
+      pasteClipboard: () => {
+        void pasteFromClipboard();
+        return true;
+      },
+      selectAllText: () => {
+        const term = controllerRef.current?.term;
+        if (!term) return false;
+        term.selectAll();
+        return true;
+      },
+      clearBuffer: () => {
+        const term = controllerRef.current?.term;
+        if (!term) return false;
+        term.clear();
         return true;
       },
     };

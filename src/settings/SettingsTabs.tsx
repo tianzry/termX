@@ -37,6 +37,7 @@ import {
   effectiveBinding,
   type KeyBinding,
 } from "./keyBindings";
+import { beginHotkeyCapture, endHotkeyCapture } from "./hotkeyRuntime";
 import type { AppIconVariant } from "./settingsModel";
 import {
   DEFAULT_KEYWORD_HIGHLIGHT_RULES,
@@ -1891,6 +1892,7 @@ export function ShortcutsTab() {
 
   useEffect(() => {
     if (!recording) return;
+    beginHotkeyCapture();
     const h = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1909,7 +1911,10 @@ export function ShortcutsTab() {
       setRecording(null);
     };
     window.addEventListener("keydown", h, true);
-    return () => window.removeEventListener("keydown", h, true);
+    return () => {
+      window.removeEventListener("keydown", h, true);
+      endHotkeyCapture();
+    };
   }, [recording, s.hotkeyScheme, s.customKeyBindings]);
 
   const disabledSet = new Set(s.disabledKeyBindings);
@@ -1931,7 +1936,6 @@ export function ShortcutsTab() {
 
   return (
     <div className="nc-set-page">
-      <p className="nc-set-hint">{t("settings.shortcuts.runtimeNotWired")}</p>
       <Section title={t("settings.shortcuts.section.scheme")}>
         <Row
           title={t("settings.shortcuts.scheme.label")}

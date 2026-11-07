@@ -340,7 +340,6 @@ const zhCN: Record<string, string> = {
   "settings.shortcuts.section.scheme": "快捷键方案",
   "settings.shortcuts.scheme.label": "键盘快捷键",
   "settings.shortcuts.scheme.desc": "选择快捷键使用的键盘布局",
-  "settings.shortcuts.runtimeNotWired": "快捷键绑定目前只保存配置，运行时尚未接入（当前版本不会生效）。",
   "settings.shortcuts.scheme.mac": "Mac (Cmd)",
   "settings.shortcuts.scheme.pc": "PC (Ctrl)",
   "settings.shortcuts.captureHint": "请按键...",
