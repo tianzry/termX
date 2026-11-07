@@ -7175,3 +7175,34 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - `npm run test:run`：72 文件 / 803 用例 ✓（含新增 `popoverPosition` 8 例）。
 - `npm run build`（tsc + vite）✓。本轮无 Rust 改动。
 
+
+## 2026-11-07 — SFTP 深路径与队列验收（129 实机 + 本地）
+
+### 七项实测结论（预期 / 实测 / 结论）
+
+1. **冲突三态 + applyToAll 作用域**：预期 rename 走 Netcatty `(copy)`/`(copy N)`、skip 不改目标、replace 覆盖、applyToAll 限同批次 → 实测 rename 链 `chain (copy).txt`→`chain (copy 2).txt`、下载侧 `dl (copy).txt`、batch1 skip+applyAll 只影响同批（batch2 仍 Conflict）、replace+applyAll 回溯同批已冲突项并全部完成。**结论：通过**（冲突项释放并发槽与 Netcatty attention 语义一致，concurrency=1 时后续项也会进入 Conflict，不是排队）。
+2. **暂停/恢复/取消/重试**：预期 128MB 上传/下载暂停留断点、恢复后 SHA256 一致；取消排队项与运行中项、远端临时文件清理；失败项补源后重试完成 → 实测上传暂停断点 7.7MB/128MB（5.7%）、下载 7.8MB/128MB，恢复后 SHA256 均一致；排队取消→Cancelled、运行中取消 checkpoint=0 且远端 `.part` 清理；缺失本地源 Failed(io_error) → 补源 retry Completed。**结论：通过**。
+3. **并发上限与优先级**：预期 1/8 实际并行数一致、High>Normal>Low → 实测 `set=1 observed_max=1`、`set=8 observed_max=8`、启动顺序 `["high","normal","low"]`。**结论：通过**。
+4. **目录递归 + 符号链接**：预期嵌套/空目录/大量小文件完整、下载跟随目录软链、上传不展开目录软链 → 远端 104 files/6 dirs（含空目录、file-link 跟随、dir-link 跟随、坏链/环跳过）23ms；本地 102 files/4 dirs 4ms；Windows 建软链无权限时测试输出跳过提示。**结论：通过**（原「空目录丢失」「下载不跟随目录软链」两处偏差已修）。
+5. **文件系统操作（远端 + 本地）**：预期 chmod 3×3、rename、mkdir、删除非空目录、复制冲突 → 实测远端 755/644/600 全部生效、rename/copy_file 新目标与覆盖均正确、删除非空目录成功；本地 mkdir/rename/类型守卫/删除非空目录同通过。**结论：通过**。
+6. **异常文件名（远端 + 本地）**：预期中文/空格/特殊字符/长名可用 → 实测 184/224/244/254/255 字节名直接上传均 ok；255 字节名经队列（断点续传临时文件）也成功；本地异常名 walk 正常。**GBK 结论：协议层不可行**——russh-sftp 2.1.1 用 `String`（UTF-8 lossy）传文件名，list 返回 `gbk-����.txt`（含 U+FFFD），用该名回写操作返回 `sftp_io_failed`；原始字节名无法往返，不做假下拉/假提示。
+7. **断线重连队列状态**：预期运行中任务落 Failed、离线时 resume/retry 明确拒绝、重连后从头完成 → 实测运行中任务约 10s 内落 Failed(`sftp_io_failed`)、`retry`/`resume` 均返回 `sftp_resume_session_offline`、重连后 retry checkpoint=0 从头完成且 SHA256 一致。**结论：通过**（断线感知依赖底层写超时约 10s，非静默挂起）。
+
+### 偏差与修复（独立 commit）
+
+- Medium：递归传输丢失空目录 → WalkEntry 增加 `is_dir`，SftpPanel 先建目录再传文件（`e114100`）。
+- Medium：远端下载不跟随目录符号链接（Netcatty 跟随）→ canonicalize 去环后跟随（同上）。
+- Medium：255 字节文件名 + `.part` 单段名超限 → `remote_partial_path()` 改同目录 `.termx-<sha256前16>.part`（`66f2bd7`）。
+- Low：同栏「创建副本」命名 `(1)` 与 Netcatty `(copy)` 不一致；自动重命名上限 50 无兜底 → 对齐 `(copy)`/`(copy N)`、999 次后 `(copy <时间戳>)`（`90ed67f`）。
+- Low：断线离线提示只写「应用重启」；队列 `io_error` 无 params 时文案留空 → 改为「无法续传/重试，重新连接后重新发起」+ `io_error` 兜底说明（`3a63714`）。
+- 测试：新增 7 组 live 验收 + `walk_local_dir` 本地单测（`c4e886e`）。
+
+### 后台遗留命令清理
+
+- 上轮 9 条后台命令：5 条已停止（vite dev 1420 / telnet echo 2324 / termx app 等），4 条查询时已不存在；本轮复核 1420/2324/9222/2333 均无监听，不影响端口转发与 SFTP 测试。
+
+### 门禁
+
+- live：`TERMX_SFTP_LIVE=1 cargo test --lib live_sftp` 10/10 ✓（68.07s）。
+- `npm run test:run`：73 文件 / 825 用例 ✓；`npm run build` ✓。
+- `cargo check --no-default-features --lib` ✓；`cargo test --no-default-features --lib`：964 ✓（85.19s）；`cargo build --release --no-default-features` ✓。
