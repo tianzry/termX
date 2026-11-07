@@ -47,7 +47,6 @@ import {
   type TerminalEncoding,
 } from "./terminal/terminalEncoding";
 import { userVisibleError } from "./domain/sshErrors";
-import { shellDisplayName } from "./domain/shellName";
 import {
   rootHostsForDisplay,
   shouldHideRootHostsSection,
@@ -691,14 +690,10 @@ export function VaultView({
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [toast, setToast] = useState("");
   const toastTimer = useRef<number | null>(null);
-  /** 本机默认 shell 命令（default_shell 命令，与 pty_spawn 同源），供本地卡显示名。 */
-  const [localShellCmd, setLocalShellCmd] = useState("");
-  /** 本机发现的 shell（本地终端面板 Shell 下拉 + 本地卡名解析）。 */
+  /** 本机发现的 shell（本地终端面板 Shell 下拉）。 */
   const [discoveredShells, setDiscoveredShells] = useState<DiscoveredShell[]>(
     [],
   );
-  /** 设置项 local_shell（发现的 shell id 或自定义命令）；空 = 系统默认。 */
-  const [localShellSetting, setLocalShellSetting] = useState("");
   /** 本地终端面板：null = 关闭；"new" = 新建；否则为编辑目标。 */
   const [localPanel, setLocalPanel] = useState<Profile | "new" | null>(null);
   /** 串口主机编辑面板：null = 关闭；否则为编辑目标。 */
@@ -882,25 +877,13 @@ export function VaultView({
     });
   }, [profiles]);
 
-  // 本地终端卡显示真实默认 shell 名（对齐 Netcatty「Git Bash / Git Bash」）。
+  // 本机发现的 shell（本地终端面板 Shell 下拉）。
   useEffect(() => {
     let alive = true;
-    api
-      .defaultShell()
-      .then((s) => {
-        if (alive) setLocalShellCmd(s);
-      })
-      .catch(() => {});
     api
       .discoverShells()
       .then((s) => {
         if (alive) setDiscoveredShells(s);
-      })
-      .catch(() => {});
-    api
-      .getSetting("local_shell")
-      .then((s) => {
-        if (alive) setLocalShellSetting(s ?? "");
       })
       .catch(() => {});
     return () => {
@@ -1182,6 +1165,7 @@ export function VaultView({
   ].filter((s) => (s.id === "__ungrouped" ? s.hosts.length > 0 : true));
 
   // 最近连接：按记录顺序，排除已置顶（避免与「已置顶」重复），最多 6 条。
+  // 未保存的临时本地终端（"__local"）不进入列表（对齐 Netcatty：最近主机只记存档主机）。
   const recentProfiles = settings.showRecentHosts
     ? recentIds
         .filter((id) => id !== "__local" && !pinnedIds.includes(id))
@@ -1189,10 +1173,6 @@ export function VaultView({
         .filter((p): p is Profile => Boolean(p))
         .slice(0, 6)
     : [];
-  const showLocalRecently =
-    settings.showRecentHosts &&
-    recentIds.includes("__local") &&
-    (!keyword || "local".includes(keyword));
 
   const pinnedHosts = sortHosts(
     pinnedIds
@@ -3552,40 +3532,6 @@ export function VaultView({
     );
   }
 
-  // 本地卡显示名：设置 local_shell → 发现列表名 / 命令名；空设置回退默认 shell。
-  const localMatchedShell = discoveredShells.find(
-    (s) => s.id === localShellSetting,
-  );
-  const localName = localShellSetting
-    ? (localMatchedShell?.name ?? shellDisplayName(localShellSetting))
-    : shellDisplayName(localShellCmd);
-  const localCard = (compact = false) => (
-    <div
-      key="__local"
-      className={`vault-host-card${compact ? " list" : ""}`}
-      role="button"
-      tabIndex={0}
-      onClick={() => onLocal()}
-      onKeyDown={(e) => {
-        if (e.key !== "Enter" && e.key !== " ") return;
-        e.preventDefault();
-        onLocal();
-      }}
-      title="新建本地终端"
-    >
-      <span className="nc-avatar lg local">
-        <Icon name="terminal" size={20} />
-      </span>
-      <span className="vault-host-card-main">
-        <strong>{localName}</strong>
-        <span className="vault-host-card-sub">{localName}</span>
-      </span>
-      <span className="vault-host-card-go">
-        <Icon name="terminal" size={14} />
-      </span>
-    </div>
-  );
-
   function groupCard(g: GroupTile) {
     const compact = view !== "grid";
     const isSelected = selectedGroups.has(g.id);
@@ -4201,27 +4147,23 @@ export function VaultView({
               </section>
             )}
 
-            {atRoot &&
-              view !== "tree" &&
-              (recentProfiles.length > 0 || showLocalRecently) && (
-                <section className="vault-section">
-                  <h3 className="vault-section-title">
-                    <Icon name="clock" size={14} />
-                    最近连接
-                  </h3>
-                  {view === "grid" ? (
-                    <div className="vault-grid">
-                      {showLocalRecently && localCard()}
-                      {recentProfiles.map((p) => hostCard(p))}
-                    </div>
-                  ) : (
-                    <div className="vault-list">
-                      {showLocalRecently && localCard(true)}
-                      {recentProfiles.map((p) => hostCard(p))}
-                    </div>
-                  )}
-                </section>
-              )}
+            {atRoot && view !== "tree" && recentProfiles.length > 0 && (
+              <section className="vault-section">
+                <h3 className="vault-section-title">
+                  <Icon name="clock" size={14} />
+                  最近连接
+                </h3>
+                {view === "grid" ? (
+                  <div className="vault-grid">
+                    {recentProfiles.map((p) => hostCard(p))}
+                  </div>
+                ) : (
+                  <div className="vault-list">
+                    {recentProfiles.map((p) => hostCard(p))}
+                  </div>
+                )}
+              </section>
+            )}
 
             {atRoot && view !== "tree" && groupTiles.length > 0 && (
               <section className="vault-section">
