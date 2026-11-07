@@ -386,7 +386,9 @@ export function MonitorView({
       listenersRef.current.set(profileId, unlisten ?? (() => {}));
       await api.sshConnect(profileId, 80, 24, sid);
       if (runningRef.current) {
-        patchHost(profileId, { status: "live", error: null });
+        // 连接成功 ≠ 已有读数：保持「连接中」，等第一次采样成功才置 live，
+        // 否则卡片会在首次采样前就显示「已更新」而数值全是 `--`。
+        patchHost(profileId, { status: "connecting", error: null });
       }
     } catch (e) {
       unlisten?.();
@@ -458,7 +460,7 @@ export function MonitorView({
           await connectHost(id);
           continue;
         }
-        if (state.status === "live" || state.status === "error") {
+        if (state.status === "live" || state.status === "error" || state.status === "connecting") {
           await sampleHost(id, state.sessionId);
         }
       }
@@ -555,6 +557,9 @@ export function MonitorView({
 
   /** 切换面板：应用该面板的布局 / 列数 / 间隔；运行中禁止切换（开始/停止只作用于当前面板）。 */
   function applyPanel(id: string) {
+    // 下拉框虽然 disabled，但状态层也必须拦截：否则程序化 change 会在运行中把面板切走，
+    // 采样目标随之漂移，造成「面板切换后数据串」。
+    if (runningRef.current) return;
     const panel = allPanels.find((item) => item.id === id);
     if (!panel) return;
     setPanelId(panel.id);

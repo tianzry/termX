@@ -84,6 +84,7 @@ const ERROR_MESSAGES: Record<
   ssh_bastion_tunnel_failed: () => "堡垒机隧道建立失败。",
   ssh_bastion_tunnel_timeout: () => "堡垒机隧道超时。",
   plugin_exec_failed: (p) => `插件执行失败：${str(p, "err")}`,
+  plugin_exec_channel_failed: (p) => `执行远程命令失败：${str(p, "err")}`,
   // ── 认证 ──
   ssh_auth_rejected: () => "认证被服务器拒绝。",
   ssh_password_auth_failed: (p) => `密码认证失败：${str(p, "err")}`,

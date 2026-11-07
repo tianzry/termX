@@ -103,6 +103,9 @@ describe("userVisibleError", () => {
     expect(
       userVisibleError('__termx_err__|{"code":"fwd_duplicate_remote_port","params":{"port":8080}}'),
     ).toContain("8080");
+    expect(
+      userVisibleError('__termx_err__|{"code":"plugin_exec_channel_failed","params":{"err":"Channel send error"}}'),
+    ).toBe("执行远程命令失败：Channel send error");
   });
 
   it("未知 code 回退 params.err，再回退泛化文案", () => {
