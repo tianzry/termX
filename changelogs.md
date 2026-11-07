@@ -7353,4 +7353,25 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 7. 已知不在本轮范围：串口工具栏「关键字高亮」为禁用态（title「本机 / 串口终端不支持主机高亮规则」），
    待后续批次改造。
 
+## 2026-11-07 — 关键字高亮：仅显示匹配行（前端过滤）
+
+- **功能**：高亮浮层新增「仅显示匹配行」开关（与规则列表同一处）。打开后终端只显示命中
+  **已启用规则**的行，命中关键字沿用原规则着色；关闭后从关闭时刻起恢复全量显示，关闭前被过滤
+  掉的历史不回流。实现走写路径（按 `\n` 切行，未命中整行丢弃），打开时清 scrollback 后只回填
+  命中行，不用 CSS 隐藏行（否则会留空行、滚动计算错乱）。
+- **录制不受影响**：过滤只作用于 `term.write` 之前的渲染数据；手动 `.log` 与 `.cast`
+  （SessionRecorder）在后端数据链路落盘，不经过该过滤，录制内容不丢行。
+- **实测（release + CDP 9222）**：
+  - 本地 shell：过滤前 15 个非空行 → 打开后 2 行（`ERROR alpha` / `ERROR beta`，保持红色）；
+    过滤期间新输出 `ERROR gamma` 显示、`plain four` 丢弃；关闭后 `plain five` 恢复，旧
+    `plain one/four` 未回流；同时录制的 `hl_local_test.log` 含全部 8 行；cast 末尾事件含
+    `ERROR delta\r\nplain six`（界面当时只显示 `ERROR delta`）。
+  - 129 SSH（主机级覆盖规则）：过滤前 8 行 → 打开后 4 行（`COVERED open` 青 `#22CCCC`、
+    `ERROR ssh` 红 `#F87171`，另两条命令行回显命中的是内置 `unix-path` 规则，属预期）；
+    过滤期间新输出只显示 `COVERED open2` / `ERROR ssh3`，`plain ssh3` 被丢弃；关闭后
+    `plain ssh4` 恢复、旧 plain 行未回流；`hl_ssh_test.log` 完整含 `plain ssh` / `plain ssh2`
+    / `plain ssh3`；`hl-ssh-cast_20261107_224508.cast` 中 `plain ssh3` 等被过滤行完整存在。
+- **语义说明**：判定条件是「命中任一已启用规则」，内置 `unix-path` / URL / IP 规则同样参与
+  过滤，因此含路径的命令行会被保留，与 grep 式「规则集即过滤条件」一致。
+
 

@@ -458,6 +458,21 @@ export function TerminalPane({
    */
   const [hostHighlightEnabled, setHostHighlightEnabled] = useState(false);
   const [hostHighlightRules, setHostHighlightRules] = useState<KeywordHighlightRule[]>([]);
+  /**
+   * 高亮浮层的「仅显示匹配行」：纯界面过滤，只影响本窗格渲染；
+   * 后端会话日志 / asciicast 自动录制在数据到达前端前已完成写入，不受影响。
+   * 关闭时从关闭那一刻恢复全量，关闭前被过滤掉的历史不回流。
+   */
+  const [onlyMatchingLines, setOnlyMatchingLines] = useState(false);
+  const onlyMatchingLinesRef = useRef(false);
+  /** 过滤判断复用着色规则（effectiveHighlight 编译结果）。 */
+  const filterRulesRef = useRef<ReturnType<typeof compileKeywordRules>>([]);
+  /** 过滤模式下行缓冲：等待 \n 的未完成行。 */
+  const filterPendingRef = useRef("");
+  /** 回填 / 内部清屏时绕过过滤。 */
+  const filterBypassRef = useRef(false);
+  /** 串口字节流解码（过滤模式需要文本做行匹配）。 */
+  const serialFilterDecoderRef = useRef<TextDecoder | null>(null);
 
   /**
    * 拉取本主机的高亮规则；主机编辑器保存后广播 profileId，已开终端重拉
@@ -758,17 +773,105 @@ export function TerminalPane({
     writeTerminalText(bytes);
   }
 
+  /** 去掉 ANSI 控制序列：仅用于过滤匹配判断，显示内容保持原样。 */
+  function stripAnsiForFilter(line: string): string {
+    return line
+      .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+      .replace(/\x1b[@-_]/g, "");
+  }
+
+  /** 过滤命中判断：与着色共用已编译规则；规则全关时视为无命中。 */
+  function filterLineMatches(line: string): boolean {
+    if (!line.trim()) return false;
+    return findKeywordSpans(stripAnsiForFilter(line), filterRulesRef.current).length > 0;
+  }
+
+  /**
+   * 过滤模式下的显示写入：按 \n 切行，仅写出命中行，不命中的整行丢弃。
+   * 只影响终端显示；会话日志 / asciicast 录制在后端完成，不在本链路。
+   */
+  function writeFilteredText(text: string) {
+    const term = controllerRef.current?.term;
+    if (!term) return;
+    if (!onlyMatchingLinesRef.current || filterBypassRef.current) {
+      term.write(text);
+      return;
+    }
+    const combined = filterPendingRef.current + text;
+    const lines = combined.split("\n");
+    filterPendingRef.current = lines.pop() ?? "";
+    let out = "";
+    for (const raw of lines) {
+      const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+      if (filterLineMatches(line)) out += `${line}\r\n`;
+    }
+    if (out) term.write(out);
+  }
+
+  /** 串口字节流 → 文本后再过滤；关闭过滤时保持原字节直写。 */
+  function writeSerialText(bytes: Uint8Array) {
+    const term = controllerRef.current?.term;
+    if (!term) return;
+    if (!onlyMatchingLinesRef.current) {
+      term.write(bytes);
+      return;
+    }
+    if (!serialFilterDecoderRef.current) serialFilterDecoderRef.current = new TextDecoder();
+    const text = serialFilterDecoderRef.current.decode(bytes, { stream: true });
+    if (text) writeFilteredText(text);
+  }
+
+  /** 打开过滤：清屏后只回填当前缓冲区中命中的行；关闭时的历史不回流。 */
+  function rebuildFilteredView() {
+    const term = controllerRef.current?.term;
+    if (!term) return;
+    const buf = term.buffer.active;
+    const matched: string[] = [];
+    for (let y = 0; y < buf.length; y += 1) {
+      const line = buf.getLine(y);
+      if (!line) continue;
+      const text = line.translateToString(true).replace(/\s+$/, "");
+      if (filterLineMatches(text)) matched.push(text);
+    }
+    filterPendingRef.current = "";
+    filterBypassRef.current = true;
+    try {
+      term.write("\x1b[3J\x1b[2J\x1b[H");
+      for (const line of matched) term.write(`${line}\r\n`);
+    } finally {
+      filterBypassRef.current = false;
+    }
+  }
+
+  /** 关闭过滤：把尚未成行的半截输出照常写出，之后的输出全量显示。 */
+  function flushFilterPending() {
+    const term = controllerRef.current?.term;
+    if (!term) return;
+    const pending = filterPendingRef.current;
+    filterPendingRef.current = "";
+    if (pending) term.write(pending);
+  }
+
+  function toggleOnlyMatchingLines() {
+    const next = !onlyMatchingLinesRef.current;
+    onlyMatchingLinesRef.current = next;
+    setOnlyMatchingLines(next);
+    if (next) rebuildFilteredView();
+    else flushFilterPending();
+  }
+
   /** 直通字节 → 终端（ZMODEM 非协议输出、串口原始字节共用）。 */
   function writeTerminalText(bytes: Uint8Array) {
     const term = controllerRef.current?.term;
     if (!term) return;
     if (transportRef.current?.kind === "serial") {
-      term.write(bytes);
+      writeSerialText(bytes);
       return;
     }
     const text = decoderRef.current.decode(bytes);
     if (text) {
-      term.write(text);
+      writeFilteredText(text);
       scheduleOutputTriggerCheck();
     }
   }
@@ -1956,6 +2059,13 @@ export function TerminalPane({
     [highlightRules, highlightEnabled, hostHighlightRules, hostHighlightEnabled, status],
   );
 
+  /** 过滤模式与着色共用同一规则集；总开关关闭时视为无规则。 */
+  useEffect(() => {
+    filterRulesRef.current = effectiveHighlight.enabled
+      ? compileKeywordRules(effectiveHighlight.rules)
+      : [];
+  }, [effectiveHighlight]);
+
   /** 关键字高亮：按设置里的规则给命中片段着色（xterm decoration foregroundColor）。 */
   useEffect(() => {
     const term = controllerRef.current?.term;
@@ -2643,9 +2753,7 @@ export function TerminalPane({
         const unsubs: UnlistenFn[] = [];
         unsubRef.current = unsubs;
         unsubs.push(
-          await api.onSerialData(sid, (bytes) =>
-            controllerRef.current?.term.write(bytes),
-          ),
+          await api.onSerialData(sid, (bytes) => writeSerialText(bytes)),
         );
         unsubs.push(
           await api.onSerialClose(sid, () => {
@@ -2668,16 +2776,12 @@ export function TerminalPane({
           kind: "serial",
           write: (text) => {
             const chunk = input.feed(text);
-            if (chunk.echo) {
-              controllerRef.current?.term.write(new TextEncoder().encode(chunk.echo));
-            }
+            if (chunk.echo) writeFilteredText(chunk.echo);
             if (chunk.wire) void api.serialWrite(actual, chunk.wire);
           },
           writeBulk: (text) => {
             const chunk = input.feed(text);
-            if (chunk.echo) {
-              controllerRef.current?.term.write(new TextEncoder().encode(chunk.echo));
-            }
+            if (chunk.echo) writeFilteredText(chunk.echo);
             if (chunk.wire) void api.serialWrite(actual, chunk.wire);
           },
           resize: () => {},
@@ -2772,9 +2876,7 @@ export function TerminalPane({
           write: (text) => {
             if (localEcho.current) {
               const echo = formatTelnetLocalEcho(text);
-              if (echo) {
-                controllerRef.current?.term.write(new TextEncoder().encode(echo));
-              }
+              if (echo) writeFilteredText(echo);
             }
             void api.telnetWrite(actual, text, encodingRef.current);
           },
@@ -3581,6 +3683,19 @@ export function TerminalPane({
                             </button>
                           </label>
                         </div>
+                        <label className="term-highlight-enabled term-highlight-only-matches">
+                          <span>仅显示匹配行</span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={onlyMatchingLines}
+                            className={`term-highlight-toggle${onlyMatchingLines ? " on" : ""}`}
+                            title="类似 grep：只显示命中已启用规则的行（不影响日志录制）"
+                            onClick={toggleOnlyMatchingLines}
+                          >
+                            <span />
+                          </button>
+                        </label>
                         {!sshProfileId && (
                           <div className="term-highlight-hint">
                             本类型终端没有主机级规则，这里编辑的是全局规则（同步到设置页）
