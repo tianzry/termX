@@ -7206,3 +7206,36 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - live：`TERMX_SFTP_LIVE=1 cargo test --lib live_sftp` 10/10 ✓（68.07s）。
 - `npm run test:run`：73 文件 / 825 用例 ✓；`npm run build` ✓。
 - `cargo check --no-default-features --lib` ✓；`cargo test --no-default-features --lib`：964 ✓（85.19s）；`cargo build --release --no-default-features` ✓。
+
+## 2026-11-07 — 性能验收 + SFTP UI 实点回归（最后一轮）
+
+### A. 性能（release 包，129 实机）
+
+1. **大目录 10,000 条**：后端 `sftp_list` 190–194ms（3 次），home 28 条 3.7–4.4ms。修复前全页首屏 5.2–7.8s / 侧栏 4.3s，DOM 110,671 节点，滚动 19.8fps（avg 50.5ms / p95 104ms / max 132ms）。虚拟化后全页首屏 **337ms**（行 207.5ms，渲染约 28 行）、侧栏 **613ms**（行 481ms，约 21 行）；滚动均 **144fps**（avg 6.9ms / p95 7.1ms / 0 帧 >16.7ms）；双 10k 同时打开 JS heap **9.81MB**、DOM **929** 节点。
+2. **8 并发传输下 UI**：10k 列表滚动 144fps（avg 6.92ms，0 帧 >16.7ms）；12s 采样窗口 avg 6.95ms / max 14ms；真实点击输入延迟 p50 **3.9ms** / p95 **4.6ms** / max 4.6ms；69 个长事件均为 pointerover/pointerleave（打开传输弹窗时 16–24ms），无 click 长事件。
+3. **长会话 30 分钟**（129 远程 20 行/s + 本地 cmd 1 行/s 并行，19:05–19:35）：内存总量 **465.1MB（起点）→ 504.9MB（中点）→ 518.8MB（终点）**，主进程稳定 36.8→37.7MB，WebView 428.3→481.1MB（前 10 分钟涨完，后 20 分钟在 505–519MB 波动）；JS heap 10.6→26.9→28.3MB，DOM 484→521 后不变。CPU 累计 115.4→284→457s，每 5 分钟增量 62.5/52.5/53.6/61.0/55.0/57.0s（约 11.4s/min ≈ 单核 19%），**无爬升**。DB 体积恒定 2,296,136B（会话日志落 `.cast` 文件非 DB）；录制文件 129 **14,124→1,535,500B**（+1.52MB，50.7KB/min）、本地 **2,567→551,814B**（+549KB，18.3KB/min）。
+4. **冷启动（release）**：进程启动→WebView CDP 目标 432ms，→导航开始 527.4ms（含 Rust/Tauri 初始化与 DB 打开 **5ms**），导航 domInteractive 48.8ms / load 158.8ms，**启动→可交互 754ms**（前端自导航起约 227ms）。termX 非 Java 技术栈，按「主窗口（Rust/Tauri）+ 前端 + DB」拆分。
+
+### B. SFTP UI 实点回归（启动 release 实点）
+
+- 冲突三态 + applyToAll：替换并勾选后 2 个同批冲突一次完成；跳过 ×2 逐个 `skipped`；创建副本 ×2 生成 `a2_5 (copy).bin` 并完成。
+- 队列按钮：暂停 running→paused；恢复 paused→running；取消 running→cancelled；重试 queued→failed（权限拒绝），状态与后端一致。
+- 离线标注：断开 SFTP 会话后后端 `session_live` 立即 false，顶栏弹窗行出现「会话已断开：无法续传/重试…」，恢复/重试按钮 disabled（title「会话已断开，无法续传/重试」）。**修复前**运行期断开仍是 `live=true`（刷新只在入队/操作触发 `pump` 时发生），已修。
+- 已完成行行尾：底部队列「打开目标目录」→ 资源管理器打开下载目录；上传行提示「目标目录所属的 SFTP 会话未打开…」；顶栏弹窗已完成行「打开目标目录」→ 打开 `dl9`；顶栏已完成行「移除」→ 后端列表同步删除。
+
+### 偏差与修复（独立 commit）
+
+- **P1 性能**：10k 目录列表无虚拟化（首屏 5–8s、滚动 19.8fps）→ 行高量测 + 视口虚拟滚动（阈值 200 行、overscan 8），新增单测（`71de6d4`）。
+- **P2 功能/UI 偏差**：运行期断开 SFTP/SSH 后队列 `session_live` 陈旧 → `refreshed_snapshot` 在 close 后刷新句柄并广播 `sftp:queue_changed`（GUI sftp_close / ssh_disconnect 与 headless sftp_close / ssh_disconnect 四处对齐）（`34c8e38`）。
+- **P3 可观测性**：启动无 DB 打开耗时 → `startup: db open took N ms`（`ead2eda`）。
+
+### 门禁
+
+- `npm run test:run`：73 文件 / 826 用例 ✓；`npm run build`（随 tauri build）✓。
+- `cargo check --lib` ✓；`cargo check --lib --features server` ✓；`cargo test --lib` 全通过 ✓。
+- `npx tauri build --no-bundle` ✓（release 2m32s；首次因 G: 剩余 0.11GB 失败，清理 `target/debug` 98GB 后成功）。
+
+### 不做 / 外部条件阻塞
+
+- **不做**：GBK 文件名往返（russh-sftp UTF-8 String 限制，上轮已定）；不做 Java 主窗口拆分（非 Java 栈）；不引入传输限速器（暂停窗口改用 200MB 大文件 + 并发 1）；不把虚拟化抽成通用组件。
+- **外部阻塞**：远端根分区 99%（余约 61MB），8×64MB 上传侧吞吐与万级大文件写盘无法测（并发验收走下载）；`.cast` 录制默认关闭为显式设置（本轮临时开启，已恢复 false），会话日志按 `.cast` 计量；30 分钟双会话并行被测进程级内存为合并值，无法按会话拆分；冷启动为构建后热缓存（无法清空系统文件缓存）。
