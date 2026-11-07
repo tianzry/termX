@@ -365,7 +365,6 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
       return;
     }
     setRun({ name: s.name, paneId: activeHandle.paneId });
-    setNotice(`已在活动终端运行「${s.name}」`);
     if (fromPanel) setIsNew(false);
   };
 
