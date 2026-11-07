@@ -137,6 +137,41 @@ pub(crate) fn log_from_file(dir: &Path, filename: &str) -> Option<SessionLog> {
     })
 }
 
+/// 收集当前仍在写的 asciicast 文件名。扫描时据此把索引行标成「进行中」，
+/// 否则列表只能等会话结束才看到状态变化。
+fn active_recording_names(state: &AppState) -> std::collections::HashSet<String> {
+    use std::collections::HashSet;
+
+    let mut names = HashSet::new();
+    let ssh_slots: Vec<_> = {
+        let Ok(guard) = locked(&state.sessions) else {
+            return names;
+        };
+        guard.values().map(|handle| handle.recorder_slot()).collect()
+    };
+    for slot in ssh_slots {
+        if let Ok(guard) = locked(&slot) {
+            if let Some(active) = guard.as_ref() {
+                names.insert(recording_filename(&active.path));
+            }
+        }
+    }
+    let lifecycle_slots: Vec<_> = {
+        let Ok(guard) = locked(&state.lifecycle_sessions) else {
+            return names;
+        };
+        guard.values().map(|record| record.log_slots.rec.clone()).collect()
+    };
+    for slot in lifecycle_slots {
+        if let Ok(guard) = locked(&slot) {
+            if let Some(active) = guard.as_ref() {
+                names.insert(recording_filename(&active.path));
+            }
+        }
+    }
+    names
+}
+
 /// 扫描 recordings 目录并 upsert 索引。目录不存在返回空列表（首次使用即空态）。
 pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
     let dir = crate::commands::settings::recording_dir(state);
@@ -144,6 +179,7 @@ pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
         return Ok(vec![]);
     }
 
+    let active = active_recording_names(state);
     let mut logs = Vec::new();
     for entry in std::fs::read_dir(&dir)? {
         let Ok(entry) = entry else {
@@ -160,9 +196,13 @@ pub fn scan_recordings(state: &AppState) -> AppResult<Vec<SessionLog>> {
         let Ok(file_name) = entry.file_name().into_string() else {
             continue;
         };
-        let Some(log) = log_from_file(&dir, &file_name) else {
+        let Some(mut log) = log_from_file(&dir, &file_name) else {
             continue;
         };
+        if active.contains(&file_name) {
+            log.status = "recording".into();
+            log.ended_at = None;
+        }
         crate::db::session_logs::upsert(&state.db, &log)?;
         logs.push(log);
     }
