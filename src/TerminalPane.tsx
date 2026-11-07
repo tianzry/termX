@@ -20,6 +20,8 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { TerminalView, type TerminalController } from "./Terminal";
 import { ComposeBar } from "./terminal/ComposeBar";
 import { appendComposeHistory, buildComposePayload, buildPastePayload } from "./terminal/composeBarModel";
+import { insertSnippetIntoCompose } from "./terminal/composeBarSnippets";
+import { loadComposeDraft, resolveComposeDraftKey, saveComposeDraft } from "./terminal/composeDraft";
 import {
   readCommandHistory,
   recordCommandHistory,
@@ -508,6 +510,8 @@ export function TerminalPane({
   const [snippetVarPrompt, setSnippetVarPrompt] = useState<{
     snippet: api.Snippet;
     values: Record<string, string>;
+    /** send = 填值后直接发送；insert = 填值后只插入撰写栏草稿。 */
+    mode: "send" | "insert";
   } | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -563,7 +567,14 @@ export function TerminalPane({
   const [showTimestamps, setShowTimestamps] = useState(readShowTimestamps);
   /** 撰写栏 / 终端搜索 / 主机关键词高亮。 */
   const [composeOpen, setComposeOpen] = useState(false);
-  const [composeText, setComposeText] = useState("");
+  /**
+   * 撰写草稿：仅绑定已保存主机的终端（SSH / 来自已保存主机的串口·Telnet）
+   * 按主机记忆并恢复；本地 shell 与临时串口·Telnet 不保存也不恢复。
+   */
+  const composeDraftHostKey = resolveComposeDraftKey(tab.connector);
+  const [composeText, setComposeText] = useState(() =>
+    loadComposeDraft(resolveComposeDraftKey(tab.connector)),
+  );
   /** 本窗格的撰写发送历史（↑↓ 翻阅；与终端命令历史分离）。 */
   const [composeHistory, setComposeHistory] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1118,15 +1129,17 @@ export function TerminalPane({
   // 句柄在注册时是稳定闭包，需通过 ref 拿到最新的连接状态与发送链路。
   runSnippetRef.current = insertSnippet;
 
-  /** 快捷键片段变量：填值后替换占位符再写入。 */
+  /** 快捷键片段变量：填值后替换占位符，再按 send / insert 语义执行。 */
   const submitSnippetVarPrompt = () => {
     const pending = snippetVarPrompt;
     if (!pending) return;
     setSnippetVarPrompt(null);
-    insertSnippet({
-      ...pending.snippet,
-      command: previewSnippetCommand(pending.snippet.command, pending.values),
-    });
+    const command = previewSnippetCommand(pending.snippet.command, pending.values);
+    if (pending.mode === "insert") {
+      appendComposeCommand(command);
+      return;
+    }
+    insertSnippet({ ...pending.snippet, command });
   };
 
   /** 输入缓冲：命令历史与脚本录制共用；开始录制时清空步数。 */
@@ -2048,6 +2061,21 @@ export function TerminalPane({
       id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     });
     return true;
+  }
+
+  /** 撰写草稿持久化（去抖 300ms）：临时终端 key 为 null，存取均为空操作。 */
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => saveComposeDraft(composeDraftHostKey, composeText),
+      300,
+    );
+    return () => window.clearTimeout(timer);
+  }, [composeDraftHostKey, composeText]);
+
+  /** 追加命令到撰写栏草稿（片段插入 / 变量填值后插入共用）。 */
+  function appendComposeCommand(command: string) {
+    setComposeOpen(true);
+    setComposeText((current) => insertSnippetIntoCompose(current, command).value);
   }
 
   /** 终端搜索（SearchAddon，对照 Netcatty SEARCH_OPTIONS / SEARCH_DECORATIONS）。 */
@@ -3699,6 +3727,7 @@ export function TerminalPane({
             values: Object.fromEntries(
               vars.map((v) => [v.name, v.defaultValue ?? ""]),
             ),
+            mode: "send",
           });
           return;
         }
@@ -4643,6 +4672,16 @@ export function TerminalPane({
           connected={status === "connected"}
           snippets={snippets}
           onRunSnippet={insertSnippet}
+          onSnippetVariables={(snippet, mode) => {
+            const vars = parseSnippetVariables(snippet.command);
+            setSnippetVarPrompt({
+              snippet,
+              values: Object.fromEntries(
+                vars.map((v) => [v.name, v.defaultValue ?? ""]),
+              ),
+              mode,
+            });
+          }}
           onClose={() => {
             setComposeOpen(false);
             controllerRef.current?.term.focus();
@@ -4949,7 +4988,9 @@ export function TerminalPane({
               </label>
             ))}
             <div className="modal-actions">
-              <button onClick={submitSnippetVarPrompt}>运行</button>
+              <button onClick={submitSnippetVarPrompt}>
+                {snippetVarPrompt.mode === "insert" ? "插入" : "运行"}
+              </button>
               <button onClick={() => setSnippetVarPrompt(null)}>取消</button>
             </div>
           </div>

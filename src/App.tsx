@@ -340,8 +340,9 @@ export default function App() {
   async function saveSerialHost(
     name: string,
     snapshot: SerialProfileSnapshot,
-  ): Promise<void> {
+  ): Promise<string> {
     const credentialId = newId();
+    const profileId = newId();
     await api.createCredential({
       id: credentialId,
       name: `${name} (${snapshot.serial_port})`,
@@ -351,7 +352,7 @@ export default function App() {
       save_to_remote: false,
     });
     await api.createProfile({
-      id: newId(),
+      id: profileId,
       name,
       host: snapshot.serial_port,
       port: 0,
@@ -364,6 +365,7 @@ export default function App() {
       ...snapshot,
     });
     await loadData();
+    return profileId;
   }
 
   function connect(profile: Profile) {
@@ -382,6 +384,7 @@ export default function App() {
           byteOrientedBackspace: form.byteOrientedBackspace,
         },
         name: profile.name,
+        profileId: profile.id,
       });
       return;
     }
@@ -965,11 +968,12 @@ export default function App() {
           onConnect={(session, saveHost) => {
             setShowSerialModal(false);
             setSurface(null);
-            const openSerialTab = () =>
+            const openSerialTab = (profileId?: string) =>
               workspaceRef.current?.newTab({
                 kind: "serial",
                 session,
                 name: saveHost?.name || `串口 ${session.port}`,
+                profileId,
               });
             if (!saveHost) {
               openSerialTab();
@@ -978,12 +982,12 @@ export default function App() {
             // 保存失败只提示，不阻断本次连接。
             void (async () => {
               try {
-                await saveSerialHost(saveHost.name, saveHost.snapshot);
+                const profileId = await saveSerialHost(saveHost.name, saveHost.snapshot);
+                openSerialTab(profileId);
               } catch (e) {
                 setStatus(
                   `串口主机保存失败：${userVisibleError(String(e))}`,
                 );
-              } finally {
                 openSerialTab();
               }
             })();

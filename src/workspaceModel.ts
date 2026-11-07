@@ -53,7 +53,8 @@ export type Connector =
       name?: string;
     }
   | { kind: "ssh"; profileId: string; name: string }
-  | { kind: "serial"; session: SerialSessionConfig; name?: string }
+  /** `profileId` 仅在从已保存主机打开时存在；临时串口连接没有该字段。 */
+  | { kind: "serial"; session: SerialSessionConfig; name?: string; profileId?: string }
   | { kind: "telnet"; session: TelnetSessionConfig; name?: string };
 
 export interface LeafNode {

@@ -76,10 +76,20 @@ describe("ComposeBar", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("Shift+Enter 仅换行，不发送", () => {
-    const { textarea, onSend } = renderBar({ value: "a" });
+  it("Shift+Enter 只发送光标所在行，其余内容留在草稿", () => {
+    const { textarea, onChange, onSend } = renderBar({ value: "one\ntwo\nthree" });
+    textarea.setSelectionRange(5, 5);
     fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+    expect(onSend).toHaveBeenCalledWith("two");
+    expect(onChange).toHaveBeenLastCalledWith("one\nthree");
+  });
+
+  it("Ctrl+Enter 在光标处换行，不发送", () => {
+    const { textarea, onChange, onSend } = renderBar({ value: "ab" });
+    textarea.setSelectionRange(1, 1);
+    fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
     expect(onSend).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenLastCalledWith("a\nb");
   });
 
   it("输入法组合态 Enter 不发送", () => {
@@ -116,30 +126,54 @@ describe("ComposeBar 快捷片段条", () => {
     snippet("s2", "uptime", "uptime"),
   ];
 
-  it("固定片段按名称排序展示，点击追加到草稿末尾", async () => {
-    const onChange = vi.fn();
-    renderBar({ value: "pwd", onChange, snippets });
-    const chip = await screen.findByRole("button", { name: "uptime" });
-    fireEvent.click(chip);
-    expect(onChange).toHaveBeenLastCalledWith("pwd\nuptime");
-  });
-
-  it("草稿为空时插入不带前导换行", async () => {
-    const onChange = vi.fn();
-    renderBar({ value: "", onChange, snippets });
-    fireEvent.click(await screen.findByRole("button", { name: "df -h" }));
-    expect(onChange).toHaveBeenLastCalledWith("df -h");
-  });
-
-  it("Shift+点击直接发送执行（复用脚本模块），不改草稿", async () => {
+  it("单击片段直接发送执行，不改草稿", async () => {
     const onRunSnippet = vi.fn(() => true);
     const onChange = vi.fn();
     renderBar({ value: "draft", onChange, snippets, onRunSnippet });
-    const chip = await screen.findByRole("button", { name: "uptime" });
-    fireEvent.click(chip, { shiftKey: true });
+    fireEvent.click(await screen.findByRole("button", { name: "uptime" }));
     expect(onRunSnippet).toHaveBeenCalledWith(
       expect.objectContaining({ id: "s2", command: "uptime" }),
     );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("Shift+点击只插入草稿，不发送", async () => {
+    const onRunSnippet = vi.fn(() => true);
+    const onChange = vi.fn();
+    renderBar({ value: "pwd", onChange, snippets, onRunSnippet });
+    const chip = await screen.findByRole("button", { name: "uptime" });
+    fireEvent.click(chip, { shiftKey: true });
+    expect(onRunSnippet).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenLastCalledWith("pwd\nuptime");
+  });
+
+  it("未连接时单击片段退回插入草稿", async () => {
+    const onRunSnippet = vi.fn(() => false);
+    const onChange = vi.fn();
+    renderBar({ value: "", onChange, snippets, onRunSnippet });
+    fireEvent.click(await screen.findByRole("button", { name: "df -h" }));
+    expect(onRunSnippet).toHaveBeenCalled();
+    expect(onChange).toHaveBeenLastCalledWith("df -h");
+  });
+
+  it("含 {{变量}} 的片段交给父级填值：单击=发送、Shift+单击=插入", async () => {
+    const varsSnippets = [snippet("s3", "greet", "echo {{name}}")];
+    const onRunSnippet = vi.fn(() => true);
+    const onSnippetVariables = vi.fn();
+    const onChange = vi.fn();
+    renderBar({ value: "keep", onChange, snippets: varsSnippets, onRunSnippet, onSnippetVariables });
+    const chip = await screen.findByRole("button", { name: "greet" });
+    fireEvent.click(chip);
+    expect(onSnippetVariables).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "s3" }),
+      "send",
+    );
+    fireEvent.click(chip, { shiftKey: true });
+    expect(onSnippetVariables).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "s3" }),
+      "insert",
+    );
+    expect(onRunSnippet).not.toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
   });
 

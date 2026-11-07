@@ -2,9 +2,10 @@
  * 终端撰写栏的纯逻辑（对照 Netcatty `components/terminal/TerminalComposeBar.tsx`、
  * `composeBarHelpers.ts`、`domain/composeBarHistory.ts`）。
  *
- * Netcatty 行为基线：
+ * Netcatty 行为基线（本模块在按键语义上做了调整）：
  * - 固定在终端底部，高度默认 120、可拖拽 72–360，内容不撑高、textarea 内部滚动；
- * - 普通 Enter 发送、Shift+Enter 换行、Ctrl/Alt/Cmd+Enter 也发送；
+ * - termX：Enter 发送全部、Shift+Enter 只发送光标所在行、Ctrl+Enter 换行；
+ *   Alt/Cmd+Enter 仍按发送（与 Netcatty 一致）；
  * - Escape 关闭；输入法组合态（composition / keyCode 229）不触发任何快捷键；
  * - ↑/↓ 在光标位于首/末行时翻阅本会话发送历史，回到草稿时恢复原文；
  * - 发送时换行统一为 LF，多行内容在 bracketed paste 模式下包裹后追加 `\r`。
@@ -25,6 +26,8 @@ export function clampComposeBarHeight(height: number): number {
 
 export type ComposeKeyAction =
   | "send"
+  | "send-line"
+  | "newline"
   | "close"
   | "history-up"
   | "history-down"
@@ -45,8 +48,9 @@ export interface ComposeKeyInput {
 }
 
 /**
- * 键盘映射：输入法组合态一律交还给输入法；Enter 非 Shift 即发送（与 Netcatty 一致），
- * Shift+Enter 默认换行；↑/↓ 仅在无修饰键且允许翻阅历史时接管。
+ * 键盘映射：输入法组合态一律交还给输入法。
+ * Enter = 发送全部；Shift+Enter = 只发送单行；Ctrl+Enter = 换行（不发送）；
+ * Alt/Cmd+Enter 保持发送（与 Netcatty 一致）；↑/↓ 仅在无修饰键且允许翻阅历史时接管。
  */
 export function resolveComposeKeyAction(input: ComposeKeyInput): ComposeKeyAction {
   if (input.isComposing || input.keyCode === 229) return "default";
@@ -56,9 +60,36 @@ export function resolveComposeKeyAction(input: ComposeKeyInput): ComposeKeyActio
   if (plain && input.key === "ArrowDown" && input.canHistoryDown) {
     return "history-down";
   }
-  if (input.key === "Enter" && !input.shiftKey) return "send";
+  if (input.key === "Enter") {
+    if (input.ctrlKey) return "newline";
+    if (input.shiftKey) return "send-line";
+    return "send";
+  }
   if (input.key === "Escape") return "close";
   return "default";
+}
+
+export interface ComposeLineSlice {
+  /** 光标所在行的原文（未 trim）。 */
+  line: string;
+  /** 移除该行后剩下的草稿（保留其余行顺序）。 */
+  rest: string;
+  /** 移除后光标应落到的位置。 */
+  cursor: number;
+}
+
+/** Shift+Enter：取出光标所在单行；其余内容按原顺序保留。 */
+export function sliceComposeLine(value: string, cursor: number): ComposeLineSlice {
+  const lines = value.split("\n");
+  const safeCursor = Math.max(0, Math.min(cursor, value.length));
+  const index = value.slice(0, safeCursor).split("\n").length - 1;
+  const line = lines[index] ?? "";
+  const before = lines.slice(0, index);
+  const after = lines.slice(index + 1);
+  const rest = [...before, ...after].join("\n");
+  const beforeLength = before.join("\n").length;
+  const nextCursor = before.length > 0 ? beforeLength + (after.length > 0 ? 1 : 0) : 0;
+  return { line, rest, cursor: nextCursor };
 }
 
 /** 仅当光标/选区在首行（↑）或末行（↓）且没有选区时，↑/↓ 才翻阅历史。 */

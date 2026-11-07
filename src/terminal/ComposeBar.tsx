@@ -3,9 +3,9 @@
 // 结构：固定在终端底部，体型自上而下为
 // 顶边 6px 拖拽条 → 30px 快捷片段条（固定片段 chips + 管理浮层）→ 文本区 + 关闭按钮；
 // 高度默认 120px、可拖拽 72–360px 并持久化，内容不撑高，textarea 内部滚动。
-// 键盘：Enter 发送 / Shift+Enter 换行 / Ctrl·Alt·Cmd+Enter 发送 / Esc 关闭；
-// ↑↓ 在首末行翻阅本会话的撰写历史；输入法组合态一律交还给输入法。
-// 片段：普通点击插入草稿末尾（光标置尾），Shift+点击立即发送（复用脚本模块）。
+// 键盘：Enter 发送全部 / Shift+Enter 只发送光标所在行 / Ctrl+Enter 换行 /
+// Alt·Cmd+Enter 发送 / Esc 关闭；↑↓ 在首末行翻阅本会话的撰写历史；输入法组合态一律交还给输入法。
+// 片段：单击立即发送，Shift+单击只插入到输入框（含 {{变量}} 的片段先弹填值框再按该语义执行）。
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Pin, Plus, Search, X } from "lucide-react";
 import type { Snippet } from "../backend/client";
@@ -27,8 +27,10 @@ import {
   clampComposeBarHeight,
   navigateComposeHistory,
   resolveComposeKeyAction,
+  sliceComposeLine,
   type ComposeHistoryState,
 } from "./composeBarModel";
+import { parseSnippetVariables } from "../snippets/snippetsModel";
 
 const COMPOSE_BAR_HEIGHT_STORAGE_KEY = "termx.composeBar.height";
 
@@ -72,8 +74,13 @@ export interface ComposeBarProps {
   connected: boolean;
   /** 仓库片段（顶部快捷条的数据源；内置 4 条在无片段时兜底）。 */
   snippets?: readonly Snippet[];
-  /** Shift+点击片段：立即执行（复用脚本模块）；返回 false 表示未连接。 */
+  /** 单击片段：立即发送执行（复用脚本模块）；返回 false 表示未连接。 */
   onRunSnippet?: (snippet: Snippet) => boolean;
+  /**
+   * 含 {{变量}} 的片段：交给父级弹填值框；填完按 mode 直接发送或只插入草稿。
+   * （填值框由 TerminalPane 持有，避免把变量收集逻辑搬进撰写栏。）
+   */
+  onSnippetVariables?: (snippet: Snippet, mode: "send" | "insert") => void;
 }
 
 export function ComposeBar({
@@ -85,6 +92,7 @@ export function ComposeBar({
   connected,
   snippets = [],
   onRunSnippet,
+  onSnippetVariables,
 }: ComposeBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [height, setHeight] = useState(readStoredHeight);
@@ -182,10 +190,18 @@ export function ComposeBar({
     writePinned(next);
   }
 
-  function handleSnippetActivate(snippet: Snippet, sendImmediately: boolean) {
-    if (sendImmediately) {
-      onRunSnippet?.(snippet);
+  /**
+   * 片段激活：单击 = 直接发送，Shift+单击 = 只插入草稿。
+   * 含 {{变量}} 时先交由父级弹填值框，填完再按同一语义发送或插入。
+   */
+  function handleSnippetActivate(snippet: Snippet, mode: "send" | "insert") {
+    if (parseSnippetVariables(snippet.command).length > 0) {
+      onSnippetVariables?.(snippet, mode);
       return;
+    }
+    if (mode === "send") {
+      // 未连接时退回插入，避免点击无反馈、内容丢失。
+      if (onRunSnippet?.(snippet)) return;
     }
     const insertion = insertSnippetIntoCompose(value, snippet.command);
     resetHistory();
@@ -245,6 +261,16 @@ export function ComposeBar({
       send();
       return;
     }
+    if (action === "send-line") {
+      event.preventDefault();
+      sendCurrentLine();
+      return;
+    }
+    if (action === "newline") {
+      event.preventDefault();
+      insertNewline();
+      return;
+    }
     if (action === "close") {
       event.preventDefault();
       onClose();
@@ -277,6 +303,39 @@ export function ComposeBar({
     resetHistory();
     onChange("");
     textareaRef.current?.focus();
+  }
+
+  /** Shift+Enter：只发送光标所在行，其余内容留在草稿里（光标落在被删处）。 */
+  function sendCurrentLine() {
+    const el = textareaRef.current;
+    if (!el) return;
+    const slice = sliceComposeLine(value, el.selectionStart);
+    if (!slice.line.trim()) return;
+    if (!connected || !onSend(slice.line)) return;
+    resetHistory();
+    onChange(slice.rest);
+    requestAnimationFrame(() => {
+      const node = textareaRef.current;
+      if (!node) return;
+      node.focus();
+      node.setSelectionRange(slice.cursor, slice.cursor);
+    });
+  }
+
+  /** Ctrl+Enter：在光标处插入换行，不发送（浏览器默认不会为 Ctrl+Enter 换行）。 */
+  function insertNewline() {
+    const el = textareaRef.current;
+    if (!el) return;
+    const start = Math.max(0, Math.min(el.selectionStart, value.length));
+    const end = Math.max(start, Math.min(el.selectionEnd, value.length));
+    const next = `${value.slice(0, start)}\n${value.slice(end)}`;
+    handleChange(next);
+    const cursor = start + 1;
+    requestAnimationFrame(() => {
+      const node = textareaRef.current;
+      if (!node) return;
+      node.setSelectionRange(cursor, cursor);
+    });
   }
 
   function handleResizeStart(event: React.MouseEvent) {
@@ -340,13 +399,13 @@ export function ComposeBar({
             <div
               className="term-compose-chip"
               key={snippet.id}
-              title={`${snippet.name}\n${snippet.command.split("\n")[0]}\n点击插入，Shift+点击直接发送`}
+              title={`${snippet.name}\n${snippet.command.split("\n")[0]}\n点击直接发送，Shift+点击插入到输入框`}
             >
               <button
                 type="button"
                 className="term-compose-chip-label"
                 onClick={(event) =>
-                  handleSnippetActivate(snippet, event.shiftKey)
+                  handleSnippetActivate(snippet, event.shiftKey ? "insert" : "send")
                 }
               >
                 {snippet.name}
@@ -435,7 +494,7 @@ export function ComposeBar({
           ref={textareaRef}
           className="term-compose-input"
           value={value}
-          placeholder="在此输入命令，按回车发送..."
+          placeholder="回车发送全部 · Shift+回车发送当前行 · Ctrl+回车换行"
           aria-label="撰写栏"
           onChange={(e) => handleChange(e.target.value)}
           onKeyDown={handleKeyDown}

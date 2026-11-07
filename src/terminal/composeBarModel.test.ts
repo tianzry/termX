@@ -8,6 +8,7 @@ import {
   clampComposeBarHeight,
   navigateComposeHistory,
   resolveComposeKeyAction,
+  sliceComposeLine,
 } from "./composeBarModel";
 
 describe("撰写栏高度", () => {
@@ -22,20 +23,46 @@ describe("撰写栏高度", () => {
 describe("撰写栏按键映射", () => {
   const base = { key: "a" };
 
-  it("Enter 发送，Shift+Enter 换行，Ctrl/Alt/Cmd+Enter 也发送", () => {
+  it("Enter 发送全部、Shift+Enter 只发单行、Ctrl+Enter 换行，Alt/Cmd+Enter 仍发送", () => {
     expect(resolveComposeKeyAction({ ...base, key: "Enter" })).toBe("send");
     expect(
       resolveComposeKeyAction({ ...base, key: "Enter", shiftKey: true }),
-    ).toBe("default");
+    ).toBe("send-line");
     expect(
       resolveComposeKeyAction({ ...base, key: "Enter", ctrlKey: true }),
-    ).toBe("send");
+    ).toBe("newline");
+    expect(
+      resolveComposeKeyAction({ ...base, key: "Enter", ctrlKey: true, shiftKey: true }),
+    ).toBe("newline");
     expect(
       resolveComposeKeyAction({ ...base, key: "Enter", altKey: true }),
     ).toBe("send");
     expect(
       resolveComposeKeyAction({ ...base, key: "Enter", metaKey: true }),
     ).toBe("send");
+  });
+
+  it("Shift+Enter 取出光标所在行，其余内容与光标位置保留", () => {
+    expect(sliceComposeLine("one\ntwo\nthree", 5)).toEqual({
+      line: "two",
+      rest: "one\nthree",
+      cursor: 4,
+    });
+    expect(sliceComposeLine("one\ntwo", 0)).toEqual({
+      line: "one",
+      rest: "two",
+      cursor: 0,
+    });
+    expect(sliceComposeLine("one\ntwo", 7)).toEqual({
+      line: "two",
+      rest: "one",
+      cursor: 3,
+    });
+    expect(sliceComposeLine("only", 2)).toEqual({
+      line: "only",
+      rest: "",
+      cursor: 0,
+    });
   });
 
   it("输入法组合态不触发发送或关闭", () => {

@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-11-07 — 撰写栏：片段单击语义、草稿持久化、三档发送按键
+
+### 修改
+
+- **片段单击语义反转**：快捷片段改为「单击 = 直接发送执行，Shift+单击 = 只插入输入框」。按住 Shift 的路径绝不触发发送；未连接时单击退回插入，避免点击无反馈。含 `{{变量}}` 的片段仍先走原填值流程，填完按同一语义执行（`snippetVarPrompt` 新增 `mode: "send" | "insert"`，按钮文案随之变为「插入」）。
+- **草稿按主机持久化**：新增 `terminal/composeDraft.ts`，以 `termx.composeDraft.v1.<ssh|serial|telnet>:<profileId>` 存 localStorage（去抖 300ms，空白即删键）。只有绑定已保存主机的终端才保存与恢复；本地 shell（pty）与临时串口 / Telnet 一律不保存。串口 / Telnet 的「是否来自已保存主机」依据：串口在 connector 上新增可选 `profileId`（`connect(profile)` 与「保存为主机」后打开都会带上），Telnet 复用 session 已有的 `profileId`。
+- **发送按键**：Enter = 发送输入框全部内容；Shift+Enter = 只发送光标所在单行（其余行留在草稿，光标落到被删处）；Ctrl+Enter = 光标处换行不发送；Alt / Cmd+Enter 保持发送。`composeBarModel` 新增 `send-line` / `newline` 动作与纯函数 `sliceComposeLine`。
+- 输入框 hint 改为「回车发送全部 · Shift+回车发送当前行 · Ctrl+回车换行」；片段 tooltip 同步改为「点击直接发送，Shift+点击插入到输入框」。
+
+### 踩坑
+
+- 多个标签页并存时所有 TerminalPane 都挂在 DOM 里，`document.querySelector('.term-compose-input')` 会命中隐藏页的输入框（自动化验证时踩到：草稿写进了本地 shell，导致主机草稿「看起来没保存」）。验证脚本必须按 `offsetParent !== null` 过滤可见元素，不能只看首个匹配。
+
+### 实测（release + CDP 9222，四类终端）
+
+- **本地 shell**（临时）：单击「磁盘用量」片段立即执行 `df -h`、草稿保持空；Shift+单击「窗口标题」只插入输入框、终端无新输出；草稿 `aaa\nbbb\nccc` 光标在第 2 行时 Shift+Enter 只执行 `bbb` 且剩 `aaa\nccc`；Ctrl+Enter 在光标处插入空行不发送；构造 `isComposing` 的 Enter 不发送；Enter 发送剩余全部后清空。localStorage 无任何草稿键；关闭标签重开 Git Bash 撰写栏为空。
+- **SSH 129**：输入 `ssh-draft-42` → 落键 `ssh%3Ab994…`；关闭标签重开同一主机，撰写栏自动恢复该文本。
+- **串口 COM4（已保存主机）**：草稿落键 `serial%3A10c6…`，关闭标签重开后恢复。
+- **Telnet Echo 2324（已保存主机）**：草稿落键 `telnet%3A6d29…`，关闭标签重开后恢复（本次 2324 服务未启动，连接失败但草稿存取与终端类型无关，仍验证通过）。
+- 验证后已清理测试草稿键（`termx.composeDraft*` 全部移除）。
+
+### 门禁
+
+- `npm run test:run` 840✓（新增 composeDraft 7 例 + 按键/片段语义用例）；`npm run build`✓；`cargo check --lib`✓；`cargo check --lib --features server`✓；`cargo test --lib` 968✓；`npx tauri build --no-bundle`✓。
+
+---
+
 ## 2026-11-07 — 关键字高亮规则编辑与标准色块取色
 
 ### 修改
