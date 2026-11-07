@@ -6586,13 +6586,23 @@ button:disabled {
   max-width: 168px;
   border-radius: 4px;
   overflow: hidden;
-  background: hsl(var(--muted));
-  color: hsl(var(--foreground));
+  /* 对齐 Netcatty buildTheme().chipBg：终端前景 6% + 背景 94%。 */
+  background: color-mix(
+    in srgb,
+    var(--compose-chip-fg, hsl(var(--foreground))) 6%,
+    var(--compose-chip-bg, hsl(var(--background))) 94%
+  );
+  color: var(--compose-chip-fg, hsl(var(--foreground)));
   transition: background-color 0.15s ease;
 }
 
 .term-compose-chip:hover {
-  background: hsl(var(--accent, var(--muted)));
+  /* Netcatty chipHoverBg：前景 12% + 背景 88%。 */
+  background: color-mix(
+    in srgb,
+    var(--compose-chip-fg, hsl(var(--foreground))) 12%,
+    var(--compose-chip-bg, hsl(var(--background))) 88%
+  );
 }
 
 .term-compose-chip-label {

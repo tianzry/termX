@@ -6,9 +6,11 @@
 // 键盘：Enter 发送 / Shift+Enter 换行 / Ctrl·Alt·Cmd+Enter 发送 / Esc 关闭；
 // ↑↓ 在首末行翻阅本会话的撰写历史；输入法组合态一律交还给输入法。
 // 片段：普通点击插入草稿末尾（光标置尾），Shift+点击立即发送（复用脚本模块）。
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Pin, Plus, Search, X } from "lucide-react";
 import type { Snippet } from "../backend/client";
+import { useSettings } from "../settings/settingsStore";
+import { isDarkTerminal, TERM_THEME_DARK, TERM_THEME_LIGHT } from "../Terminal";
 import {
   COMPOSE_PINNED_STORAGE_KEY,
   buildComposeSnippetMap,
@@ -96,6 +98,17 @@ export function ComposeBar({
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => readPinned() ?? []);
   const [manageOpen, setManageOpen] = useState(false);
   const [snippetQuery, setSnippetQuery] = useState("");
+
+  // 固定片段 chip 配色对齐 Netcatty：以终端主题的前景/背景混色，
+  // 深色终端不再是突兀的浅灰底（6% 前景 + 94% 背景，hover 12%/88%）。
+  const settings = useSettings();
+  const termTheme = isDarkTerminal(settings)
+    ? TERM_THEME_DARK
+    : TERM_THEME_LIGHT;
+  const chipThemeVars = {
+    "--compose-chip-bg": termTheme.background ?? "#ffffff",
+    "--compose-chip-fg": termTheme.foreground ?? "#16202b",
+  } as CSSProperties;
 
   const snippetMap = useMemo(() => buildComposeSnippetMap(snippets), [snippets]);
   const pinnedSnippets = useMemo(
@@ -307,7 +320,7 @@ export function ComposeBar({
   return (
     <div
       className="term-compose-bar"
-      style={{ height }}
+      style={{ height, ...chipThemeVars }}
       data-section="terminal-compose-bar"
     >
       <div

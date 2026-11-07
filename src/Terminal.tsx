@@ -86,7 +86,7 @@ function resolveFontFamily(s: AppSettings): string {
   return `${base}${cjk}${DEFAULT_FONT_STACK}`;
 }
 
-const TERM_THEME_DARK: ITheme = {
+export const TERM_THEME_DARK: ITheme = {
   background: "#16181d",
   foreground: "#dfe3ea",
   cursor: "#6aa1ff",
@@ -95,7 +95,7 @@ const TERM_THEME_DARK: ITheme = {
   brightCyan: "#56d4dd",
 };
 
-const TERM_THEME_LIGHT: ITheme = {
+export const TERM_THEME_LIGHT: ITheme = {
   background: "#ffffff",
   foreground: "#16202b",
   cursor: "#0a84ff",
