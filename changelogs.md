@@ -4,6 +4,39 @@
 
 ---
 
+## 2026-11-08 — MCP 面向外部 agent 的接入说明（协议自描述 + 设置页接入指南 + 单一权威源）
+
+### 修改
+
+- 新增 `src-tauri/src/mcp/guide.rs`：`INSTRUCTIONS` 是唯一权威文案，`initialize.instructions` 与设置页「可直接粘贴的 system prompt」直接读它；工具速查表的参数从 `tools::definitions()` 实时生成，避免 schema 漂移（`settings_guide_and_initialize_share_one_source` 测试锁定）。
+- `src-tauri/src/mcp/tools.rs`：5 个工具的 `description` 补齐「何时用 / 何时不用」；`inputSchema` 给全 required/optional、类型、默认值与示例值；返回与错误统一为 `{code, message, hint}`，只读工具原有字段（sessions / hostCount / hosts / snippets）平铺保留，不破坏已验证客户端。
+- `src-tauri/src/mcp/server.rs`：`initialize` 返回 `guide::INSTRUCTIONS`；`src-tauri/src/commands/mcp.rs` 新增 `mcp_guide` 命令，`lib.rs` 与 headless 分发同步登记。
+- `src/settings/AiTab.tsx` + `src/backend/client.ts`：AI → 工具接入页新增「接入指南」区块，按 6 块展示 Trae / Claude Desktop / Cursor / curl 三步 / system prompt / 5 工具速查表，每块独立复制按钮；文案全部来自后端，前端不另抄。
+- `src/styles.css`：`.nc-mcp-guide*` 分块样式；代码块 `white-space:pre` + 独立横向滚动，system prompt 与速查表 `pre-wrap`；窄窗口卡片不撑破、页面无横向溢出。
+- `src/settings/i18n.ts`：新增 `settings.ai.guide` / `.desc` / `.loading` 中英文案。
+
+### 实机验证（debug + Vite HMR）
+
+- 真实客户端 `initialize`（Bearer token）：HTTP 200，`instructions` 返回完整指南（5 工具、推荐顺序、失败自纠）；`tools/list` 返回 5 个工具，`terminal_execute` required=`["sessionId","command"]`、timeoutMs 有 minimum/maximum/default。
+- `tools/call get_environment`：`{code:"ok", message, hint, sessions, hostCount}`，`isError:false`。
+- 设置页逐块点击「复制」并回读剪贴板：trae 224 / claude 247 / cursor 247 / curl 949 / systemPrompt 1035 / tools 495 字符，内容与对应代码块一致（仅 LF→CRLF 差异）。
+- 680px 窄窗口：页面 `scrollWidth == viewport == 680`，配置/curl 代码块各自出现横向滚动，system prompt 与速查表换行无溢出。
+
+### 截图（`docs/verify-ui/`）
+
+- `ui8-guide-top.png`：Trae / Claude Desktop / Cursor 配置片段。
+- `ui8-guide-bottom.png`：curl 尾部、system prompt、5 工具速查表。
+- `ui8-guide-narrow.png`：680px 窄窗口代码块横向滚动。
+
+### 门禁
+
+- `npm run test:run`：81 文件 / 915 通过。
+- `npm run build`：通过。
+- `cargo test --lib mcp::`：18 通过（新增 guide 2 例、tools 3 例）。
+- `cargo check --lib --features server`：通过。
+
+---
+
 ## 2026-11-08 — 设置 AI 工具接入页按钮组与输入框对齐
 
 ### 修改

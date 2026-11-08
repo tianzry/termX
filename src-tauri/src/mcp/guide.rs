@@ -187,4 +187,27 @@ mod tests {
         assert!(INSTRUCTIONS.contains("推荐调用顺序"));
         assert!(INSTRUCTIONS.contains("{code, message, hint}"));
     }
+
+    /// 单一权威源：设置页 system prompt 必须等于 initialize 的 instructions，
+    /// 速查表参数必须来自 `tools::definitions()`，不允许前后端各维护一份。
+    #[test]
+    fn settings_guide_and_initialize_share_one_source() {
+        let list = blocks(Some("http://127.0.0.1:47391/mcp"), Some("tok"));
+        let prompt = list.iter().find(|b| b.id == "systemPrompt").unwrap();
+        assert_eq!(prompt.content, INSTRUCTIONS);
+
+        let table = tools_table();
+        let defs = crate::mcp::tools::definitions();
+        for tool in defs.as_array().unwrap() {
+            let name = tool["name"].as_str().unwrap();
+            assert!(table.contains(name), "速查表缺少 {name}");
+            for (param, spec) in tool["inputSchema"]["properties"].as_object().unwrap() {
+                let ty = spec["type"].as_str().unwrap();
+                assert!(
+                    table.contains(&format!("{param}: {ty}")),
+                    "速查表缺少参数 {name}.{param}: {ty}"
+                );
+            }
+        }
+    }
 }
