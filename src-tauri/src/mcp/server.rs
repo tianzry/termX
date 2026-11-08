@@ -26,10 +26,6 @@ const MAX_HEADER_BYTES: usize = 8 * 1024;
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 const SUPPORTED_PROTOCOL: &str = "2025-06-18";
 
-const INSTRUCTIONS: &str = "termX MCP 暴露本机已打开的终端会话与主机清单。\
-先调用 get_environment 获取 sessionId，再用 terminal_execute 执行命令。\
-写操作是否放行取决于 设置 → AI → 工具接入 的权限档位。";
-
 struct Inner {
     config: McpConfig,
     token: Option<String>,
@@ -663,7 +659,7 @@ async fn dispatch(
                     "resources": { "subscribe": false, "listChanged": false }
                 },
                 "serverInfo": { "name": "termX", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": INSTRUCTIONS
+                "instructions": super::guide::INSTRUCTIONS
             }))
         }
         "ping" => Ok(json!({})),

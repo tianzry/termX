@@ -6,5 +6,6 @@
 
 pub mod approval;
 pub mod config;
+pub mod guide;
 pub mod server;
 pub mod tools;

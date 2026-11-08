@@ -6,6 +6,7 @@ use tauri::State;
 use crate::error::{AppError, AppResult};
 use crate::mcp::approval::{self, ApprovalDecision, ApprovalRequestPayload};
 use crate::mcp::config::{self, McpConfig};
+use crate::mcp::guide::{self, GuideBlock};
 use crate::mcp::server::{client_snippet, McpRuntime, McpState, McpStatus};
 use crate::state::AppState;
 
@@ -122,6 +123,16 @@ pub fn mcp_rotate_token(app: tauri::AppHandle, rt: State<'_, McpState>) -> AppRe
 #[tauri::command]
 pub fn mcp_client_config(rt: State<'_, McpState>, kind: String) -> AppResult<String> {
     Ok(client_snippet(&runtime(&rt).status(), &kind))
+}
+
+/// 设置页「接入指南」：与 `initialize.instructions` 共用 `mcp::guide` 的同一份文案。
+#[tauri::command]
+pub fn mcp_guide(rt: State<'_, McpState>) -> AppResult<Vec<GuideBlock>> {
+    let status = runtime(&rt).status();
+    Ok(guide::blocks(
+        status.url.as_deref(),
+        status.bearer_token.as_deref(),
+    ))
 }
 
 #[tauri::command]

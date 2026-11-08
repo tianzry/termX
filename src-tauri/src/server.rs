@@ -1133,7 +1133,11 @@ fn dispatch(
             };
             ok(Ok::<_, crate::error::AppError>(status))
         }
-        "mcp_set_config" | "mcp_rotate_token" | "mcp_client_config" | "mcp_approval_pending"
+        "mcp_set_config"
+        | "mcp_rotate_token"
+        | "mcp_client_config"
+        | "mcp_guide"
+        | "mcp_approval_pending"
         | "mcp_approval_resolve" | "mcp_approval_revoke" => Err(json!(
             "gui_only: 对外 MCP 监听器只在桌面 GUI 进程内运行"
         )),
