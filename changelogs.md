@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-08 — 面向用户的 MCP 接入指南文档
+
+### 修改
+
+- 新增 `docs/mcp-guide.md`：面向第一次接触 termX MCP 的使用者，覆盖「是什么 / 快速开始与三客户端配置 / 5 个工具参数与返回 / 调用顺序与完整示例 / 权限三档与审批三选项 / 安全边界 / 排错 / 已知限制」。
+- 内容以 `src-tauri/src/mcp/guide.rs`（`INSTRUCTIONS` 与设置页接入指南）和 `src-tauri/src/mcp/tools.rs`（`description` / `inputSchema` / 返回信封）为权威源，逐项核对参数名、返回字段、错误码与 HTTP 状态。
+
+### 校对
+
+- `terminal_execute` / `session_close` 的参数名与 required、`timeoutMs` 1000–600000 / 默认 30000 与 schema 一致；成功返回字段 `stdout` / `stderr` / `exitCode` / `closed` 与实现一致。
+- 权限档位切换走 `rt.set_config`（不重启、不换 token、不结算挂起审批）；「始终允许」持久化 key 为 `mcp.allowed_tools`，撤销走 `mcp_approval_revoke`；审批超时 `110_000 ms`。
+- HTTP 行为与 `server.rs` 一致：401 `unauthorized` + `WWW-Authenticate`、403 `forbidden_host` / `forbidden_origin`、405 `sse_not_supported`、503 `mcp_disabled` / `mcp_restarted`、400 `parse_error`、413 / 431 体积上限。
+
+---
+
 ## 2026-11-08 — 顶栏 AI 助手图标恢复可点击并直达工具接入页
 
 ### 修改
