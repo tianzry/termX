@@ -7564,5 +7564,19 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
   `npx tauri build --no-bundle` ✓。
 
+## 2026-11-08 — 关键字高亮浮层：总开关与「仅显示匹配行」同排联动
+
+- 浮层头部改为 `.term-highlight-switches`：总开关（已启用 / 已禁用）与「仅显示匹配行」并排一行，
+  后者紧随总开关（间距 12px），不再单独占一行。
+- 新增 `setHighlightMasterEnabled`：关闭总开关时同步把行过滤关掉并 `flushFilterPending()`，
+  避免关闭后仍停在过滤后的残视图。
+- 总开关关闭时「仅显示匹配行」按钮 `disabled` 且降透明度（`opacity: .45`），点击无效；
+  已过滤丢弃的历史行按既有设计不回流（后续输出全量显示）。
+- 实机（本地 Git Bash 终端）：同一行 `sameRow=true`；总开→仅开时只剩 2 条命中行；
+  总关后「仅显示匹配行」自动关闭 + disabled，再次点击仍关闭；新输出 `ccc-unfiltered` 正常显示。
+  截图 `docs/verify-ui/ui2-switch-row.png`、`ui2-only-matching-on.png`、`ui2-master-off.png`。
+- 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
+  `npx tauri build --no-bundle` ✓。
+
 
 

@@ -999,6 +999,16 @@ export function TerminalPane({
     else flushFilterPending();
   }
 
+  /** 关键字高亮总开关：关闭时同步关掉行过滤，避免留下过滤后的残视图。 */
+  function setHighlightMasterEnabled(next: boolean) {
+    if (!next && onlyMatchingLinesRef.current) {
+      onlyMatchingLinesRef.current = false;
+      setOnlyMatchingLines(false);
+      flushFilterPending();
+    }
+    persistHostKeywordHighlight({ enabled: next });
+  }
+
   /** 直通字节 → 终端（ZMODEM 非协议输出、串口原始字节共用）。 */
   function writeTerminalText(bytes: Uint8Array) {
     const term = controllerRef.current?.term;
@@ -3880,36 +3890,42 @@ export function TerminalPane({
                           <span className="term-highlight-title">
                             {TERMINAL_TOOLBAR_TEXT.highlight.label}
                           </span>
-                          <label className="term-highlight-enabled">
-                            <span>{highlightUiEnabled ? "已启用" : "已禁用"}</span>
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={highlightUiEnabled}
-                              className={`term-highlight-toggle${highlightUiEnabled ? " on" : ""}`}
-                              onClick={() =>
-                                persistHostKeywordHighlight({
-                                  enabled: !highlightUiEnabled,
-                                })
-                              }
-                            >
-                              <span />
-                            </button>
-                          </label>
+                          <div className="term-highlight-switches">
+                            <label className="term-highlight-enabled">
+                              <span>{highlightUiEnabled ? "已启用" : "已禁用"}</span>
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={highlightUiEnabled}
+                                className={`term-highlight-toggle${highlightUiEnabled ? " on" : ""}`}
+                                title="关键字高亮总开关"
+                                onClick={() =>
+                                  setHighlightMasterEnabled(!highlightUiEnabled)
+                                }
+                              >
+                                <span />
+                              </button>
+                            </label>
+                            <label className="term-highlight-enabled">
+                              <span>仅显示匹配行</span>
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={onlyMatchingLines && highlightUiEnabled}
+                                disabled={!highlightUiEnabled}
+                                className={`term-highlight-toggle${onlyMatchingLines && highlightUiEnabled ? " on" : ""}`}
+                                title={
+                                  highlightUiEnabled
+                                    ? "类似 grep：只显示命中已启用规则的行（不影响日志录制）"
+                                    : "先启用关键字高亮才能使用行过滤"
+                                }
+                                onClick={toggleOnlyMatchingLines}
+                              >
+                                <span />
+                              </button>
+                            </label>
+                          </div>
                         </div>
-                        <label className="term-highlight-enabled term-highlight-only-matches">
-                          <span>仅显示匹配行</span>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={onlyMatchingLines}
-                            className={`term-highlight-toggle${onlyMatchingLines ? " on" : ""}`}
-                            title="类似 grep：只显示命中已启用规则的行（不影响日志录制）"
-                            onClick={toggleOnlyMatchingLines}
-                          >
-                            <span />
-                          </button>
-                        </label>
                         {!sshProfileId && (
                           <div className="term-highlight-hint">
                             本类型终端没有主机级规则，这里编辑的是全局规则（同步到设置页）

@@ -6256,9 +6256,17 @@ button:disabled {
   text-align: center;
 }
 
-/* 「仅显示匹配行」开关：与规则列表同一浮层，单独一行 */
-.term-highlight-only-matches {
-  padding: 4px 10px 2px;
+/* 顶部两个开关（总开关 + 仅显示匹配行）同一行，紧随其后排列 */
+.term-highlight-switches {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.term-highlight-menu .term-highlight-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* 非 SSH 终端（本地 / 串口 / Telnet）：提示这里是全局规则 */
