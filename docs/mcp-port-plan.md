@@ -1,0 +1,136 @@
+# 对外 MCP 移植方案（Settings → AI → 工具接入）
+
+> 状态：方案 + 后端已落地（`feat/mcp-server` 分支，独立 worktree）。
+> 前端设置页 UI 未落地（见 §9），其余实现与未实现清单见 §6/§10。
+
+## 1. Netcatty 侧取证（唯一基准）
+
+| 主题 | 文件 : 行号 | 事实 |
+| --- | --- | --- |
+| 主进程 TCP bridge | `electron/bridges/mcpServerBridge.cjs:L1325-L1395` | `net.createServer` 绑定 `127.0.0.1` + **随机端口**；成功后写 discovery 文件并回调 `externalMcpHostReadyHook({port, token})` |
+| Token | `electron/bridges/mcpServerBridge.cjs:L104-L133` | `crypto.randomBytes(32)` 生成；撤销时清空 token 并断开已认证 external socket |
+| Discovery 文件 | `electron/bridges/mcpServerBridge.cjs:L511-L568` | 内容含 `port/token/pid/permissionMode/updatedAt`；校验失败自动重写，避免客户端拿到过期信息 |
+| 认证 | `electron/bridges/mcpServerBridge.cjs:L1454-L1537` | 首帧必须是 `auth/verify`；普通 token / external token / delegated token 三种；external socket 被强制绑定 `EXTERNAL_MCP_CHAT_SESSION_ID` |
+| RPC 分派 | `electron/bridges/mcpServerBridge.cjs:L2239-L2351` | `netcatty/*` 走内置 capability handler，其余走 capability RPC；含权限评估、session scope 校验、写审批 |
+| 对外 HTTP 运行时 | `electron/bridges/externalMcpController.cjs:L173-L204` | 绑定 `chatSessionId`，`getToken` 提供 bearer，RPC 走 `dispatchBuiltinRpc` + privacy guard |
+| HTTP 启停/错误 | `electron/bridges/externalMcpController.cjs:L253-L296` | `listen_failed / port_in_use / invalid_address` 三类错误码；`httpEnabled/enabled` 决定启停 |
+| 客户端片段 | `electron/domain/externalMcpHttp.ts:L15-L58` | `http://host:port/mcp` + `Authorization: Bearer`；生成 Codex TOML / 环境变量 / Claude 命令 / 通用 MCP JSON |
+| 工具目录 | `electron/capabilities/catalog/index.cjs:L3-L27` | `META/TERMINAL/SFTP/VAULT/PORT_FORWARD/HARNESS` 汇总为 `ALL_CAPABILITIES` |
+| 目录条目样例 | `electron/capabilities/catalog/terminal.cjs:L6-L89` | 字段：`id / description / policy / surfaces.builtin / surfaces.public / mcpTool / rpcMethod / inputShape / write / bypassesApproval` |
+| SFTP 条目 | `electron/capabilities/catalog/sftp.cjs:L5-L139` | 11 个 sftp 工具，写工具标 `write: true` |
+| 工具面生成 | `electron/capabilities/codegen/toolSurfaces.cjs:L57-L97` | 按 surface 过滤 → `listMcpTools()` |
+| McpServer 注册 | `electron/capabilities/codegen/mcpToolRegistry.cjs:L118-L245` | `createToolHandler()` 依 `mcpTool/rpcMethod/inputShape/policy` 生成 handler，`server.tool(...)` 注册 |
+| 渐进式工具集 | `electron/mcp/progressiveMcpTools.cjs:L9-L105` | `CORE_MCP_TOOL_NAMES` + `DEFERRED_MCP_TOOLSETS`（sftp_advanced / vault_hosts / notes / snippets / scripts / portforward） |
+| 工具加载 | `electron/mcp/progressiveMcpTools.cjs:L145-L189` | 初始 15 个核心工具，`load_netcatty_tools` 按组动态加载 |
+| stdio server | `electron/mcp/netcatty-mcp-server.cjs:L313-L359` | 创建 `McpServer`、写 instructions、注册渐进式或 delegated profile |
+| server instructions | `electron/mcp/netcattyMcpInstructions.cjs:L3-L6` | 覆盖 terminals / hosts / SFTP / vault / snippets / scripts / port forwards，说明 `get_environment` 与 `load_netcatty_tools` |
+| 设置页卡片 | `components/settings/tabs/ai/ExternalMcpCard.tsx:L49-L87, L248-L293, L335-L391, L393-L489` | 状态机（disabled/unavailable/running/starting/error）、开关+模式+超时+HTTP 配置、提交与轮询 |
+| HTTP 区块 | `components/settings/tabs/ai/ExternalMcpHttpSection.tsx:L77-L133, L180-L290, L291-L375` | 端口 / 监听地址 / 客户端 host / 自定义绑定开关 / URL / token / Codex 配置 / Claude 命令 / 通用 JSON |
+| 接入指引 | `components/settings/tabs/ai/ToolAccessGuidance.tsx:L10-L37, L95-L140` + `application/state/useToolAccessGuidanceState.ts:L40-L62, L81-L159` | 仅在 MCP 运行中且启用时展示 launcher / discovery 信息 |
+| 权限三档 | `components/settings/tabs/ai/SafetySettings.tsx:L72-L93` | `observer / confirm / auto` |
+| 状态点 / 弹窗 | `ToolStatusPill.tsx:L4-L14` / `ToolSettingsDialog.tsx:L6-L47` | `active/inactive/error` 三态；弹窗壳 |
+
+**传输结论**：Netcatty 对外有两跳 —— ①Electron 主进程 loopback TCP bridge（传 JSON-RPC，token 鉴权）；②可选对外 HTTP（`/mcp`，Bearer）与一个 Node stdio launcher（`netcatty-external-mcp-server.cjs`）作为 stdio 客户端适配层。termX 是单进程，**不需要 launcher 这一跳**。
+
+## 2. termX 复用点与冲突点
+
+| 主题 | termX 现状 | 结论 |
+| --- | --- | --- |
+| 双注册规则 | Tauri 命令在 `src-tauri/src/lib.rs:L179-L517` 的 `generate_handler!`；headless 在 `src-tauri/src/server.rs:L241` 的 `dispatch` + `dispatch_async` | 4 个 mcp 命令两处都已注册：`lib.rs:L512-L516`、`server.rs:L1113-L1137` |
+| 唯一 invoke 出口 | `src/backend/client.ts` 扁平导出函数 | 新增 `mcpStatus/mcpSetConfig/mcpRotateToken/mcpClientConfig`（`client.ts:L1983-L2029`），页面不得直接 `invoke` |
+| 嵌套 snake_case | 顶层参数 camelCase，嵌套 struct 原样 snake_case | `McpConfigPatch` 是顶层 struct，`#[serde(rename_all="camelCase")]`；返回 `McpStatus` 同样 camelCase |
+| 设置存储 | `db::settings::get/set`（`src-tauri/src/db/settings.rs:L6/L20`），通用 KV | 用 `mcp.*` 六个键，**不新增表 → 不升 `SCHEMA_VERSION`** |
+| 既有执行能力 | `plugin_exec_impl`（`commands/plugin.rs:L491`，SSH/Local，含超时）与 `ssh_exec_impl`（`commands/session.rs`） | `terminal_execute` 直接复用 `plugin_exec_impl` |
+| 关闭能力 | `lifecycle::close_resource`（`commands/lifecycle.rs:L932`，需 `kind + owner`） | `session_close` 复用，owner/kind 从注册表读 |
+| 会话注册表 | `AppState.lifecycle_sessions`（`state.rs:L77`），新增只读 `lock_sessions()`（`state.rs:L118`） | `get_environment` 数据源 |
+| 命令黑名单 | `ai::command_blacklist::load`（`command_blacklist.rs:L91`）+ `sanitize::validate_with`（`sanitize.rs:L374`） | 写工具执行前必过黑名单（与 AI 面板同一套） |
+| headless 冲突 | headless 无窗口、无前端 UI，MCP 监听器无意义 | `mcp_status` 只回配置快照（`errorCode: headless_no_listener`）；其余 3 个命令返回 `gui_only` |
+| 事件契约 | 后端→前端走 `<domain>:data:<id>` 事件 | MCP 是**入站**请求，不产生新事件；状态由前端轮询 `mcp_status`（对齐 Netcatty 的静默轮询） |
+
+## 3. 依赖选型
+
+- **不引入 `rmcp` / `axum` / `hyper`**：仓库现有 `tokio` 已启用 `net/io-util/time`（`src-tauri/Cargo.toml:L39`），本实现用 `tokio::net::TcpListener` + 手写最小 HTTP/1.1 解析（`src-tauri/src/mcp/server.rs`）。
+- JSON-RPC 手写（`dispatch`），仅支持单请求/批量数组，`id` 缺失即通知 → HTTP 202。
+- token 用两段 `uuid::Uuid::new_v4()` 拼接（244 位随机），避免新增 RNG 依赖。
+- 若后续要 SSE / 双向通知，再评估 `rmcp`（届时需新增依赖并重写传输层）。
+
+## 4. 进程内 server 与 Tauri 生命周期
+
+- 运行态 `McpRuntime` 独立于 `AppState`，以 `McpState(Arc<McpRuntime>)` 单独 `app.manage`（`lib.rs:L170-L171`），避免每个请求抢 DB 锁。
+- 启动：`setup` 内读 `mcp.enabled`，开启则 `McpRuntime::start(app.handle().clone(), cfg)`（`lib.rs:L172-L176`）。
+- 停止：`mcp_set_config` 里 `enabled=false` → `rt.stop()`；`stop` 用 `AtomicU64 generation` + `Notify` 让 accept 循环退出（旧连接凭 generation 失效）。
+- 进程退出不额外清理：socket 随进程释放（与 Netcatty 进程退出一致）。
+- 端口绑定冲突 → `port_in_use`；地址不可用 → `invalid_address`；其它 → `listen_failed`，均写回 `McpStatus.error/errorCode`。
+
+## 5. 端口 / 鉴权 / 开关设计
+
+| 项 | 设计 |
+| --- | --- |
+| 默认端口 | `47391`（与 Netcatty 同值），范围 ≥1024；改动即时重启监听 |
+| 默认监听 | `127.0.0.1`；非回环地址必须显式打开 `allowCustomBind`，否则 `custom_bind_disabled` |
+| 鉴权 | `Authorization: Bearer <token>`；定长比较防时序侧信道；token 每次启用重新生成，可手动轮换 |
+| Host/Origin | 白名单 = `127.0.0.1 / localhost / ::1` + 用户 `clientHost`；不匹配 → 403 `forbidden_host / forbidden_origin` |
+| 路径 | 仅 `POST /mcp`；`GET` → 405（不提供 SSE）；`DELETE` → 200；其它 → 404 |
+| 体积 | header ≤8KB、body ≤4MB（超限 431/413） |
+| 权限档位 | `observer` 全部写拒绝；`confirm` 本阶段也拒绝（无审批 UI）；`auto` 写放行但仍过命令黑名单 |
+
+## 6. 工具清单与映射
+
+已实现（`src-tauri/src/mcp/tools.rs`）：
+
+| 工具 | 类型 | 映射到 | 备注 |
+| --- | --- | --- | --- |
+| `get_environment` | 只读 | `AppState.lifecycle_sessions` + `db::profile::list` | 返回 `sessions[{id,kind,phase}]` 与 `hostCount`；同时对 `termx://environment` resource 提供同一快照 |
+| `vault_hosts_list` | 只读 | `db::profile::list` | 只回 `id/name/host/port/groupId`，**不回凭据** |
+| `snippets_list` | 只读 | `db::snippet::load` | 回 `id/name/package/command/description` |
+| `terminal_execute` | 写 | `plugin::plugin_exec_impl` | `timeoutMs` 默认沿用 impl；执行前 `validate_with` 过黑名单；owner 从注册表取 |
+| `session_close` | 写 | `lifecycle::close_resource` | kind/owner 从注册表取，避免越权关闭他人会话 |
+
+未实现（与 Netcatty 对应关系，**不注册假工具**）：
+
+| Netcatty 工具组 | 未实现原因 | 补齐前提 |
+| --- | --- | --- |
+| `terminal_start / poll / stop` | termX 有 SSH/PTY 会话创建，但没有「MCP 拥有并可见于 UI 的 tab」语义；`SessionOwner::Headless` 开的会话前端不可见 | 需要前端 tab 绑定 + 关闭事件回放（Phase 2） |
+| `sftp.*`（11 个） | `commands/sftp.rs` 只有 `#[tauri::command]` 直连 `State`，没有 `*_impl` 可复用；MCP 不能持有 `State` | 先把 sftp 命令抽成 `*_impl(state, ...)`（与 plugin/session 同风格） |
+| `vault.host.open` | 依赖上面两条 | Phase 2 |
+| `vault.notes.*` / `scripts.*` / `snippets.*` 写 | 未暴露写入口（只读已覆盖） | 按需求逐项开 |
+| `portforward.*` | 代理与端口转发已按既定决策暂停 | 恢复该模块后同步开 |
+| `attachments` / `web_search` / `web_fetch` | termX 无对应能力 | 不移植 |
+| `load_netcatty_tools` 渐进式加载 | termX 只有 5 个工具，无需渐进 | 工具数 > 15 时再引入分组 |
+| stdio 传输 / Node launcher | 单进程 Tauri，HTTP 已覆盖主流客户端 | 若必须支持仅 stdio 的客户端，再单独做 `termx-mcp-stdio` 小二进制 |
+
+## 7. 失败与取消语义
+
+- 工具业务失败 → `tools/call` 返回 `content[0].text` + `isError: true`（不抛 JSON-RPC error），与 Netcatty 一致。
+- 参数缺失 → `isError` + `missing_argument`；未知工具 → `isError` + `unknown_tool`。
+- 方法不存在 → JSON-RPC `-32601`；`resources/read` 未知 uri → `-32602`；解析失败 → `-32700`。
+- 取消：**未实现** `notifications/cancelled` 与 AbortSignal 透传；`terminal_execute` 靠 `timeoutMs` 兜底（`plugin_exec_impl` 自带超时）。
+
+## 8. 日志与调试入口
+
+- 监听/accept 失败：`log::warn!("mcp accept failed: ...")`；autostart 失败 `log::warn!("mcp autostart failed: ...")`。
+- 前端可见错误：`McpStatus.error` + `errorCode`（`port_in_use / invalid_address / listen_failed / custom_bind_disabled / mcp_restarted`）。
+- 手工调试：`curl -s -H "Authorization: Bearer <token>" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' http://127.0.0.1:47391/mcp`。
+
+## 9. 前端 UI 落点
+
+- 数据出口：`src/backend/client.ts` 4 个函数（已加）。
+- 组件落点：`src/settings/SettingsTabs.tsx` 新增「AI / 工具接入」分区（与 Netcatty `ExternalMcpCard` 对齐：开关 + 权限三档 + 端口/监听地址/客户端 host + 连接详情折叠区（URL / token / Codex TOML / Claude 命令 / 通用 JSON）+ 状态点 + 错误条 + 轮换 token）。
+- 代码块逐项对应 Netcatty：`ExternalMcpCard.tsx`（状态机与轮询）、`ExternalMcpHttpSection.tsx`（HTTP 字段与连接详情）、`ToolAccessGuidance.tsx`（接入指引文案）、`SafetySettings.tsx`（三档）、`ToolStatusPill.tsx`（状态点）。
+- 本轮 UI 未落地：`SettingsTabs.tsx` 现无 AI 分区骨架，新增分区涉及 i18n 键与导航项，避免半成品入口。
+
+## 10. 风险与不做的部分
+
+1. **任意命令执行面**：`terminal_execute` 等价于「持有 token 的人可在已打开会话里执行任意命令」，仅靠命令黑名单（49 条种子）与权限档位约束；默认 `confirm` 且默认关闭监听，是当前唯一的兜底。**不做**命令白名单/路径白名单。
+2. **跨进程权限边界**：单机 loopback + Bearer，无 OS 级 ACL；同机同用户进程可读 token（内存/设置页复制）。Netcatty 同样如此。
+3. **审批交互缺失**：`confirm` 档位对写操作一律拒绝，属**有意降级**，不得伪装成"待审批"。
+4. **会话所有权**：MCP 不是会话 owner，`plugin_exec_impl` 用的是注册表里的真实 owner；若 owner 是某个窗口，MCP 实质是替该窗口执行。这是为「不越权」付出的语义折中，需在 UI 提示。
+5. **headless**：不启动监听器，只读配置快照，避免无界面进程偷偷开端口。
+6. **不新增 schema 表**：纯 settings KV，故 `SCHEMA_VERSION` 不变；如未来要给 MCP 建审计表再提升版本。
+7. **不做的**：SSE 服务端推送、stdio launcher、OAuth、多客户端 session 管理（当前无状态、无 `Mcp-Session-Id`）、工具级审批卡片、渐进式工具加载。
+
+## 11. 验证状态
+
+- `cargo check --lib --offline`：见本轮回执（修复 4 处编译错误后复跑）。
+- 未做：`cargo build`/`tauri build`（本轮按约束不构建 release；debug 构建留待合入后）、真实 MCP 客户端握手、UI 截图。
+- 对手工验证脚本：启动 app → 打开 工具接入 → 复制通用 JSON 到 Claude/Codex → 调 `get_environment` / `terminal_execute`。

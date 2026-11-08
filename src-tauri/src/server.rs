@@ -1110,6 +1110,32 @@ fn dispatch(
         // across manifests at release) so About + update checks work embedded.
         "plugin:app|version" => Ok(json!(env!("CARGO_PKG_VERSION"))),
 
+        // ---- 对外 MCP（headless 只回配置快照，不监听端口）----
+        "mcp_status" => {
+            let cfg = crate::mcp::config::load(&state.db);
+            let status = crate::mcp::server::McpStatus {
+                enabled: cfg.enabled,
+                running: false,
+                port: cfg.port,
+                url: None,
+                bearer_token: None,
+                permission_mode: cfg.permission_mode.as_str().to_string(),
+                error: None,
+                error_code: Some("headless_no_listener".to_string()),
+                allow_custom_bind: cfg.allow_custom_bind,
+                listen_address: cfg.listen_address,
+                client_host: cfg.client_host,
+                tool_count: crate::mcp::tools::definitions()
+                    .as_array()
+                    .map(|a| a.len())
+                    .unwrap_or(0),
+            };
+            ok(Ok::<_, crate::error::AppError>(status))
+        }
+        "mcp_set_config" | "mcp_rotate_token" | "mcp_client_config" => Err(json!(
+            "gui_only: 对外 MCP 监听器只在桌面 GUI 进程内运行"
+        )),
+
         other => Err(json!(format!("unknown command: {other}"))),
     }
 }

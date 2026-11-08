@@ -8,6 +8,7 @@ pub mod forward;
 pub mod group;
 pub mod keychain;
 pub mod lifecycle;
+pub mod mcp;
 pub mod localfs;
 pub mod monitor;
 pub mod notes;
