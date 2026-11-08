@@ -7608,5 +7608,19 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
   `npx tauri build --no-bundle` ✓。
 
+## 2026-11-08 — 终端设置的关键字高亮对四类终端统一生效
+
+- 核对合并链路：`effectiveHighlight.enabled = 全局开 || 主机开`，全局规则对四类终端都参与 merge，
+  非 SSH 终端浮层直接编辑全局规则（并提示「本类型终端没有主机级规则」），不是只对 SSH 生效。
+- 设置页该分区文案改为明确「对所有终端类型（SSH / 本地终端 / 串口 / Telnet）生效；
+  规则按行匹配、忽略大小写，同一位置多个命中时排在前面的规则优先。设置改动会立即同步到已打开的终端」。
+- 实机四类终端同时验证：129 SSH、本地 Git Bash、COM4 串口（自环回显）、Telnet 2324（本地回显服务），
+  向每个终端写入含 `TERMXERR` 的行，四类终端都出现规则色 `#F87171` 的着色 span；
+  截图 `docs/verify-ui/hl-ssh-129.png`、`hl-local-gitbash.png`、`hl-serial-com4.png`、`hl-telnet-2324.png`，
+  设置页文案截图 `func2-settings-all-terminals.png`。
+- 其它显示相关设置（字体、连字、字体平滑、输出时间戳）均为应用级/共用 `TerminalView` 选项，四类终端走同一条渲染路径。
+- 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
+  `npx tauri build --no-bundle` ✓。
+
 
 
