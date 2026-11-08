@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-11-08 — 设置 AI 工具接入页按钮组与输入框对齐
+
+### 修改
+
+- `src/settings/AiTab.tsx`：「服务 URL」「Bearer token」两行重排为「标签 / 输入行（代码块 + 按钮组）」；URL 的复制按钮也收进 `.nc-mcp-copy-actions`；Bearer token 的说明移到输入行下方，不再挤占按钮组高度。
+- `src/styles.css`：`.nc-mcp-copy-row` 改为纵向排列（标签 + 输入行 + 可选说明）；新增 `.nc-mcp-copy-line`，用 `align-items:center` 让按钮组与代码块垂直居中、同一基线；代码块 `flex:1 / min-width:0` 可收缩，按钮组 `flex:none` 且按钮 `white-space:nowrap`，长文案（轮换 token）不被挤压换行；`@media (max-width:720px)` 下输入行改为纵向、代码块占满整行、按钮组右对齐，避免横向溢出。
+- 右侧内边距沿用 `.nc-set-card` 的 16px，两行一致（实测按钮组右缘与卡片内容右缘差 <1px）。
+
+### 实机验证（debug + Vite HMR）
+
+- 1024 宽：URL 行代码块中心 y=506.8、按钮组中心 y=506.8；token 行 589.2 / 589.2，完全垂直居中；按钮高 28px，`scrollWidth == clientWidth`，无挤压换行。
+- 680 宽（媒体查询生效）：代码块占满整行，按钮组换到下方右对齐；设置内容区 `scrollWidth == clientWidth`，无横向溢出。
+
+### 截图（`docs/verify-ui/`）
+
+- `ui7-ai-copy-rows.png`：常规宽度下两行按钮组与输入框垂直居中。
+- `ui7-ai-copy-rows-narrow.png`：680px 窄窗口下按钮组换行右对齐、无溢出。
+
+### 门禁
+
+- `npm run test:run`：81 文件 / 915 通过。
+- `npm run build`：通过。
+
+---
+
 ## 2026-11-08 — 新建 JS 脚本预填全注释 tmx API 模板
 
 ### 修改

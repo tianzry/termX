@@ -442,33 +442,35 @@ export function AiTab() {
           <summary className="nc-set-section-title nc-mcp-summary">{t("settings.ai.details")}</summary>
           <div className="nc-set-card">
             <div className="nc-mcp-copy-row">
-              <div className="nc-mcp-copy-text">
-                <div className="nc-mcp-copy-label">{t("settings.ai.url")}</div>
+              <div className="nc-mcp-copy-label">{t("settings.ai.url")}</div>
+              <div className="nc-mcp-copy-line">
                 <code className="nc-mcp-code-block">{status.url ?? t("settings.ai.unavailable")}</code>
+                <div className="nc-mcp-copy-actions">
+                  {copyButton("url", status.url ?? "", !status.url)}
+                </div>
               </div>
-              {copyButton("url", status.url ?? "", !status.url)}
             </div>
 
             <div className="nc-mcp-copy-row">
-              <div className="nc-mcp-copy-text">
-                <div className="nc-mcp-copy-label">{t("settings.ai.token")}</div>
+              <div className="nc-mcp-copy-label">{t("settings.ai.token")}</div>
+              <div className="nc-mcp-copy-line">
                 <code className="nc-mcp-code-block">
                   {status.bearerToken ? maskToken(status.bearerToken) : t("settings.ai.unavailable")}
                 </code>
-                <div className="nc-set-row-desc">{t("settings.ai.token.rotate.desc")}</div>
+                <div className="nc-mcp-copy-actions">
+                  {copyButton("token", status.bearerToken ?? "", !status.bearerToken)}
+                  <button
+                    type="button"
+                    className="nc-set-btn is-sm"
+                    disabled={pending === "rotate"}
+                    onClick={() => void rotateToken()}
+                  >
+                    <Icon name="refresh" size={14} />
+                    {t("settings.ai.token.rotate")}
+                  </button>
+                </div>
               </div>
-              <div className="nc-mcp-copy-actions">
-                {copyButton("token", status.bearerToken ?? "", !status.bearerToken)}
-                <button
-                  type="button"
-                  className="nc-set-btn is-sm"
-                  disabled={pending === "rotate"}
-                  onClick={() => void rotateToken()}
-                >
-                  <Icon name="refresh" size={14} />
-                  {t("settings.ai.token.rotate")}
-                </button>
-              </div>
+              <div className="nc-set-row-desc">{t("settings.ai.token.rotate.desc")}</div>
             </div>
 
             <div className="nc-mcp-snippet">
