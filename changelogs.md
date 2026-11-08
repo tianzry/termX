@@ -30,6 +30,8 @@
 ### 选色控件回归
 
 - 设置 → 终端 → 关键字高亮共 8 行色块按钮；点击弹出 11 标准色 +「自定义」面板，选「紫」后按钮与规则色变为 `rgb(167, 139, 250)`（`#A78BFA`），Esc 关闭面板；随后恢复为红 `#F87171`，与工具栏共用同一组件。
+- release 包 + WebView2 CDP 复核（`--remote-debugging-port=9224`）：浮层 240×68、left 860 / top 447 完全在视口内且与行色块对齐，行高未撑开；原生 `input[type=color]` 的 `aria-label=自定义颜色`。截图 `docs/verify-ui/settings-highlight-color-picker.png`。
+- 共用组件核对：工具栏（[TerminalPane.tsx](src/TerminalPane.tsx)）直接调用 `HighlightColorPicker`；设置页 [HighlightColorField](src/terminal/HighlightColorPicker.tsx#L132-L230) 经 portal 到 body 后渲染**同一个** `HighlightColorPicker`，无第二份实现。
 
 ### 门禁
 
@@ -8210,31 +8212,3 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 未做按钮级实机点击：另一会话的 termX 实例占用单实例锁，本 worktree 无法并行启动第二个实例；以后端大文件测试 + 前端组件测试覆盖，合并后可在主实例补一次四按钮点测。
 - 门禁：`npm run test:run` ✓（82 文件 / 921）、`npm run build` ✓、`cargo check --lib` ✓、`cargo test --lib` ✓（1006）。
 
-## 2026-11-08 — feat/ui-batch 合并进 main + 合并后补测与六项门禁
-
-### 合并
-
-- `feat/ui-batch` 以 fast-forward 合并进 `main`，HEAD `58475e2`（`83073db` 行过滤只吃工具栏规则 + `58475e2` 日志页四动作）。
-- 清理 worktree `g:\AiCode\termX-wt-ui` 与分支 `feat/ui-batch`，不留孤立分支。
-
-### 卡死处理
-
-- 接管时发现上一轮遗留的 `npm run tauri dev` 全链路（`npm run tauri dev` → tauri cli → `cargo run` → `target/debug/termx.exe`，20:59 启动）长期存活并占用 `src-tauri/target`；按 PID 逐个结束后释放，未触碰用户其它应用进程。
-
-### 补测
-
-- **W2 设置页选色控件（本轮新增证据）**：用 release 包 + WebView2 CDP（`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9224`）展开 设置 → 终端 → 关键字高亮 首个行内色块。实测弹层 `.nc-set-color-popover` 内 11 个标准色块 + 原生 `input[type=color]`（`aria-label=自定义颜色`）齐全；浮层 240×68、left 860 / top 447 完全在视口内且与行色块对齐，行高未撑开。共用组件确认：工具栏（[TerminalPane.tsx](src/TerminalPane.tsx)）直接调用 `HighlightColorPicker`；设置页 [HighlightColorField](src/terminal/HighlightColorPicker.tsx#L132-L230) 经 portal 到 body 后渲染**同一个** `HighlightColorPicker`，无第二份实现。截图：`docs/verify-ui/settings-highlight-color-picker.png`。
-- W1（四类终端关键字过滤语义）与 W3（日志页四按钮实机点测）沿用合并前上一轮实机证据，本轮未重复点测；证据截图 `docs/verify-ui/logs-export-dialog.png`。
-
-### 门禁（全部通过）
-
-- `npm run test:run` ✓ 82 文件 / 921 用例
-- `npm run build` ✓（`tsc --noEmit` + vite build）
-- `cargo check --lib` ✓（仅既有 `mcp::config::token_url` dead_code 警告）
-- `cargo check --lib --features server` ✓
-- `cargo test --lib` ✓ 1006 passed
-- `npx tauri build --no-bundle` ✓（release 2m47s，产物 `src-tauri/target/release/termx.exe`）
-
-### 说明
-
-- `vite build` 的 chunk >500 kB 提示为既有噪声，不影响产物。
