@@ -5,7 +5,13 @@ import {
   normalizeKeywordHighlightRules,
   type KeywordHighlightRule,
 } from "../settings/settingsModel";
-import { compileKeywordRules, findKeywordSpans, mergeKeywordHighlightRules, validateKeywordRuleDraft } from "./keywordHighlight";
+import {
+  compileKeywordRules,
+  findKeywordSpans,
+  mergeKeywordHighlightRules,
+  resolveKeywordHighlightRuntime,
+  validateKeywordRuleDraft,
+} from "./keywordHighlight";
 
 const rule = (id: string, color: string, patterns: string[], enabled = true): KeywordHighlightRule => ({
   id,
@@ -153,6 +159,40 @@ describe("mergeKeywordHighlightRules（全局 + 主机，Netcatty 追加语义�
       "error",
       "cover",
     ]);
+  });
+});
+
+describe("resolveKeywordHighlightRuntime（工具栏规则 vs 设置页全局规则）", () => {
+  const globalRule = rule("global-a", "#F87171", ["GLOBAL_A"]);
+  const toolbarRule = rule("toolbar-b", "#22D3EE", ["TOOLBAR_B"]);
+
+  it("着色 = 全局 + 工具栏追加；过滤 = 只有工具栏规则", () => {
+    const runtime = resolveKeywordHighlightRuntime([globalRule], true, [toolbarRule], true);
+    expect(runtime.colorEnabled).toBe(true);
+    expect(runtime.colorRules.map((r) => r.id)).toEqual(["global-a", "toolbar-b"]);
+    expect(runtime.filterRules.map((r) => r.id)).toEqual(["toolbar-b"]);
+  });
+
+  it("开过滤时只保留命中工具栏规则的行（全局规则不参与过滤）", () => {
+    const runtime = resolveKeywordHighlightRuntime([globalRule], true, [toolbarRule], true);
+    const compiled = compileKeywordRules(runtime.filterRules);
+    expect(findKeywordSpans("only GLOBAL_A here", compiled)).toHaveLength(0);
+    expect(findKeywordSpans("has TOOLBAR_B here", compiled).map((s) => s.ruleId)).toEqual([
+      "toolbar-b",
+    ]);
+  });
+
+  it("工具栏规则关闭时不过滤也不着色，仅保留全局着色", () => {
+    const runtime = resolveKeywordHighlightRuntime([globalRule], true, [toolbarRule], false);
+    expect(runtime.colorRules.map((r) => r.id)).toEqual(["global-a"]);
+    expect(runtime.filterRules).toEqual([]);
+  });
+
+  it("全局关闭时工具栏规则仍可着色并过滤", () => {
+    const runtime = resolveKeywordHighlightRuntime([globalRule], false, [toolbarRule], true);
+    expect(runtime.colorEnabled).toBe(true);
+    expect(runtime.colorRules.map((r) => r.id)).toEqual(["toolbar-b"]);
+    expect(runtime.filterRules.map((r) => r.id)).toEqual(["toolbar-b"]);
   });
 });
 

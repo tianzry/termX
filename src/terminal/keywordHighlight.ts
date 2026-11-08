@@ -34,6 +34,35 @@ export function mergeKeywordHighlightRules(
   };
 }
 
+/**
+ * 运行时规则来源解析（工具栏浮层语义）：
+ * - 着色：全局规则在前，工具栏规则追加在后（主机级 / 会话级按终端类型二选一）；
+ * - 过滤：只用工具栏规则，不包含设置页的全局规则。
+ * 工具栏规则关闭时既不参与着色，也不参与过滤。
+ */
+export function resolveKeywordHighlightRuntime(
+  globalRules: KeywordHighlightRule[],
+  globalEnabled: boolean,
+  toolbarRules: KeywordHighlightRule[],
+  toolbarEnabled: boolean,
+): {
+  colorEnabled: boolean;
+  colorRules: KeywordHighlightRule[];
+  filterRules: KeywordHighlightRule[];
+} {
+  const merged = mergeKeywordHighlightRules(
+    globalRules,
+    globalEnabled,
+    toolbarRules,
+    toolbarEnabled,
+  );
+  return {
+    colorEnabled: merged.enabled,
+    colorRules: merged.rules,
+    filterRules: toolbarEnabled ? toolbarRules : [],
+  };
+}
+
 export interface KeywordHighlightSpan {
   start: number;
   end: number;

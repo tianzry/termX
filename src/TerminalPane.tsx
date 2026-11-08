@@ -86,13 +86,13 @@ import type {
   TerminalTransport,
 } from "./backend/client";
 import type { Tab } from "./workspaceModel";
-import { getSettings, subscribeSettings, updateSettings } from "./settings/settingsStore";
+import { getSettings, subscribeSettings } from "./settings/settingsStore";
 import { cloneKeywordHighlightRules, normalizeHostKeywordHighlightRules, type KeywordHighlightRule } from "./settings/settingsModel";
 import {
   cellOffsets,
   compileKeywordRules,
   findKeywordSpans,
-  mergeKeywordHighlightRules,
+  resolveKeywordHighlightRuntime,
   validateKeywordRuleDraft,
 } from "./terminal/keywordHighlight";
 import { subscribeHostKeywordHighlightChanged } from "./terminal/hostKeywordHighlight";
@@ -535,13 +535,19 @@ export function TerminalPane({
   const [hostHighlightEnabled, setHostHighlightEnabled] = useState(false);
   const [hostHighlightRules, setHostHighlightRules] = useState<KeywordHighlightRule[]>([]);
   /**
+   * 无主机级规则的终端（本地 / 串口 / Telnet）由工具栏浮层维护的会话级规则：
+   * 只追加着色，不写回设置页；行过滤也只认这一组规则。
+   */
+  const [sessionHighlightEnabled, setSessionHighlightEnabled] = useState(true);
+  const [sessionHighlightRules, setSessionHighlightRules] = useState<KeywordHighlightRule[]>([]);
+  /**
    * 高亮浮层的「仅显示匹配行」：纯界面过滤，只影响本窗格渲染；
    * 后端会话日志 / asciicast 自动录制在数据到达前端前已完成写入，不受影响。
    * 关闭时从关闭那一刻恢复全量，关闭前被过滤掉的历史不回流。
    */
   const [onlyMatchingLines, setOnlyMatchingLines] = useState(false);
   const onlyMatchingLinesRef = useRef(false);
-  /** 过滤判断复用着色规则（effectiveHighlight 编译结果）。 */
+  /** 过滤判断只用工具栏规则（不含设置页全局规则），见 resolveKeywordHighlightRuntime。 */
   const filterRulesRef = useRef<ReturnType<typeof compileKeywordRules>>([]);
   /** 过滤模式下行缓冲：等待 \n 的未完成行。 */
   const filterPendingRef = useRef("");
@@ -952,7 +958,7 @@ export function TerminalPane({
       setOnlyMatchingLines(false);
       flushFilterPending();
     }
-    persistHostKeywordHighlight({ enabled: next });
+    updateToolbarHighlightRules({ enabled: next });
   }
 
   /** 直通字节 → 终端（ZMODEM 非协议输出、串口原始字节共用）。 */
@@ -2156,12 +2162,12 @@ export function TerminalPane({
   }, []);
 
   /**
-   * 工具栏浮层的目标规则集：仅 SSH 编辑主机级规则（主机级覆盖不回退）；
-   * 本地终端 / 串口 / Telnet 没有主机级规则，直接编辑全局规则，
-   * 着色仍走同一套 `effectiveHighlight`（与 SSH 完全一致）。
+   * 工具栏浮层的目标规则集：SSH 编辑主机级规则（主机级追加不回退）；
+   * 本地终端 / 串口 / Telnet 没有主机级规则，改为维护**会话级**规则，
+   * 不写回设置页；两者都作为「工具栏规则」参与着色，并单独作为行过滤条件。
    */
-  const highlightUiRules = sshProfileId ? hostHighlightRules : highlightRules;
-  const highlightUiEnabled = sshProfileId ? hostHighlightEnabled : highlightEnabled;
+  const highlightUiRules = sshProfileId ? hostHighlightRules : sessionHighlightRules;
+  const highlightUiEnabled = sshProfileId ? hostHighlightEnabled : sessionHighlightEnabled;
 
   /**
    * 新增主机规则（对齐 Netcatty `addHostKeywordHighlightRule`）：
@@ -2181,7 +2187,7 @@ export function TerminalPane({
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
         : `host-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    persistHostKeywordHighlight({
+    updateToolbarHighlightRules({
       rules: [
         ...highlightUiRules,
         { id, label, patterns: [pattern], color: hostHighlightColor, enabled: true },
@@ -2194,29 +2200,19 @@ export function TerminalPane({
   }
 
   /**
-   * 主机级规则持久化（对齐 Netcatty HostKeywordHighlightPopover 的 onUpdateHost）：
-   * 写回当前主机档案后，本终端按新规则立即重绘（本地 state 同步），
-   * 无需重启、也无需重新连接；断开后仍由 status 门槛回落全局。
+   * 工具栏规则写入：
+   * - SSH：持久化到主机档案（对齐 Netcatty HostKeywordHighlightPopover 的 onUpdateHost），
+   *   写回后本终端立即重绘，断开后由 status 门槛回落全局；
+   * - 本地 / 串口 / Telnet：只更新本会话的规则，不写设置页，避免行过滤误用全局规则。
    */
-  function persistHostKeywordHighlight(patch: {
+  function updateToolbarHighlightRules(patch: {
     enabled?: boolean;
     rules?: KeywordHighlightRule[];
   }) {
     const profileId = sshProfileId;
     if (!profileId) {
-      // 本地终端 / 串口 / Telnet：没有主机级规则，浮层直接改全局规则，
-      // 与设置页共用同一份数据，改动即时同步到所有已开终端。
-      const nextEnabled = patch.enabled ?? highlightEnabled;
-      const nextRules = patch.rules ?? highlightRules;
-      setHighlightEnabled(nextEnabled);
-      setHighlightRules(nextRules);
-      updateSettings({
-        terminal: {
-          ...getSettings().terminal,
-          keywordHighlightEnabled: nextEnabled,
-          keywordHighlightRules: nextRules,
-        },
-      });
+      setSessionHighlightEnabled(patch.enabled ?? sessionHighlightEnabled);
+      setSessionHighlightRules(patch.rules ?? sessionHighlightRules);
       return;
     }
     const nextEnabled = patch.enabled ?? hostHighlightEnabled;
@@ -2278,7 +2274,7 @@ export function TerminalPane({
       setEditRuleError(error);
       return;
     }
-    persistHostKeywordHighlight({
+    updateToolbarHighlightRules({
       rules: highlightUiRules.map((rule) =>
         rule.id === editingRuleId
           ? { ...rule, label, patterns, color: editRuleColor, enabled: editRuleEnabled }
@@ -2290,33 +2286,44 @@ export function TerminalPane({
   }
 
   /**
-   * 全局 + 主机规则合并（Netcatty 语义：主机追加、全局先匹配）；
-   * 主机规则的开关随连接状态联动 —— 断开后回落全局。
+   * 规则来源：
+   * - 着色 = 全局规则 + 工具栏规则（SSH 主机级 / 其他终端会话级，均追加在后）；
+   * - 过滤 = 只用工具栏规则，不含设置页全局规则。
+   * SSH 主机规则的开关随连接状态联动 —— 断开后回落全局。
    */
-  const effectiveHighlight = useMemo(
+  const highlightRuntime = useMemo(
     () =>
-      mergeKeywordHighlightRules(
+      resolveKeywordHighlightRuntime(
         highlightRules,
         highlightEnabled,
-        hostHighlightRules,
-        hostHighlightEnabled && status === "connected",
+        sshProfileId ? hostHighlightRules : sessionHighlightRules,
+        sshProfileId
+          ? hostHighlightEnabled && status === "connected"
+          : sessionHighlightEnabled,
       ),
-    [highlightRules, highlightEnabled, hostHighlightRules, hostHighlightEnabled, status],
+    [
+      highlightRules,
+      highlightEnabled,
+      hostHighlightRules,
+      hostHighlightEnabled,
+      sessionHighlightRules,
+      sessionHighlightEnabled,
+      sshProfileId,
+      status,
+    ],
   );
 
-  /** 过滤模式与着色共用同一规则集；总开关关闭时视为无规则。 */
+  /** 行过滤只用工具栏规则；总开关关闭时视为无规则。 */
   useEffect(() => {
-    filterRulesRef.current = effectiveHighlight.enabled
-      ? compileKeywordRules(effectiveHighlight.rules)
-      : [];
-  }, [effectiveHighlight]);
+    filterRulesRef.current = compileKeywordRules(highlightRuntime.filterRules);
+  }, [highlightRuntime]);
 
-  /** 关键字高亮：按设置里的规则给命中片段着色（xterm decoration foregroundColor）。 */
+  /** 关键字高亮：按合并后的规则给命中片段着色（xterm decoration foregroundColor）。 */
   useEffect(() => {
     const term = controllerRef.current?.term;
     if (!term) return;
-    const compiled = effectiveHighlight.enabled
-      ? compileKeywordRules(effectiveHighlight.rules)
+    const compiled = highlightRuntime.colorEnabled
+      ? compileKeywordRules(highlightRuntime.colorRules)
       : [];
     if (compiled.length === 0) return;
     // registerMarker / registerDecoration 属于 proposed API。
@@ -2381,7 +2388,7 @@ export function TerminalPane({
       for (const sub of subs) sub.dispose();
       clear();
     };
-  }, [effectiveHighlight]);
+  }, [highlightRuntime]);
 
   /** 脚本下拉菜单（终端工具栏「脚本」按钮）。 */
   const [scriptMenuOpen, setScriptMenuOpen] = useState(false);
@@ -3964,8 +3971,8 @@ export function TerminalPane({
                                 className={`term-highlight-toggle${onlyMatchingLines && highlightUiEnabled ? " on" : ""}`}
                                 title={
                                   highlightUiEnabled
-                                    ? "类似 grep：只显示命中已启用规则的行（不影响日志录制）"
-                                    : "先启用关键字高亮才能使用行过滤"
+                                    ? "类似 grep：只显示命中工具栏高亮规则的行（不含设置页全局/主机规则，不影响日志录制）"
+                                    : "先启用工具栏高亮规则才能使用行过滤"
                                 }
                                 onClick={toggleOnlyMatchingLines}
                               >
@@ -3976,7 +3983,7 @@ export function TerminalPane({
                         </div>
                         {!sshProfileId && (
                           <div className="term-highlight-hint">
-                            本类型终端没有主机级规则，这里编辑的是全局规则（同步到设置页）
+                            本类型终端没有主机级规则，这里的规则只作用于当前会话（不写回设置页）
                           </div>
                         )}
                         {editingRuleId ? (
@@ -4056,7 +4063,7 @@ export function TerminalPane({
                             <div className="term-highlight-empty">
                               {sshProfileId
                                 ? "此主机未定义自定义高亮规则"
-                                : "全局未定义高亮规则，可在下方添加"}
+                                : "当前会话未定义高亮规则，可在下方添加"}
                             </div>
                           ) : (
                             highlightUiRules.map((rule) => (
@@ -4071,7 +4078,7 @@ export function TerminalPane({
                                   className={`term-highlight-check${rule.enabled ? " on" : ""}`}
                                   title={rule.enabled ? "点击停用该规则" : "点击启用该规则"}
                                   onClick={() =>
-                                    persistHostKeywordHighlight({
+                                    updateToolbarHighlightRules({
                                       rules: highlightUiRules.map((r) =>
                                         r.id === rule.id ? { ...r, enabled: !r.enabled } : r,
                                       ),
@@ -4116,7 +4123,7 @@ export function TerminalPane({
                                   className="term-highlight-remove"
                                   title="移除该规则"
                                   onClick={() =>
-                                    persistHostKeywordHighlight({
+                                    updateToolbarHighlightRules({
                                       rules: highlightUiRules.filter((r) => r.id !== rule.id),
                                     })
                                   }
@@ -4179,7 +4186,7 @@ export function TerminalPane({
                               type="button"
                               className="term-highlight-clear"
                               onClick={() =>
-                                persistHostKeywordHighlight({ rules: [], enabled: false })
+                                updateToolbarHighlightRules({ rules: [], enabled: false })
                               }
                             >
                               <Icon name="rotate-ccw" size={10} />
