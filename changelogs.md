@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-11-08 — 脚本运行时阶段 1（1/7）：SessionTextBuffer
+
+### 修改
+
+- 新增 `src/snippets/sessionTextBuffer.ts`：阶段 1 的会话文本缓冲，移植 Netcatty `sessionOutputBuffer.cjs` 的绝对偏移游标模型。
+  - `append` 追加输出，保留最近 20 万字符；超限时多裁 5 万字符并按裁剪量回退游标（`consumeThrough` 只前进不后退）。
+  - `markSendStart` / `consumeThrough` 支持「只消费发送前的缓冲长度」，`consumeAll` / `clear` / `dispose` 覆盖结束与重置场景。
+  - `waitForText / waitForRegex / waitForPrompt / waitForAny`：只扫描游标之后的文本，命中即返回并推进游标到命中末尾；非法正则视为不匹配；默认 30s（`waitForPrompt` 60s），超时错误带方法名与毫秒数，中止抛 `Script stopped`。
+  - 等待同时由 append 立即唤醒与 50ms 轮询兜底，不依赖 xterm 渲染回调。
+- 新增 `src/snippets/sessionTextBuffer.test.ts`：21 个单测覆盖追加/游标/绝对偏移消费/四类等待/超时与中止/尾部裁剪/即时唤醒。
+- 同步 `docs/script-runtime.md` §5.3：命中后游标推进到**命中末尾**（与 Netcatty 实现一致，不吞掉同一包里命中之后的输出）。
+
+### 踩坑
+
+- 裁剪公式不能直接照抄「保留 maxChars + 50k slack」的常数写法：小 `maxChars` 时会把缓冲裁空。改成 `keep = max(maxChars - 50k, 75% × maxChars)` 后，默认 20 万仍留 15 万，小值也能保留 75%。
+- 命中位置必须用匹配器返回的 `index`，不能用 `fresh.indexOf(matched.value)`：正则 `^OK$` 的匹配文本可能在更早位置重复出现。
+- 非脚本局部逻辑：提示符规则阶段 1 仍为 `[#$%]\s*$`（简化），不因 Git Bash 的 MINGW 输出做运行时匹配改动。
+
+### 门禁
+
+- `npx vitest run src/snippets/sessionTextBuffer.test.ts` → 21✓。
+
+---
+
 ## 2026-11-08 — 对外 MCP 工具接入合入主干
 
 ### 修改

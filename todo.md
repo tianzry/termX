@@ -201,6 +201,15 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
   - 置灰写明原因（不可移植）：录制回放（Netcatty 依赖主进程会话录制与回放协议）、脚本内 `nct.dialog`（需主进程原生对话框回调）、`nct.progress` / `startLog`（宿主级进度与日志宿主未移植）。
   - 129 实测：onConnect 连接后自动写 `/tmp/termx-stageb-connect-*`（含主机名），脚本内 `#@wait-text` 命中回显后才继续；终端输入 `echo TERMX-OUTPUT-42` 触发 onOutput 写 `/tmp/termx-stageb-output-*`；重复输出不再二次触发；目标主机不匹配的负例脚本未触发。证据 `evidence/script-stageb-129.json` + `script-stageb-log.png`。
   - 参考：`components/scripts/`、`netcatty-bridge-script.d.ts` L148-L168。
+  - 阶段 1（MVP，进行中，方案 `docs/script-runtime.md`）：spike 已通过（WebView2 module worker + `new Function`，本地 Git Bash / 129 SSH 均跑通，死循环 2s 被终止）。分 7 块独立提交：
+    - [x] 1/7 `SessionTextBuffer`（输出 tap、绝对偏移消费、20 万字符尾部保留、四类等待）+ 21 单测。
+    - [ ] 2/7 Worker 沙箱与宿主运行器（三种源码包装、nct RPC、100ms 心跳 + 2s 看门狗、30 分钟总超时、停止）。
+    - [ ] 3/7 API 子集接线（screen / session / log，`sendLine` 30ms 两包时序且只消费发送前长度）。
+    - [ ] 4/7 运行与停止入口（`PaneHandle.runNctScript` / `scriptControl`、运行状态、脚本日志面板）。
+    - [ ] 5/7 CodeMirror 6 编辑器（javascript 高亮、`Mod-Enter` 运行、Tab 缩进）。
+    - [ ] 6/7 执行前 `{{var}}` 替换 + 脚本区变量提示。
+    - [ ] 7/7 兼容分流（`kind=script && language=javascript` 走新运行时，其余旧 `#@`；新建脚本默认 javascript）。
+    - 编辑器/文档提示：等待词按目标设备实际输出写（Git Bash 为 MINGW 输出，不含 `Linux`）；Worker 屏蔽全局仅防呆，不是安全边界。
 - [x] ✅ **14. 主机监控面板**
   - CPU / 内存 / 磁盘 / 网络历史曲线，采样失败自动重试。
   - 完成（2026-11-04）：后端 `monitor_sample(session_id, timeout_ms)` Linux 只读采样（CPU/内存/磁盘/网络，逐项容错、8s 超时、本地 Δt 差分），`lib.rs` + `server.rs` 双注册；前端 `src/monitor/MonitorView.tsx` + `src/domain/monitorModel.ts`，Vault「监控」页启用（多选、图表/列表、2s 默认重采样、5/15/30min 趋势、状态与退避重连、SVG 曲线）。129 真机实测 CPU 0.8% / 内存 1188.9–3355.1 MiB / 磁盘 93.7% / 网络 1.1 KB/s；门禁 417✓ / 881✓。多面板 CRUD、macOS 采集未移植。
