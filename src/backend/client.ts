@@ -2030,6 +2030,17 @@ export function mcpClientConfig(kind: string): Promise<string> {
   return invoke<string>("mcp_client_config", { kind });
 }
 
+/** 设置页「接入指南」：内容由后端 `mcp::guide` 生成，与 initialize.instructions 同源。 */
+export interface McpGuideBlock {
+  id: string;
+  title: string;
+  content: string;
+}
+
+export function mcpGuide(): Promise<McpGuideBlock[]> {
+  return invoke<McpGuideBlock[]>("mcp_guide");
+}
+
 export type McpApprovalDecision = "once" | "always" | "reject";
 
 export interface McpApprovalRequest {

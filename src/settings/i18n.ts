@@ -79,6 +79,9 @@ const zhCN: Record<string, string> = {
   "settings.ai.snippet.claude": "Claude 命令",
   "settings.ai.snippet.json": "通用 JSON",
   "settings.ai.snippet.loading": "正在获取片段…",
+  "settings.ai.guide": "接入指南",
+  "settings.ai.guide.desc": "以下片段与 MCP initialize 返回的 instructions 同源，可逐块复制到对应客户端。",
+  "settings.ai.guide.loading": "正在生成接入指南…",
 
   // 应用
   "settings.application.checkUpdates": "检查更新",
@@ -705,6 +708,9 @@ const en: Record<string, string> = {
   "settings.ai.snippet.claude": "Claude command",
   "settings.ai.snippet.json": "Generic JSON",
   "settings.ai.snippet.loading": "Loading snippet…",
+  "settings.ai.guide": "Integration guide",
+  "settings.ai.guide.desc": "These snippets share one source with the MCP initialize instructions; copy each block into the matching client.",
+  "settings.ai.guide.loading": "Generating integration guide…",
   // 外观（本轮 1:1 对照 Netcatty；其余 tab 的 en 词典仍待补齐）
   "settings.appearance.section.language": "Language",
   "settings.appearance.language.label": "Language",

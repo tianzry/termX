@@ -14055,11 +14055,51 @@ html[data-theme="dark"] .nc-shell-icon.mono {
   margin-left: auto;
 }
 
+/* 接入指南：每块标题 + 复制按钮 + 可横向滚动的代码块，窄窗口不撑破卡片。 */
+.nc-mcp-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.nc-mcp-guide-block {
+  min-width: 0;
+}
+
+.nc-mcp-guide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.nc-mcp-guide-head .nc-mcp-copy-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.nc-mcp-guide-code {
+  white-space: pre;
+  word-break: normal;
+  overflow: auto;
+  max-height: 320px;
+}
+
+.nc-mcp-guide-code.is-prose {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 @media (max-width: 720px) {
   .nc-mcp-head {
     flex-direction: column;
   }
 
+  .nc-mcp-guide-head {
+    align-items: flex-start;
+  }
   /* 窄窗口：按钮组换到输入框下方，避免横向溢出。 */
   .nc-mcp-copy-line {
     flex-direction: column;

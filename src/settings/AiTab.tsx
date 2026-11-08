@@ -10,10 +10,12 @@ import { useEffect, useRef, useState } from "react";
 import {
   mcpApprovalRevoke,
   mcpClientConfig,
+  mcpGuide,
   mcpRotateToken,
   mcpSetConfig,
   mcpStatus,
   type McpConfigPatch,
+  type McpGuideBlock,
   type McpPermissionMode,
   type McpStatus,
 } from "../backend/client";
@@ -83,6 +85,11 @@ export function AiTab() {
   const [snippetLoading, setSnippetLoading] = useState(false);
   const [snippetError, setSnippetError] = useState<string | null>(null);
 
+  // 接入指南：后端 `mcp::guide` 与 initialize.instructions 同源，前端只展示与复制。
+  const [guide, setGuide] = useState<McpGuideBlock[]>([]);
+  const [guideLoading, setGuideLoading] = useState(false);
+  const [guideError, setGuideError] = useState<string | null>(null);
+
   // 页面挂载时拉一次配置，之后每 3 秒静默轮询；卸载清理定时器。
   useEffect(() => {
     let alive = true;
@@ -135,6 +142,30 @@ export function AiTab() {
       alive = false;
     };
   }, [detailsOpen, snippetKind, status?.running, status?.url, status?.bearerToken]);
+
+  // 服务运行 / 轮换 token 后重新生成指南，保证复制出来的 URL 与 token 是最新的。
+  useEffect(() => {
+    if (!status?.running) {
+      setGuide([]);
+      return;
+    }
+    let alive = true;
+    setGuideLoading(true);
+    setGuideError(null);
+    mcpGuide()
+      .then((blocks) => {
+        if (alive) setGuide(blocks);
+      })
+      .catch((error) => {
+        if (alive) setGuideError(describeError(error));
+      })
+      .finally(() => {
+        if (alive) setGuideLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [status?.running, status?.url, status?.bearerToken]);
 
   const apply = async (patch: McpConfigPatch, key: string) => {
     setActionError(null);
@@ -503,6 +534,45 @@ export function AiTab() {
             </div>
           </div>
         </details>
+      )}
+
+      {status?.running && (
+        <section className="nc-set-section">
+          <div className="nc-mcp-head">
+            <div className="nc-mcp-head-text">
+              <h3 className="nc-set-section-title">{t("settings.ai.guide")}</h3>
+              <p className="nc-set-row-desc">{t("settings.ai.guide.desc")}</p>
+            </div>
+          </div>
+          <div className="nc-set-card">
+            {guideError && (
+              <p className="nc-mcp-error" role="alert">
+                {guideError}
+              </p>
+            )}
+            {guideLoading && guide.length === 0 && (
+              <p className="nc-set-hint">{t("settings.ai.guide.loading")}</p>
+            )}
+            <div className="nc-mcp-guide" data-testid="mcp-guide">
+              {guide.map((block) => (
+                <div key={block.id} className="nc-mcp-guide-block" data-guide-id={block.id}>
+                  <div className="nc-mcp-guide-head">
+                    <span className="nc-mcp-copy-label">{block.title}</span>
+                    {copyButton(`guide:${block.id}`, block.content, !block.content)}
+                  </div>
+                  <pre
+                    className={
+                      "nc-mcp-code-block nc-mcp-guide-code" +
+                      (block.id === "systemPrompt" || block.id === "tools" ? " is-prose" : "")
+                    }
+                  >
+                    {block.content}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       )}
     </div>
   );
