@@ -207,6 +207,14 @@ impl McpRuntime {
         inner.error = Some((code.to_string(), message.into()));
     }
 
+    /// 原地更新配置：权限档 / client_host 等纯设置项使用。
+    ///
+    /// 不重启监听、不换 token，已连接客户端与 Trae/Claude 里配置的 token 继续有效。
+    pub fn set_config(&self, cfg: McpConfig) {
+        let mut inner = self.lock();
+        inner.config = cfg;
+    }
+
     /// 启动。已运行实例先停（generation++ 让旧 accept 循环退出）。
     pub fn start(self: &Arc<Self>, app: AppHandle, cfg: McpConfig) -> Result<(), (String, String)> {
         config::validate(&cfg)?;
@@ -217,6 +225,20 @@ impl McpRuntime {
             self.approvals
                 .set_allowed_tools(config::load_allowed_tools(&state.db));
         }
+        // token 只在手动轮换时更换：内存中的 token 优先，其次用持久化的，最后才新生成。
+        let token = {
+            let current = self.lock().token.clone();
+            let stored = current.or_else(|| {
+                let state = app.state::<AppState>();
+                config::load_token(&state.db)
+            });
+            stored.unwrap_or_else(|| {
+                let token = new_token();
+                let state = app.state::<AppState>();
+                let _ = config::save_token(&state.db, &token);
+                token
+            })
+        };
         let cleared = self.approvals.deny_all();
         let cleared_ids: Vec<String> = cleared
             .into_iter()
@@ -231,7 +253,7 @@ impl McpRuntime {
                 old.notify_waiters();
             }
             inner.config = cfg;
-            inner.token = Some(new_token());
+            inner.token = Some(token);
             inner.listening = false;
             inner.bound_port = None;
             inner.error = None;
@@ -261,16 +283,18 @@ impl McpRuntime {
         }
         inner.listening = false;
         inner.bound_port = None;
-        inner.token = None;
         inner.error = None;
+        // token 不清空：关闭再启用沿用同一个 token，只有手动轮换才会更换。
     }
 
-    pub fn rotate_token(&self) -> Option<String> {
+    pub fn rotate_token(&self, app: &AppHandle) -> Option<String> {
         let mut inner = self.lock();
         if !inner.listening {
             return None;
         }
         let token = new_token();
+        let state = app.state::<AppState>();
+        let _ = config::save_token(&state.db, &token);
         inner.token = Some(token.clone());
         Some(token)
     }
@@ -753,5 +777,30 @@ mod tests {
         assert_eq!(config::validate(&cfg).unwrap_err().0, "custom_bind_disabled");
         cfg.allow_custom_bind = true;
         assert!(config::validate(&cfg).is_ok());
+    }
+
+    #[test]
+    fn token_survives_set_config() {
+        let rt = McpRuntime::new();
+        {
+            let mut inner = rt.lock();
+            inner.token = Some("fixed-token".to_string());
+            inner.listening = true;
+        }
+        let mut cfg = rt.config();
+        cfg.permission_mode = config::PermissionMode::Auto;
+        rt.set_config(cfg);
+        let st = rt.status();
+        assert_eq!(st.bearer_token.as_deref(), Some("fixed-token"));
+        assert_eq!(st.permission_mode, "auto");
+    }
+
+    #[test]
+    fn new_token_is_random_64_hex() {
+        let a = new_token();
+        let b = new_token();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

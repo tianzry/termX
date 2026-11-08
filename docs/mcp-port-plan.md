@@ -68,7 +68,7 @@
 | --- | --- |
 | 默认端口 | `47391`（与 Netcatty 同值），范围 ≥1024；改动即时重启监听 |
 | 默认监听 | `127.0.0.1`；非回环地址必须显式打开 `allowCustomBind`，否则 `custom_bind_disabled` |
-| 鉴权 | `Authorization: Bearer <token>`；定长比较防时序侧信道；token 每次启用重新生成，可手动轮换 |
+| 鉴权 | `Authorization: Bearer <token>`；定长比较防时序侧信道；token 持久化在 settings KV `mcp.token`，**只有手动「轮换」才更换**（改权限档 / 改监听参数 / 重启 app 都沿用） |
 | Host/Origin | 白名单 = `127.0.0.1 / localhost / ::1` + 用户 `clientHost`；不匹配 → 403 `forbidden_host / forbidden_origin` |
 | 路径 | 仅 `POST /mcp`；`GET` → 405（不提供 SSE）；`DELETE` → 200；其它 → 404 |
 | 体积 | header ≤8KB、body ≤4MB（超限 431/413） |
@@ -202,7 +202,7 @@
 
 **需要用户知道的遗留点**：
 
-1. **改任何 MCP 配置都会重启监听并轮换 token**（`apply()` 无条件 `rt.start()`，`start` 里 `new_token()`）。因此切权限档、改端口后，Trae/Claude 里的旧 token 立即失效，必须重新复制；若 Trae 未自动重连，需要重载 MCP 配置或重启 IDE。这是当前实现的副作用，后续可优化为「仅连接参数变化才重启」。
+1. ~~改任何 MCP 配置都会重启监听并轮换 token~~ **已修复**：只有端口 / 监听地址 / 开关变化才重建监听；权限档、`client_host`、always-allow 名单原地生效；token 持久化在 `mcp.token`，`start()` 优先复用内存 / KV 中的 token，仅手动「轮换」才生成新值。切档后 Trae/Claude 里的旧 token 继续可用，不需要重新复制；重启 app 也不变。
 2. **MCP 工具在 Trae 会话里的可见性取决于会话建立时机**：服务上线前就已创建/续接的会话，其工具表不会注入这 5 个工具（本轮 Trae 自身完成了 initialize / initialized / tools/list / SSE 探测，但模型侧未拿到工具，`tools/call` 是用同一报文特征回放执行的）。要在 Trae 里让模型直接调用，请新开一个会话。
 3. 本轮结束时的本机状态：`mcp.enabled = 开`、`permissionMode = confirm`、`allowedTools = []`（如不希望常驻监听，请在设置页关闭；关闭后 Trae 连接即失效）。
 4. `McpApprovalHost` 只在主窗渲染；实测设置页打开时浮层仍压在设置之上可见（右下角显示待审批条数 + 倒计时），不需要切回主界面。

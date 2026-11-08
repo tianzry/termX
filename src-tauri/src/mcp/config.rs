@@ -17,6 +17,8 @@ pub const KEY_CLIENT_HOST: &str = "mcp.client_host";
 pub const KEY_PERMISSION_MODE: &str = "mcp.permission_mode";
 /// 「始终允许」的工具名单（JSON 字符串数组），按工具粒度持久化。
 pub const KEY_ALLOWED_TOOLS: &str = "mcp.allowed_tools";
+/// Bearer token。持久化后只有手动「轮换」才会更换，改配置/重启 app 都不变。
+pub const KEY_TOKEN: &str = "mcp.token";
 
 /// Netcatty 默认端口 47391（`ExternalMcpHttpSection` 默认值），保持同值便于用户迁移。
 pub const DEFAULT_PORT: u16 = 47391;
@@ -96,6 +98,14 @@ impl McpConfig {
         } else {
             host
         }
+    }
+
+    /// 是否需要重建监听：只有绑定相关参数变化才要重启。
+    ///
+    /// 权限档位、`client_host`（只影响白名单与 URL 展示）、「始终允许」工具名单等
+    /// 纯设置项可原地生效，不应导致监听重启（重启会踢掉已连接客户端）。
+    pub fn bind_changed(&self, other: &McpConfig) -> bool {
+        self.port != other.port || self.listen_address != other.listen_address
     }
 }
 
@@ -192,6 +202,18 @@ pub fn allowed_hosts(cfg: &McpConfig) -> Vec<String> {
         hosts.push(custom);
     }
     hosts
+}
+
+pub fn load_token(db: &Db) -> Option<String> {
+    settings::get(db, KEY_TOKEN)
+        .ok()
+        .flatten()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+pub fn save_token(db: &Db, token: &str) -> AppResult<()> {
+    settings::set(db, KEY_TOKEN, token)
 }
 
 pub fn load_allowed_tools(db: &Db) -> Vec<String> {

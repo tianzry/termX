@@ -52,6 +52,12 @@ fn invalid(code: String, msg: String) -> AppError {
     )
 }
 
+/// 是否需要重建监听：未运行必然要起；运行中只有端口 / 监听地址变化要重启。
+/// 权限档、client_host、「始终允许」工具名单等纯设置项原地生效，不重启也不换 token。
+fn needs_restart(previous: &McpConfig, next: &McpConfig, running: bool) -> bool {
+    !running || previous.bind_changed(next)
+}
+
 fn apply(
     app: &tauri::AppHandle,
     state: &AppState,
@@ -59,13 +65,18 @@ fn apply(
     cfg: McpConfig,
 ) -> AppResult<McpStatus> {
     config::validate(&cfg).map_err(|(code, msg)| invalid(code, msg))?;
+    let previous = config::load(&state.db);
     config::save(&state.db, &cfg)?;
+    let running = rt.status().running;
     let enabled = cfg.enabled;
-    if enabled {
+    if !enabled {
+        rt.stop(Some(app));
+    } else if needs_restart(&previous, &cfg, running) {
         rt.start(app.clone(), cfg)
             .map_err(|(code, msg)| invalid(code, msg))?;
     } else {
-        rt.stop(Some(app));
+        // 纯设置项：原地更新，token 与已连接客户端都不受影响。
+        rt.set_config(cfg);
     }
     let mut status = rt.status();
     // 启动是异步的：立即读 status 可能仍是 listening=false，把配置里的端口先回给前端，
@@ -103,8 +114,8 @@ pub fn mcp_set_config(
 }
 
 #[tauri::command]
-pub fn mcp_rotate_token(rt: State<'_, McpState>) -> AppResult<McpStatus> {
-    runtime(&rt).rotate_token();
+pub fn mcp_rotate_token(app: tauri::AppHandle, rt: State<'_, McpState>) -> AppResult<McpStatus> {
+    runtime(&rt).rotate_token(&app);
     Ok(runtime(&rt).status())
 }
 
@@ -170,4 +181,48 @@ pub fn mcp_approval_revoke(
     tools.retain(|t| t != &tool_name);
     rt.approvals().set_allowed_tools(tools.clone());
     Ok(tools)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcp::config::PermissionMode;
+
+    fn running_cfg() -> McpConfig {
+        McpConfig {
+            enabled: true,
+            ..McpConfig::default()
+        }
+    }
+
+    #[test]
+    fn permission_mode_change_does_not_restart() {
+        let prev = running_cfg();
+        let mut next = prev.clone();
+        next.permission_mode = PermissionMode::Auto;
+        assert!(!needs_restart(&prev, &next, true));
+        assert!(!prev.bind_changed(&next));
+    }
+
+    #[test]
+    fn client_host_change_does_not_restart() {
+        let prev = running_cfg();
+        let mut next = prev.clone();
+        next.client_host = "192.168.1.10".to_string();
+        assert!(!needs_restart(&prev, &next, true));
+    }
+
+    #[test]
+    fn port_change_requires_restart() {
+        let prev = running_cfg();
+        let mut next = prev.clone();
+        next.port = 49391;
+        assert!(needs_restart(&prev, &next, true));
+    }
+
+    #[test]
+    fn stopped_listener_always_restarts() {
+        let cfg = running_cfg();
+        assert!(needs_restart(&cfg, &cfg.clone(), false));
+    }
 }

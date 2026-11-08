@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-11-08 — MCP token 不再随配置变化轮换
+
+### 修改
+
+- `commands/mcp.rs::apply()`：按需重启。新增 `needs_restart(previous, next, running)`——未运行必起；运行中只有端口 / 监听地址变化（`McpConfig::bind_changed`）才重建监听；其余设置走 `McpRuntime::set_config()` 原地生效，不重启、不换 token。
+- `mcp/server.rs`：`start()` 复用 token（内存 → KV `mcp.token` → 都没有才新生成并写回）；`stop()` 不再清空 token；`rotate_token(&AppHandle)` 生成新 token 并持久化；新增 `set_config()`。
+- `mcp/config.rs`：新增 KV `mcp.token` 与 `load_token / save_token`，新增 `bind_changed()`。
+- 效果：切权限档、改 client_host、改 always-allow 名单都不再踢连接、不再换 token；改端口 / 开关重启监听仍沿用同一 token；重启 app 也沿用；只有手动「轮换」才变。
+
+### 单测
+
+- `commands/mcp.rs`：改权限档不重启、改 client_host 不重启、改端口要重启、未运行必重启。
+- `mcp/server.rs`：`set_config` 后 token 与权限档的独立性（旧 token 保留、permission_mode 生效）、`new_token` 64 位 hex 且两次不同。
+
+### 实机验证（debug 重建 + Trae 报文特征）
+
+- 切 `observer` → `mcp_status.token` 与切档前一致（`10d4aacd…`），同一 token 继续 `tools/list` + 三个只读工具全部 HTTP 200 / `isError:false`。
+- 改端口 `47391 → 47393`：监听重建、token 不变；再改回 `47391`：token 仍不变。
+- 手动 `mcp_rotate_token`：token 变为 `549da6ab…`；重启整个 app 后仍是 `549da6ab…`（KV 持久化生效）。
+- Trae 的 `mcp.json` 只在首次接入时填一次 token，之后无需再复制。
+
+### 门禁
+
+- `cargo check --lib`、`cargo check --lib --features server`：通过。
+- `cargo test --lib`：987 passed / 0 failed（新增 6 例 MCP 用例，前端无改动故未跑 npm 门禁）。
+
+---
+
 ## 2026-11-08 — MCP 与 Trae CN 真实客户端联调（第二段）
 
 ### 修改（仅文档，无源码改动）
