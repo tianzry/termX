@@ -4,6 +4,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
+use crate::mcp::approval::{self, ApprovalDecision, ApprovalRequestPayload};
 use crate::mcp::config::{self, McpConfig};
 use crate::mcp::server::{client_snippet, McpRuntime, McpState, McpStatus};
 use crate::state::AppState;
@@ -64,7 +65,7 @@ fn apply(
         rt.start(app.clone(), cfg)
             .map_err(|(code, msg)| invalid(code, msg))?;
     } else {
-        rt.stop();
+        rt.stop(Some(app));
     }
     let mut status = rt.status();
     // 启动是异步的：立即读 status 可能仍是 listening=false，把配置里的端口先回给前端，
@@ -78,6 +79,7 @@ pub fn mcp_status(rt: State<'_, McpState>, state: State<'_, AppState>) -> AppRes
     let cfg = config::load(&state.db);
     let mut status = runtime(&rt).status();
     status.enabled = cfg.enabled;
+    status.allowed_tools = config::load_allowed_tools(&state.db);
     if !status.running {
         status.permission_mode = cfg.permission_mode.as_str().to_string();
         status.allow_custom_bind = cfg.allow_custom_bind;
@@ -109,4 +111,63 @@ pub fn mcp_rotate_token(rt: State<'_, McpState>) -> AppResult<McpStatus> {
 #[tauri::command]
 pub fn mcp_client_config(rt: State<'_, McpState>, kind: String) -> AppResult<String> {
     Ok(client_snippet(&runtime(&rt).status(), &kind))
+}
+
+#[tauri::command]
+pub fn mcp_approval_pending(rt: State<'_, McpState>) -> AppResult<Vec<ApprovalRequestPayload>> {
+    Ok(runtime(&rt).pending_approvals())
+}
+
+/// 结算一个待审批项：`once` 允许一次、`always` 允许并持久化该工具、`reject` 拒绝。
+#[tauri::command]
+pub fn mcp_approval_resolve(
+    app: tauri::AppHandle,
+    rt: State<'_, McpState>,
+    state: State<'_, AppState>,
+    approval_id: String,
+    decision: String,
+) -> AppResult<bool> {
+    let decision = ApprovalDecision::parse(&decision).ok_or_else(|| {
+        invalid(
+            "mcp_bad_decision".to_string(),
+            "decision 必须是 once / always / reject".to_string(),
+        )
+    })?;
+    let rt = runtime(&rt);
+    let Some(taken) = rt.take_approval(&approval_id) else {
+        return Ok(false);
+    };
+    let allow = decision.allows();
+    if decision == ApprovalDecision::Always {
+        if let Err(e) = config::add_allowed_tool(&state.db, &taken.tool) {
+            let _ = taken.tx.send(false);
+            approval::emit_cleared(&app, &[approval_id.clone()], "rejected");
+            approval::sync_attention(&app, rt.approvals().pending_count());
+            return Err(e);
+        }
+        rt.approvals().allow_tool(&taken.tool);
+    }
+    let _ = taken.tx.send(allow);
+    approval::emit_cleared(
+        &app,
+        &[approval_id],
+        if allow { "approved" } else { "rejected" },
+    );
+    approval::sync_attention(&app, rt.approvals().pending_count());
+    Ok(true)
+}
+
+/// 撤销某工具的「始终允许」。
+#[tauri::command]
+pub fn mcp_approval_revoke(
+    rt: State<'_, McpState>,
+    state: State<'_, AppState>,
+    tool_name: String,
+) -> AppResult<Vec<String>> {
+    config::remove_allowed_tool(&state.db, &tool_name)?;
+    let rt = runtime(&rt);
+    let mut tools = rt.approvals().allowed_tools();
+    tools.retain(|t| t != &tool_name);
+    rt.approvals().set_allowed_tools(tools.clone());
+    Ok(tools)
 }

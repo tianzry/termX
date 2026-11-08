@@ -13833,6 +13833,131 @@ html[data-theme="dark"] .nc-shell-icon.mono {
   color: hsl(var(--muted-foreground));
 }
 
+.nc-mcp-allowed-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.nc-mcp-allowed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--muted));
+  font-size: 12px;
+}
+
+.nc-mcp-allowed-chip code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.nc-mcp-allowed-revoke {
+  border: none;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.nc-mcp-allowed-revoke:hover {
+  color: hsl(var(--foreground));
+}
+
+/* 主窗右下角的 MCP 审批浮层（对齐 Netcatty ExternalMcpApprovalsHost）。 */
+.mcp-approval-host {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.mcp-approval-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+.mcp-approval-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mcp-approval-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mcp-approval-count {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.mcp-approval-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.mcp-approval-tool code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: hsl(var(--foreground));
+}
+
+.mcp-approval-meta {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  word-break: break-all;
+}
+
+.mcp-approval-args {
+  max-height: 140px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: hsl(var(--muted));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mcp-approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.mcp-approval-error {
+  font-size: 12px;
+  color: hsl(var(--destructive));
+}
+
 .nc-mcp-checkbox {
   width: 18px;
   height: 18px;

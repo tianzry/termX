@@ -6,18 +6,19 @@
 //! 直连，不需要再分发一个 Node launcher。stdio 传输在方案文档里列为未实现。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
 use crate::state::AppState;
+use super::approval::{self, ApprovalRegistry, ApprovalRequestPayload, TakenApproval};
 use super::config::{self, McpConfig};
 use super::tools;
 
@@ -54,6 +55,7 @@ impl Inner {
 pub struct McpRuntime {
     inner: Mutex<Inner>,
     generation: AtomicU64,
+    approvals: ApprovalRegistry,
 }
 
 pub struct McpState(pub Arc<McpRuntime>);
@@ -73,6 +75,8 @@ pub struct McpStatus {
     pub listen_address: String,
     pub client_host: String,
     pub tool_count: usize,
+    /// confirm 档位下「始终允许」的工具名单（持久化在设置 KV）。
+    pub allowed_tools: Vec<String>,
 }
 
 impl McpRuntime {
@@ -80,7 +84,81 @@ impl McpRuntime {
         Arc::new(Self {
             inner: Mutex::new(Inner::new()),
             generation: AtomicU64::new(0),
+            approvals: ApprovalRegistry::new(),
         })
+    }
+
+    pub fn approvals(&self) -> &ApprovalRegistry {
+        &self.approvals
+    }
+
+    pub fn pending_approvals(&self) -> Vec<ApprovalRequestPayload> {
+        self.approvals.pending_list()
+    }
+
+    /// 取走一个待审批项（UI 结算用）。已超时 / 已结算则返回 `None`。
+    pub fn take_approval(&self, approval_id: &str) -> Option<TakenApproval> {
+        self.approvals.take(approval_id)
+    }
+
+    /// 写操作审批：confirm 档位下挂起等待 UI 决策。
+    ///
+    /// 返回 `true` 表示允许执行；拒绝 / 超时 / 连接断开 / 服务重启均返回 `false`。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn request_approval(
+        self: &Arc<Self>,
+        app: &AppHandle,
+        gen: u64,
+        tool: &str,
+        args_summary: String,
+        session_id: Option<String>,
+        target_label: Option<String>,
+        disconnected: Arc<AtomicBool>,
+    ) -> bool {
+        if self.approvals.is_tool_allowed(tool) {
+            return true;
+        }
+        if !self.is_current(gen) {
+            return false;
+        }
+        // 主窗不存在时没有审批通路，直接拒绝（对齐 Netcatty 无 renderer 即拒绝）。
+        if app.get_webview_window("main").is_none() {
+            return false;
+        }
+        let (payload, mut rx) =
+            self.approvals
+                .register(tool, args_summary, session_id, target_label);
+        let approval_id = payload.approval_id.clone();
+        approval::emit_request(app, &payload);
+        approval::sync_attention(app, self.approvals.pending_count());
+
+        let deadline = Instant::now() + Duration::from_millis(approval::APPROVAL_TIMEOUT_MS);
+        loop {
+            tokio::select! {
+                biased;
+                resolved = &mut rx => {
+                    return resolved.unwrap_or(false);
+                }
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                    let reason = if !self.is_current(gen) {
+                        Some("restarted")
+                    } else if disconnected.load(Ordering::SeqCst) {
+                        Some("client_disconnected")
+                    } else if Instant::now() >= deadline {
+                        Some("timeout")
+                    } else {
+                        None
+                    };
+                    let Some(reason) = reason else { continue };
+                    // 已被 UI 结算时 `deny` 返回 false，继续等 receiver 的最终值。
+                    if self.approvals.deny(&approval_id) {
+                        approval::emit_cleared(app, &[approval_id.clone()], reason);
+                        approval::sync_attention(app, self.approvals.pending_count());
+                        return false;
+                    }
+                }
+            }
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -118,6 +196,7 @@ impl McpRuntime {
             listen_address: cfg.listen_address.clone(),
             client_host: cfg.client_host.clone(),
             tool_count: tools::definitions().as_array().map(|a| a.len()).unwrap_or(0),
+            allowed_tools: self.approvals.allowed_tools(),
         }
     }
 
@@ -132,6 +211,19 @@ impl McpRuntime {
     pub fn start(self: &Arc<Self>, app: AppHandle, cfg: McpConfig) -> Result<(), (String, String)> {
         config::validate(&cfg)?;
         let gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        // 重启后「始终允许」仍然生效；旧挂起项一律拒绝，避免悬空等待。
+        {
+            let state = app.state::<AppState>();
+            self.approvals
+                .set_allowed_tools(config::load_allowed_tools(&state.db));
+        }
+        let cleared = self.approvals.deny_all();
+        let cleared_ids: Vec<String> = cleared
+            .into_iter()
+            .map(|p| p.approval_id)
+            .collect();
+        approval::emit_cleared(&app, &cleared_ids, "restarted");
+        approval::sync_attention(&app, 0);
         let shutdown = Arc::new(Notify::new());
         {
             let mut inner = self.lock();
@@ -152,8 +244,17 @@ impl McpRuntime {
         Ok(())
     }
 
-    pub fn stop(&self) {
+    pub fn stop(&self, app: Option<&AppHandle>) {
         self.generation.fetch_add(1, Ordering::SeqCst);
+        let cleared = self.approvals.deny_all();
+        let cleared_ids: Vec<String> = cleared
+            .into_iter()
+            .map(|p| p.approval_id)
+            .collect();
+        if let Some(app) = app {
+            approval::emit_cleared(app, &cleared_ids, "stopped");
+            approval::sync_attention(app, 0);
+        }
         let mut inner = self.lock();
         if let Some(n) = inner.shutdown.take() {
             n.notify_waiters();
@@ -364,13 +465,16 @@ async fn read_request(socket: &mut TcpStream) -> Result<HttpRequest, (u16, Strin
     Ok(req)
 }
 
-async fn respond(
-    socket: &mut TcpStream,
+async fn respond<W>(
+    socket: &mut W,
     status: u16,
     content_type: &str,
     body: &str,
     extra: &[(&str, &str)],
-) -> std::io::Result<()> {
+) -> std::io::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
@@ -453,11 +557,34 @@ async fn serve_connection(
         return respond(&mut socket, 400, "application/json", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"parse_error\"}}", &[]).await;
     };
 
+    // 拆分读写半连接：审批等待期间由后台任务监听客户端断开（EOF / 读错误）。
+    let (mut read_half, mut write_half) = socket.into_split();
+    let disconnected = Arc::new(AtomicBool::new(false));
+    {
+        let flag = disconnected.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            loop {
+                match read_half.read(&mut buf).await {
+                    Ok(0) => {
+                        flag.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        flag.store(true, Ordering::SeqCst);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     let (body, status) = if payload.is_array() {
         let mut out = Vec::new();
         let mut only_notifications = true;
         for item in payload.as_array().cloned().unwrap_or_default() {
-            if let Some(resp) = dispatch(&app, &rt, gen, &item).await {
+            if let Some(resp) = dispatch(&app, &rt, gen, &item, &disconnected).await {
                 only_notifications = false;
                 out.push(resp);
             }
@@ -468,15 +595,21 @@ async fn serve_connection(
             (Value::Array(out).to_string(), 200)
         }
     } else {
-        match dispatch(&app, &rt, gen, &payload).await {
+        match dispatch(&app, &rt, gen, &payload, &disconnected).await {
             Some(resp) => (resp.to_string(), 200),
             None => (String::new(), 202),
         }
     };
-    respond(&mut socket, status, "application/json", &body, &[]).await
+    respond(&mut write_half, status, "application/json", &body, &[]).await
 }
 
-async fn dispatch(app: &AppHandle, rt: &Arc<McpRuntime>, gen: u64, req: &Value) -> Option<Value> {
+async fn dispatch(
+    app: &AppHandle,
+    rt: &Arc<McpRuntime>,
+    gen: u64,
+    req: &Value,
+    disconnected: &Arc<AtomicBool>,
+) -> Option<Value> {
     let id = req.get("id").cloned();
     let method = req.get("method").and_then(Value::as_str).unwrap_or("");
     let params = req.get("params").cloned().unwrap_or(Value::Null);
@@ -514,7 +647,17 @@ async fn dispatch(app: &AppHandle, rt: &Arc<McpRuntime>, gen: u64, req: &Value) 
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            let out = tools::call_tool(&state, &cfg, name, &args).await;
+            let out = tools::call_tool(
+                &state,
+                &cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                name,
+                &args,
+            )
+            .await;
             Ok(json!({
                 "content": [{ "type": "text", "text": out.text }],
                 "isError": out.is_error

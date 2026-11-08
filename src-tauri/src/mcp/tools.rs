@@ -4,11 +4,16 @@
 //! termX 本阶段只移植「已存在可复用执行链路」的 5 个工具，其余在
 //! `docs/mcp-port-plan.md` 里列为未实现并说明缺口，绝不注册空转工具。
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 use serde_json::{json, Value};
+use tauri::AppHandle;
 
 use crate::state::{AppState, SessionKind};
 use crate::commands::{lifecycle, plugin};
 use super::config::{McpConfig, PermissionMode};
+use super::server::McpRuntime;
 
 pub struct ToolResult {
     pub text: String,
@@ -98,15 +103,56 @@ fn kind_name(kind: SessionKind) -> &'static str {
     }
 }
 
-fn write_gate(cfg: &McpConfig) -> Result<(), ToolResult> {
-    if cfg.permission_mode.allows_write() {
-        return Ok(());
+fn summarize_command(command: &str) -> String {
+    const MAX_CHARS: usize = 200;
+    let trimmed = command.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        trimmed.to_string()
+    } else {
+        let head: String = trimmed.chars().take(MAX_CHARS).collect();
+        format!("{head}…")
     }
-    let reason = match cfg.permission_mode {
-        PermissionMode::Observer => "当前权限档位为 observer，写操作被拒绝",
-        _ => "当前权限档位为 confirm，但本版本尚未实现审批卡片，写操作被拒绝；请切到 auto 或改用只读工具",
-    };
-    Err(ToolResult::err(reason))
+}
+
+/// 写操作审批：auto 直接放行；observer 直接拒绝；confirm 走 UI 审批（含「始终允许」）。
+#[allow(clippy::too_many_arguments)]
+async fn approval_gate(
+    cfg: &McpConfig,
+    rt: &Arc<McpRuntime>,
+    app: &AppHandle,
+    gen: u64,
+    disconnected: Arc<AtomicBool>,
+    tool: &str,
+    args_summary: String,
+    session_id: Option<String>,
+    target_label: Option<String>,
+) -> Result<(), ToolResult> {
+    match cfg.permission_mode {
+        PermissionMode::Auto => Ok(()),
+        PermissionMode::Observer => Err(ToolResult::err(
+            "permission_denied: 当前权限档位为 observer，写操作被拒绝",
+        )),
+        PermissionMode::Confirm => {
+            let allowed = rt
+                .request_approval(
+                    app,
+                    gen,
+                    tool,
+                    args_summary,
+                    session_id,
+                    target_label,
+                    disconnected,
+                )
+                .await;
+            if allowed {
+                Ok(())
+            } else {
+                Err(ToolResult::err(format!(
+                    "permission_denied: {tool} 的审批被拒绝、超时或客户端已断开"
+                )))
+            }
+        }
+    }
 }
 
 fn owner_of(state: &AppState, session_id: &str) -> Result<crate::state::SessionOwner, ToolResult> {
@@ -150,6 +196,10 @@ fn environment(state: &AppState) -> Result<Value, ToolResult> {
 pub async fn call_tool(
     state: &AppState,
     cfg: &McpConfig,
+    rt: &Arc<McpRuntime>,
+    app: &AppHandle,
+    gen: u64,
+    disconnected: Arc<AtomicBool>,
     name: &str,
     args: &Value,
 ) -> ToolResult {
@@ -195,9 +245,6 @@ pub async fn call_tool(
             Err(e) => ToolResult::err(e.to_string()),
         },
         "terminal_execute" => {
-            if let Err(e) = write_gate(cfg) {
-                return e;
-            }
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
                 _ => return ToolResult::err("missing_argument: sessionId"),
@@ -218,6 +265,26 @@ pub async fn call_tool(
                 Ok(o) => o,
                 Err(e) => return e,
             };
+            let kind = match kind_of(state, &session_id) {
+                Ok(k) => k,
+                Err(e) => return e,
+            };
+            let target_label = Some(format!("{} · {}", kind_name(kind), session_id));
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "terminal_execute",
+                summarize_command(&command),
+                Some(session_id.clone()),
+                target_label,
+            )
+            .await
+            {
+                return e;
+            }
             match plugin::plugin_exec_impl(state, &owner, session_id, command, timeout).await {
                 Ok(out) => ToolResult::ok(
                     json!({
@@ -231,9 +298,6 @@ pub async fn call_tool(
             }
         }
         "session_close" => {
-            if let Err(e) = write_gate(cfg) {
-                return e;
-            }
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
                 _ => return ToolResult::err("missing_argument: sessionId"),
@@ -246,6 +310,22 @@ pub async fn call_tool(
                 Ok(k) => k,
                 Err(e) => return e,
             };
+            let target_label = Some(format!("{} · {}", kind_name(kind), session_id));
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "session_close",
+                format!("关闭会话 {session_id}"),
+                Some(session_id.clone()),
+                target_label,
+            )
+            .await
+            {
+                return e;
+            }
             match lifecycle::close_resource(state, &session_id, kind, &owner) {
                 Ok(()) => ToolResult::ok(json!({ "closed": session_id }).to_string()),
                 Err(e) => ToolResult::err(e.to_string()),

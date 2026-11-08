@@ -4,6 +4,7 @@
 //! `electron/bridges/externalMcpController.cjs`、`electron/mcp/*`。
 //! 移植方案与未实现清单见 `docs/mcp-port-plan.md`。
 
+pub mod approval;
 pub mod config;
 pub mod server;
 pub mod tools;

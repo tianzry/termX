@@ -1,14 +1,14 @@
 /**
  * 设置 → AI → 工具接入（对外 MCP）。
  *
- * 后端只暴露 4 个出口（mcpStatus / mcpSetConfig / mcpRotateToken /
- * mcpClientConfig），本页不直接 invoke("mcp_*")。结构对照 Netcatty
- * ExternalMcpCard + ExternalMcpHttpSection，差异：confirm 档位没有审批卡片，
- * 写操作一律被拒绝（文案如实说明）。
+ * 结构对照 Netcatty ExternalMcpCard + ExternalMcpHttpSection：
+ * - 三档权限（observer / confirm / auto）；confirm 的写操作走主窗审批浮层；
+ * - 「始终允许」按工具粒度持久化在设置 KV，可在本页撤销。
  */
 
 import { useEffect, useRef, useState } from "react";
 import {
+  mcpApprovalRevoke,
   mcpClientConfig,
   mcpRotateToken,
   mcpSetConfig,
@@ -189,6 +189,19 @@ export function AiTab() {
     }
   };
 
+  const revokeAllowedTool = async (tool: string) => {
+    setActionError(null);
+    setPending(`revoke:${tool}`);
+    try {
+      const tools = await mcpApprovalRevoke(tool);
+      setStatus((prev) => (prev ? { ...prev, allowedTools: tools } : prev));
+    } catch (error) {
+      setActionError(describeError(error));
+    } finally {
+      setPending(null);
+    }
+  };
+
   const copy = (key: string, value: string) => {
     navigator.clipboard
       ?.writeText(value)
@@ -284,6 +297,32 @@ export function AiTab() {
               })}
             </div>
           </div>
+
+          {status?.permissionMode === "confirm" && (status.allowedTools?.length ?? 0) > 0 && (
+            <div className="nc-set-row nc-mcp-row-block">
+              <div className="nc-set-row-text">
+                <div className="nc-set-row-title">{t("settings.ai.permission.allowed")}</div>
+                <div className="nc-set-row-desc">{t("settings.ai.permission.confirm.desc")}</div>
+              </div>
+              <div className="nc-mcp-allowed-list">
+                {status.allowedTools.map((tool) => (
+                  <span key={tool} className="nc-mcp-allowed-chip">
+                    <code>{tool}</code>
+                    <button
+                      type="button"
+                      className="nc-mcp-allowed-revoke"
+                      aria-label={t("settings.ai.permission.revoke", { tool })}
+                      title={t("settings.ai.permission.revoke", { tool })}
+                      disabled={pending === `revoke:${tool}`}
+                      onClick={() => void revokeAllowedTool(tool)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="nc-set-row">
             <div className="nc-set-row-text">

@@ -15,14 +15,18 @@ pub const KEY_ALLOW_CUSTOM_BIND: &str = "mcp.allow_custom_bind";
 pub const KEY_LISTEN_ADDRESS: &str = "mcp.listen_address";
 pub const KEY_CLIENT_HOST: &str = "mcp.client_host";
 pub const KEY_PERMISSION_MODE: &str = "mcp.permission_mode";
+/// 「始终允许」的工具名单（JSON 字符串数组），按工具粒度持久化。
+pub const KEY_ALLOWED_TOOLS: &str = "mcp.allowed_tools";
 
 /// Netcatty 默认端口 47391（`ExternalMcpHttpSection` 默认值），保持同值便于用户迁移。
 pub const DEFAULT_PORT: u16 = 47391;
 pub const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1";
 pub const MIN_PORT: u16 = 1024;
 
-/// 与 Netcatty `SafetySettings` 三档一致。差异：termX 本阶段没有审批卡片 UI，
-/// `confirm` 对写操作按拒绝处理（详见 docs/mcp-port-plan.md「不做的部分」）。
+/// 与 Netcatty `SafetySettings` 三档一致：
+/// - observer：只读工具可用，写操作直接拒绝；
+/// - confirm：写操作生成审批项，由渲染层选择允许一次 / 始终允许 / 拒绝；
+/// - auto：写操作直接放行。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionMode {
@@ -46,11 +50,6 @@ impl PermissionMode {
             "observer" => PermissionMode::Observer,
             _ => PermissionMode::Confirm,
         }
-    }
-
-    /// 写工具是否直接放行。`confirm` 需要审批交互，本阶段没有该 UI → 视作拒绝。
-    pub fn allows_write(self) -> bool {
-        matches!(self, PermissionMode::Auto)
     }
 }
 
@@ -193,4 +192,32 @@ pub fn allowed_hosts(cfg: &McpConfig) -> Vec<String> {
         hosts.push(custom);
     }
     hosts
+}
+
+pub fn load_allowed_tools(db: &Db) -> Vec<String> {
+    settings::get(db, KEY_ALLOWED_TOOLS)
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_allowed_tools(db: &Db, tools: &[String]) -> AppResult<()> {
+    let raw = serde_json::to_string(tools).unwrap_or_else(|_| "[]".to_string());
+    settings::set(db, KEY_ALLOWED_TOOLS, &raw)
+}
+
+pub fn add_allowed_tool(db: &Db, tool: &str) -> AppResult<()> {
+    let mut tools = load_allowed_tools(db);
+    if !tools.iter().any(|t| t == tool) {
+        tools.push(tool.to_string());
+        save_allowed_tools(db, &tools)?;
+    }
+    Ok(())
+}
+
+pub fn remove_allowed_tool(db: &Db, tool: &str) -> AppResult<()> {
+    let mut tools = load_allowed_tools(db);
+    tools.retain(|t| t != tool);
+    save_allowed_tools(db, &tools)
 }

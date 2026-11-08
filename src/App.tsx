@@ -29,6 +29,7 @@ import { SerialConnectModal } from "./serial/SerialConnectModal";
 import { TelnetConnectModal } from "./telnet/TelnetConnectModal";
 import { useForwardSupervisor } from "./forwardSupervisor";
 import { ConnectionManager } from "./ConnectionManager";
+import { McpApprovalHost } from "./mcp/McpApprovalHost";
 import { SftpView } from "./sftp/SftpView";
 import {
   resolveSftpLocateCdCommand,
@@ -1027,6 +1028,8 @@ export default function App() {
           onChanged={() => void loadData()}
         />
       )}
+
+      <McpApprovalHost />
     </div>
   );
 }

@@ -72,7 +72,7 @@
 | Host/Origin | 白名单 = `127.0.0.1 / localhost / ::1` + 用户 `clientHost`；不匹配 → 403 `forbidden_host / forbidden_origin` |
 | 路径 | 仅 `POST /mcp`；`GET` → 405（不提供 SSE）；`DELETE` → 200；其它 → 404 |
 | 体积 | header ≤8KB、body ≤4MB（超限 431/413） |
-| 权限档位 | `observer` 全部写拒绝；`confirm` 本阶段也拒绝（无审批 UI）；`auto` 写放行但仍过命令黑名单 |
+| 权限档位 | `observer` 全部写拒绝；`confirm` 写工具生成审批项（允许一次 / 始终允许 / 拒绝），只读工具直接放行；`auto` 写放行但仍过命令黑名单 |
 
 ## 6. 工具清单与映射
 
@@ -85,6 +85,18 @@
 | `snippets_list` | 只读 | `db::snippet::load` | 回 `id/name/package/command/description` |
 | `terminal_execute` | 写 | `plugin::plugin_exec_impl` | `timeoutMs` 默认沿用 impl；执行前 `validate_with` 过黑名单；owner 从注册表取 |
 | `session_close` | 写 | `lifecycle::close_resource` | kind/owner 从注册表取，避免越权关闭他人会话 |
+
+### 6.1 写操作审批（confirm）
+
+对齐 Netcatty `mcpServerBridge` 的 approval gate，落在 `src-tauri/src/mcp/approval.rs`：
+
+- 触发：`confirm` 档位下的 `terminal_execute` / `session_close`。参数校验（缺失参数、命令黑名单、会话不存在）先做，通过后才生成审批项。
+- 待审批项：`approvalId / toolName / argsSummary / sessionId / targetLabel / timeoutMs / createdAtMs`；主进程通过 `mcp:approval-request` 广播，结算后广播 `mcp:approval-cleared`（`approvalIds + reason`）。
+- 前端：`src/mcp/McpApprovalHost.tsx` 常驻主窗右下角，提供「允许一次 / 始终允许该工具 / 拒绝」；窗口不在前台时后端 `request_user_attention` 闪任务栏。
+- 超时：110 秒（外部客户端常见 120 秒工具调用上限之前），到时按拒绝结算。
+- 断开与重启：读写半连接拆分后监听客户端 EOF，断开即拒绝；`McpRuntime::stop` / `start`（generation++）会拒绝全部挂起项，重启后不残留悬空等待。
+- 「始终允许」：按工具粒度存 `mcp.allowed_tools`（settings KV，JSON 数组），重启后仍生效；设置页 confirm 档位下列出已允许工具并可撤销。
+- 只读工具（`get_environment` / `vault_hosts_list` / `snippets_list`）不进入审批。
 
 未实现（与 Netcatty 对应关系，**不注册假工具**）：
 
@@ -103,6 +115,7 @@
 
 - 工具业务失败 → `tools/call` 返回 `content[0].text` + `isError: true`（不抛 JSON-RPC error），与 Netcatty 一致。
 - 参数缺失 → `isError` + `missing_argument`；未知工具 → `isError` + `unknown_tool`。
+- 审批拒绝 / 超时 / 客户端断开 → `isError` + `permission_denied`，由外部客户端自行处理。
 - 方法不存在 → JSON-RPC `-32601`；`resources/read` 未知 uri → `-32602`；解析失败 → `-32700`。
 - 取消：**未实现** `notifications/cancelled` 与 AbortSignal 透传；`terminal_execute` 靠 `timeoutMs` 兜底（`plugin_exec_impl` 自带超时）。
 
@@ -114,20 +127,21 @@
 
 ## 9. 前端 UI 落点
 
-- 数据出口：`src/backend/client.ts` 4 个函数（已加）。
+- 数据出口：`src/backend/client.ts` 9 个函数（状态 / 改配置 / 轮换 token / 客户端片段 / 待审批 / 结算 / 撤销始终允许）。
+- 审批浮层：`src/mcp/McpApprovalHost.tsx`，常驻 `App.tsx` 根节点，不受当前页面切换影响。
 - 组件落点：`src/settings/AiTab.tsx`（新建，已在 `SettingsDialog.tsx` 启用 ai tab），结构与 Netcatty `ExternalMcpCard` 对齐：标题+说明+状态胶囊、错误条、启用开关、权限三档、端口/监听地址/允许自定义绑定/客户端 host、连接详情折叠区（URL / 打码 token / 轮换 / Codex TOML / Claude 命令 / 通用 JSON）、3 秒静默轮询。
-- 文案：`src/settings/i18n.ts` 中英文 `settings.ai.*`；样式追加在 `src/styles.css` 的 `.nc-mcp-*`。
-- 与 Netcatty 的差异：无 `env` 片段入口（后端支持但 UI 未展示，避免超出三片段范围）；`confirm` 档位文案明确写「写操作会被拒绝」而不是「待审批」。
+- 文案：`src/settings/i18n.ts` 中英文 `settings.ai.*` 与 `mcp.approval.*`；样式追加在 `src/styles.css` 的 `.nc-mcp-*` / `.mcp-approval-*`。
+- 与 Netcatty 的差异：无 `env` 片段入口（后端支持但 UI 未展示，避免超出三片段范围）。
 
 ## 10. 风险与不做的部分
 
 1. **任意命令执行面**：`terminal_execute` 等价于「持有 token 的人可在已打开会话里执行任意命令」，仅靠命令黑名单（49 条种子）与权限档位约束；默认 `confirm` 且默认关闭监听，是当前唯一的兜底。**不做**命令白名单/路径白名单。
 2. **跨进程权限边界**：单机 loopback + Bearer，无 OS 级 ACL；同机同用户进程可读 token（内存/设置页复制）。Netcatty 同样如此。
-3. **审批交互缺失**：`confirm` 档位对写操作一律拒绝，属**有意降级**，不得伪装成"待审批"。
+3. **审批绕过面**：`auto` 档与「始终允许」会跳过确认。默认为 `confirm` 且默认关闭监听；「始终允许」可在设置页撤销。
 4. **会话所有权**：MCP 不是会话 owner，`plugin_exec_impl` 用的是注册表里的真实 owner；若 owner 是某个窗口，MCP 实质是替该窗口执行。这是为「不越权」付出的语义折中，需在 UI 提示。
 5. **headless**：不启动监听器，只读配置快照，避免无界面进程偷偷开端口。
 6. **不新增 schema 表**：纯 settings KV，故 `SCHEMA_VERSION` 不变；如未来要给 MCP 建审计表再提升版本。
-7. **不做的**：SSE 服务端推送、stdio launcher、OAuth、多客户端 session 管理（当前无状态、无 `Mcp-Session-Id`）、工具级审批卡片、渐进式工具加载。
+7. **不做的**：SSE 服务端推送、stdio launcher、OAuth、多客户端 session 管理（当前无状态、无 `Mcp-Session-Id`）、渐进式工具加载。
 
 ## 11. 验证状态
 

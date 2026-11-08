@@ -2000,6 +2000,8 @@ export interface McpStatus {
   listenAddress: string;
   clientHost: string;
   toolCount: number;
+  /** confirm 档位下「始终允许」的工具名单（持久化在设置 KV）。 */
+  allowedTools: string[];
 }
 
 export interface McpConfigPatch {
@@ -2026,6 +2028,34 @@ export function mcpRotateToken(): Promise<McpStatus> {
 /** kind: "codex" | "claude" | "env" | "json"（其余落到通用 JSON）。 */
 export function mcpClientConfig(kind: string): Promise<string> {
   return invoke<string>("mcp_client_config", { kind });
+}
+
+export type McpApprovalDecision = "once" | "always" | "reject";
+
+export interface McpApprovalRequest {
+  approvalId: string;
+  toolName: string;
+  argsSummary: string;
+  sessionId: string | null;
+  targetLabel: string | null;
+  timeoutMs: number;
+  createdAtMs: number;
+}
+
+export function mcpApprovalPending(): Promise<McpApprovalRequest[]> {
+  return invoke<McpApprovalRequest[]>("mcp_approval_pending");
+}
+
+/** 结算待审批项；返回 false 表示该项已超时 / 已被结算。 */
+export function mcpApprovalResolve(
+  approvalId: string,
+  decision: McpApprovalDecision,
+): Promise<boolean> {
+  return invoke<boolean>("mcp_approval_resolve", { approvalId, decision });
+}
+
+export function mcpApprovalRevoke(toolName: string): Promise<string[]> {
+  return invoke<string[]>("mcp_approval_revoke", { toolName });
 }
 
 /** 冲突答复；`applyToAll` 时策略按批次记忆（阶段 C 对话框调用）。 */

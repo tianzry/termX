@@ -4,6 +4,44 @@
 
 ---
 
+## 2026-11-08 — MCP 写操作审批（confirm 档位补齐审批通路）
+
+### 修改
+
+- 新增 `src-tauri/src/mcp/approval.rs`：`ApprovalRegistry` 管理待审批项（工具名 / 参数摘要 / 目标会话 / 创建时间）与「始终允许」工具集合；`ApprovalDecision` 只认 `once / always / reject`。
+  - 事件：`mcp:approval-request` / `mcp:approval-cleared`（`approvalIds + reason`）；窗口失焦且有挂起项时 `request_user_attention(Informational)`，清空后复位。
+  - 110 秒硬超时（低于外部客户端常见 120 秒工具调用上限），到时按拒绝结算。
+- `mcp/server.rs`：`McpRuntime` 持有审批表；`request_approval` 挂 `oneshot` 等待，每 200ms 检查 `generation`（重启）/ 客户端断开 / 超时，任一条触发即 `deny` 并广播 cleared。
+  - 连接拆成读 / 写半连接，后台读 EOF 判定客户端断开；`stop` 与 `start` 都会 `deny_all`，不留悬空等待。
+  - 启动时从 settings KV 载入 `mcp.allowed_tools`；`McpStatus` 增 `allowedTools`。
+- `mcp/tools.rs`：`terminal_execute` / `session_close` 在参数校验、黑名单、会话存在性校验通过后才进审批；`auto` 放行、`observer` 直接拒绝、`confirm` 等待用户决策。只读工具不经过 gate。
+  - 参数摘要：命令按 200 字符截断，会话为 `kind · sessionId`。
+- 新增 Tauri 命令 `mcp_approval_pending / mcp_approval_resolve / mcp_approval_revoke`（`commands/mcp.rs`，`lib.rs` 注册）；headless `server.rs` 同步登记为 `gui_only`，`mcp_status` 补 `allowedTools`。
+- 前端新增 `src/mcp/McpApprovalHost.tsx`：主窗常驻右下角浮层，启动时拉取挂起项补齐、监听两个事件、每秒刷新倒计时；三按钮分别调用 `once / always / reject`。
+- 设置页 AI tab：confirm 档位下展示「始终允许的工具」chips，可逐个撤销；文案补充 110 秒自动拒绝。
+
+### 踩坑
+
+- `cargo check --lib` 不覆盖 `--features server`：headless `dispatch` 里手工构造 `McpStatus`，新增字段后只有带 feature 才报 `E0063`。新增 `McpStatus` 字段必须两处同改。
+- 启动网关的 `generation` 与 UI 结算存在竞争：等待用 `biased` 优先看超时 / 断开 / 重启，`deny()` 返回 false 时继续等 receiver，避免同一 id 被双重结算。
+- 客户端半关闭（发完请求即 FIN、但仍想读响应）会被判定为断开并拒绝，属可接受折衷（主流 MCP 客户端是长连接）。
+
+### 实机验证（debug 构建 + curl real MCP HTTP）
+
+- 只读工具 `get_environment` / `snippets_list` 在 confirm 下直接返回，不弹浮层。
+- 「允许一次」：浮层出现 → 点击后 curl 收到 `exitCode 0 / stdout approval-once-ok`。
+- 「拒绝」：点击后 curl 收到 `isError: true` + `permission_denied`。
+- 「始终允许 terminal_execute」：点击后成功执行；`mcp_status.allowedTools` 变为 `["terminal_execute"]`，后续调用 140ms 直接放行不弹窗；重启 MCP 服务、重启整个 app 后仍生效。
+- 撤销：`mcp_approval_revoke` 后 `allowedTools` 清空，设置页 chip 消失。
+- 关闭 MCP 服务时存在挂起项：客户端立即收到 `permission_denied`，`pending` 归 0。
+- 杀掉客户端进程（连接断开）：`pending` 1 → 0，挂起项按拒绝结算。
+
+### 门禁
+
+- `npm run test:run`：81 文件 / 913 用例通过（含 `McpApprovalHost` 3 例、`approval.rs` 4 例）。
+- `npm run build`：通过。
+- `cargo check --lib`、`cargo check --features server`、`cargo test --lib`：通过（981 用例，仅既有 `token_url` dead_code warning）。
+
 ## 2026-11-08 — 脚本 API 统一为 `tmx`（纯改名）
 
 ### 修改
