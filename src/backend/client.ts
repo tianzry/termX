@@ -882,8 +882,23 @@ export function exportSessionLog(id: string, format: string): Promise<string> {
   return invoke<string>("export_session_log", { id, format });
 }
 
+/** 导出直接由后端写目标文件，正文不回传前端（大文件不卡 UI）。 */
+export function exportSessionLogToFile(id: string, format: string, path: string): Promise<void> {
+  return invoke("export_session_log_to_file", { id, format, path });
+}
+
 export function deleteSessionLog(id: string): Promise<void> {
   return invoke("delete_session_log", { id });
+}
+
+/** 用系统默认关联程序打开日志文件。 */
+export function openSessionLog(id: string): Promise<void> {
+  return invoke("open_session_log", { id });
+}
+
+/** 在系统文件管理器中定位并选中日志文件。 */
+export function revealSessionLog(id: string): Promise<void> {
+  return invoke("reveal_session_log", { id });
 }
 
 export function listFonts(): Promise<FontInfo[]> {

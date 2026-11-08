@@ -305,6 +305,111 @@ pub fn export_session_log_impl(state: &AppState, id: &str, format: &str) -> AppR
     }
 }
 
+/// 解析日志索引行并拼出安全的全路径（DB 的 path 只能是裸文件名）。
+fn resolve_session_log_file(
+    state: &AppState,
+    id: &str,
+) -> AppResult<(SessionLog, std::path::PathBuf)> {
+    let log = crate::db::session_logs::get(&state.db, id)?;
+    if !crate::commands::settings::is_safe_recording_name(&log.path) {
+        return Err(AppError::config(
+            "invalid_recording_name",
+            serde_json::json!({ "name": &log.path }),
+        ));
+    }
+    let full = crate::commands::settings::session_log_dir(state).join(&log.path);
+    Ok((log, full))
+}
+
+/// 文件可能被用户或外部程序删掉：这里给出明确错误码，前端据此提示，
+/// 不把「文件不存在」当成无操作静默吞掉。
+fn ensure_session_log_file(full: &Path) -> AppResult<()> {
+    if full.is_file() {
+        return Ok(());
+    }
+    Err(AppError::not_found(
+        "session_log_file_missing",
+        serde_json::json!({ "path": full.to_string_lossy() }),
+    ))
+}
+
+/// 用系统默认关联程序打开日志文件（与仓库 / SFTP 的「系统打开」同一实现）。
+pub fn open_session_log_impl(state: &AppState, id: &str) -> AppResult<()> {
+    let (_log, full) = resolve_session_log_file(state, id)?;
+    ensure_session_log_file(&full)?;
+    crate::commands::localfs::open_with_system(&full).map_err(|e| {
+        AppError::other(
+            "session_log_open_failed",
+            serde_json::json!({ "err": e.to_string() }),
+        )
+    })
+}
+
+/// 在系统文件管理器中定位并选中日志文件。
+pub fn reveal_session_log_impl(state: &AppState, id: &str) -> AppResult<()> {
+    let (_log, full) = resolve_session_log_file(state, id)?;
+    ensure_session_log_file(&full)?;
+    reveal_in_file_manager(&full).map_err(|e| {
+        AppError::other(
+            "session_log_reveal_failed",
+            serde_json::json!({ "err": e.to_string() }),
+        )
+    })
+}
+
+fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        // explorer 的 /select 参数要求「/select,路径」在同一次调用里；
+        // 分开传两个参数会被当成「打开文件夹」而不是「选中文件」。
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.to_string_lossy()))
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg("-R").arg(path).spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let parent = path.parent().unwrap_or(path);
+        std::process::Command::new("xdg-open").arg(parent).spawn()?;
+    }
+    Ok(())
+}
+
+/// 导出直接写目标文件：txt 走文件拷贝，html 在 Rust 侧读取并转义后写出。
+/// 全链路不把正文回传前端，避免大文件（5MiB+）把 UI 卡死。
+pub fn export_session_log_to_file_impl(
+    state: &AppState,
+    id: &str,
+    format: &str,
+    target: &str,
+) -> AppResult<()> {
+    validate_export_format(format)?;
+    if target.trim().is_empty() {
+        return Err(AppError::config(
+            "session_log_path_invalid",
+            serde_json::json!({ "path": target }),
+        ));
+    }
+    let (_log, source) = resolve_session_log_file(state, id)?;
+    ensure_session_log_file(&source)?;
+    let destination = std::path::PathBuf::from(target);
+    let result = match format {
+        "txt" => std::fs::copy(&source, &destination).map(|_| ()),
+        // 校验已限定集合，剩余分支只可能是 html。
+        _ => std::fs::read_to_string(&source)
+            .and_then(|content| std::fs::write(&destination, text_to_html(&content))),
+    };
+    result.map_err(|e| {
+        AppError::other(
+            "session_log_export_failed",
+            serde_json::json!({ "err": e.to_string() }),
+        )
+    })
+}
+
 pub fn delete_session_log_impl(state: &AppState, id: &str) -> AppResult<()> {
     let log = crate::db::session_logs::get(&state.db, id)?;
     if !crate::commands::settings::is_safe_recording_name(&log.path) {
@@ -628,6 +733,26 @@ pub fn delete_session_log(state: State<'_, AppState>, id: String) -> AppResult<(
 }
 
 #[tauri::command]
+pub fn open_session_log(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    open_session_log_impl(&state, &id)
+}
+
+#[tauri::command]
+pub fn reveal_session_log(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    reveal_session_log_impl(&state, &id)
+}
+
+#[tauri::command]
+pub fn export_session_log_to_file(
+    state: State<'_, AppState>,
+    id: String,
+    format: String,
+    path: String,
+) -> AppResult<()> {
+    export_session_log_to_file_impl(&state, &id, &format, &path)
+}
+
+#[tauri::command]
 pub fn start_session_log(
     state: State<'_, AppState>,
     session_id: String,
@@ -823,6 +948,88 @@ mod tests {
         assert_eq!(
             crate::db::session_logs::get(&state.db, id).unwrap_err().code(),
             "session_log_not_found"
+        );
+    }
+
+    #[test]
+    fn export_to_file_writes_txt_and_html_without_returning_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path().to_path_buf());
+        write_log(
+            &crate::commands::settings::session_log_dir(&state),
+            "prod_web_20260603_120000.log",
+            LOG_BODY,
+        );
+        scan_session_logs(&state).unwrap();
+        let id = "log:prod_web_20260603_120000.log";
+
+        let txt_target = temp.path().join("out.txt");
+        export_session_log_to_file_impl(&state, id, "txt", txt_target.to_str().unwrap()).unwrap();
+        assert_eq!(std::fs::read_to_string(&txt_target).unwrap(), LOG_BODY);
+
+        let html_target = temp.path().join("out.html");
+        export_session_log_to_file_impl(&state, id, "html", html_target.to_str().unwrap())
+            .unwrap();
+        let html = std::fs::read_to_string(&html_target).unwrap();
+        assert!(html.contains("&lt;b&gt;&amp;"));
+        assert!(!html.contains("<b>&"));
+    }
+
+    #[test]
+    fn export_to_file_handles_five_mebibyte_log_without_frontend_roundtrip() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path().to_path_buf());
+        // 5.5MiB 量级：对齐实机里 129 的 5.5MB 会话日志。
+        let body = "line of log output 0123456789\n".repeat(200_000);
+        write_log(
+            &crate::commands::settings::session_log_dir(&state),
+            "big_20260603_120000.log",
+            &body,
+        );
+        scan_session_logs(&state).unwrap();
+        let id = "log:big_20260603_120000.log";
+
+        let txt_target = temp.path().join("big.txt");
+        export_session_log_to_file_impl(&state, id, "txt", txt_target.to_str().unwrap()).unwrap();
+        assert_eq!(
+            std::fs::metadata(&txt_target).unwrap().len(),
+            body.len() as u64
+        );
+
+        let html_target = temp.path().join("big.html");
+        export_session_log_to_file_impl(&state, id, "html", html_target.to_str().unwrap())
+            .unwrap();
+        assert!(std::fs::metadata(&html_target).unwrap().len() > body.len() as u64);
+    }
+
+    #[test]
+    fn open_and_reveal_report_missing_file_instead_of_silent_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path().to_path_buf());
+        let dir = crate::commands::settings::session_log_dir(&state);
+        write_log(&dir, "prod_web_20260603_120000.log", LOG_BODY);
+        scan_session_logs(&state).unwrap();
+        std::fs::remove_file(dir.join("prod_web_20260603_120000.log")).unwrap();
+
+        let id = "log:prod_web_20260603_120000.log";
+        assert_eq!(
+            open_session_log_impl(&state, id).unwrap_err().code(),
+            "session_log_file_missing"
+        );
+        assert_eq!(
+            reveal_session_log_impl(&state, id).unwrap_err().code(),
+            "session_log_file_missing"
+        );
+        assert_eq!(
+            export_session_log_to_file_impl(
+                &state,
+                id,
+                "txt",
+                temp.path().join("out.txt").to_str().unwrap()
+            )
+            .unwrap_err()
+            .code(),
+            "session_log_file_missing"
         );
     }
 

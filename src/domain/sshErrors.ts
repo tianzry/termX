@@ -185,6 +185,13 @@ const ERROR_MESSAGES: Record<
   session_log_read_failed: (p) => `读取会话日志失败：${str(p, "err")}`,
   session_log_format_invalid: (p) => `不支持的日志格式：${str(p, "format")}`,
   session_log_delete_failed: (p) => `删除会话日志失败：${str(p, "err")}`,
+  session_log_file_missing: (p) =>
+    `日志文件已被外部删除或移动：${str(p, "path") || "文件不存在"}`,
+  session_log_open_failed: (p) =>
+    `无法用系统默认程序打开日志：${str(p, "err") || "可能没有关联程序"}。请检查 .log 的文件关联。`,
+  session_log_reveal_failed: (p) =>
+    `无法打开日志所在文件夹：${str(p, "err") || "文件管理器不可用"}`,
+  session_log_export_failed: (p) => `导出会话日志失败：${str(p, "err")}`,
   session_log_path_invalid: () => "保存路径无效或目录不存在，请重新选择。",
   session_log_already_recording: () => "当前会话已在记录日志。",
   session_log_not_recording: () => "当前会话没有进行中的日志记录。",

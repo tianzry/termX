@@ -834,6 +834,32 @@ fn dispatch(
             .map_err(err_value)?;
             Ok(Value::Null)
         }
+        "open_session_log" => {
+            crate::commands::session_logs::open_session_log_impl(
+                state,
+                &arg::<String>(&args, "id")?,
+            )
+            .map_err(err_value)?;
+            Ok(Value::Null)
+        }
+        "reveal_session_log" => {
+            crate::commands::session_logs::reveal_session_log_impl(
+                state,
+                &arg::<String>(&args, "id")?,
+            )
+            .map_err(err_value)?;
+            Ok(Value::Null)
+        }
+        "export_session_log_to_file" => {
+            crate::commands::session_logs::export_session_log_to_file_impl(
+                state,
+                &arg::<String>(&args, "id")?,
+                &arg::<String>(&args, "format")?,
+                &arg::<String>(&args, "path")?,
+            )
+            .map_err(err_value)?;
+            Ok(Value::Null)
+        }
         "start_session_log" => {
             let sid: String = arg(&args, "sessionId")?;
             let title: String = arg(&args, "title")?;

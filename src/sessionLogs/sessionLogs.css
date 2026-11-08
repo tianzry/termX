@@ -131,7 +131,7 @@
 .session-logs-row {
   display: grid;
   grid-template-columns:
-    minmax(0, 1.6fr) 140px 84px 84px 88px;
+    minmax(0, 1.6fr) minmax(0, 0.7fr) 118px 118px 78px 78px 136px;
   align-items: center;
   gap: 12px;
   padding: 0 16px;
@@ -163,6 +163,11 @@
 
 .session-logs-th:hover {
   color: inherit;
+}
+
+/* 主机 / 结束 / 操作是没有排序行为的静态表头，不显示可点击手型。 */
+div.session-logs-th {
+  cursor: default;
 }
 
 .session-logs-sort-mark {
@@ -199,6 +204,17 @@
 .session-logs-row:focus-visible {
   outline: 2px solid hsl(var(--nc-primary) / 0.55);
   outline-offset: -2px;
+}
+
+/* 单击只做选中 / 聚焦：不打开正文，也不跳转页面。 */
+.session-logs-row.selected {
+  background: hsl(var(--nc-primary) / 0.12);
+}
+
+.session-logs-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-logs-cell {
@@ -348,261 +364,12 @@
   line-height: 1.6;
 }
 
-.session-logs-detail {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-}
-
-.session-logs-detail-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  /* 对齐 Netcatty ConnectionLogsManager 行级 px-4（左 16px）。 */
-  padding: 10px 16px;
-  border-bottom: 1px solid hsl(var(--nc-border) / 0.45);
-}
-
-.session-logs-detail-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.session-logs-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  height: 26px;
-  padding: 0 8px 0 6px;
-  border: 1px solid hsl(var(--nc-border));
-  border-radius: 6px;
-  background: transparent;
-  color: hsl(var(--nc-muted));
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.session-logs-back:hover {
-  background: hsl(var(--nc-hover));
-  color: inherit;
-}
-
-.session-logs-detail-title h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-logs-detail-title p {
-  margin: 2px 0 0;
-  font-size: 11px;
-  color: hsl(var(--nc-muted));
-}
-
-.session-logs-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  border: 1px solid hsl(var(--nc-border));
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-.session-logs-action:hover {
-  background: hsl(var(--nc-hover));
-}
-
-.session-logs-danger:hover {
-  border-color: #e5534b;
-  color: #e5534b;
-}
-
-/* 彩色 / 原文视图切换（阶段 B）。 */
-.session-logs-view-toggle {
-  flex: 0 0 auto;
-  display: inline-flex;
-  border: 1px solid hsl(var(--nc-border));
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.session-logs-view-toggle button {
-  height: 24px;
-  padding: 0 8px;
-  border: 0;
-  background: transparent;
-  color: hsl(var(--nc-muted));
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.session-logs-view-toggle button + button {
-  border-left: 1px solid hsl(var(--nc-border));
-}
-
-.session-logs-view-toggle button.active {
-  background: hsl(var(--nc-hover));
-  color: inherit;
-}
-
-/* 字号调节（对齐 Netcatty LogView 主题/字号定制）。 */
-.session-logs-zoom {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: hsl(var(--nc-muted));
-}
-
-.session-logs-zoom button {
-  height: 24px;
-  min-width: 26px;
-  padding: 0 6px;
-  border: 1px solid hsl(var(--nc-border));
-  border-radius: 5px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.session-logs-zoom button:hover:not(:disabled) {
-  background: hsl(var(--nc-hover));
-}
-
-.session-logs-zoom button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-/* 导出按钮 + 格式菜单（阶段 B）。 */
-.session-logs-export {
-  position: relative;
-  flex: 0 0 auto;
-  display: inline-flex;
-  gap: 2px;
-}
-
-.session-logs-export-toggle {
-  width: 20px;
-}
-
-.session-logs-export .session-logs-action:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.session-logs-export-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 20;
-  min-width: 148px;
-  display: flex;
-  flex-direction: column;
-  padding: 4px;
-  border: 1px solid hsl(var(--nc-border));
-  border-radius: 8px;
-  background: hsl(var(--nc-bg-elev));
-  box-shadow: 0 8px 24px hsl(220 40% 10% / 0.35);
-}
-
-.session-logs-export-menu button {
-  height: 28px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: inherit;
-  font-size: 12px;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.session-logs-export-menu button:hover {
-  background: hsl(var(--nc-hover));
-}
-
 .session-logs-notice {
   margin: 0;
   padding: 5px 12px;
   border-bottom: 1px solid hsl(var(--nc-border) / 0.3);
   color: hsl(var(--nc-muted));
   font-size: 11px;
-}
-
-.session-logs-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  padding: 8px 12px;
-  border-bottom: 1px solid hsl(var(--nc-border) / 0.3);
-}
-
-.session-logs-stat {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 11px;
-  color: hsl(var(--nc-muted));
-}
-
-.session-logs-stat strong {
-  font-weight: 500;
-  color: inherit;
-}
-
-.session-logs-path {
-  flex: 1 1 100%;
-  min-width: 0;
-}
-
-.session-logs-path strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.session-logs-content-wrap {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.session-logs-content {
-  margin: 0;
-  padding: 12px 16px;
-  color: inherit;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-  line-height: 1.65;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.session-logs-empty {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: hsl(var(--nc-muted));
-  font-size: 13px;
 }
 
 .session-logs-delete-modal {

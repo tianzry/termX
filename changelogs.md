@@ -8153,3 +8153,26 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 文档同步：§6.3 补「等待词按目标设备实际输出写」说明。
 - 实机（重启调试构建、重开 Git Bash + 129）：新建脚本落库 `language=javascript`；JS 脚本运行 → 面板「已完成」+ 日志 `b7-js-ok`；`language=shell` 的 `echo B7_OLD_PATH` 走旧路径（运行条出现、129 终端回显 `B7_OLD_PATH`、无脚本面板）；验证脚本随后删除。
 - 门禁：`npm run test:run` ✓（80 文件 / 910）、`npm run build` ✓、`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` ✓。
+
+## 2026-11-08 — worktree feat/ui-batch（1/3）：仅显示匹配行的规则来源改为工具栏规则
+
+- 规则来源拆成两条：**着色** = 设置页全局规则 + 工具栏规则追加；**行过滤** = 只用工具栏规则，不再把设置页全局规则 / 内置 unix-path 规则算进过滤条件（`resolveKeywordHighlightRuntime` 纯函数，`TerminalPane` 的 `filterRulesRef` 改吃 `filterRules`）。
+- 工具栏规则的归属：SSH 仍为持久化的主机级规则（关开关 / 断开回落全局）；本地终端、串口、Telnet 因没有主机档案，改为**会话级**规则（只在当前窗格内存里，不写回设置页），浮层提示与空态文案同步改为「只作用于当前会话」。
+- 这样「全局规则 A + 工具栏规则 B」在开过滤时只保留含 B 的行；关过滤时 A、B 一起着色，四类终端语义一致。
+- 新增 4 例单测：着色=全局在前+工具栏追加、过滤=仅工具栏（含只命中 A 的行被过滤）、工具栏关闭时不过滤也不着色、全局关闭时工具栏仍可着色并过滤。
+- 实机验证未执行：另一会话的 termX 实例正占用单实例锁，本 worktree 无法并行启动第二个实例；以纯函数单测锁定语义，待合并后可在主实例回归「A+B」两条用例。
+
+## 2026-11-08 — worktree feat/ui-batch（2/3）：设置页选色控件复用主干实现（跳过）
+
+- 已 rebase 到最新 `origin/main`（`6da524a`，含 `9f4a4d7`）：设置 → 终端 → 关键字高亮 的行内色块使用 `HighlightColorField`，展开为 `HighlightColorPicker`；工具栏「关键字高亮」弹层（`TerminalPane.tsx`）调用同一个 `HighlightColorPicker`，两处共用一份实现，满足 11 个标准色块 + 自定义原生取色器。
+- 本分支未重复实现、也未改动该控件，仅记录复用结论。
+
+## 2026-11-08 — worktree feat/ui-batch（3/3）：日志页不再渲染正文，列表只留元信息 + 四按钮
+
+- 首页「日志」页彻底移除正文渲染与详情页：删除 `getSessionLog` 调用、详情 state、字号调节、彩色/原文切换、详情导出菜单；列表行展示文件名、主机、开始、结束、时长、大小，行单击只做选中/聚焦，**不触发打开**。
+- 操作列四个按钮：`系统打开`（新增 `session_log_open`，走系统默认关联程序）、`打开所在文件夹`（新增 `session_log_reveal`，Windows `explorer /select`、macOS `open -R`、Linux `xdg-open`）、`导出`（新增 `session_log_export_to_file`，后端直接写目标文件：txt 走 `fs::copy`、html 在 Rust 侧转义后写出，正文不回传前端）、`删除`（二次确认后删文件与索引并刷新列表）。
+- 失败不静默：新增 `session_log_file_missing` / `session_log_open_failed` / `session_log_reveal_failed` / `session_log_export_failed` 中文化映射，覆盖文件被外部删除、无关联程序等场景。
+- 后端 3 个新命令同步接入 headless server 路由；新增 3 例 Rust 测试（txt/html 落盘、5.5MiB 大文件导出、文件缺失返回明确错误）；新增 2 例前端组件测试（行元信息 + 单击不读取、四按钮调用链）。
+- 实测数据（真实日志 `C:\Users\tianzry\.termX\logs\129_20261108_085047.log`，5,784,162 B）：旧路径后端整文件读取 25.84 / 40.42 / 30.41 / 31.07 / 28.42 ms（5 次，仅读取，不含 IPC 与前端渲染）；新导出后端拷贝 9.52 / 3.91 / 3.53 ms（3 次）；新列表单击在组件测试中低于 50 ms 阈值且无任何后端调用。
+- 未做按钮级实机点击：另一会话的 termX 实例占用单实例锁，本 worktree 无法并行启动第二个实例；以后端大文件测试 + 前端组件测试覆盖，合并后可在主实例补一次四按钮点测。
+- 门禁：`npm run test:run` ✓（82 文件 / 921）、`npm run build` ✓、`cargo check --lib` ✓、`cargo test --lib` ✓（1006）。
