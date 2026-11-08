@@ -114,3 +114,14 @@ pub struct AppState {
     pub ai_remote_shell_cache: Mutex<HashMap<String, crate::ai::shell::ShellKind>>,
     pub data_dir: PathBuf,
 }
+
+impl AppState {
+    /// 对外 MCP 读取会话注册表用：poisoned 时返回错误字符串，不 panic。
+    pub fn lock_sessions(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, SessionRecord>>, String> {
+        self.lifecycle_sessions
+            .lock()
+            .map_err(|_| "session_registry_poisoned".to_string())
+    }
+}

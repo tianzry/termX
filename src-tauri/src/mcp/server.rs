@@ -1,0 +1,614 @@
+//! 对外 MCP 宿主：进程内 Streamable HTTP（JSON 响应）server。
+//!
+//! Netcatty 的链路是 Electron 主进程 TCP bridge + `netcatty-external-mcp-server.cjs`
+//! stdio launcher + 可选 HTTP。termX 是单进程 Tauri，本阶段只做 **HTTP 传输**：
+//! 外部客户端（Claude Code / Codex / Cursor）用 `http://host:port/mcp` + Bearer token
+//! 直连，不需要再分发一个 Node launcher。stdio 传输在方案文档里列为未实现。
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use serde::Serialize;
+use serde_json::{json, Value};
+use tauri::{AppHandle, Manager};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
+
+use crate::state::AppState;
+use super::config::{self, McpConfig};
+use super::tools;
+
+const MAX_HEADER_BYTES: usize = 8 * 1024;
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+const SUPPORTED_PROTOCOL: &str = "2025-06-18";
+
+const INSTRUCTIONS: &str = "termX MCP 暴露本机已打开的终端会话与主机清单。\
+先调用 get_environment 获取 sessionId，再用 terminal_execute 执行命令。\
+写操作是否放行取决于 设置 → AI → 工具接入 的权限档位。";
+
+struct Inner {
+    config: McpConfig,
+    token: Option<String>,
+    bound_port: Option<u16>,
+    listening: bool,
+    error: Option<(String, String)>,
+    shutdown: Option<Arc<Notify>>,
+}
+
+impl Inner {
+    fn new() -> Self {
+        Self {
+            config: McpConfig::default(),
+            token: None,
+            bound_port: None,
+            listening: false,
+            error: None,
+            shutdown: None,
+        }
+    }
+}
+
+pub struct McpRuntime {
+    inner: Mutex<Inner>,
+    generation: AtomicU64,
+}
+
+pub struct McpState(pub Arc<McpRuntime>);
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub port: u16,
+    pub url: Option<String>,
+    pub bearer_token: Option<String>,
+    pub permission_mode: String,
+    pub error: Option<String>,
+    pub error_code: Option<String>,
+    pub allow_custom_bind: bool,
+    pub listen_address: String,
+    pub client_host: String,
+    pub tool_count: usize,
+}
+
+impl McpRuntime {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(Inner::new()),
+            generation: AtomicU64::new(0),
+        })
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn config(&self) -> McpConfig {
+        self.lock().config.clone()
+    }
+
+    pub fn status(&self) -> McpStatus {
+        let inner = self.lock();
+        let cfg = &inner.config;
+        let running = inner.listening;
+        let port = inner.bound_port.unwrap_or(cfg.port);
+        let url = if running {
+            Some(format!(
+                "http://{}:{}/mcp",
+                cfg.effective_client_host(),
+                port
+            ))
+        } else {
+            None
+        };
+        McpStatus {
+            enabled: cfg.enabled,
+            running,
+            port,
+            url,
+            bearer_token: inner.token.clone(),
+            permission_mode: cfg.permission_mode.as_str().to_string(),
+            error: inner.error.as_ref().map(|(_, m)| m.clone()),
+            error_code: inner.error.as_ref().map(|(c, _)| c.clone()),
+            allow_custom_bind: cfg.allow_custom_bind,
+            listen_address: cfg.listen_address.clone(),
+            client_host: cfg.client_host.clone(),
+            tool_count: tools::definitions().as_array().map(|a| a.len()).unwrap_or(0),
+        }
+    }
+
+    fn set_error(&self, code: &str, message: impl Into<String>) {
+        let mut inner = self.lock();
+        inner.listening = false;
+        inner.bound_port = None;
+        inner.error = Some((code.to_string(), message.into()));
+    }
+
+    /// 启动。已运行实例先停（generation++ 让旧 accept 循环退出）。
+    pub fn start(self: &Arc<Self>, app: AppHandle, cfg: McpConfig) -> Result<(), (String, String)> {
+        config::validate(&cfg)?;
+        let gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let shutdown = Arc::new(Notify::new());
+        {
+            let mut inner = self.lock();
+            if let Some(old) = inner.shutdown.take() {
+                old.notify_waiters();
+            }
+            inner.config = cfg;
+            inner.token = Some(new_token());
+            inner.listening = false;
+            inner.bound_port = None;
+            inner.error = None;
+            inner.shutdown = Some(shutdown.clone());
+        }
+        let rt = self.clone();
+        tauri::async_runtime::spawn(async move {
+            rt.run(app, gen, shutdown).await;
+        });
+        Ok(())
+    }
+
+    pub fn stop(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        let mut inner = self.lock();
+        if let Some(n) = inner.shutdown.take() {
+            n.notify_waiters();
+        }
+        inner.listening = false;
+        inner.bound_port = None;
+        inner.token = None;
+        inner.error = None;
+    }
+
+    pub fn rotate_token(&self) -> Option<String> {
+        let mut inner = self.lock();
+        if !inner.listening {
+            return None;
+        }
+        let token = new_token();
+        inner.token = Some(token.clone());
+        Some(token)
+    }
+
+    fn is_current(&self, gen: u64) -> bool {
+        self.generation.load(Ordering::SeqCst) == gen
+    }
+
+    async fn run(self: Arc<Self>, app: AppHandle, gen: u64, shutdown: Arc<Notify>) {
+        let (addr, port) = {
+            let inner = self.lock();
+            (inner.config.listen_address.clone(), inner.config.port)
+        };
+        let listener = match TcpListener::bind((addr.as_str(), port)).await {
+            Ok(l) => l,
+            Err(e) => {
+                if self.is_current(gen) {
+                    let code = match e.kind() {
+                        std::io::ErrorKind::AddrInUse => "port_in_use",
+                        std::io::ErrorKind::AddrNotAvailable => "invalid_address",
+                        _ => "listen_failed",
+                    };
+                    self.set_error(code, format!("监听 {addr}:{port} 失败: {e}"));
+                }
+                return;
+            }
+        };
+        if !self.is_current(gen) {
+            return;
+        }
+        let bound = listener.local_addr().ok().map(|a| a.port()).unwrap_or(port);
+        {
+            let mut inner = self.lock();
+            inner.listening = true;
+            inner.bound_port = Some(bound);
+            inner.error = None;
+        }
+
+        loop {
+            tokio::select! {
+                _ = shutdown.notified() => break,
+                accepted = listener.accept() => {
+                    match accepted {
+                        Ok((socket, _)) => {
+                            if !self.is_current(gen) { break; }
+                            let app2 = app.clone();
+                            let rt2 = self.clone();
+                            tokio::spawn(async move {
+                                let _ = serve_connection(app2, rt2, gen, socket).await;
+                            });
+                        }
+                        Err(e) => {
+                            log::warn!("mcp accept failed: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.is_current(gen) {
+            let mut inner = self.lock();
+            inner.listening = false;
+        }
+    }
+}
+
+fn new_token() -> String {
+    // 两段 UUIDv4 拼接 = 244 位随机，避免为 token 引入额外 RNG 依赖。
+    format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
+}
+
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+}
+
+fn parse_request(raw: &[u8]) -> Option<HttpRequest> {
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let head = std::str::from_utf8(&raw[..split]).ok()?;
+    let body = raw[split + 4..].to_vec();
+    let mut lines = head.split("\r\n");
+    let mut first = lines.next()?.split_whitespace();
+    let method = first.next()?.to_ascii_uppercase();
+    let path = first.next()?.to_string();
+    let mut headers = HashMap::new();
+    for line in lines {
+        if let Some((k, v)) = line.split_once(':') {
+            headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
+        }
+    }
+    Some(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
+fn header_ok(req: &HttpRequest, cfg: &McpConfig) -> Result<(), (u16, String)> {
+    let allowed = config::allowed_hosts(cfg);
+    if let Some(host) = req.headers.get("host") {
+        let bare = host.split(':').next().unwrap_or(host);
+        if !allowed.iter().any(|a| a == bare) {
+            return Err((403, "forbidden_host".to_string()));
+        }
+    }
+    if let Some(origin) = req.headers.get("origin") {
+        let ok = allowed.iter().any(|a| {
+            origin.as_str() == format!("http://{a}")
+                || origin.as_str() == format!("https://{a}")
+                || origin.as_str() == format!("http://{a}:{}", cfg.port)
+        });
+        if !ok {
+            return Err((403, "forbidden_origin".to_string()));
+        }
+    }
+    Ok(())
+}
+
+fn auth_ok(req: &HttpRequest, token: Option<&str>) -> bool {
+    let Some(expected) = token else {
+        return false;
+    };
+    let Some(raw) = req.headers.get("authorization") else {
+        return false;
+    };
+    let Some(bearer) = raw.strip_prefix("Bearer ").or_else(|| raw.strip_prefix("bearer ")) else {
+        return false;
+    };
+    // 定长比较，避免时序侧信道。
+    let a = bearer.trim().as_bytes();
+    let b = expected.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for i in 0..a.len() {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
+}
+
+async fn read_request(socket: &mut TcpStream) -> Result<HttpRequest, (u16, String)> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut header_done = false;
+    loop {
+        let mut chunk = [0u8; 1024];
+        let n = socket
+            .read(&mut chunk)
+            .await
+            .map_err(|e| (400, format!("read_failed: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            header_done = true;
+            break;
+        }
+        if buf.len() > MAX_HEADER_BYTES {
+            return Err((431, "headers_too_large".to_string()));
+        }
+    }
+    if !header_done {
+        return Err((400, "incomplete_request".to_string()));
+    }
+    let mut req = parse_request(&buf).ok_or((400, "malformed_request".to_string()))?;
+    let want = req
+        .headers
+        .get("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    if want > MAX_BODY_BYTES {
+        return Err((413, "body_too_large".to_string()));
+    }
+    while req.body.len() < want {
+        let mut chunk = [0u8; 4096];
+        let n = socket
+            .read(&mut chunk)
+            .await
+            .map_err(|e| (400, format!("read_failed: {e}")))?;
+        if n == 0 {
+            break;
+        }
+        req.body.extend_from_slice(&chunk[..n]);
+    }
+    if req.body.len() > MAX_BODY_BYTES {
+        return Err((413, "body_too_large".to_string()));
+    }
+    Ok(req)
+}
+
+async fn respond(
+    socket: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &str,
+    extra: &[(&str, &str)],
+) -> std::io::Result<()> {
+    let reason = match status {
+        200 => "OK",
+        202 => "Accepted",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        413 => "Payload Too Large",
+        431 => "Request Header Fields Too Large",
+        503 => "Service Unavailable",
+        _ => "Error",
+    };
+    let mut head = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    for (k, v) in extra {
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("\r\n");
+    socket.write_all(head.as_bytes()).await?;
+    socket.write_all(body.as_bytes()).await?;
+    socket.flush().await?;
+    Ok(())
+}
+
+async fn serve_connection(
+    app: AppHandle,
+    rt: Arc<McpRuntime>,
+    gen: u64,
+    mut socket: TcpStream,
+) -> std::io::Result<()> {
+    let req = match read_request(&mut socket).await {
+        Ok(r) => r,
+        Err((status, msg)) => {
+            return respond(&mut socket, status, "application/json", &json!({ "error": msg }).to_string(), &[]).await;
+        }
+    };
+    if !rt.is_current(gen) {
+        return respond(&mut socket, 503, "application/json", "{\"error\":\"mcp_restarted\"}", &[]).await;
+    }
+    let (cfg, token, running) = {
+        let inner = rt.lock();
+        (inner.config.clone(), inner.token.clone(), inner.listening)
+    };
+    if !running {
+        return respond(&mut socket, 503, "application/json", "{\"error\":\"mcp_disabled\"}", &[]).await;
+    }
+    if let Err((status, msg)) = header_ok(&req, &cfg) {
+        return respond(&mut socket, status, "application/json", &json!({ "error": msg }).to_string(), &[]).await;
+    }
+    if req.method != "POST" {
+        if req.method == "GET" {
+            return respond(
+                &mut socket,
+                405,
+                "application/json",
+                "{\"error\":\"sse_not_supported\"}",
+                &[("Allow", "POST, DELETE")],
+            )
+            .await;
+        }
+        if req.method == "DELETE" {
+            if !auth_ok(&req, token.as_deref()) {
+                return respond(&mut socket, 401, "application/json", "{\"error\":\"unauthorized\"}", &[("WWW-Authenticate", "Bearer")]).await;
+            }
+            return respond(&mut socket, 200, "application/json", "{}", &[]).await;
+        }
+        return respond(&mut socket, 404, "application/json", "{\"error\":\"not_found\"}", &[]).await;
+    }
+    if req.path != "/mcp" && req.path != "/mcp/" {
+        return respond(&mut socket, 404, "application/json", "{\"error\":\"not_found\"}", &[]).await;
+    }
+    if !auth_ok(&req, token.as_deref()) {
+        return respond(&mut socket, 401, "application/json", "{\"error\":\"unauthorized\"}", &[("WWW-Authenticate", "Bearer")]).await;
+    }
+    let parsed: Result<Value, _> = serde_json::from_slice(&req.body);
+    let Ok(payload) = parsed else {
+        return respond(&mut socket, 400, "application/json", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"parse_error\"}}", &[]).await;
+    };
+
+    let (body, status) = if payload.is_array() {
+        let mut out = Vec::new();
+        let mut only_notifications = true;
+        for item in payload.as_array().cloned().unwrap_or_default() {
+            if let Some(resp) = dispatch(&app, &rt, gen, &item).await {
+                only_notifications = false;
+                out.push(resp);
+            }
+        }
+        if only_notifications {
+            (String::new(), 202)
+        } else {
+            (Value::Array(out).to_string(), 200)
+        }
+    } else {
+        match dispatch(&app, &rt, gen, &payload).await {
+            Some(resp) => (resp.to_string(), 200),
+            None => (String::new(), 202),
+        }
+    };
+    respond(&mut socket, status, "application/json", &body, &[]).await
+}
+
+async fn dispatch(app: &AppHandle, rt: &Arc<McpRuntime>, gen: u64, req: &Value) -> Option<Value> {
+    let id = req.get("id").cloned();
+    let method = req.get("method").and_then(Value::as_str).unwrap_or("");
+    let params = req.get("params").cloned().unwrap_or(Value::Null);
+
+    // 通知（无 id）一律不回包，HTTP 层返回 202。
+    if id.is_none() {
+        return None;
+    }
+    let id = id.unwrap();
+    if !rt.is_current(gen) {
+        return Some(json!({ "jsonrpc": "2.0", "id": id,
+            "error": { "code": -32000, "message": "mcp_restarted" } }));
+    }
+    let state = app.state::<AppState>();
+    let cfg = rt.config();
+
+    let result: Result<Value, (i64, String)> = match method {
+        "initialize" => {
+            let requested = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or(SUPPORTED_PROTOCOL);
+            Ok(json!({
+                "protocolVersion": requested,
+                "capabilities": {
+                    "tools": { "listChanged": false },
+                    "resources": { "subscribe": false, "listChanged": false }
+                },
+                "serverInfo": { "name": "termX", "version": env!("CARGO_PKG_VERSION") },
+                "instructions": INSTRUCTIONS
+            }))
+        }
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({ "tools": tools::definitions() })),
+        "tools/call" => {
+            let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+            let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            let out = tools::call_tool(&state, &cfg, name, &args).await;
+            Ok(json!({
+                "content": [{ "type": "text", "text": out.text }],
+                "isError": out.is_error
+            }))
+        }
+        "resources/list" => Ok(json!({ "resources": tools::resources() })),
+        "resources/read" => {
+            let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
+            let out = tools::read_resource(&state, uri);
+            if out.is_error {
+                Err((-32602, out.text))
+            } else {
+                Ok(json!({
+                    "contents": [{ "uri": uri, "mimeType": "application/json", "text": out.text }]
+                }))
+            }
+        }
+        "prompts/list" => Ok(json!({ "prompts": [] })),
+        "logging/setLevel" => Ok(json!({})),
+        _ => Err((-32601, format!("method_not_found: {method}"))),
+    };
+    Some(match result {
+        Ok(value) => json!({ "jsonrpc": "2.0", "id": id, "result": value }),
+        Err((code, message)) => json!({ "jsonrpc": "2.0", "id": id,
+            "error": { "code": code, "message": message } }),
+    })
+}
+
+/// 生成对外客户端连接片段（对齐 Netcatty `domain/externalMcpHttp.ts` 的四种形态）。
+pub fn client_snippet(status: &McpStatus, kind: &str) -> String {
+    let Some(url) = status.url.as_deref() else {
+        return String::new();
+    };
+    let token = status.bearer_token.clone().unwrap_or_default();
+    match kind {
+        "codex" => format!(
+            "[mcp_servers.termx]\nurl = \"{url}\"\nbearer_token_env_var = \"TERMX_MCP_TOKEN\"\n"
+        ),
+        "claude" => format!(
+            "claude mcp add --transport http termx {url} --header \"Authorization: Bearer {token}\""
+        ),
+        "env" => format!("export TERMX_MCP_URL={url}\nexport TERMX_MCP_TOKEN={token}\n"),
+        _ => json!({
+            "mcpServers": {
+                "termx": {
+                    "type": "http",
+                    "url": url,
+                    "headers": { "Authorization": format!("Bearer {token}") }
+                }
+            }
+        })
+        .to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_minimal_request() {
+        let raw = b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:47391\r\nAuthorization: Bearer abc\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+        let req = parse_request(raw).unwrap();
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.path, "/mcp");
+        assert_eq!(req.body, b"{}");
+        assert_eq!(req.headers.get("host").unwrap(), "127.0.0.1:47391");
+    }
+
+    #[test]
+    fn auth_is_constant_time_equal() {
+        let req = parse_request(b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer tok\r\n\r\n").unwrap();
+        assert!(auth_ok(&req, Some("tok")));
+        assert!(!auth_ok(&req, Some("tok2")));
+        assert!(!auth_ok(&req, None));
+    }
+
+    #[test]
+    fn host_and_origin_are_checked() {
+        let cfg = McpConfig::default();
+        let good = parse_request(b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:47391\r\n\r\n").unwrap();
+        assert!(header_ok(&good, &cfg).is_ok());
+        let bad = parse_request(b"POST /mcp HTTP/1.1\r\nHost: evil.example\r\n\r\n").unwrap();
+        assert_eq!(header_ok(&bad, &cfg).unwrap_err().0, 403);
+        let origin = parse_request(b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: http://evil.example\r\n\r\n").unwrap();
+        assert_eq!(header_ok(&origin, &cfg).unwrap_err().0, 403);
+    }
+
+    #[test]
+    fn validate_blocks_public_bind_without_opt_in() {
+        let mut cfg = McpConfig::default();
+        cfg.listen_address = "0.0.0.0".into();
+        assert_eq!(config::validate(&cfg).unwrap_err().0, "custom_bind_disabled");
+        cfg.allow_custom_bind = true;
+        assert!(config::validate(&cfg).is_ok());
+    }
+}

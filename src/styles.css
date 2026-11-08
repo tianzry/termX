@@ -13657,3 +13657,282 @@ html[data-theme="dark"] .nc-shell-icon.mono {
 .nc-scripts-row:focus-within .nc-scripts-run {
   opacity: 1;
 }
+
+/* ── 设置 → AI → 工具接入（对外 MCP）── */
+.nc-mcp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nc-mcp-head-text {
+  min-width: 0;
+}
+
+.nc-mcp-head .nc-set-row-desc {
+  margin-top: 4px;
+}
+
+.nc-mcp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+.nc-mcp-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: hsl(var(--muted-foreground));
+}
+
+.nc-mcp-status.is-running {
+  border-color: hsl(var(--primary) / 0.4);
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+}
+
+.nc-mcp-status.is-running .nc-mcp-status-dot {
+  background: hsl(var(--primary));
+}
+
+.nc-mcp-status.is-starting {
+  border-color: hsl(38 92% 50% / 0.4);
+  background: hsl(38 92% 50% / 0.1);
+  color: hsl(38 92% 42%);
+}
+
+.nc-mcp-status.is-starting .nc-mcp-status-dot {
+  background: hsl(38 92% 50%);
+}
+
+.nc-mcp-status.is-error {
+  border-color: hsl(var(--destructive) / 0.4);
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
+}
+
+.nc-mcp-status.is-error .nc-mcp-status-dot {
+  background: hsl(var(--destructive));
+}
+
+.nc-mcp-error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid hsl(var(--destructive) / 0.4);
+  border-radius: 8.4px;
+  background: hsl(var(--destructive) / 0.08);
+  color: hsl(var(--destructive));
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.nc-mcp-error-code {
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+.nc-mcp-row-block {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.nc-mcp-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.nc-mcp-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8.4px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.nc-mcp-mode:hover:not(:disabled) {
+  background: hsl(var(--accent) / 0.12);
+}
+
+.nc-mcp-mode.is-active {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.08);
+}
+
+.nc-mcp-mode:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nc-mcp-mode-radio {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  flex: none;
+  border: 1px solid hsl(var(--input));
+  border-radius: 50%;
+  background: hsl(var(--background));
+}
+
+.nc-mcp-mode.is-active .nc-mcp-mode-radio {
+  border-color: hsl(var(--primary));
+}
+
+.nc-mcp-mode.is-active .nc-mcp-mode-radio::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: hsl(var(--primary));
+}
+
+.nc-mcp-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nc-mcp-mode-title {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.nc-mcp-mode-desc {
+  font-size: 12px;
+  line-height: 16px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-mcp-checkbox {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: hsl(var(--primary));
+  cursor: pointer;
+}
+
+.nc-mcp-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.nc-mcp-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nc-mcp-summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.nc-mcp-copy-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.nc-mcp-copy-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.nc-mcp-copy-label {
+  font-size: 12px;
+  line-height: 16px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-mcp-copy-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.nc-mcp-code-block {
+  display: block;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--muted) / 0.35);
+  color: hsl(var(--foreground));
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  max-height: 180px;
+}
+
+.nc-mcp-snippet {
+  padding: 12px 0;
+}
+
+.nc-mcp-snippet-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.nc-mcp-snippet-tabs .nc-set-btn:last-child {
+  margin-left: auto;
+}
+
+@media (max-width: 720px) {
+  .nc-mcp-head,
+  .nc-mcp-copy-row {
+    flex-direction: column;
+  }
+
+  .nc-mcp-copy-actions {
+    justify-content: flex-start;
+  }
+
+  .nc-mcp-snippet-tabs .nc-set-btn:last-child {
+    margin-left: 0;
+  }
+}

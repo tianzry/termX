@@ -1,6 +1,7 @@
 mod ai;
 mod app_lock;
 mod commands;
+mod mcp;
 #[cfg(desktop)]
 pub use commands::cli::CLI_VERSION;
 pub mod crypto;
@@ -139,6 +140,7 @@ pub fn run() {
                 log::warn!("migration failed (will retry on next startup): {e}");
             }
 
+            let mcp_cfg = crate::mcp::config::load(&db);
             app.manage(AppState {
                 transfer_center: Arc::new(crate::sftp::transfer_center::TransferCenter::new(db.clone())),
                 db,
@@ -162,6 +164,16 @@ pub fn run() {
                 ai_remote_shell_cache: Mutex::new(HashMap::new()),
                 data_dir,
             });
+
+            // 对外 MCP：运行态独立于 AppState（避免每次请求都持有 db 锁）。
+            // 配置从 settings 表读取，开关关闭时不监听端口。
+            let mcp_runtime = crate::mcp::server::McpRuntime::new();
+            app.manage(crate::mcp::server::McpState(mcp_runtime.clone()));
+            if mcp_cfg.enabled {
+                if let Err((code, message)) = mcp_runtime.start(app.handle().clone(), mcp_cfg) {
+                    log::warn!("mcp autostart failed: {code} {message}");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -497,6 +509,11 @@ pub fn run() {
             ai::commands::ai_provider_list,
             ai::commands::ai_provider_save,
             ai::commands::ai_provider_delete,
+            // 对外 MCP（Settings → AI → 工具接入）
+            commands::mcp::mcp_status,
+            commands::mcp::mcp_set_config,
+            commands::mcp::mcp_rotate_token,
+            commands::mcp::mcp_client_config,
         ])
         .run(tauri::generate_context!())
         .expect("termX startup failed");

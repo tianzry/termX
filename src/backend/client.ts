@@ -1980,6 +1980,54 @@ export function sftpTransferSetConcurrency(concurrency: number): Promise<void> {
   return invoke("sftp_transfer_set_concurrency", { concurrency });
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// 对外 MCP（Settings → AI → 工具接入）
+// 只有这 4 个出口，页面不得直接 invoke("mcp_*")。
+// ────────────────────────────────────────────────────────────────────────────
+
+export type McpPermissionMode = "observer" | "confirm" | "auto";
+
+export interface McpStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  url: string | null;
+  bearerToken: string | null;
+  permissionMode: McpPermissionMode;
+  error: string | null;
+  errorCode: string | null;
+  allowCustomBind: boolean;
+  listenAddress: string;
+  clientHost: string;
+  toolCount: number;
+}
+
+export interface McpConfigPatch {
+  enabled?: boolean;
+  port?: number;
+  allowCustomBind?: boolean;
+  listenAddress?: string;
+  clientHost?: string;
+  permissionMode?: McpPermissionMode;
+}
+
+export function mcpStatus(): Promise<McpStatus> {
+  return invoke<McpStatus>("mcp_status");
+}
+
+export function mcpSetConfig(patch: McpConfigPatch): Promise<McpStatus> {
+  return invoke<McpStatus>("mcp_set_config", { patch });
+}
+
+export function mcpRotateToken(): Promise<McpStatus> {
+  return invoke<McpStatus>("mcp_rotate_token");
+}
+
+/** kind: "codex" | "claude" | "env" | "json"（其余落到通用 JSON）。 */
+export function mcpClientConfig(kind: string): Promise<string> {
+  return invoke<string>("mcp_client_config", { kind });
+}
+
 /** 冲突答复；`applyToAll` 时策略按批次记忆（阶段 C 对话框调用）。 */
 export function sftpResolveConflict(
   transferId: string,
