@@ -72,6 +72,7 @@ import {
   parseSnippetImportPayload,
   type SnippetExportPayload,
 } from "./snippetsTransfer";
+import { ScriptRunPanel, type NctScriptViewState } from "./ScriptRunPanel";
 import "./snippets.css";
 
 type SnippetKind = "" | "script";
@@ -190,6 +191,8 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   const [scriptExpanded, setScriptExpanded] = useState(false);
   const [recording, setRecording] = useState(false);
   const [run, setRun] = useState<{ name: string; paneId: string } | null>(null);
+  /** JavaScript 脚本运行状态（来自活动终端的 scriptControl 订阅）。 */
+  const [scriptRun, setScriptRun] = useState<NctScriptViewState | null>(null);
   const [varPrompt, setVarPrompt] = useState<{
     snippet: Snippet;
     fromPanel: boolean;
@@ -229,6 +232,15 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   // 切换活动窗格 / 关闭终端后清空运行横幅，避免把控制键发给错误的会话。
   useEffect(() => {
     setRun(null);
+  }, [activeHandle]);
+
+  // 订阅活动窗格的脚本运行状态（含切换窗格后立即同步当前状态）。
+  useEffect(() => {
+    if (!activeHandle) {
+      setScriptRun(null);
+      return;
+    }
+    return activeHandle.scriptControl.subscribe(setScriptRun);
   }, [activeHandle]);
 
   // 点击空白处关闭下拉与右键菜单。
@@ -360,6 +372,17 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   };
 
   const sendSnippet = (s: Snippet, fromPanel = false) => {
+    // JavaScript 脚本走 Worker 运行时（nct.* API），不把源码发给 shell。
+    // 阶段 1 无语言选择入口：kind=script 的条目暂时全部按 JavaScript 处理，
+    // 兼容分流在后续块收敛为 language==="javascript"。
+    if (s.kind === "script") {
+      if (!activeHandle?.runNctScript({ name: s.name, source: s.command })) {
+        setNotice("脚本未能启动：终端未就绪，或已有脚本正在运行。");
+        return;
+      }
+      if (fromPanel) setIsNew(false);
+      return;
+    }
     if (!activeHandle?.runSnippet(s)) {
       setNotice("脚本未能发送：终端未就绪。");
       return;
@@ -863,6 +886,14 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
             <button onClick={() => controlRun("resume")}>恢复</button>
             <span className="sn-run-hint">停止 = Ctrl-C；暂停 = Ctrl-Z；恢复 = fg</span>
           </div>
+        )}
+
+        {scriptRun && activeHandle && (
+          <ScriptRunPanel
+            state={scriptRun}
+            onStop={() => activeHandle.scriptControl.stop()}
+            onDismiss={() => activeHandle.scriptControl.dismiss()}
+          />
         )}
 
         {(err || notice) && (

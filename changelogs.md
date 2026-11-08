@@ -7766,3 +7766,13 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 
 
 
+
+## 2026-11-08 — 脚本运行时阶段 1（4/7）：终端窗格接入 nct 脚本运行与状态面板
+
+- `PaneHandle` 增 `runNctScript({name,source})` 与 `scriptControl`（status / stop / subscribe / dismiss）；`TerminalPane` 新增会话文本 tap（非串口输出先 append 到 `SessionTextBuffer`，串口走独立解码分支）、`publishScriptRun` / `appendScriptLog`（日志保留 200 条）、`runNctScript`（要求传输就绪、拒绝并行、空源码返回 false、运行前 `consumeAll()`、`createNctScriptApi` + `startNctScript`，`done` 后发布 completed / failed / stopped 与 error）。
+- 修复：`startNctScript` 未传 `onLog`，`nct.log()` 通知落到宿主 `api.log`（空实现），日志面板只剩 `sendLine` 一条。改为 `onLog: appendScriptLog` 接通运行器 notify 通道。
+- 新建 `ScriptRunPanel`（运行中 / 已完成 / 失败 / 已停止、停止与关闭按钮、失败原因、日志 `aria-label` 与自动滚底）；`SnippetsView` 订阅活动窗格 `scriptControl`，`kind==='script'` 的运行改走 `runNctScript`（临时过渡，块 7 收敛为 `language==='javascript'`），启动失败提示「脚本未能启动：终端未就绪，或已有脚本正在运行。」；旧 `sn-runbar` 保留给片段。
+- 新增 2 例组件测试（ScriptRunPanel 状态与按钮）。
+- 实机（本地 Git Bash + 129 Ubuntu，CDP）：`sendLine('uname -a')` + `waitForText` 命中（Git Bash 命中 `MINGW`、129 命中 `Linux`），xterm 缓冲可见 `MINGW64_NT-10.0-…` / `…GNU/Linux` 真实输出；`while(true){}` 2.17s 被心跳看门狗终止并显示 `Script execution timed out after 2000ms (no heartbeat)`；运行中点「停止」→ 已停止，「关闭」隐藏面板。
+- 坑与已知差异：从 Vault「脚本」页运行时终端处于 `display:none`，期间写入在切回终端后不可见（会话 id 未变、无重连；改用普通手输命令 `echo SURVIVE` 复现，属既有窗格挂载行为，不影响脚本执行与等待词匹配）；等待词须按目标设备实际输出写（Git Bash 为 MINGW 输出、不含 `Linux`）；Worker 屏蔽全局仅防呆，不是安全边界。
+- 门禁：`npm run test:run` ✓（79 文件 / 906）、`npm run build` ✓、`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` ✓。

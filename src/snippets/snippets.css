@@ -254,6 +254,68 @@
   color: hsl(var(--nc-faint));
   font-size: 11px;
 }
+
+/* ── 脚本运行面板（nct.* 运行时） ─────────────────────── */
+.sn-script-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: hsl(var(--nc-hover) / 0.8);
+  border: 1px solid hsl(var(--nc-border));
+}
+.sn-script-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sn-script-title {
+  font-weight: 500;
+}
+.sn-script-head button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid hsl(var(--nc-border));
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sn-script-head button:hover:not(:disabled) {
+  background: hsl(var(--nc-hover));
+}
+.sn-script-head button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.sn-run-dot.is-idle {
+  animation: none;
+  background: hsl(var(--nc-faint));
+}
+.sn-script-error {
+  color: #f87171;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sn-script-logs {
+  max-height: 160px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: hsl(var(--nc-hover) / 0.55);
+  border: 1px solid hsl(var(--nc-border) / 0.6);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.sn-script-log {
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
 @keyframes sn-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }

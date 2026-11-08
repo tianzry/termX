@@ -205,7 +205,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
     - [x] 1/7 `SessionTextBuffer`（输出 tap、绝对偏移消费、20 万字符尾部保留、四类等待）+ 21 单测。
     - [x] 2/7 Worker 沙箱与宿主运行器（三种源码包装、nct RPC、100ms 心跳 + 2s 看门狗、30 分钟总超时、停止）+ 28 单测。
     - [x] 3/7 API 子集接线（screen / session / log，`sendLine` 30ms 两包时序且只消费发送前长度）+ 14 单测。
-    - [ ] 4/7 运行与停止入口（`PaneHandle.runNctScript` / `scriptControl`、运行状态、脚本日志面板）。
+    - [x] 4/7 运行与停止入口（`PaneHandle.runNctScript` / `scriptControl`、运行状态、脚本日志面板）。实机：本地 Git Bash `uname -a` 输出 `MINGW64_NT-…`、等待词 `MINGW` 命中；129 Ubuntu `Linux` 命中；`while(true){}` 约 2.1s 被心跳看门狗终止（`Script execution timed out after 2000ms (no heartbeat)`）；停止 → 已停止、关闭面板可用。
     - [ ] 5/7 CodeMirror 6 编辑器（javascript 高亮、`Mod-Enter` 运行、Tab 缩进）。
     - [ ] 6/7 执行前 `{{var}}` 替换 + 脚本区变量提示。
     - [ ] 7/7 兼容分流（`kind=script && language=javascript` 走新运行时，其余旧 `#@`；新建脚本默认 javascript）。

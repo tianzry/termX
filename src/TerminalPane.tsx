@@ -70,6 +70,10 @@ import {
 } from "./snippets/snippetsModel";
 import { parseScriptBlocks, runScriptBlocks } from "./snippets/scriptRunner";
 import { appendScriptTrigger } from "./snippets/scriptTriggerLog";
+import { SessionTextBuffer } from "./snippets/sessionTextBuffer";
+import { startNctScript, type NctScriptRunHandle } from "./snippets/nctRuntime";
+import { createNctScriptApi } from "./snippets/nctScriptApi";
+import type { NctScriptViewState } from "./snippets/ScriptRunPanel";
 import "./snippets/snippets.css";
 import type {
   AuthOverride,
@@ -269,6 +273,15 @@ export interface PaneHandle {
   selectAllText: () => boolean;
   /** 清屏（含回滚缓冲区）。 */
   clearBuffer: () => boolean;
+  /** 运行 JavaScript 脚本（当前会话）；已有脚本在跑 / 未连接返回 false。 */
+  runNctScript: (request: { name: string; source: string }) => boolean;
+  /** 脚本运行控制：停止、读取状态、订阅状态变化、关闭结果面板。 */
+  scriptControl: {
+    stop: () => boolean;
+    status: () => NctScriptViewState | null;
+    subscribe: (cb: (state: NctScriptViewState | null) => void) => () => void;
+    dismiss: () => void;
+  };
 }
 
 /** 自动打开侧栏时可落地的视图；Netcatty 的 theme/system/ai/browser 在 termX 未移植，忽略。 */
@@ -476,6 +489,10 @@ export function TerminalPane({
   useEffect(() => {
     onConnectionStatusRef.current?.(status);
   }, [status]);
+  // 新建 / 重连会话：丢弃上一会话的输出，避免脚本读到历史缓冲。
+  useEffect(() => {
+    if (status === "connecting") sessionTextBufferRef.current.clear();
+  }, [status]);
   const [error, setError] = useState<string | null>(null);
   const [progressValue, setProgressValue] = useState(CONNECTION_PROGRESS_START);
   const [progressLogs, setProgressLogs] = useState<string[]>([]);
@@ -501,6 +518,14 @@ export function TerminalPane({
     /** send = 填值后直接发送；insert = 填值后只插入撰写栏草稿。 */
     mode: "send" | "insert";
   } | null>(null);
+  /**
+   * 脚本运行时（阶段 1）：输出缓冲 + 运行句柄 + 订阅者。
+   * 状态同时存 ref 与 state：RPC / done 回调需要在渲染闭包外读到最新值。
+   */
+  const sessionTextBufferRef = useRef<SessionTextBuffer>(new SessionTextBuffer());
+  const scriptRunRef = useRef<NctScriptViewState | null>(null);
+  const scriptHandleRef = useRef<NctScriptRunHandle | null>(null);
+  const scriptSubscribersRef = useRef(new Set<(state: NctScriptViewState | null) => void>());
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -612,6 +637,8 @@ export function TerminalPane({
   const filterBypassRef = useRef(false);
   /** 串口字节流解码（过滤模式需要文本做行匹配）。 */
   const serialFilterDecoderRef = useRef<TextDecoder | null>(null);
+  /** 串口字节流的脚本输出 tap 解码（与过滤开关无关）。 */
+  const serialTapDecoderRef = useRef<TextDecoder | null>(null);
 
   /**
    * 拉取本主机的高亮规则；主机编辑器保存后广播 profileId，已开终端重拉
@@ -951,6 +978,10 @@ export function TerminalPane({
   function writeSerialText(bytes: Uint8Array) {
     const term = controllerRef.current?.term;
     if (!term) return;
+    // 脚本运行时需要原始输出；串口直写也要单独解码一份文本进缓冲。
+    if (!serialTapDecoderRef.current) serialTapDecoderRef.current = new TextDecoder();
+    const tapText = serialTapDecoderRef.current.decode(bytes, { stream: true });
+    if (tapText) sessionTextBufferRef.current.append(tapText);
     if (!onlyMatchingLinesRef.current) {
       term.write(bytes);
       return;
@@ -1019,9 +1050,92 @@ export function TerminalPane({
     }
     const text = decoderRef.current.decode(bytes);
     if (text) {
+      sessionTextBufferRef.current.append(text);
       writeFilteredText(text);
       scheduleOutputTriggerCheck();
     }
+  }
+
+  /**
+   * 脚本运行状态：ref 保存最新值供异步回调读取，同时通知外部订阅者
+   * （脚本页日志面板）。
+   */
+  function publishScriptRun(next: NctScriptViewState | null) {
+    scriptRunRef.current = next;
+    for (const listener of [...scriptSubscribersRef.current]) listener(next);
+  }
+
+  function appendScriptLog(line: string) {
+    const current = scriptRunRef.current;
+    if (!current) return;
+    publishScriptRun({ ...current, logs: [...current.logs, line].slice(-200) });
+  }
+
+  /** 在当前会话运行 JavaScript 脚本（阶段 1：手动运行、单脚本串行）。 */
+  function runNctScript(request: { name: string; source: string }): boolean {
+    if (!transportRef.current) return false;
+    if (scriptHandleRef.current) return false;
+    const source = String(request.source ?? "");
+    if (!source.trim()) return false;
+
+    const buffer = sessionTextBufferRef.current;
+    // 只让脚本消费本次运行之后的输出，避免历史提示符导致 waitFor* 立即命中。
+    buffer.consumeAll();
+
+    const runId = `pane-${paneId}-${Date.now().toString(36)}`;
+    const runState: NctScriptViewState = {
+      runId,
+      name: request.name,
+      status: "running",
+      logs: [],
+    };
+    publishScriptRun(runState);
+
+    const api = createNctScriptApi({
+      write: (text) => {
+        transportRef.current?.write(text);
+      },
+      buffer,
+      snapshot: {
+        connected: Boolean(transportRef.current),
+        name: tabTitleRef.current,
+        hostname: hostInfoRef.current?.hostname ?? "",
+        username: authUsernameRef.current ?? "",
+      },
+      isAborted: () => scriptHandleRef.current?.status() !== "running",
+      onLog: appendScriptLog,
+    });
+
+    let handle: NctScriptRunHandle;
+    try {
+      handle = startNctScript({ source, api, runId, onLog: appendScriptLog });
+    } catch (error) {
+      publishScriptRun({
+        ...runState,
+        status: "failed",
+        error: (error as { message?: string })?.message || String(error),
+      });
+      return false;
+    }
+    scriptHandleRef.current = handle;
+    void handle.done.then((result) => {
+      if (scriptHandleRef.current === handle) scriptHandleRef.current = null;
+      const logs = scriptRunRef.current?.logs ?? runState.logs;
+      publishScriptRun({
+        ...runState,
+        status: result.status,
+        logs,
+        error: result.status === "failed" ? result.error : undefined,
+      });
+    });
+    return true;
+  }
+
+  function stopNctScript(): boolean {
+    const handle = scriptHandleRef.current;
+    if (!handle) return false;
+    handle.stop();
+    return true;
   }
 
   /** ZMODEM 完成 / 失败提示：完成显示 4 秒，错误保留到下次传输。 */
@@ -2416,6 +2530,14 @@ export function TerminalPane({
   const [showAuthPassphrase, setShowAuthPassphrase] = useState(false);
   const [showAuthPassword, setShowAuthPassword] = useState(false);
 
+  // 脚本运行时取启动快照用：句柄回调在旧渲染闭包里执行，直接读 state 会过期。
+  const hostInfoRef = useRef(hostInfo);
+  hostInfoRef.current = hostInfo;
+  const authUsernameRef = useRef(authUsername);
+  authUsernameRef.current = authUsername;
+  const tabTitleRef = useRef(tab.title);
+  tabTitleRef.current = tab.title;
+
   const paneRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<TerminalController | null>(null);
   /**
@@ -2646,6 +2768,22 @@ export function TerminalPane({
         if (!term) return false;
         term.clear();
         return true;
+      },
+      runNctScript: (request) => runNctScript(request),
+      scriptControl: {
+        stop: () => stopNctScript(),
+        status: () => scriptRunRef.current,
+        subscribe: (cb) => {
+          scriptSubscribersRef.current.add(cb);
+          cb(scriptRunRef.current);
+          return () => {
+            scriptSubscribersRef.current.delete(cb);
+          };
+        },
+        dismiss: () => {
+          if (scriptHandleRef.current) return;
+          publishScriptRun(null);
+        },
       },
     };
     onRegister(paneId, handle);
