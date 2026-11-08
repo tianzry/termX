@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-11-08 — 脚本运行时阶段 1（3/7）：nct API 子集接线
+
+### 修改
+
+- 新增 `src/snippets/nctScriptApi.ts`：把 Worker 的 RPC 落到当前会话。
+  - `screen.send/sendLine/clear/getText`：`send` 原样写入并记日志；`sendLine` 先写正文、30ms 后写 `\r`，只 `consumeThrough` 发送前长度（正文与 CR 之间到达的输出仍可等待，与 Netcatty #1960 行为一致）；`clear` 写 `ESC[2J ESC[H`；`getText` 按 0 基行号切片，无参数时返回完整缓冲。
+  - `screen.waitForText/waitForRegex/waitForPrompt/waitForAny`：委托 `SessionTextBuffer`，沿用 30s / 60s 默认超时与 `isAborted` 中止。
+  - `session.sleep` 默认实现带停止轮询（50ms），停止立即以 `Script stopped` 拒绝；`connected/name/hostname/username` 取启动快照。
+  - `abort()` 拒绝缓冲里所有未完成等待。
+- 新增 `src/snippets/nctScriptApi.test.ts`（14）：两包时序、只消费发送前长度、空行不等待、正文后停止不写 CR、真实 30ms 间隔、四类等待与 sleep 中止、getText 行切片、清屏与快照。
+
+### 踩坑
+
+- `sendLine` 的消费点必须在写 `\r` **之后**、且用发送前长度：否则正文回显会被提前消费，下一步 `waitForText` 直接超时。
+- 等待的 `isAborted` 不能只靠 RPC 取消：Worker 被 terminate 后 RPC Promise 不会回到 Worker，宿主侧必须让 `SessionTextBuffer` 的等待一起被拒绝，否则运行结束会残留定时器。
+
+### 门禁
+
+- `npx vitest run src/snippets/nctScriptApi.test.ts` → 14✓。
+- 说明：本块只提供 API 实现，运行入口在第 4 块接线后统一做本地 Git Bash / 129 SSH 实机验证。
+
+---
+
 ## 2026-11-08 — 脚本运行时阶段 1（2/7）：Worker 沙箱与宿主运行器
 
 ### 修改
