@@ -3003,7 +3003,7 @@ button:disabled {
 
 /* 主机卡：68px / rounded-xl / soft-card + elevate */
 .vault-host-card {
-  height: 68px;
+  min-height: 68px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -3025,7 +3025,8 @@ button:disabled {
 }
 
 .vault-host-card.list {
-  height: 56px;
+  height: auto;
+  min-height: 56px;
   gap: 12px;
   padding: 8px;
   border-color: transparent;
@@ -9707,15 +9708,15 @@ button:disabled {
   background: hsl(var(--primary) / 0.12);
 }
 
-/* 主机卡片上的标签 chip（右侧单行，固定卡片高度不被撑开） */
+/* 主机卡片上的标签 chip（位于标题上方，单行展示） */
 .vault-host-tags {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
-  flex: 0 1 auto;
   min-width: 0;
-  max-width: 45%;
+  max-width: 100%;
+  margin-bottom: 1px;
   overflow: hidden;
 }
 
@@ -9732,31 +9733,6 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* 带标签的主机卡：标签移到右上角、编辑按钮移到右下角，卡片高度保持不变 */
-.vault-host-card.has-tags .vault-host-tags {
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  max-width: calc(100% - 96px);
-  justify-content: flex-end;
-}
-
-.vault-host-card.has-tags .vault-host-edit {
-  position: absolute;
-  right: 6px;
-  bottom: 2px;
-}
-
-.vault-host-card.list.has-tags .vault-host-tags {
-  top: 4px;
-  right: 6px;
-}
-
-.vault-host-card.list.has-tags .vault-host-edit {
-  bottom: 1px;
-}
-
 
 /* 键盘焦点 & 拖拽投放反馈 */
 .vault-host-card.focused {

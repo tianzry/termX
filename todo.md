@@ -60,6 +60,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 
 | 能力 | 状态 | 位置 |
 |---|---|---|
+| 主机卡去发行版图标、标签上移、编辑按钮右侧居中 | ✅ | `src/VaultView.tsx`、`src/styles.css`；实机截图 `docs/verify-ui/ui1-vault-cards.png` |
 | 内存分进程分解测量（四场景 0/5/15/30 分钟 + 回滚 10000 vs 2000） | ✅ | `docs/memory-breakdown.md`、`src/Terminal.tsx`（门控 `__termxXtermStats` 诊断桩）；结论：空闲基线 390.6 MB、main 仅 33 MB、renderer 38.1%，建议默认回滚 3000 行 |
 | 侧栏「标签筛选 / 更多」弹层裁切修复（portal + 视口收拢/上翻） | ✅ | `src/HostSidebar.tsx`（`AnchoredMenu`：`createPortal` 到 body + `position:fixed`）、`src/domain/popoverPosition.ts` + `popoverPosition.test.ts`（8 例）；根因 `.nc-shell { overflow:hidden }` 裁掉向左越界的就地 absolute 菜单（changelogs 2026-11-07） |
 | 终端侧栏 SFTP 面板照抄 Netcatty（红圈 5 项排除 / 复用 SSH 会话通道 / 分屏与窄窗） | ✅ | `src/terminal/TerminalSidePanel.tsx`、`src/sftp/SftpSidePane.tsx`、`src/domain/terminalSidePanel.ts`、`evidence/sftp-panel/`（changelogs #227） |

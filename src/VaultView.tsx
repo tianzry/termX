@@ -3481,7 +3481,7 @@ export function VaultView({
         data-host-id={p.id}
         className={`vault-host-card${compact ? " list" : ""}${
           isSelected ? " selected" : ""
-        }${focusId === p.id ? " focused" : ""}${ownTags.length > 0 ? " has-tags" : ""}`}
+        }${focusId === p.id ? " focused" : ""}`}
         role={selectMode ? "checkbox" : "button"}
         aria-checked={selectMode ? isSelected : undefined}
         tabIndex={0}
@@ -3506,20 +3506,19 @@ export function VaultView({
             <Icon name="pin" size={12} />
           </span>
         )}
-        <DistroAvatar profile={p} size="lg" />
         <span className="vault-host-card-main">
+          {ownTags.length > 0 && (
+            <span className="vault-host-tags">
+              {ownTags.slice(0, 3).map((t) => (
+                <span key={t} className="vault-host-tag">
+                  {t}
+                </span>
+              ))}
+            </span>
+          )}
           <strong>{p.name}</strong>
           <span className="vault-host-card-sub">{subtitle(p)}</span>
         </span>
-        {ownTags.length > 0 && (
-          <span className="vault-host-tags">
-            {ownTags.slice(0, 3).map((t) => (
-              <span key={t} className="vault-host-tag">
-                {t}
-              </span>
-            ))}
-          </span>
-        )}
         {!selectMode && (
           <button
             className="vault-host-edit"

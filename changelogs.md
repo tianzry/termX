@@ -7553,5 +7553,16 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
   后台循环持有；PowerShell 重定向写 UTF-8 会带 BOM，`JSON.parse` 前要剥 `\uFEFF`；隐藏标签页的
   xterm 会被 fit 收缩成 5×10，并行场景「每行单元格数」与可见标签不可比。
 
+## 2026-11-08 — 主机卡去掉发行版图标，标签上移、编辑按钮右侧居中
+
+- Vault 主机卡移除 `DistroAvatar`（发行版形状图标），标签 chip 从右侧绝对定位改为标题上方单行展示（最多 3 个）。
+- 卡片高度从固定 `height` 改为 `min-height`（卡片 68px / 列表 56px），带标签时标签不再绝对定位压在标题上；
+  编辑按钮回到卡片右侧、垂直居中。
+- 删除 `.vault-host-card.has-tags` 的全部绝对定位规则与 `has-tags` class 分支。
+- 实机（Vault 列表 9 张卡）量得：`hasAvatar=false`、标签在标题上方（tagsTop 9 / titleTop 28，无重叠）、
+  编辑按钮中心与卡片中心偏移 0px；截图 `docs/verify-ui/ui1-vault-cards.png`。
+- 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
+  `npx tauri build --no-bundle` ✓。
+
 
 
