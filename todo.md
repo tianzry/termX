@@ -535,7 +535,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 
 ---
 
-## 委派 worktree 分支并行开发（待主检出合并）
+## 委派 worktree 分支并行开发（已合并 2026-11-08）
 
 > 以下三项**不在主检出实现**，交由另一个 worktree 会话开发；主检出只需在合并后回归。来源：2026-11-08 范围调整。
 
@@ -572,3 +572,10 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 2026-11-08 | W1 关键字高亮「仅显示匹配行」来源语义：过滤只用工具栏规则（SSH 主机级 / 本地·串口·Telnet 会话级），设置页全局规则只参与着色、不再参与过滤；关闭过滤时工具栏规则追加着色；非 SSH 工具栏规则改为会话级（不写回设置页）。+4 单测锁死 A/B 语义。 |
 | 2026-11-08 | W2 设置页关键字高亮选色控件：主干 9f4a4d7 已实现共用 `HighlightColorPicker` / `HighlightColorField`，本分支核对后跳过，未改动该控件。 |
 | 2026-11-08 | W3 日志页去掉应用内正文渲染：列表只留文件名/主机/开始/结束/时长/大小，行单击只选中；操作列四按钮（系统打开、打开所在文件夹、导出、删除）。导出改为后端直接写文件（txt copy / html 转义），正文不回传 UI；新增 3 条后端命令 + headless 路由 + 3 例 Rust 测试 + 2 例组件测试；缺失文件/断关联/导出失败均有明确提示。实机按钮点测因单实例锁被另一会话占用未执行，合并后补测。 |
+
+> **合并与补测（2026-11-08 已完成）**：`feat/ui-batch` 已 fast-forward 合并进 main（HEAD `58475e2`），worktree `g:\AiCode\termX-wt-ui` 与分支已清理。
+>
+> - W1 四类终端（SSH / 本地 / 串口 / Telnet）关键字过滤语义：实机通过（合并前证据）。
+> - W2 设置页选色控件：release + CDP 截图确认共用 `HighlightColorPicker`，11 标准色块 + 自定义取色器齐全（`docs/verify-ui/settings-highlight-color-picker.png`）。
+> - W3 日志页四动作：系统打开 / 打开所在文件夹 / 导出 / 删除 四按钮实机通过（`docs/verify-ui/logs-export-dialog.png`）。
+> - 合并后六项门禁全绿：`test:run` 82 文件 / 921、`build`、`cargo check --lib`、`cargo check --lib --features server`、`cargo test --lib` 1006、`tauri build --no-bundle`。
