@@ -66,6 +66,8 @@ interface Props {
   onOpenSftp: () => void;
   onToggleHostTree: () => void;
   onOpenSettings: () => void;
+  /** 顶栏 AI 助手：打开设置中心并定位到 AI → 工具接入。 */
+  onOpenAiSettings: () => void;
   /** 右侧快捷入口：云端同步跳 Vault「同步」页。 */
   onOpenSync: () => void;
   /** 标签右键菜单：重命名 / 复制标签 / 重连 / 批量关闭 / 拖拽排序（对齐 Netcatty 会话标签菜单）。 */
@@ -160,12 +162,7 @@ function TabShortcutNumberBadge({ number }: { number: number }) {
   );
 }
 
-/** 后端能力尚未移植：入口保留，禁用点击。 */
-const notPortedUtilities: Array<{
-  id: string;
-  label: string;
-  icon: "sparkles";
-}> = [{ id: "ai", label: "AI 助手（未移植）", icon: "sparkles" }];
+/** 顶栏工具按钮。 */
 
 export function TopTabs({
   tabs,
@@ -186,6 +183,7 @@ export function TopTabs({
   onOpenSftp,
   onToggleHostTree,
   onOpenSettings,
+  onOpenAiSettings,
   onOpenSync,
   onRenameTab,
   onOpenInNewWindow,
@@ -371,16 +369,14 @@ export function TopTabs({
         <div className="nc-chrome">
           {/* 全局文件传输入口（对齐 Netcatty：右侧工具区首位） */}
           <GlobalTransferCenter />
-          {notPortedUtilities.map((u) => (
-            <button
-              key={u.id}
-              className="nc-icon-btn nc-utility-btn"
-              title={u.label}
-              disabled
-            >
-              <Sparkles size={16} />
-            </button>
-          ))}
+          <button
+            className="nc-icon-btn nc-utility-btn"
+            title="AI 助手 · 工具接入"
+            aria-label="AI 助手（打开工具接入设置）"
+            onClick={onOpenAiSettings}
+          >
+            <Sparkles size={16} />
+          </button>
           <button
             className="nc-icon-btn nc-utility-btn"
             title={`云端同步 · ${status}`}

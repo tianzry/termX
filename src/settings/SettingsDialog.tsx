@@ -54,11 +54,14 @@ const TABS: TabDef[] = [
 export function SettingsDialog({
   onClose,
   initialTab = "application",
+  focusNonce = 0,
   onOpenSync,
 }: {
   onClose: () => void;
   /** 打开时定位到某个 tab（终端工具栏「终端设置」用 appearance）。 */
   initialTab?: SettingsTabId;
+  /** 已打开时再次定位 tab 的信号（顶栏 AI 助手重复点击）。 */
+  focusNonce?: number;
   /** 「同步与云」tab 的跳转：关闭设置中心并打开 Vault 同步页。 */
   onOpenSync?: () => void;
 }) {
@@ -67,6 +70,18 @@ export function SettingsDialog({
   const [tab, setTab] = useState<SettingsTabId>(initialTab);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+
+  // 设置已打开时再次点击顶栏 AI 助手：把当前 tab 切到目标页并聚焦内容区，
+  // 不关闭 / 重开 overlay（沿用 initialTab 的定位语义）。
+  useEffect(() => {
+    if (focusNonce <= 0) return;
+    setTab(initialTab);
+    const content = document.querySelector<HTMLElement>(".nc-settings-content");
+    if (content) {
+      content.scrollTop = 0;
+      content.focus();
+    }
+  }, [focusNonce, initialTab]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -153,7 +168,7 @@ export function SettingsDialog({
             ))}
           </div>
         </nav>
-        <div className="nc-settings-content">
+        <div className="nc-settings-content" tabIndex={-1}>
           {tab === "application" && <ApplicationTab />}
           {tab === "appearance" && <AppearanceTab />}
           {tab === "terminal" && <TerminalTab />}

@@ -152,6 +152,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** 设置中心打开时定位的 tab（终端工具栏「终端设置」→ 外观）。 */
   const [settingsTab, setSettingsTab] = useState<SettingsTabId>("application");
+  /** 设置中心已打开时再次定位 tab 的信号（顶栏 AI 助手重复点击时生效）。 */
+  const [settingsFocusNonce, setSettingsFocusNonce] = useState(0);
   /** 顶栏 / 设置中心「打开同步页」：Vault 子页定位请求（nonce 保证重复点击生效）。 */
   const [vaultFocus, setVaultFocus] = useState<string | null>(null);
   const [vaultFocusNonce, setVaultFocusNonce] = useState(0);
@@ -839,6 +841,13 @@ export default function App() {
           setSettingsTab("application");
           setSettingsOpen(true);
         }}
+        onOpenAiSettings={() => {
+          // 顶栏 AI 助手：复用设置 overlay，直接落到 AI → 工具接入；
+          // 已打开时不重开，只递增定位信号把当前页切过去。
+          setSettingsTab("ai");
+          setSettingsFocusNonce((n) => n + 1);
+          setSettingsOpen(true);
+        }}
         onOpenSync={openVaultSync}
         quickSwitchSeq={quickSwitchSeq}
       />
@@ -846,6 +855,7 @@ export default function App() {
         <SettingsDialog
           onClose={() => setSettingsOpen(false)}
           initialTab={settingsTab}
+          focusNonce={settingsFocusNonce}
           onOpenSync={openVaultSync}
         />
       )}

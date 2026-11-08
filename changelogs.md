@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-11-08 — 顶栏 AI 助手图标恢复可点击并直达工具接入页
+
+### 修改
+
+- `src/TopTabs.tsx`：删除 `notPortedUtilities` 禁用占位（不再出现「未移植」），AI 助手图标恢复为正常按钮，`title="AI 助手 · 工具接入"`，点击调用新 prop `onOpenAiSettings`。
+- `src/App.tsx`：新增 `settingsFocusNonce`；`onOpenAiSettings` 复用现有设置 overlay——设置 `settingsTab="ai"` 并递增定位信号，设置已打开时不重开。
+- `src/settings/SettingsDialog.tsx`：新增 `focusNonce` prop，已打开时再次点击只切换 tab 到 AI、内容区滚回顶部并聚焦（`tabIndex={-1}`）；复用既有 `initialTab` 定位能力，未新开窗口。
+
+### 实机验证（debug + Vite HMR）
+
+- 图标：`disabled=false`，`title="AI 助手 · 工具接入"`，`aria-label="AI 助手（打开工具接入设置）"`，无「未移植」字样。
+- 点击落地：overlay 打开，激活 tab=`AI`，内容含「工具接入」与「接入指南」，内容区获得焦点且 `scrollTop=0`。
+- 已打开场景：先停在「应用」页，再次点击图标；overlay 元素身份不变（未重开），激活 tab 从「应用」切到「AI」，接入指南仍可见。
+
+### 截图（`docs/verify-ui/`）
+
+- `ui9-ai-icon-settings.png`：点击顶栏 AI 助手后的设置落地页。
+
+### 门禁
+
+- `npm run test:run`：81 文件 / 915 通过。
+- `npm run build`：通过。
+
+---
+
 ## 2026-11-08 — MCP 面向外部 agent 的接入说明（协议自描述 + 设置页接入指南 + 单一权威源）
 
 ### 修改
