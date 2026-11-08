@@ -4,6 +4,39 @@
 
 ---
 
+## 2026-11-08 — 合并 `feat/ui-batch` + 主实例补测（日志四按钮 / 四类终端高亮 / 选色控件）
+
+### 合并
+
+- `feat/ui-batch`（`83073db` 行过滤语义、`58475e2` 日志页四动作）基于 `6da524a`，主检出 `git merge --ff-only` 成功，无冲突，HEAD `58475e2`；worktree 的 3 条 changelog 条目随 ff 合入（`worktree feat/ui-batch 1/3`～`3/3`），未重复。
+- 合并前遗留的旧 `termx.exe`（PID 28932，无 CDP）确认无采样任务后关闭；随后以带 `--remote-debugging-port=9227` 的 dev 实例补测。
+
+### 日志页实测（`129_20261108_085047.log`，5.5 MiB）
+
+- 行单击：0.7ms，`selected=true`、`focused=true`，点击期间无任何 `invoke`，未触发系统打开；操作列四个 aria-label（系统打开 / 打开所在文件夹 / 导出 / 删除）齐全。
+- 系统打开：`open_session_log` 15.4ms，按钮点击后 100ms 内出现系统 `OpenWith` 进程（本机 `.log` 无关联，交由系统选择器，属系统行为而非应用失败）。
+- 打开所在文件夹：`reveal_session_log` 34.2ms，资源管理器定位窗口随即出现。
+- 导出：按钮点击弹出系统另存对话框（截图 `docs/verify-ui/logs-export-dialog.png`）；后端直调 `export_session_log_to_file` txt 25.9ms / html 17.2ms，两个文件均落盘。
+- 删除：二次确认后点击「删除」，文件消失、列表由 19 条刷新为 18 条（约 1.4s 内完成轮询刷新）；原文件已备份到 `%TEMP%\termx-acc\bak\` 后由按钮删除。缺失 id 调 `open_session_log` / `delete_session_log` 均返回结构化 `session_log_not_found`。
+
+### 关键字高亮实测（全局规则 A `GLOBAL-A`/`TERMXGLOBALA`/红 `#F87171` + 工具栏规则 B `TOOL-B`/`TERMXTOOLB`/绿 `#34D399`）
+
+- 129 SSH：开过滤只显示 `TERMXTOOLB-line`（A 与 plain 行隐藏）；关过滤 A 行红、B 行绿（`rgb(248, 113, 113)` / `rgb(52, 211, 153)`）。
+- 本地 Git Bash：同一 A/B 语义通过；工具栏规则为会话级，添加即生效。
+- 串口：本机 COM4 为无本地对端的独立虚拟口（向 COM1/COM2 写入均不能送达），改用 COM2↔COM3 配对做同链路实测：临时串口快速连接 COM3，COM2 写入三行后，开过滤只留 B 行、关过滤 A/B 着色，结果与 SSH/本地一致；COM4 标签本身连接正常，仅无法接收外部数据。
+- Telnet 2324：本地广播回显服务下发三行，开过滤只留 B 行（3 条累计），关过滤 A 红/B 绿。
+- 串口/Telnet 的工具栏规则为会话级（浮层提示「本类型终端没有主机级规则」），符合本轮语义。
+
+### 选色控件回归
+
+- 设置 → 终端 → 关键字高亮共 8 行色块按钮；点击弹出 11 标准色 +「自定义」面板，选「紫」后按钮与规则色变为 `rgb(167, 139, 250)`（`#A78BFA`），Esc 关闭面板；随后恢复为红 `#F87171`，与工具栏共用同一组件。
+
+### 门禁
+
+- `npm run test:run` 82 文件 / 921 通过；`npm run build` 通过；`cargo check --lib`、`cargo check --lib --features server` 通过；`cargo test --lib` 1006 通过；`npx tauri build --no-bundle` 成功（仅既有 `token_url` dead_code 与 chunk 体积提示）。
+
+---
+
 ## 2026-11-08 — 设置 → AI：许可记忆表（审批「一律许可」沉淀放行规则）
 
 ### 修改
