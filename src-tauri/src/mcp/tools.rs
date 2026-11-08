@@ -181,7 +181,7 @@ fn summarize_command(command: &str) -> String {
     }
 }
 
-/// 写操作审批：auto 直接放行；observer 直接拒绝；confirm 走 UI 审批（含「始终允许」）。
+/// 写操作审批：auto 直接放行；observer 直接拒绝；confirm 先查许可记忆表，再走 UI 审批。
 #[allow(clippy::too_many_arguments)]
 async fn approval_gate(
     cfg: &McpConfig,
@@ -191,6 +191,7 @@ async fn approval_gate(
     disconnected: Arc<AtomicBool>,
     tool: &str,
     args_summary: String,
+    args: Value,
     session_id: Option<String>,
     target_label: Option<String>,
 ) -> Result<(), ToolResult> {
@@ -208,6 +209,7 @@ async fn approval_gate(
                     gen,
                     tool,
                     args_summary,
+                    args,
                     session_id,
                     target_label,
                     disconnected,
@@ -345,6 +347,15 @@ pub async fn call_tool(
                 }
             };
             let timeout = args.get("timeoutMs").and_then(Value::as_u64);
+            // 正则层黑名单（Netcatty `commandBlocklist.json` 默认清单 + 用户规则）。
+            let blocklist = super::blocklist::load(&state.db);
+            if let Some(rule) = super::blocklist::first_match(&blocklist, &command) {
+                return ToolResult::err(
+                    "command_blocked",
+                    format!("命令被命令黑名单拦截：命中规则 \"{rule}\""),
+                    "改用等价但更具体的命令，或请用户在「设置 → AI → 命令黑名单」中调整规则。",
+                );
+            }
             let blacklist = match crate::ai::command_blacklist::load(&state.db) {
                 Ok(bl) => bl,
                 Err(e) => return internal_error(e),
@@ -369,6 +380,7 @@ pub async fn call_tool(
                 disconnected.clone(),
                 "terminal_execute",
                 summarize_command(&command),
+                args.clone(),
                 Some(session_id.clone()),
                 target_label,
             )
@@ -417,6 +429,7 @@ pub async fn call_tool(
                 disconnected.clone(),
                 "session_close",
                 format!("关闭会话 {session_id}"),
+                args.clone(),
                 Some(session_id.clone()),
                 target_label,
             )

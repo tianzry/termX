@@ -1704,6 +1704,24 @@ impl Actor {
             }
         };
 
+        // 正则层命令黑名单（对齐 Netcatty commandSafety）：用户自定义规则优先，其次默认规则。
+        let blocklist = crate::mcp::blocklist::load(&self.cfg.db);
+        if let Some(rule) = crate::mcp::blocklist::first_match(&blocklist, &input.cmd) {
+            let reason = format!("命令被命令黑名单拦截：命中规则 \"{rule}\"");
+            self.audit_push(AuditKind::CommandBlocked {
+                cmd: input.cmd.clone(),
+                reason: reason.clone(),
+            });
+            self.emit(
+                "command_blocked",
+                json!({ "cmd": input.cmd, "reason": reason }),
+            );
+            return Ok(self.make_tool_error(
+                &tc.id,
+                &format!("{reason}. Try a compliant rewrite or ask the user to adjust the blocklist."),
+            ));
+        }
+
         if let Err(e) = sanitize::validate_with(&input.cmd, &self.cfg.blacklist) {
             // termx blocked this before it ever became an approval card. Surface it
             // in both panels (chat note + audit) — otherwise the safety layer fires

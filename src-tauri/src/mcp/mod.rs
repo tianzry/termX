@@ -5,6 +5,7 @@
 //! 移植方案与未实现清单见 `docs/mcp-port-plan.md`。
 
 pub mod approval;
+pub mod blocklist;
 pub mod config;
 pub mod guide;
 pub mod server;

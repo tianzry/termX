@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-11-08 — 设置 → AI：命令黑名单（Netcatty 正则层）
+
+### 修改
+
+- 新增 `src-tauri/src/mcp/blocklist.rs`：KV `mcp.command_blocklist` 存规则数组；`DEFAULT_PATTERNS` 逐条照抄 Netcatty `lib/commandBlocklist.json`（21 条：common 2 / posixNative 8 / posix 5 / powershell 6）；`load` 缺失或非数组时回落默认清单，显式空数组表示「不拦截」；`save` / `reset`（整体恢复出厂清单，用户自定义项一并丢弃，与 Netcatty `SafetySettings` 一致）。
+- 匹配语义对齐 Netcatty `electron/bridges/ai/commandSafety.cjs`：先测用户清单里的规则，再测「仍保留在清单中的默认规则」；大小写不敏感（`fancy-regex` 内联 `(?i)`，因默认规则含 lookahead，`regex` crate 不支持）；空串 / 非法正则跳过，不阻断执行。
+- 拦截时机：`src-tauri/src/mcp/tools.rs::terminal_execute` 在审批之前执行正则层检查（命中直接返回，不弹审批）；`src-tauri/src/ai/session.rs::handle_run_command` 在内置分类黑名单之前执行同一层检查。两层叠加：新正则层在前，旧 `ai/command_blacklist.rs` 分类层在后。
+- 命中返回：`code = "command_blocked"`，`message = 命令被命令黑名单拦截：命中规则 "<rule>"`，`hint` 指向「设置 → AI → 命令黑名单」；AI 会话侧同时写审计 `CommandBlocked` 并 emit `command_blocked`。
+- 只作用于 MCP / AI 发起的执行链路；用户手动在终端输入不经过该层（与 Netcatty 实际行为一致）。
+- 后端命令 `mcp_blocklist_get` / `mcp_blocklist_set` / `mcp_blocklist_reset`；`src-tauri/src/lib.rs` 与 headless dispatcher 同步登记。
+- 设置页 AI tab 新增「命令黑名单」区块：副标题「用于拦截通过 termX 执行的危险命令的正则表达式」、右上「恢复默认」、每条只读输入框 + 右侧 ×、底部「+ 添加规则」（校验空串 / 非法正则并提示）。
+
+### Netcatty 取证
+
+- `Netcatty/lib/commandBlocklist.json`：21 条分四组（`common` / `posixNative` / `posix` / `powershell`），含 `\brm\s+…`（rf/fr 组合与 `--recursive --force`）、`\b(shutdown|reboot|poweroff|halt)\b`、`\bmkfs\.`、`\bdd\s+if=.*\s+of=/dev/`、`>\s*/dev/sd`。
+- `Netcatty/lib/commandBlocklist.cjs:17` 起：`DEFAULT_COMMAND_BLOCKLIST` 合并四组；`firstMatch` 返回首个命中。
+- `Netcatty/electron/bridges/ai/commandSafety.cjs:76-84`：规则编译为大小写不敏感正则；`:103-124`：用户规则优先、再按 shell 类型取默认规则（默认规则仅当仍在清单中才生效）。
+- `Netcatty/electron/bridges/mcpServerBridge.cjs:1913,1972`：返回 `Command blocked by safety policy. Pattern: ${safety.matchedPattern}`。
+- `Netcatty/electron/mcp/netcatty-mcp-server.cjs:99,117,119`：`checkCommandSafety` → 命中同样返回 blocked + `matchedPattern`。
+- `Netcatty/components/settings/tabs/ai/SafetySettings.tsx`：恢复默认直接把清单置为默认规则集。
+
+### 验证（实机，debug + CDP + MCP HTTP）
+
+- `terminal_execute("rm -rf /")` → HTTP 200 / 126ms / `isError:true` / `code:command_blocked`，message 内命中规则为 `\brm\s+(?=[^\n;&|]*…`（最长那条 rm 规则）。
+- `terminal_execute("mkfs.ext4 /dev/sda1")` → HTTP 200 / 151ms / `command_blocked`，命中规则 `\bmkfs\.`。
+- 规则编辑/恢复默认：默认 21 条 → 追加自定义后 22 条（最后一条为自定义）→「恢复默认」回到 21 条且与默认清单逐条相等。
+- `npm run test:run` 81 文件 / 915 通过；`npm run build` 通过；`npx tsc --noEmit` 通过；`cargo test --lib mcp::` 30 通过（blocklist 4 例覆盖危险命令命中、安全命令放行、用户规则优先/删默认即禁用、空/非法正则跳过）。
+
+---
+
 ## 2026-11-08 — 关键字高亮选色控件共用化（设置页对齐工具栏）
 
 ### 修改
