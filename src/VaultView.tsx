@@ -3536,9 +3536,6 @@ export function VaultView({
             <Icon name="pencil" size={compact ? 13 : 14} />
           </button>
         )}
-        <span className="vault-host-card-go">
-          <Icon name="terminal" size={14} />
-        </span>
       </div>
     );
   }

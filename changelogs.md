@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-11-08 — 主机卡片去掉悬停终端小图标
+
+### 修改
+
+- `src/VaultView.tsx`：主机卡（hostCard）删除标题与画笔之间的 `.vault-host-card-go`（terminal `>_` 图标）；分组卡的 `vault-host-card-go`（chevron）保留。
+- 该图标是绝对定位的悬停装饰（grid `right:50px` / list `right:36px`），不占布局宽度；移除后卡片高度（grid 68 / list 56）、`vault-host-edit` 位置（grid `right:12px` / list `right:8px`）、标题可用宽度（grid 145px / list 整行）全部不变，不会出现错位或高度跳变。
+
+### 截图（`docs/verify-ui/`）
+
+- `ui5-grid-tags.png`：网格 + 带标签（搜索 `123`），悬停仅剩画笔。
+- `ui5-grid-no-tags.png`：网格 + 不带标签（搜索 `Git Bash`）。
+- `ui5-list-tags.png`：列表 + 带标签，整行内有标签芯片，画笔在最右。
+- `ui5-list-no-tags.png`：列表 + 不带标签。
+
+### 门禁
+
+- `npm run test:run`：81 文件 / 913 通过。
+- `npm run build`：通过。
+
+---
+
 ## 2026-11-08 — MCP token 不再随配置变化轮换
 
 ### 修改
