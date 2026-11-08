@@ -115,9 +115,9 @@
 ## 9. 前端 UI 落点
 
 - 数据出口：`src/backend/client.ts` 4 个函数（已加）。
-- 组件落点：`src/settings/SettingsTabs.tsx` 新增「AI / 工具接入」分区（与 Netcatty `ExternalMcpCard` 对齐：开关 + 权限三档 + 端口/监听地址/客户端 host + 连接详情折叠区（URL / token / Codex TOML / Claude 命令 / 通用 JSON）+ 状态点 + 错误条 + 轮换 token）。
-- 代码块逐项对应 Netcatty：`ExternalMcpCard.tsx`（状态机与轮询）、`ExternalMcpHttpSection.tsx`（HTTP 字段与连接详情）、`ToolAccessGuidance.tsx`（接入指引文案）、`SafetySettings.tsx`（三档）、`ToolStatusPill.tsx`（状态点）。
-- 本轮 UI 未落地：`SettingsTabs.tsx` 现无 AI 分区骨架，新增分区涉及 i18n 键与导航项，避免半成品入口。
+- 组件落点：`src/settings/AiTab.tsx`（新建，已在 `SettingsDialog.tsx` 启用 ai tab），结构与 Netcatty `ExternalMcpCard` 对齐：标题+说明+状态胶囊、错误条、启用开关、权限三档、端口/监听地址/允许自定义绑定/客户端 host、连接详情折叠区（URL / 打码 token / 轮换 / Codex TOML / Claude 命令 / 通用 JSON）、3 秒静默轮询。
+- 文案：`src/settings/i18n.ts` 中英文 `settings.ai.*`；样式追加在 `src/styles.css` 的 `.nc-mcp-*`。
+- 与 Netcatty 的差异：无 `env` 片段入口（后端支持但 UI 未展示，避免超出三片段范围）；`confirm` 档位文案明确写「写操作会被拒绝」而不是「待审批」。
 
 ## 10. 风险与不做的部分
 
@@ -131,6 +131,7 @@
 
 ## 11. 验证状态
 
-- `cargo check --lib --offline`：见本轮回执（修复 4 处编译错误后复跑）。
+- `cargo check --lib --offline`：通过（修复 4 处编译错误后复跑 exit 0）。
+- `npx tsc --noEmit`：通过（`npm install` 后执行，exit 0）。
 - 未做：`cargo build`/`tauri build`（本轮按约束不构建 release；debug 构建留待合入后）、真实 MCP 客户端握手、UI 截图。
 - 对手工验证脚本：启动 app → 打开 工具接入 → 复制通用 JSON 到 Claude/Codex → 调 `get_environment` / `terminal_execute`。

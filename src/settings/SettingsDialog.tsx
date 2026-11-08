@@ -4,17 +4,18 @@
  * （搜索控件 + 纵向 TabsList）、右侧内容区。
  *
  * plugins tab 在 Netcatty 里仅当 pluginRuntimeAvailable 时渲染；termX 无
- * 插件运行时，等价于不渲染。ai 为占位 tab；sync 已实现（跳 Vault 同步页）。
+ * 插件运行时，等价于不渲染。ai 为「工具接入（对外 MCP）」；sync 已实现
+ * （跳 Vault 同步页）。
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { Icon, type IconName } from "../ui/icons";
+import { AiTab } from "./AiTab";
 import { settingsT } from "./i18n";
 import { useSettings } from "./settingsStore";
 import {
   AppearanceTab,
   ApplicationTab,
-  PlaceholderTab,
   ShortcutsTab,
   SystemTab,
   SftpTab,
@@ -45,7 +46,7 @@ const TABS: TabDef[] = [
   { id: "terminal", icon: "terminal-square" },
   { id: "shortcuts", icon: "keyboard" },
   { id: "file-associations", icon: "file-type" },
-  { id: "ai", icon: "sparkles", disabled: true },
+  { id: "ai", icon: "sparkles" },
   { id: "sync", icon: "cloud" },
   { id: "system", icon: "hard-drive" },
 ];
@@ -159,7 +160,7 @@ export function SettingsDialog({
           {tab === "shortcuts" && <ShortcutsTab />}
           {tab === "file-associations" && <SftpTab />}
           {tab === "system" && <SystemTab />}
-          {(tab === "ai") && <PlaceholderTab tab={tab} />}
+          {tab === "ai" && <AiTab />}
           {tab === "sync" && <SyncTab onOpenSync={onOpenSync} />}
         </div>
       </div>
