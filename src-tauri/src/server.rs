@@ -1129,7 +1129,7 @@ fn dispatch(
                     .as_array()
                     .map(|a| a.len())
                     .unwrap_or(0),
-                allowed_tools: crate::mcp::config::load_allowed_tools(&state.db),
+                grants: crate::mcp::grants::load(&state.db),
             };
             ok(Ok::<_, crate::error::AppError>(status))
         }
@@ -1138,7 +1138,15 @@ fn dispatch(
         | "mcp_client_config"
         | "mcp_guide"
         | "mcp_approval_pending"
-        | "mcp_approval_resolve" | "mcp_approval_revoke" => Err(json!(
+        | "mcp_approval_resolve"
+        | "mcp_grant_remove"
+        | "mcp_grants_list"
+        | "mcp_grants_save"
+        | "mcp_grants_import"
+        | "mcp_grants_export"
+        | "mcp_blocklist_get"
+        | "mcp_blocklist_set"
+        | "mcp_blocklist_reset" => Err(json!(
             "gui_only: 对外 MCP 监听器只在桌面 GUI 进程内运行"
         )),
 

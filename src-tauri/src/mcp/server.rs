@@ -71,8 +71,8 @@ pub struct McpStatus {
     pub listen_address: String,
     pub client_host: String,
     pub tool_count: usize,
-    /// confirm 档位下「始终允许」的工具名单（持久化在设置 KV）。
-    pub allowed_tools: Vec<String>,
+    /// confirm 档位下的放行规则（持久化在设置 KV，形状见 `mcp::grants`）。
+    pub grants: Vec<super::grants::PermissionGrant>,
 }
 
 impl McpRuntime {
@@ -107,11 +107,13 @@ impl McpRuntime {
         gen: u64,
         tool: &str,
         args_summary: String,
+        args: Value,
         session_id: Option<String>,
         target_label: Option<String>,
         disconnected: Arc<AtomicBool>,
     ) -> bool {
-        if self.approvals.is_tool_allowed(tool) {
+        // 先看许可记忆表：命中的同类操作直接放行，不再弹审批。
+        if self.approvals.match_grant(tool, &args).is_some() {
             return true;
         }
         if !self.is_current(gen) {
@@ -123,7 +125,7 @@ impl McpRuntime {
         }
         let (payload, mut rx) =
             self.approvals
-                .register(tool, args_summary, session_id, target_label);
+                .register(tool, args_summary, session_id, target_label, args);
         let approval_id = payload.approval_id.clone();
         approval::emit_request(app, &payload);
         approval::sync_attention(app, self.approvals.pending_count());
@@ -192,7 +194,7 @@ impl McpRuntime {
             listen_address: cfg.listen_address.clone(),
             client_host: cfg.client_host.clone(),
             tool_count: tools::definitions().as_array().map(|a| a.len()).unwrap_or(0),
-            allowed_tools: self.approvals.allowed_tools(),
+            grants: self.approvals.grants(),
         }
     }
 
@@ -215,11 +217,10 @@ impl McpRuntime {
     pub fn start(self: &Arc<Self>, app: AppHandle, cfg: McpConfig) -> Result<(), (String, String)> {
         config::validate(&cfg)?;
         let gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        // 重启后「始终允许」仍然生效；旧挂起项一律拒绝，避免悬空等待。
+        // 重启后许可记忆表仍然生效；旧挂起项一律拒绝，避免悬空等待。
         {
             let state = app.state::<AppState>();
-            self.approvals
-                .set_allowed_tools(config::load_allowed_tools(&state.db));
+            self.approvals.set_grants(super::grants::load(&state.db));
         }
         // token 只在手动轮换时更换：内存中的 token 优先，其次用持久化的，最后才新生成。
         let token = {

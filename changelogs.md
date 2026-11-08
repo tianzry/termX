@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-11-08 — 设置 → AI：许可记忆表（审批「一律许可」沉淀放行规则）
+
+### 修改
+
+- 新增 `src-tauri/src/mcp/grants.rs`：`PermissionGrant { id, capabilityId, sessionPattern, commandPattern?, argsPattern?, createdAt, note? }`，KV `mcp.permission_grants` 存规则数组（对齐 Netcatty `infrastructure/ai/harness/permissionGrants.ts:7-34` 的模型维度：工具 / 命令模式 / 目标范围）。
+- 匹配（对齐 `permissionGrants.ts:121-167`）：命令模式规则优先——shell 命令按 `&& || ; |` 分段（识别引号与转义），**每段都必须命中**才放行；非命令规则按 `capabilityId + sessionPattern`；`host:` 类目标不生效，`*` 能力不参与目标匹配。
+- 审批「一律许可」（`src/mcp/McpApprovalHost.tsx` 原「始终允许」改名）走 `build_grants_from_approval`（对齐 `permissionGrants.ts:251-279` + `shellCommandGrant.ts:468/480`）：`sessionPattern = "*"`（对所有终端节点/会话生效），命令类工具按 bash arity 前缀生成模式（如 `git status *`），纯 `cd` 段落跳过；多条命令生成多条规则，与已有规则去重。
+- 后端命令：`mcp_grants_list` / `mcp_grants_save` / `mcp_grant_remove` / `mcp_grants_import` / `mcp_grants_export`；导入 = 整表替换（对齐 `PermissionGrantsSettings.tsx:103-112`），非法 JSON / 字段缺失返回中文明确错误（`mcp_invalid_grants`）；导出为规则数组 JSON，不含 token / 主机凭据等敏感信息。删除旧的 `mcp_approval_revoke`。
+- **旧 `allowedTools` 迁移**：`mcp.allowed_tools` 首次读取时转成 capability 规则（`sessionPattern="*"`，note「从旧的「始终允许」设置迁移」）并删除旧键，之后只剩 grants 一套逻辑，不存在两套并行判断。`mcp_status` 的 `allowedTools` 字段替换为 `grants`。
+- 设置页 AI tab 新增「许可记忆表」区块：卡片标题「Confirm 模式放行规则」+ 固定说明文案、按钮「+ 添加规则 / 导入 JSON / 导出 JSON」、空态「尚无规则。可在审批时选择『一律许可』，或手动添加。」、表格展示 工具 / 命令模式 / 备注 并可逐条删除。
+
+### Netcatty 取证
+
+- `Netcatty/infrastructure/ai/harness/permissionGrants.ts:7-34`：规则模型（capabilityId、sessionPattern、commandPattern 等）；`:121-167` `matchCommandPatternGrants` 每段都必须命中；`:169+` sanitize；`:251-279` `buildGrantsFromApproval`（全局 `sessionPattern='*'`，命令模式多条）。
+- `Netcatty/infrastructure/ai/shared/shellCommandGrant.ts:468` `extractGrantableShellCommandSegments`、`:480` `buildAlwaysAllowCommandPatterns`；`bashArity.ts` 130 项前缀表已移植。
+- `Netcatty/components/settings/tabs/ai/PermissionGrantsSettings.tsx:92-101` 导出 Blob 下载、`:103-112` 导入 JSON parse 后整表替换、失败 `setImportError`。
+- `Netcatty/components/ai/ExternalMcpApprovalsHost.tsx:89-91`：`handleAlwaysAllow` 调 `buildGrantsFromApproval`。
+
+### 验证（实机，debug + CDP + MCP HTTP）
+
+- `terminal_execute("git status")`（confirm 档）→ 浮层出现「允许一次 / 一律许可 / 拒绝」；点「一律许可」后执行成功（审批等待 20.9s），`mcp_grants_list` 得到 1 条 `{ capabilityId: "terminal_execute", sessionPattern: "*", commandPattern: "git status *", note: "git status" }`。
+- 紧接着执行同类命令 `git status -s` → 503ms 直接返回 `exitCode:0`，**未再弹审批**（对照审批路径 20.9s）。
+- 导入导出往返：`mcp_grants_export` → `mcp_grants_import` → 再次 export，两次文本逐字节相等；非法 JSON 返回「JSON 解析失败：…」，字段不合法返回「第 1 条缺少 capabilityId（工具名）」；导入为整表替换，测试后已清理验证用规则（`mcp_grant_remove`，剩余 0 条）。
+- 审批浮层单测同步改名并修正断言（「一律许可」→ resolve `always`）。
+- `npm run test:run` 81 文件 / 915 通过；`npm run build` 通过；`npx tsc --noEmit` 通过；`cargo test --lib mcp::` 30 通过（grants 8 例覆盖分段全命中、工具规则、arity 生成、cd 跳过、glob 可选参数、去重等）。
+
+---
+
 ## 2026-11-08 — 设置 → AI：命令黑名单（Netcatty 正则层）
 
 ### 修改

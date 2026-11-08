@@ -517,7 +517,14 @@ pub fn run() {
             commands::mcp::mcp_guide,
             commands::mcp::mcp_approval_pending,
             commands::mcp::mcp_approval_resolve,
-            commands::mcp::mcp_approval_revoke,
+            commands::mcp::mcp_grant_remove,
+            commands::mcp::mcp_grants_list,
+            commands::mcp::mcp_grants_save,
+            commands::mcp::mcp_grants_import,
+            commands::mcp::mcp_grants_export,
+            commands::mcp::mcp_blocklist_get,
+            commands::mcp::mcp_blocklist_set,
+            commands::mcp::mcp_blocklist_reset,
         ])
         .run(tauri::generate_context!())
         .expect("termX startup failed");

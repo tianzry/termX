@@ -15,7 +15,7 @@ pub const KEY_ALLOW_CUSTOM_BIND: &str = "mcp.allow_custom_bind";
 pub const KEY_LISTEN_ADDRESS: &str = "mcp.listen_address";
 pub const KEY_CLIENT_HOST: &str = "mcp.client_host";
 pub const KEY_PERMISSION_MODE: &str = "mcp.permission_mode";
-/// 「始终允许」的工具名单（JSON 字符串数组），按工具粒度持久化。
+/// 旧模型「始终允许」工具名单：仅供 `grants::load` 一次性迁移使用。
 pub const KEY_ALLOWED_TOOLS: &str = "mcp.allowed_tools";
 /// Bearer token。持久化后只有手动「轮换」才会更换，改配置/重启 app 都不变。
 pub const KEY_TOKEN: &str = "mcp.token";
@@ -216,6 +216,7 @@ pub fn save_token(db: &Db, token: &str) -> AppResult<()> {
     settings::set(db, KEY_TOKEN, token)
 }
 
+#[allow(dead_code)]
 pub fn load_allowed_tools(db: &Db) -> Vec<String> {
     settings::get(db, KEY_ALLOWED_TOOLS)
         .ok()
@@ -224,11 +225,13 @@ pub fn load_allowed_tools(db: &Db) -> Vec<String> {
         .unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub fn save_allowed_tools(db: &Db, tools: &[String]) -> AppResult<()> {
     let raw = serde_json::to_string(tools).unwrap_or_else(|_| "[]".to_string());
     settings::set(db, KEY_ALLOWED_TOOLS, &raw)
 }
 
+#[allow(dead_code)]
 pub fn add_allowed_tool(db: &Db, tool: &str) -> AppResult<()> {
     let mut tools = load_allowed_tools(db);
     if !tools.iter().any(|t| t == tool) {
@@ -238,6 +241,7 @@ pub fn add_allowed_tool(db: &Db, tool: &str) -> AppResult<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn remove_allowed_tool(db: &Db, tool: &str) -> AppResult<()> {
     let mut tools = load_allowed_tools(db);
     tools.retain(|t| t != tool);

@@ -4,17 +4,19 @@
 //! - 写操作生成待审批项（工具名 / 参数摘要 / 目标会话），广播给渲染层；
 //! - 110 秒硬超时（外部客户端常见的 120 秒工具调用上限之前）；
 //! - 客户端断开、MCP 停止 / 重启时，挂起项一律按拒绝结算；
-//! - `始终允许` 按工具粒度落到设置 KV（`mcp.allowed_tools`）。
+//! - 「一律许可」沉淀成 `PermissionGrant`（见 `mcp::grants`），下次同类操作直接放行。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
+
+use super::grants::PermissionGrant;
 
 pub const EVENT_REQUEST: &str = "mcp:approval-request";
 pub const EVENT_CLEARED: &str = "mcp:approval-cleared";
@@ -57,18 +59,23 @@ pub struct ApprovalRequestPayload {
 
 struct Pending {
     payload: ApprovalRequestPayload,
+    args: Value,
     tx: Option<oneshot::Sender<bool>>,
 }
 
 /// 被 UI / 调用方取走的待审批项。`tx` 送出 `true`（允许）或 `false`（拒绝）。
 pub struct TakenApproval {
     pub tool: String,
+    pub args: Value,
+    /// 审批浮层上的参数摘要，顺手作为放行规则的备注。
+    pub note: Option<String>,
     pub tx: oneshot::Sender<bool>,
 }
 
 pub struct ApprovalRegistry {
     pending: Mutex<HashMap<String, Pending>>,
-    allowed_tools: Mutex<HashSet<String>>,
+    /// 放行规则缓存（与 `mcp.permission_grants` 持久化同步）。
+    grants: Mutex<Vec<PermissionGrant>>,
     next_id: AtomicU64,
 }
 
@@ -82,36 +89,32 @@ impl ApprovalRegistry {
     pub fn new() -> Self {
         Self {
             pending: Mutex::new(HashMap::new()),
-            allowed_tools: Mutex::new(HashSet::new()),
+            grants: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(1),
         }
     }
 
-    pub fn set_allowed_tools(&self, tools: Vec<String>) {
-        let mut guard = self.allowed_tools.lock().unwrap_or_else(|e| e.into_inner());
-        guard.clear();
-        guard.extend(tools);
+    pub fn set_grants(&self, grants: Vec<PermissionGrant>) {
+        let mut guard = self.grants.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = grants;
     }
 
-    pub fn allowed_tools(&self) -> Vec<String> {
-        let guard = self.allowed_tools.lock().unwrap_or_else(|e| e.into_inner());
-        let mut list: Vec<String> = guard.iter().cloned().collect();
-        list.sort();
-        list
-    }
-
-    pub fn is_tool_allowed(&self, tool: &str) -> bool {
-        self.allowed_tools
+    pub fn grants(&self) -> Vec<PermissionGrant> {
+        self.grants
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .contains(tool)
+            .clone()
     }
 
-    pub fn allow_tool(&self, tool: &str) {
-        self.allowed_tools
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(tool.to_string());
+    /// 命中任一放行规则即免审批（命令模式规则优先，语义见 `mcp::grants::match_grant`）。
+    pub fn match_grant(&self, tool: &str, args: &Value) -> Option<PermissionGrant> {
+        let guard = self.grants.lock().unwrap_or_else(|e| e.into_inner());
+        super::grants::match_grant(&guard, tool, args)
+    }
+
+    pub fn remove_grant(&self, grant_id: &str) {
+        let mut guard = self.grants.lock().unwrap_or_else(|e| e.into_inner());
+        guard.retain(|grant| grant.id != grant_id);
     }
 
     pub fn register(
@@ -120,6 +123,7 @@ impl ApprovalRegistry {
         args_summary: String,
         session_id: Option<String>,
         target_label: Option<String>,
+        args: Value,
     ) -> (ApprovalRequestPayload, oneshot::Receiver<bool>) {
         let seq = self.next_id.fetch_add(1, Ordering::SeqCst);
         let stamp = SystemTime::now()
@@ -131,7 +135,7 @@ impl ApprovalRegistry {
             approval_id: approval_id.clone(),
             tool_name: tool.to_string(),
             args_summary,
-            session_id,
+            session_id: session_id.clone(),
             target_label,
             timeout_ms: APPROVAL_TIMEOUT_MS,
             created_at_ms: stamp as u64,
@@ -144,6 +148,7 @@ impl ApprovalRegistry {
                 approval_id,
                 Pending {
                     payload: payload.clone(),
+                    args,
                     tx: Some(tx),
                 },
             );
@@ -156,6 +161,8 @@ impl ApprovalRegistry {
         let entry = guard.remove(approval_id)?;
         Some(TakenApproval {
             tool: entry.payload.tool_name,
+            args: entry.args,
+            note: Some(entry.payload.args_summary),
             tx: entry.tx?,
         })
     }
@@ -254,13 +261,19 @@ mod tests {
     #[test]
     fn register_take_and_deny_settle_pending() {
         let registry = ApprovalRegistry::new();
-        let (payload, mut rx) =
-            registry.register("terminal_execute", "ls".into(), None, None);
+        let (payload, mut rx) = registry.register(
+            "terminal_execute",
+            "ls".into(),
+            None,
+            None,
+            json!({ "command": "ls" }),
+        );
         assert_eq!(registry.pending_count(), 1);
         assert!(payload.approval_id.starts_with("mcp_approval_"));
 
         let taken = registry.take(&payload.approval_id).expect("pending");
         assert_eq!(taken.tool, "terminal_execute");
+        assert_eq!(taken.args["command"], "ls");
         assert!(rx.try_recv().is_err(), "尚未结算时 receiver 不应有值");
         let _ = taken.tx.send(true);
         assert_eq!(rx.try_recv(), Ok(true));
@@ -271,8 +284,15 @@ mod tests {
     #[test]
     fn deny_all_rejects_every_pending_item() {
         let registry = ApprovalRegistry::new();
-        let (a, mut rx_a) = registry.register("terminal_execute", "a".into(), None, None);
-        let (b, mut rx_b) = registry.register("session_close", "b".into(), None, None);
+        let (a, mut rx_a) = registry.register(
+            "terminal_execute",
+            "a".into(),
+            None,
+            None,
+            json!({ "command": "a" }),
+        );
+        let (b, mut rx_b) =
+            registry.register("session_close", "b".into(), None, None, json!({}));
         let cleared = registry.deny_all();
         assert_eq!(cleared.len(), 2);
         assert!(cleared.iter().any(|p| p.approval_id == a.approval_id));
@@ -283,15 +303,29 @@ mod tests {
     }
 
     #[test]
-    fn allowed_tools_are_tracked_per_tool() {
+    fn grants_allow_matching_operations_only() {
         let registry = ApprovalRegistry::new();
-        registry.set_allowed_tools(vec!["terminal_execute".into()]);
-        assert!(registry.is_tool_allowed("terminal_execute"));
-        assert!(!registry.is_tool_allowed("session_close"));
-        registry.allow_tool("session_close");
-        assert_eq!(
-            registry.allowed_tools(),
-            vec!["session_close".to_string(), "terminal_execute".to_string()]
-        );
+        registry.set_grants(vec![PermissionGrant {
+            id: "grant_1".into(),
+            capability_id: "terminal_execute".into(),
+            session_pattern: "*".into(),
+            command_pattern: Some("git status *".into()),
+            args_pattern: None,
+            created_at: 1,
+            note: None,
+        }]);
+        assert!(registry
+            .match_grant("terminal_execute", &json!({ "command": "git status" }))
+            .is_some());
+        assert!(registry
+            .match_grant("terminal_execute", &json!({ "command": "rm -rf build" }))
+            .is_none());
+        assert!(registry
+            .match_grant("session_close", &json!({}))
+            .is_none());
+        registry.remove_grant("grant_1");
+        assert!(registry
+            .match_grant("terminal_execute", &json!({ "command": "git status" }))
+            .is_none());
     }
 }

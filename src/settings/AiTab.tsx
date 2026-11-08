@@ -3,13 +3,19 @@
  *
  * 结构对照 Netcatty ExternalMcpCard + ExternalMcpHttpSection：
  * - 三档权限（observer / confirm / auto）；confirm 的写操作走主窗审批浮层；
- * - 「始终允许」按工具粒度持久化在设置 KV，可在本页撤销。
+ * - 命令黑名单（正则层）与许可记忆表（Confirm 放行规则）同在 AI 页维护。
  */
 
 import { useEffect, useRef, useState } from "react";
 import {
-  mcpApprovalRevoke,
+  mcpBlocklistGet,
+  mcpBlocklistReset,
+  mcpBlocklistSet,
   mcpClientConfig,
+  mcpGrantRemove,
+  mcpGrantsExport,
+  mcpGrantsImport,
+  mcpGrantsSave,
   mcpGuide,
   mcpRotateToken,
   mcpSetConfig,
@@ -18,6 +24,7 @@ import {
   type McpGuideBlock,
   type McpPermissionMode,
   type McpStatus,
+  type PermissionGrant,
 } from "../backend/client";
 import { decodeAppError, userVisibleError } from "../domain/sshErrors";
 import { Icon } from "../ui/icons";
@@ -90,6 +97,26 @@ export function AiTab() {
   const [guideLoading, setGuideLoading] = useState(false);
   const [guideError, setGuideError] = useState<string | null>(null);
 
+  // 命令黑名单（正则层，对齐 Netcatty SafetySettings）。
+  const [blocklist, setBlocklist] = useState<string[]>([]);
+  const [blocklistBusy, setBlocklistBusy] = useState(false);
+  const [blocklistError, setBlocklistError] = useState<string | null>(null);
+  const [addBlocklistOpen, setAddBlocklistOpen] = useState(false);
+  const [blocklistDraft, setBlocklistDraft] = useState("");
+
+  // 许可记忆表（Confirm 放行规则，对齐 Netcatty PermissionGrantsSettings）。
+  const [grants, setGrants] = useState<PermissionGrant[]>([]);
+  const [grantsBusy, setGrantsBusy] = useState(false);
+  const [grantsError, setGrantsError] = useState<string | null>(null);
+  const [grantEditor, setGrantEditor] = useState<{
+    capabilityId: string;
+    commandPattern: string;
+    note: string;
+  } | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+
   // 页面挂载时拉一次配置，之后每 3 秒静默轮询；卸载清理定时器。
   useEffect(() => {
     let alive = true;
@@ -102,6 +129,7 @@ export function AiTab() {
         const next = await mcpStatus();
         if (!alive) return;
         setStatus(next);
+        setGrants(next.grants ?? []);
         if (!editingRef.current) {
           setPortDraft(String(next.port));
           setAddressDraft(next.listenAddress);
@@ -167,6 +195,21 @@ export function AiTab() {
     };
   }, [status?.running, status?.url, status?.bearerToken]);
 
+  // 命令黑名单只加载一次；写操作在后端持久化，返回最新清单。
+  useEffect(() => {
+    let alive = true;
+    mcpBlocklistGet()
+      .then((list) => {
+        if (alive) setBlocklist(list);
+      })
+      .catch((error) => {
+        if (alive) setBlocklistError(describeError(error));
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const apply = async (patch: McpConfigPatch, key: string) => {
     setActionError(null);
     setPending(key);
@@ -220,16 +263,121 @@ export function AiTab() {
     }
   };
 
-  const revokeAllowedTool = async (tool: string) => {
-    setActionError(null);
-    setPending(`revoke:${tool}`);
+  const addBlocklistRule = async () => {
+    const pattern = blocklistDraft.trim();
+    if (!pattern) return;
     try {
-      const tools = await mcpApprovalRevoke(tool);
-      setStatus((prev) => (prev ? { ...prev, allowedTools: tools } : prev));
+      new RegExp(pattern, "i");
+    } catch {
+      setBlocklistError(t("settings.ai.blocklist.dialog.invalid", { pattern }));
+      return;
+    }
+    setBlocklistBusy(true);
+    setBlocklistError(null);
+    try {
+      const next = await mcpBlocklistSet([...blocklist, pattern]);
+      setBlocklist(next);
+      setAddBlocklistOpen(false);
+      setBlocklistDraft("");
     } catch (error) {
-      setActionError(describeError(error));
+      setBlocklistError(describeError(error));
     } finally {
-      setPending(null);
+      setBlocklistBusy(false);
+    }
+  };
+
+  const removeBlocklistRule = async (index: number) => {
+    setBlocklistBusy(true);
+    setBlocklistError(null);
+    try {
+      setBlocklist(await mcpBlocklistSet(blocklist.filter((_, i) => i !== index)));
+    } catch (error) {
+      setBlocklistError(describeError(error));
+    } finally {
+      setBlocklistBusy(false);
+    }
+  };
+
+  const restoreBlocklist = async () => {
+    setBlocklistBusy(true);
+    setBlocklistError(null);
+    try {
+      setBlocklist(await mcpBlocklistReset());
+    } catch (error) {
+      setBlocklistError(describeError(error));
+    } finally {
+      setBlocklistBusy(false);
+    }
+  };
+
+  const removeGrant = async (grantId: string) => {
+    setGrantsBusy(true);
+    setGrantsError(null);
+    try {
+      setGrants(await mcpGrantRemove(grantId));
+    } catch (error) {
+      setGrantsError(describeError(error));
+    } finally {
+      setGrantsBusy(false);
+    }
+  };
+
+  const saveGrant = async () => {
+    if (!grantEditor) return;
+    const capabilityId = grantEditor.capabilityId.trim();
+    if (!capabilityId) {
+      setGrantsError(t("settings.ai.grants.col.capability"));
+      return;
+    }
+    const commandPattern = grantEditor.commandPattern.trim();
+    const note = grantEditor.note.trim();
+    const next: PermissionGrant = {
+      id: `grant_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      capabilityId,
+      sessionPattern: "*",
+      createdAt: Date.now(),
+      ...(commandPattern ? { commandPattern } : {}),
+      ...(note ? { note } : {}),
+    };
+    setGrantsBusy(true);
+    setGrantsError(null);
+    try {
+      setGrants(await mcpGrantsSave([...grants, next]));
+      setGrantEditor(null);
+    } catch (error) {
+      setGrantsError(describeError(error));
+    } finally {
+      setGrantsBusy(false);
+    }
+  };
+
+  const importGrants = async () => {
+    setGrantsBusy(true);
+    setImportError(null);
+    try {
+      setGrants(await mcpGrantsImport(importText));
+      setImportOpen(false);
+      setImportText("");
+    } catch (error) {
+      setImportError(describeError(error));
+    } finally {
+      setGrantsBusy(false);
+    }
+  };
+
+  const exportGrants = async () => {
+    setGrantsError(null);
+    try {
+      const json = await mcpGrantsExport();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = t("settings.ai.grants.export.file");
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setGrantsError(describeError(error));
     }
   };
 
@@ -328,32 +476,6 @@ export function AiTab() {
               })}
             </div>
           </div>
-
-          {status?.permissionMode === "confirm" && (status.allowedTools?.length ?? 0) > 0 && (
-            <div className="nc-set-row nc-mcp-row-block">
-              <div className="nc-set-row-text">
-                <div className="nc-set-row-title">{t("settings.ai.permission.allowed")}</div>
-                <div className="nc-set-row-desc">{t("settings.ai.permission.confirm.desc")}</div>
-              </div>
-              <div className="nc-mcp-allowed-list">
-                {status.allowedTools.map((tool) => (
-                  <span key={tool} className="nc-mcp-allowed-chip">
-                    <code>{tool}</code>
-                    <button
-                      type="button"
-                      className="nc-mcp-allowed-revoke"
-                      aria-label={t("settings.ai.permission.revoke", { tool })}
-                      title={t("settings.ai.permission.revoke", { tool })}
-                      disabled={pending === `revoke:${tool}`}
-                      onClick={() => void revokeAllowedTool(tool)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
 
           <div className="nc-set-row">
             <div className="nc-set-row-text">
@@ -462,6 +584,155 @@ export function AiTab() {
             {t("settings.ai.status.toolCount", { count: status.toolCount })}
           </p>
         )}
+      </section>
+
+      <section className="nc-set-section">
+        <div className="nc-mcp-head">
+          <div>
+            <h2 className="nc-set-section-title">{t("settings.ai.blocklist")}</h2>
+            <p className="nc-set-section-desc">{t("settings.ai.blocklist.desc")}</p>
+          </div>
+          <button
+            type="button"
+            className="nc-set-btn is-sm"
+            disabled={blocklistBusy}
+            onClick={() => void restoreBlocklist()}
+          >
+            <Icon name="refresh" size={14} />
+            {t("settings.ai.blocklist.restore")}
+          </button>
+        </div>
+
+        <div className="nc-set-card nc-safety-card">
+          {blocklist.length === 0 && (
+            <p className="nc-set-hint">{t("settings.ai.blocklist.empty")}</p>
+          )}
+          {blocklist.map((pattern, index) => (
+            <div className="nc-safety-rule" key={`${index}:${pattern}`}>
+              <input
+                className="nc-set-input nc-safety-input"
+                value={pattern}
+                readOnly
+                aria-label={`${t("settings.ai.blocklist")} ${index + 1}`}
+                title={pattern}
+              />
+              <button
+                type="button"
+                className="nc-safety-remove"
+                aria-label={t("settings.ai.blocklist.delete")}
+                title={t("settings.ai.blocklist.delete")}
+                disabled={blocklistBusy}
+                onClick={() => void removeBlocklistRule(index)}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <div className="nc-safety-foot">
+            <button
+              type="button"
+              className="nc-set-btn is-sm is-ghost"
+              onClick={() => {
+                setBlocklistError(null);
+                setBlocklistDraft("");
+                setAddBlocklistOpen(true);
+              }}
+            >
+              {t("settings.ai.blocklist.add")}
+            </button>
+            <span className="nc-set-hint">{t("settings.ai.blocklist.note")}</span>
+          </div>
+          {blocklistError && <p className="nc-mcp-error">{blocklistError}</p>}
+        </div>
+      </section>
+
+      <section className="nc-set-section">
+        <h2 className="nc-set-section-title">{t("settings.ai.grants")}</h2>
+        <div className="nc-set-card">
+          <div className="nc-set-row nc-mcp-row-block">
+            <div className="nc-set-row-text">
+              <div className="nc-set-row-title">{t("settings.ai.grants.card")}</div>
+              <div className="nc-set-row-desc">{t("settings.ai.grants.desc")}</div>
+            </div>
+            <div className="nc-grant-actions">
+              <button
+                type="button"
+                className="nc-set-btn is-sm"
+                disabled={grantsBusy}
+                onClick={() =>
+                  setGrantEditor({ capabilityId: "terminal_execute", commandPattern: "", note: "" })
+                }
+              >
+                {t("settings.ai.grants.add")}
+              </button>
+              <button
+                type="button"
+                className="nc-set-btn is-sm is-ghost"
+                disabled={grantsBusy}
+                onClick={() => {
+                  setImportError(null);
+                  setImportText("");
+                  setImportOpen(true);
+                }}
+              >
+                {t("settings.ai.grants.import")}
+              </button>
+              <button
+                type="button"
+                className="nc-set-btn is-sm is-ghost"
+                disabled={grantsBusy || grants.length === 0}
+                onClick={() => void exportGrants()}
+              >
+                {t("settings.ai.grants.export")}
+              </button>
+            </div>
+          </div>
+
+          {grants.length === 0 ? (
+            <p className="nc-set-hint nc-grant-empty">{t("settings.ai.grants.empty")}</p>
+          ) : (
+            <div className="nc-grant-table" role="table">
+              <div className="nc-grant-row nc-grant-head" role="row">
+                <span role="columnheader">{t("settings.ai.grants.col.capability")}</span>
+                <span role="columnheader">{t("settings.ai.grants.col.command")}</span>
+                <span role="columnheader">{t("settings.ai.grants.col.note")}</span>
+                <span role="columnheader" aria-label={t("settings.ai.grants.delete")} />
+              </div>
+              {grants.map((grant) => (
+                <div className="nc-grant-row" role="row" key={grant.id}>
+                  <span role="cell" className="nc-grant-cell">
+                    <code>{grant.capabilityId}</code>
+                  </span>
+                  <span role="cell" className="nc-grant-cell">
+                    {grant.commandPattern ? (
+                      <code>{grant.commandPattern}</code>
+                    ) : (
+                      <span className="nc-grant-empty-cell">
+                        {t("settings.ai.grants.allCommands")}
+                      </span>
+                    )}
+                  </span>
+                  <span role="cell" className="nc-grant-cell nc-grant-note">
+                    {grant.note ?? ""}
+                  </span>
+                  <span role="cell" className="nc-grant-cell">
+                    <button
+                      type="button"
+                      className="nc-safety-remove"
+                      aria-label={t("settings.ai.grants.delete")}
+                      title={t("settings.ai.grants.delete")}
+                      disabled={grantsBusy}
+                      onClick={() => void removeGrant(grant.id)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {grantsError && <p className="nc-mcp-error">{grantsError}</p>}
+        </div>
       </section>
 
       {status?.running && (
@@ -573,6 +844,189 @@ export function AiTab() {
             </div>
           </div>
         </section>
+      )}
+      {addBlocklistOpen && (
+        <div
+          className="nc-set-modal-backdrop"
+          role="presentation"
+          onMouseDown={() => setAddBlocklistOpen(false)}
+        >
+          <div
+            className="nc-set-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("settings.ai.blocklist.dialog.title")}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="nc-set-modal-title">{t("settings.ai.blocklist.dialog.title")}</div>
+            <div className="nc-set-field">
+              <label className="nc-set-field-label" htmlFor="ai-blocklist-pattern">
+                {t("settings.ai.blocklist")}
+              </label>
+              <input
+                id="ai-blocklist-pattern"
+                className="nc-set-input"
+                autoFocus
+                value={blocklistDraft}
+                placeholder={t("settings.ai.blocklist.dialog.placeholder")}
+                onChange={(event) => setBlocklistDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void addBlocklistRule();
+                }}
+              />
+            </div>
+            {blocklistError && <p className="nc-set-field-error">{blocklistError}</p>}
+            <div className="nc-set-modal-actions">
+              <button
+                type="button"
+                className="nc-set-btn is-sm is-ghost"
+                onClick={() => setAddBlocklistOpen(false)}
+              >
+                {t("settings.ai.blocklist.dialog.cancel")}
+              </button>
+              <button
+                type="button"
+                className="nc-set-btn is-sm is-primary"
+                disabled={blocklistBusy || !blocklistDraft.trim()}
+                onClick={() => void addBlocklistRule()}
+              >
+                {t("settings.ai.blocklist.dialog.ok")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {grantEditor && (
+        <div
+          className="nc-set-modal-backdrop"
+          role="presentation"
+          onMouseDown={() => setGrantEditor(null)}
+        >
+          <div
+            className="nc-set-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("settings.ai.grants.dialog.title")}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="nc-set-modal-title">{t("settings.ai.grants.dialog.title")}</div>
+            <div className="nc-set-field">
+              <label className="nc-set-field-label" htmlFor="ai-grant-capability">
+                {t("settings.ai.grants.dialog.capability")}
+              </label>
+              <select
+                id="ai-grant-capability"
+                className="nc-set-input"
+                value={grantEditor.capabilityId}
+                onChange={(event) =>
+                  setGrantEditor({ ...grantEditor, capabilityId: event.target.value })
+                }
+              >
+                {["terminal_execute", "session_close", "get_environment", "vault_hosts_list", "snippets_list"].map(
+                  (tool) => (
+                    <option key={tool} value={tool}>
+                      {tool}
+                    </option>
+                  ),
+                )}
+              </select>
+            </div>
+            <div className="nc-set-field">
+              <label className="nc-set-field-label" htmlFor="ai-grant-command">
+                {t("settings.ai.grants.dialog.command")}
+              </label>
+              <input
+                id="ai-grant-command"
+                className="nc-set-input"
+                autoFocus
+                value={grantEditor.commandPattern}
+                placeholder="git status *"
+                onChange={(event) =>
+                  setGrantEditor({ ...grantEditor, commandPattern: event.target.value })
+                }
+              />
+              <span className="nc-set-field-hint">{t("settings.ai.grants.dialog.commandHint")}</span>
+            </div>
+            <div className="nc-set-field">
+              <label className="nc-set-field-label" htmlFor="ai-grant-note">
+                {t("settings.ai.grants.dialog.note")}
+              </label>
+              <input
+                id="ai-grant-note"
+                className="nc-set-input"
+                value={grantEditor.note}
+                onChange={(event) => setGrantEditor({ ...grantEditor, note: event.target.value })}
+              />
+            </div>
+            {grantsError && <p className="nc-set-field-error">{grantsError}</p>}
+            <div className="nc-set-modal-actions">
+              <button
+                type="button"
+                className="nc-set-btn is-sm is-ghost"
+                onClick={() => setGrantEditor(null)}
+              >
+                {t("settings.ai.grants.dialog.cancel")}
+              </button>
+              <button
+                type="button"
+                className="nc-set-btn is-sm is-primary"
+                disabled={grantsBusy}
+                onClick={() => void saveGrant()}
+              >
+                {t("settings.ai.grants.dialog.save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importOpen && (
+        <div
+          className="nc-set-modal-backdrop"
+          role="presentation"
+          onMouseDown={() => setImportOpen(false)}
+        >
+          <div
+            className="nc-set-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("settings.ai.grants.import.title")}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="nc-set-modal-title">{t("settings.ai.grants.import.title")}</div>
+            <p className="nc-set-row-desc">{t("settings.ai.grants.import.desc")}</p>
+            <textarea
+              className="nc-set-textarea is-full"
+              rows={10}
+              autoFocus
+              value={importText}
+              placeholder={t("settings.ai.grants.import.placeholder")}
+              onChange={(event) => {
+                setImportText(event.target.value);
+                setImportError(null);
+              }}
+            />
+            {importError && <p className="nc-set-field-error">{importError}</p>}
+            <div className="nc-set-modal-actions">
+              <button
+                type="button"
+                className="nc-set-btn is-sm is-ghost"
+                onClick={() => setImportOpen(false)}
+              >
+                {t("settings.ai.grants.dialog.cancel")}
+              </button>
+              <button
+                type="button"
+                className="nc-set-btn is-sm is-primary"
+                disabled={grantsBusy || !importText.trim()}
+                onClick={() => void importGrants()}
+              >
+                {t("settings.ai.grants.import.confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -7,6 +7,7 @@
 pub mod approval;
 pub mod blocklist;
 pub mod config;
+pub mod grants;
 pub mod guide;
 pub mod server;
 pub mod tools;

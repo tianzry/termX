@@ -54,11 +54,11 @@ describe("McpApprovalHost", () => {
     await waitFor(() => expect(screen.queryByText("terminal_execute")).toBeNull());
   });
 
-  it("「始终允许」按工具提交", async () => {
+  it("「一律许可」沉淀放行规则并提交 always", async () => {
     render(<McpApprovalHost />);
     await screen.findByText("terminal_execute");
 
-    fireEvent.click(screen.getByRole("button", { name: /始终允许 terminal_execute/ }));
+    fireEvent.click(screen.getByRole("button", { name: "一律许可" }));
     await waitFor(() =>
       expect(api.mcpApprovalResolve).toHaveBeenCalledWith("a1", "always"),
     );

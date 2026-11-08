@@ -3,7 +3,7 @@
  *
  * 对齐 Netcatty `components/ai/ExternalMcpApprovalsHost.tsx`：
  * - 常驻主窗右下角，监听主进程广播的待审批项；
- * - 允许一次 / 始终允许该工具 / 拒绝；
+ * - 允许一次 / 一律许可（沉淀放行规则）/ 拒绝；
  * - 超时、客户端断开、服务重启由后端直接结算，前端只按 cleared 事件移除。
  */
 
@@ -134,9 +134,10 @@ export function McpApprovalHost() {
                 type="button"
                 className="nc-set-btn is-secondary"
                 disabled={disabled}
+                title={t("mcp.approval.alwaysAllowHint")}
                 onClick={() => void decide(item, "always")}
               >
-                {t("mcp.approval.alwaysAllow", { tool: item.toolName })}
+                {t("mcp.approval.alwaysAllow")}
               </button>
               <button
                 type="button"

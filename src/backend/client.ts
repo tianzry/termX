@@ -2000,8 +2000,23 @@ export interface McpStatus {
   listenAddress: string;
   clientHost: string;
   toolCount: number;
-  /** confirm 档位下「始终允许」的工具名单（持久化在设置 KV）。 */
-  allowedTools: string[];
+  /** confirm 档位的放行规则（持久化在设置 KV，见 `PermissionGrant`）。 */
+  grants: PermissionGrant[];
+}
+
+/** 许可记忆表规则（1:1 对齐 Netcatty `PermissionGrant`）。 */
+export interface PermissionGrant {
+  id: string;
+  /** 工具名（MCP capability）；"*" 表示任意工具（仅手动导入时出现）。 */
+  capabilityId: string;
+  /** 会话作用域："*" 或 "host:<hostId>"。 */
+  sessionPattern: string;
+  /** 命令模式（glob + 空白分隔多个模式，如 "git status *"）。 */
+  commandPattern?: string;
+  /** 参数匹配（参数名 → 模式）。 */
+  argsPattern?: Record<string, string>;
+  createdAt: number;
+  note?: string;
 }
 
 export interface McpConfigPatch {
@@ -2065,8 +2080,37 @@ export function mcpApprovalResolve(
   return invoke<boolean>("mcp_approval_resolve", { approvalId, decision });
 }
 
-export function mcpApprovalRevoke(toolName: string): Promise<string[]> {
-  return invoke<string[]>("mcp_approval_revoke", { toolName });
+export function mcpGrantRemove(grantId: string): Promise<PermissionGrant[]> {
+  return invoke<PermissionGrant[]>("mcp_grant_remove", { grantId });
+}
+
+export function mcpGrantsList(): Promise<PermissionGrant[]> {
+  return invoke<PermissionGrant[]>("mcp_grants_list");
+}
+
+export function mcpGrantsSave(grantsList: PermissionGrant[]): Promise<PermissionGrant[]> {
+  return invoke<PermissionGrant[]>("mcp_grants_save", { grantsList });
+}
+
+/** 导入 JSON：替换整张表；非法 JSON / 字段不合法会返回带序号的错误消息。 */
+export function mcpGrantsImport(raw: string): Promise<PermissionGrant[]> {
+  return invoke<PermissionGrant[]>("mcp_grants_import", { raw });
+}
+
+export function mcpGrantsExport(): Promise<string> {
+  return invoke<string>("mcp_grants_export");
+}
+
+export function mcpBlocklistGet(): Promise<string[]> {
+  return invoke<string[]>("mcp_blocklist_get");
+}
+
+export function mcpBlocklistSet(patterns: string[]): Promise<string[]> {
+  return invoke<string[]>("mcp_blocklist_set", { patterns });
+}
+
+export function mcpBlocklistReset(): Promise<string[]> {
+  return invoke<string[]>("mcp_blocklist_reset");
 }
 
 /** 冲突答复；`applyToAll` 时策略按批次记忆（阶段 C 对话框调用）。 */

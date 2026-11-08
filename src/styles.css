@@ -12235,6 +12235,135 @@ html[data-theme="dark"] .nc-settings-overlay {
   font-weight: 600;
 }
 
+/* 设置页弹窗遮罩（AI 页的黑名单 / 放行规则 / 导入 JSON 共用） */
+.nc-set-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.nc-set-section-desc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* 命令黑名单：只读规则行 + 删除 */
+.nc-safety-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+}
+
+.nc-safety-rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nc-safety-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--nc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+}
+
+.nc-safety-remove {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nc-safety-remove:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+}
+
+.nc-safety-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.nc-safety-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+/* 许可记忆表 */
+.nc-grant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.nc-grant-table {
+  margin-top: 4px;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.nc-grant-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1.4fr) minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+}
+
+.nc-grant-row:last-child {
+  border-bottom: none;
+}
+
+.nc-grant-head {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-grant-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.nc-grant-cell code {
+  font-family: var(--nc-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.nc-grant-note {
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-grant-empty-cell {
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-grant-empty {
+  padding: 14px 12px 4px;
+}
+
 .nc-set-field {
   display: flex;
   flex-direction: column;

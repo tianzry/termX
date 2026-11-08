@@ -6,8 +6,9 @@ use tauri::State;
 use crate::error::{AppError, AppResult};
 use crate::mcp::approval::{self, ApprovalDecision, ApprovalRequestPayload};
 use crate::mcp::config::{self, McpConfig};
+use crate::mcp::grants::{self, PermissionGrant};
 use crate::mcp::guide::{self, GuideBlock};
-use crate::mcp::server::{client_snippet, McpRuntime, McpState, McpStatus};
+use crate::mcp::{blocklist, server::{client_snippet, McpRuntime, McpState, McpStatus}};
 use crate::state::AppState;
 
 #[derive(Debug, Default, Deserialize)]
@@ -91,7 +92,7 @@ pub fn mcp_status(rt: State<'_, McpState>, state: State<'_, AppState>) -> AppRes
     let cfg = config::load(&state.db);
     let mut status = runtime(&rt).status();
     status.enabled = cfg.enabled;
-    status.allowed_tools = config::load_allowed_tools(&state.db);
+    status.grants = grants::load(&state.db);
     if !status.running {
         status.permission_mode = cfg.permission_mode.as_str().to_string();
         status.allow_custom_bind = cfg.allow_custom_bind;
@@ -140,7 +141,7 @@ pub fn mcp_approval_pending(rt: State<'_, McpState>) -> AppResult<Vec<ApprovalRe
     Ok(runtime(&rt).pending_approvals())
 }
 
-/// 结算一个待审批项：`once` 允许一次、`always` 允许并持久化该工具、`reject` 拒绝。
+/// 结算一个待审批项：`once` 允许一次、`always` 允许并把本次操作沉淀成放行规则、`reject` 拒绝。
 #[tauri::command]
 pub fn mcp_approval_resolve(
     app: tauri::AppHandle,
@@ -161,13 +162,17 @@ pub fn mcp_approval_resolve(
     };
     let allow = decision.allows();
     if decision == ApprovalDecision::Always {
-        if let Err(e) = config::add_allowed_tool(&state.db, &taken.tool) {
+        let mut all = grants::load(&state.db);
+        let incoming =
+            grants::build_grants_from_approval(&taken.tool, &taken.args, taken.note.clone());
+        grants::merge_grants(&mut all, incoming);
+        if let Err(e) = grants::save(&state.db, &all) {
             let _ = taken.tx.send(false);
             approval::emit_cleared(&app, &[approval_id.clone()], "rejected");
             approval::sync_attention(&app, rt.approvals().pending_count());
             return Err(e);
         }
-        rt.approvals().allow_tool(&taken.tool);
+        rt.approvals().set_grants(all);
     }
     let _ = taken.tx.send(allow);
     approval::emit_cleared(
@@ -179,19 +184,83 @@ pub fn mcp_approval_resolve(
     Ok(true)
 }
 
-/// 撤销某工具的「始终允许」。
+/// 删除一条许可记忆规则（设置页「许可记忆表」）。
 #[tauri::command]
-pub fn mcp_approval_revoke(
+pub fn mcp_grant_remove(
     rt: State<'_, McpState>,
     state: State<'_, AppState>,
-    tool_name: String,
+    grant_id: String,
+) -> AppResult<Vec<PermissionGrant>> {
+    let mut all = grants::load(&state.db);
+    all.retain(|grant| grant.id != grant_id);
+    grants::save(&state.db, &all)?;
+    runtime(&rt).approvals().remove_grant(&grant_id);
+    Ok(all)
+}
+
+#[tauri::command]
+pub fn mcp_grants_list(state: State<'_, AppState>) -> AppResult<Vec<PermissionGrant>> {
+    Ok(grants::load(&state.db))
+}
+
+/// 保存整张许可记忆表（手动编辑后回写，并同步到运行中的 MCP 服务）。
+#[tauri::command]
+pub fn mcp_grants_save(
+    rt: State<'_, McpState>,
+    state: State<'_, AppState>,
+    grants_list: Vec<PermissionGrant>,
+) -> AppResult<Vec<PermissionGrant>> {
+    let mut all = grants_list;
+    all.retain(|grant| !grant.capability_id.trim().is_empty());
+    for grant in &mut all {
+        grant.capability_id = grant.capability_id.trim().to_string();
+    }
+    grants::save(&state.db, &all)?;
+    runtime(&rt).approvals().set_grants(all.clone());
+    Ok(all)
+}
+
+#[tauri::command]
+pub fn mcp_grants_import(
+    rt: State<'_, McpState>,
+    state: State<'_, AppState>,
+    raw: String,
+) -> AppResult<Vec<PermissionGrant>> {
+    let all = grants::import_json(&state.db, &raw)
+        .map_err(|message| invalid("mcp_invalid_grants".to_string(), message))?;
+    runtime(&rt).approvals().set_grants(all.clone());
+    Ok(all)
+}
+
+#[tauri::command]
+pub fn mcp_grants_export(state: State<'_, AppState>) -> AppResult<String> {
+    grants::export_json(&state.db)
+}
+
+#[tauri::command]
+pub fn mcp_blocklist_get(state: State<'_, AppState>) -> AppResult<Vec<String>> {
+    Ok(blocklist::load(&state.db))
+}
+
+#[tauri::command]
+pub fn mcp_blocklist_set(
+    state: State<'_, AppState>,
+    patterns: Vec<String>,
 ) -> AppResult<Vec<String>> {
-    config::remove_allowed_tool(&state.db, &tool_name)?;
-    let rt = runtime(&rt);
-    let mut tools = rt.approvals().allowed_tools();
-    tools.retain(|t| t != &tool_name);
-    rt.approvals().set_allowed_tools(tools.clone());
-    Ok(tools)
+    let list: Vec<String> = patterns
+        .into_iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .take(200)
+        .collect();
+    blocklist::save(&state.db, &list)?;
+    Ok(list)
+}
+
+/// 恢复出厂规则清单（用户自定义项按 Netcatty 行为一并清空）。
+#[tauri::command]
+pub fn mcp_blocklist_reset(state: State<'_, AppState>) -> AppResult<Vec<String>> {
+    blocklist::reset(&state.db)
 }
 
 #[cfg(test)]
