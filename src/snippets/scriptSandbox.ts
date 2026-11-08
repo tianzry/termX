@@ -62,17 +62,17 @@ export function wrapScriptSource(source: string): string {
 
 /**
  * 把源码编译成可直接调用的 runner。
- * 返回的函数接收 `nct`，并在调用前把受控全局以 `undefined` 注入。
+ * 返回的函数接收 `tmx`，并在调用前把受控全局以 `undefined` 注入。
  */
-export function compileScriptRunner(source: string): (nct: unknown) => Promise<unknown> {
+export function compileScriptRunner(source: string): (tmx: unknown) => Promise<unknown> {
   const expression = wrapScriptSource(source);
-  const params = ["nct", ...SHADOWED_GLOBALS].join(", ");
+  const params = ["tmx", ...SHADOWED_GLOBALS].join(", ");
   // eslint-disable-next-line no-new-func -- 沙箱本身就是用 Function 构造隔离执行体
   const factory = new Function(params, `return (${expression});`) as (
-    nct: unknown,
+    tmx: unknown,
     ...blocked: undefined[]
   ) => Promise<unknown>;
 
-  return (nct: unknown) =>
-    factory(nct, ...SHADOWED_GLOBALS.map(() => undefined));
+  return (tmx: unknown) =>
+    factory(tmx, ...SHADOWED_GLOBALS.map(() => undefined));
 }

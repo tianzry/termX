@@ -1,4 +1,4 @@
-// 阶段 1 的 nct API 实现：把 Worker 的 RPC 调用落到当前会话。
+// 阶段 1 的 tmx API 实现：把 Worker 的 RPC 调用落到当前会话。
 //
 // 语义对齐 Netcatty `scriptRuntime.cjs`：
 // - `sendLine` 先写命令正文，等 30ms 再写 `\r`（跳板机可能吞掉 `line\r` 单包）；
@@ -6,21 +6,21 @@
 // - `getText` 阶段 1 用文本缓冲按行切分（没有屏幕快照，偏差见 docs §11）；
 // - `waitForPrompt` 使用简化的 `[#$%]\s*$`，默认 60s；其它等待默认 30s。
 
-import type { NctScriptApi, NctScriptSessionSnapshot } from "./nctRuntime";
+import type { TmxScriptApi, TmxScriptSessionSnapshot } from "./tmxRuntime";
 import type { SessionTextBuffer } from "./sessionTextBuffer";
 
-export interface NctScriptApiHost {
+export interface TmxScriptApiHost {
   /** 向当前会话写入输入（等价于用户键盘输入）。 */
   write(text: string): void;
   buffer: SessionTextBuffer;
-  snapshot: NctScriptSessionSnapshot;
+  snapshot: TmxScriptSessionSnapshot;
   /** 脚本是否已被用户停止 / 宿主终止。 */
   isAborted?: () => boolean;
   /** 两包发送间隔，默认 30ms（测试可注入更短值）。 */
   lineDelayMs?: number;
   /** 等待中的可中断 sleep（默认 setTimeout）。 */
   sleep?: (ms: number) => Promise<void>;
-  /** 运行日志：发送行等（`nct.log` 由宿主运行器单独转发）。 */
+  /** 运行日志：发送行等（`tmx.log` 由宿主运行器单独转发）。 */
   onLog?: (line: string) => void;
 }
 
@@ -54,7 +54,7 @@ function createAbortableSleep(isAborted: () => boolean) {
     });
 }
 
-export function createNctScriptApi(host: NctScriptApiHost): NctScriptApi {
+export function createTmxScriptApi(host: TmxScriptApiHost): TmxScriptApi {
   const isAborted = host.isAborted ?? (() => false);
   const lineDelayMs = host.lineDelayMs ?? DEFAULT_LINE_DELAY_MS;
   const sleep = host.sleep ?? createAbortableSleep(isAborted);
@@ -130,7 +130,7 @@ export function createNctScriptApi(host: NctScriptApiHost): NctScriptApi {
     sleep,
 
     log() {
-      // `nct.log` 的落点由宿主运行器统一收集（api.log + onLog 回调）。
+      // `tmx.log` 的落点由宿主运行器统一收集（api.log + onLog 回调）。
     },
 
     abort() {

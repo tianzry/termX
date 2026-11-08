@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ScriptRunPanel, type NctScriptViewState } from "./ScriptRunPanel";
+import { ScriptRunPanel, type TmxScriptViewState } from "./ScriptRunPanel";
 
-function state(overrides: Partial<NctScriptViewState> = {}): NctScriptViewState {
+function state(overrides: Partial<TmxScriptViewState> = {}): TmxScriptViewState {
   return {
     runId: "run-1",
     name: "巡检",

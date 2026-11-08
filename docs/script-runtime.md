@@ -1,4 +1,4 @@
-# termX 脚本运行时（JavaScript + nct API）设计与实施
+# termX 脚本运行时（JavaScript + tmx API）设计与实施
 
 > 版本：阶段 1（MVP）
 > 背景与差异清单见 [script-runtime-diff.md](./script-runtime-diff.md)。
@@ -12,7 +12,7 @@
 
 1. 用户可在 `kind=script` 且 `language=javascript` 的脚本中编写 JavaScript，并**真正执行**。
 2. 在**当前活动会话**内执行（不跨会话、不自动连接主机）。
-3. 提供最小 `nct` API：
+3. 提供最小 `tmx` API：
    - `screen.send / sendLine / clear / getText`
    - `screen.waitForText / waitForRegex / waitForPrompt / waitForAny`
    - `session.sleep / connected / name / hostname / username`
@@ -27,7 +27,7 @@
 
 - 多主机 / 并行 / 串行运行、自动连接目标主机。
 - `onConnect` / `onOutput` 改为执行 JS（本期仍维持旧 `#@` 子集）。
-- `nct.dialog.*`、`nct.progress.*`、暂停/恢复、等待超时“重试/跳过/中止”弹窗。
+- `tmx.dialog.*`、`tmx.progress.*`、暂停/恢复、等待超时“重试/跳过/中止”弹窗。
 - 录制生成 JS、`session.startLog/stopLog/disconnect`。
 - `targetGroups`、主机级连接脚本队列、权限模式（Observer/确认/自动）、运行历史持久化。
 
@@ -52,14 +52,14 @@
 
 ```
 React UI（SnippetsView / TerminalPane）
-   │  runNctScript(snippet)
+   │  runTmxScript(snippet)
    ▼
 TerminalPane 主线程（脚本宿主）
    ├─ SessionTextBuffer      ← writeTerminalText 每次追加
    ├─ 运行状态 / 日志面板     ← setScriptRun / appendLog
    └─ postMessage RPC  ◄────►  Web Worker（vm 等价沙箱）
                                 ├─ new Function 包装用户源码
-                                ├─ nct.screen/session/log 代理
+                                ├─ tmx.screen/session/log 代理
                                 └─ 心跳（100ms）
 ```
 
@@ -72,7 +72,7 @@ TerminalPane 主线程（脚本宿主）
 | main `scriptBridge` | TerminalPane 内脚本宿主 |
 | `worker_threads` + `vm` | Web Worker + `new Function` |
 | 主进程 `SessionOutputBuffer` | `SessionTextBuffer`（xterm 输出 tap） |
-| `nct` 宿主 RPC |  Worker `rpc` → 主线程 `dispatch` |
+| `tmx` 宿主 RPC |  Worker `rpc` → 主线程 `dispatch` |
 
 ### 3.2 为什么不用另外两种方案
 
@@ -86,7 +86,9 @@ TerminalPane 主线程（脚本宿主）
 
 ---
 
-## 4. `nct` API 兼容矩阵
+## 4. `tmx` API 兼容矩阵
+
+脚本内可用的全局对象是 `tmx`（唯一名称）。
 
 | 分组 | API | 阶段 1 | 阶段 2/3 | termX 实现要点 |
 |---|---|---|---|---|
@@ -180,7 +182,7 @@ idle → running → completed
 | `language` | 行为 |
 |---|---|
 | `""` / `"shell"` | 旧路径：`scriptRunner` 的 `#@wait-*` 文本子集 |
-| `"javascript"` | 新路径：Web Worker + nct 运行时 |
+| `"javascript"` | 新路径：Web Worker + tmx 运行时 |
 
 - 新建脚本默认写 `"javascript"`。
 - 已有脚本保持原值，不做自动改写；可在编辑器提示“升级为 JavaScript（需手动改写）”。
@@ -188,7 +190,7 @@ idle → running → completed
 
 ### 6.2 可选字段
 
-- `script_api_version?: number`：未来 nct API 破坏性升级时使用；阶段 1 固定为 `1`，不写入也可按 1 处理。
+- `script_api_version?: number`：未来 tmx API 破坏性升级时使用；阶段 1 固定为 `1`，不写入也可按 1 处理。
 - 运行历史不落库：与 Netcatty 一致只放内存（最多 200 条，每条最多 200 行日志）。
 
 ### 6.3 变量替换
@@ -236,8 +238,8 @@ idle → running → completed
 
 ```text
 src/snippets/sessionTextBuffer.ts   # 文本缓冲 + 等待
-src/snippets/nctRuntime.ts          # 主线程宿主：worker 生命周期、RPC、超时、停止
-src/snippets/scriptWorker.ts        # Worker 沙箱 + nct 代理
+src/snippets/tmxRuntime.ts          # 主线程宿主：worker 生命周期、RPC、超时、停止
+src/snippets/scriptWorker.ts        # Worker 沙箱 + tmx 代理
 src/snippets/ScriptCodeEditor.tsx   # CodeMirror 6
 src/snippets/ScriptRunPanel.tsx     # 运行状态 + 日志（阶段 1 最简版）
 ```
@@ -309,22 +311,22 @@ export class SessionTextBuffer {
 }
 ```
 
-### 8.3 `nctRuntime.ts`（主线程宿主）
+### 8.3 `tmxRuntime.ts`（主线程宿主）
 
 ```ts
 import { SessionTextBuffer, type WaitKind } from "./sessionTextBuffer";
 
-export interface NctScriptMeta {
+export interface TmxScriptMeta {
   name: string;
   hostname: string;
   username: string;
 }
 
-export interface NctScriptHost {
+export interface TmxScriptHost {
   write(text: string): void;
   buffer: SessionTextBuffer;
   connected(): boolean;
-  meta(): NctScriptMeta;
+  meta(): TmxScriptMeta;
   onLog(line: string): void;
   onStatus(status: { waitingFor?: string }): void;
 }
@@ -346,7 +348,7 @@ const HEARTBEAT_LIMIT_MS = 2_000;
 const MAX_RUN_MS = 30 * 60 * 1_000;
 const MAX_LOGS = 200;
 
-export function startNctScript(source: string, host: NctScriptHost, runId = crypto.randomUUID()): ScriptRunHandle {
+export function startTmxScript(source: string, host: TmxScriptHost, runId = crypto.randomUUID()): ScriptRunHandle {
   const worker = new Worker(new URL("./scriptWorker.ts", import.meta.url), { type: "module" });
 
   let settled = false;
@@ -439,7 +441,7 @@ export function startNctScript(source: string, host: NctScriptHost, runId = cryp
         return undefined;
 
       default:
-        throw new Error(`nct method not supported in phase 1: ${method}`);
+        throw new Error(`tmx method not supported in phase 1: ${method}`);
     }
   };
 
@@ -494,7 +496,7 @@ export function startNctScript(source: string, host: NctScriptHost, runId = cryp
 }
 ```
 
-### 8.4 `scriptWorker.ts`（沙箱 + nct 代理）
+### 8.4 `scriptWorker.ts`（沙箱 + tmx 代理）
 
 ```ts
 interface WorkerPort {
@@ -531,7 +533,7 @@ function notifyHost(method: string, args: unknown[]): void {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-const nct = {
+const tmx = {
   version: "1.0.0",
   sleep,
   log: (message: unknown) => notifyHost("log", [String(message ?? "")]),
@@ -577,7 +579,7 @@ function wrapSource(source: string): string {
 async function run(source: string): Promise<void> {
   // 注意：eval 无法用参数名屏蔽（严格模式下会语法错误）；这里屏蔽常用网络/加载/动态代码入口
   const factory = new Function(
-    "nct",
+    "tmx",
     "fetch",
     "XMLHttpRequest",
     "WebSocket",
@@ -586,7 +588,7 @@ async function run(source: string): Promise<void> {
     "Function",
     wrapSource(source),
   );
-  await factory(nct, undefined, undefined, undefined, undefined, undefined, undefined);
+  await factory(tmx, undefined, undefined, undefined, undefined, undefined, undefined);
 }
 
 port.onmessage = (event: MessageEvent) => {
@@ -714,9 +716,9 @@ scriptBufferRef.current.append(text);
 writeFilteredText(text);
 
 // PaneHandle 新增（阶段 1）
-runNctScript: (snippet) => {
+runTmxScript: (snippet) => {
   if (!connected()) return false;
-  activeScriptRef.current = startNctScript(snippet.command, {
+  activeScriptRef.current = startTmxScript(snippet.command, {
     write: (text) => { if (aliveRef.current) writeToPane(text); },
     buffer: scriptBufferRef.current,
     connected,
@@ -736,11 +738,11 @@ scriptControl: (action) => {
 
 ```ts
 // SnippetsView：按 language 分流
-const isNctScript = (snippet: Snippet) => snippet.kind === "script" && snippet.language === "javascript";
+const isTmxScript = (snippet: Snippet) => snippet.kind === "script" && snippet.language === "javascript";
 
 const sendSnippet = (snippet: Snippet, fromPanel = false) => {
-  if (isNctScript(snippet)) {
-    if (!activeHandle?.runNctScript(snippet)) {
+  if (isTmxScript(snippet)) {
+    if (!activeHandle?.runTmxScript(snippet)) {
       setNotice("脚本未能启动：终端未就绪。");
       return;
     }
@@ -764,7 +766,7 @@ const sendSnippet = (snippet: Snippet, fromPanel = false) => {
 1. WebView2 中 `new Worker(new URL(...), { type: "module" })` 可正常创建并双向通信。
 2. Worker 内 `new Function` 可执行 `async` 代码，`await` 生效。
 3. Worker 内 `typeof window === "undefined"`，`typeof (globalThis as any).__TAURI_INTERNALS__ === "undefined"`。
-4. `nct.screen.sendLine('echo hi')` + `waitForText('hi')` 在本地终端与 SSH 129 上均成功。
+4. `tmx.screen.sendLine('echo hi')` + `waitForText('hi')` 在本地终端与 SSH 129 上均成功。
 5. `while(true){}` 能在 2 秒左右被 terminate，且主线程不卡顿。
 
 ### 9.2 单元测试
@@ -813,8 +815,8 @@ cargo test --lib
 
 ### 10.1 阶段 2
 
-- `nct.dialog.alert/confirm/prompt/form`（表单支持 select/radio/checkbox/textarea/number + `visibleWhen`）。
-- `nct.progress.start/set/step/done`。
+- `tmx.dialog.alert/confirm/prompt/form`（表单支持 select/radio/checkbox/textarea/number + `visibleWhen`）。
+- `tmx.progress.start/set/step/done`。
 - 脚本级暂停 / 恢复（RPC 前挂起）。
 - 等待超时“重试 / 跳过 / 中止”弹窗。
 - `session.startLog / stopLog / disconnect`。
@@ -837,7 +839,7 @@ cargo test --lib
 1. **WebView2 对 module Worker + `new Function` 的真实行为**：必须在真实 termX 窗口跑通阶段 0 spike，不能只依赖开发服务器或单测环境。
 2. **SSH 129 的 `sendLine` 两包时序**：30ms 是否足够；若某些设备吞包，需要按设备类型调整或改为可配置。
 3. **`screen.getText` 的行号语义**：termX 基于 xterm 文本缓冲（含 scrollback），Netcatty 基于屏幕快照（仅可视区）。需确认用户期望并决定是否阶段 2 引入屏幕快照。
-4. **会话日志语义**：`nct.session.startLog(path)` 与 termX 现有 DB 索引式会话日志不一致；阶段 2 需产品确认是“映射”还是“扩展命令”。
+4. **会话日志语义**：`tmx.session.startLog(path)` 与 termX 现有 DB 索引式会话日志不一致；阶段 2 需产品确认是“映射”还是“扩展命令”。
 5. **多目标自动连接**（阶段 3）：需要确认是否复用现有“打开主机”流程、焦点切换与失败回滚策略。
 
 ---

@@ -255,7 +255,7 @@
   font-size: 11px;
 }
 
-/* ── 脚本运行面板（nct.* 运行时） ─────────────────────── */
+/* ── 脚本运行面板（tmx.* 运行时） ─────────────────────── */
 .sn-script-panel {
   display: flex;
   flex-direction: column;

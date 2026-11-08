@@ -1,11 +1,11 @@
-// 脚本运行状态面板（脚本页顶部）：展示运行状态、nct.log 输出与失败原因。
+// 脚本运行状态面板（脚本页顶部）：展示运行状态、tmx.log 输出与失败原因。
 //
 // 状态由 TerminalPane 维护（PaneHandle.scriptControl），本组件只做展示与
 // 停止 / 关闭两个动作；日志保留上限（200 条）在宿主侧已做，这里不再裁剪。
 
 import { useEffect, useRef } from "react";
 
-export interface NctScriptViewState {
+export interface TmxScriptViewState {
   runId: string;
   name: string;
   status: "running" | "completed" | "failed" | "stopped";
@@ -13,7 +13,7 @@ export interface NctScriptViewState {
   error?: string;
 }
 
-const STATUS_TEXT: Record<NctScriptViewState["status"], string> = {
+const STATUS_TEXT: Record<TmxScriptViewState["status"], string> = {
   running: "运行中",
   completed: "已完成",
   failed: "失败",
@@ -25,7 +25,7 @@ export function ScriptRunPanel({
   onStop,
   onDismiss,
 }: {
-  state: NctScriptViewState;
+  state: TmxScriptViewState;
   onStop: () => void;
   onDismiss: () => void;
 }) {

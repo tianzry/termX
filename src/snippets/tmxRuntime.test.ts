@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SCRIPT_LIMITS,
   invokeApi,
-  startNctScript,
-  type NctScriptApi,
+  startTmxScript,
+  type TmxScriptApi,
   type WorkerLike,
-} from "./nctRuntime";
+} from "./tmxRuntime";
 
 class FakeWorker implements WorkerLike {
   posted: Array<Record<string, unknown>> = [];
@@ -46,7 +46,7 @@ class FakeWorker implements WorkerLike {
   }
 }
 
-function createApi(overrides: Partial<NctScriptApi> = {}): NctScriptApi {
+function createApi(overrides: Partial<TmxScriptApi> = {}): TmxScriptApi {
   return {
     connected: true,
     name: "session-a",
@@ -71,16 +71,16 @@ async function flushPromises() {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
-function startWith(worker: FakeWorker, api: NctScriptApi, extra = {}) {
-  return startNctScript({
-    source: "nct.log('hi')",
+function startWith(worker: FakeWorker, api: TmxScriptApi, extra = {}) {
+  return startTmxScript({
+    source: "tmx.log('hi')",
     api,
     createWorker: () => worker,
     ...extra,
   });
 }
 
-describe("startNctScript 生命周期", () => {
+describe("startTmxScript 生命周期", () => {
   it("ready 后下发 start 配置，completed 标记完成并终止 worker", async () => {
     const worker = new FakeWorker();
     const api = createApi();
@@ -93,7 +93,7 @@ describe("startNctScript 生命周期", () => {
     expect(worker.posted[0]).toMatchObject({
       type: "start",
       config: {
-        source: "nct.log('hi')",
+        source: "tmx.log('hi')",
         snapshot: { connected: true, name: "session-a", hostname: "host-a", username: "user-a" },
       },
     });
@@ -139,13 +139,13 @@ describe("startNctScript 生命周期", () => {
   });
 
   it("空源码同步抛错", () => {
-    expect(() => startNctScript({ source: "  ", api: createApi() })).toThrow(
+    expect(() => startTmxScript({ source: "  ", api: createApi() })).toThrow(
       "Script content is empty",
     );
   });
 });
 
-describe("startNctScript RPC 与通知", () => {
+describe("startTmxScript RPC 与通知", () => {
   it("rpc 请求分发到宿主 API 并回传结果", async () => {
     const worker = new FakeWorker();
     const api = createApi();
@@ -217,7 +217,7 @@ describe("startNctScript RPC 与通知", () => {
     expect(worker.terminated).toBe(true);
   });
 
-  it("nct.log 转发到 api.log 与 onLog，并限制条数", async () => {
+  it("tmx.log 转发到 api.log 与 onLog，并限制条数", async () => {
     const worker = new FakeWorker();
     const api = createApi();
     const logs: string[] = [];
@@ -251,7 +251,7 @@ describe("startNctScript RPC 与通知", () => {
   });
 });
 
-describe("startNctScript 超时与看门狗", () => {
+describe("startTmxScript 超时与看门狗", () => {
   it("2 秒无心跳被看门狗终止", async () => {
     vi.useFakeTimers();
     try {

@@ -72,9 +72,9 @@ import {
 import { parseScriptBlocks, runScriptBlocks } from "./snippets/scriptRunner";
 import { appendScriptTrigger } from "./snippets/scriptTriggerLog";
 import { SessionTextBuffer } from "./snippets/sessionTextBuffer";
-import { startNctScript, type NctScriptRunHandle } from "./snippets/nctRuntime";
-import { createNctScriptApi } from "./snippets/nctScriptApi";
-import type { NctScriptViewState } from "./snippets/ScriptRunPanel";
+import { startTmxScript, type TmxScriptRunHandle } from "./snippets/tmxRuntime";
+import { createTmxScriptApi } from "./snippets/tmxScriptApi";
+import type { TmxScriptViewState } from "./snippets/ScriptRunPanel";
 import "./snippets/snippets.css";
 import type {
   AuthOverride,
@@ -275,12 +275,12 @@ export interface PaneHandle {
   /** 清屏（含回滚缓冲区）。 */
   clearBuffer: () => boolean;
   /** 运行 JavaScript 脚本（当前会话）；已有脚本在跑 / 未连接返回 false。 */
-  runNctScript: (request: { name: string; source: string }) => boolean;
+  runTmxScript: (request: { name: string; source: string }) => boolean;
   /** 脚本运行控制：停止、读取状态、订阅状态变化、关闭结果面板。 */
   scriptControl: {
     stop: () => boolean;
-    status: () => NctScriptViewState | null;
-    subscribe: (cb: (state: NctScriptViewState | null) => void) => () => void;
+    status: () => TmxScriptViewState | null;
+    subscribe: (cb: (state: TmxScriptViewState | null) => void) => () => void;
     dismiss: () => void;
   };
 }
@@ -524,9 +524,9 @@ export function TerminalPane({
    * 状态同时存 ref 与 state：RPC / done 回调需要在渲染闭包外读到最新值。
    */
   const sessionTextBufferRef = useRef<SessionTextBuffer>(new SessionTextBuffer());
-  const scriptRunRef = useRef<NctScriptViewState | null>(null);
-  const scriptHandleRef = useRef<NctScriptRunHandle | null>(null);
-  const scriptSubscribersRef = useRef(new Set<(state: NctScriptViewState | null) => void>());
+  const scriptRunRef = useRef<TmxScriptViewState | null>(null);
+  const scriptHandleRef = useRef<TmxScriptRunHandle | null>(null);
+  const scriptSubscribersRef = useRef(new Set<(state: TmxScriptViewState | null) => void>());
   const [answers, setAnswers] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -1064,7 +1064,7 @@ export function TerminalPane({
    * 脚本运行状态：ref 保存最新值供异步回调读取，同时通知外部订阅者
    * （脚本页日志面板）。
    */
-  function publishScriptRun(next: NctScriptViewState | null) {
+  function publishScriptRun(next: TmxScriptViewState | null) {
     scriptRunRef.current = next;
     for (const listener of [...scriptSubscribersRef.current]) listener(next);
   }
@@ -1076,7 +1076,7 @@ export function TerminalPane({
   }
 
   /** 在当前会话运行 JavaScript 脚本（阶段 1：手动运行、单脚本串行）。 */
-  function runNctScript(request: { name: string; source: string }): boolean {
+  function runTmxScript(request: { name: string; source: string }): boolean {
     if (!transportRef.current) return false;
     if (scriptHandleRef.current) return false;
     const source = String(request.source ?? "");
@@ -1087,7 +1087,7 @@ export function TerminalPane({
     buffer.consumeAll();
 
     const runId = `pane-${paneId}-${Date.now().toString(36)}`;
-    const runState: NctScriptViewState = {
+    const runState: TmxScriptViewState = {
       runId,
       name: request.name,
       status: "running",
@@ -1095,7 +1095,7 @@ export function TerminalPane({
     };
     publishScriptRun(runState);
 
-    const api = createNctScriptApi({
+    const api = createTmxScriptApi({
       write: (text) => {
         transportRef.current?.write(text);
       },
@@ -1110,9 +1110,9 @@ export function TerminalPane({
       onLog: appendScriptLog,
     });
 
-    let handle: NctScriptRunHandle;
+    let handle: TmxScriptRunHandle;
     try {
-      handle = startNctScript({ source, api, runId, onLog: appendScriptLog });
+      handle = startTmxScript({ source, api, runId, onLog: appendScriptLog });
     } catch (error) {
       publishScriptRun({
         ...runState,
@@ -1135,7 +1135,7 @@ export function TerminalPane({
     return true;
   }
 
-  function stopNctScript(): boolean {
+  function stopTmxScript(): boolean {
     const handle = scriptHandleRef.current;
     if (!handle) return false;
     handle.stop();
@@ -1223,7 +1223,7 @@ export function TerminalPane({
   const insertSnippet = (s: api.Snippet): boolean => {
     if (status !== "connected") return false;
     if (isJavaScriptSnippet(s)) {
-      return runNctScript({ name: s.name, source: s.command });
+      return runTmxScript({ name: s.name, source: s.command });
     }
     clearPendingWrites();
     const plan = snippetWritePlan(s.command, s.no_auto_run, s.multi_line_run_mode);
@@ -1304,7 +1304,7 @@ export function TerminalPane({
   /**
    * 「开始录制」（Netcatty `recording`）：脚本录制，记录用户输入的命令。
    * 全局互斥：其它会话在录时提示「已有其他终端正在录制」；停止后把命令序列
-   * 保存成脚本片段（termX 没有 nct.* JS 运行时，产物是 shell 命令序列）。
+   * 保存成脚本片段（录制产物是 shell 命令序列，不是 JavaScript 脚本）。
    */
   async function toggleScriptRecording() {
     const sid = sidRef.current;
@@ -2776,9 +2776,9 @@ export function TerminalPane({
         term.clear();
         return true;
       },
-      runNctScript: (request) => runNctScript(request),
+      runTmxScript: (request) => runTmxScript(request),
       scriptControl: {
-        stop: () => stopNctScript(),
+        stop: () => stopTmxScript(),
         status: () => scriptRunRef.current,
         subscribe: (cb) => {
           scriptSubscribersRef.current.add(cb);

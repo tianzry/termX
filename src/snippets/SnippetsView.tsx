@@ -11,7 +11,7 @@
 // 与 Netcatty 的差异（已记录在 changelogs）：
 // - termX 无多会话广播，运行目标固定为当前活动终端；
 // - Snippet 无时间戳字段，newest / oldest 用数组顺序近似；
-// - 脚本语言仅 shell（nct.* JS 运行时未移植）。
+// - 脚本语言支持 javascript（Worker 运行时）与 shell（旧 `#@` 文本路径）。
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from "react";
 import {
@@ -74,7 +74,7 @@ import {
   type SnippetExportPayload,
 } from "./snippetsTransfer";
 import { ScriptCodeEditor } from "./ScriptCodeEditor";
-import { ScriptRunPanel, type NctScriptViewState } from "./ScriptRunPanel";
+import { ScriptRunPanel, type TmxScriptViewState } from "./ScriptRunPanel";
 import "./snippets.css";
 
 type SnippetKind = "" | "script";
@@ -195,7 +195,7 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   const [recording, setRecording] = useState(false);
   const [run, setRun] = useState<{ name: string; paneId: string } | null>(null);
   /** JavaScript 脚本运行状态（来自活动终端的 scriptControl 订阅）。 */
-  const [scriptRun, setScriptRun] = useState<NctScriptViewState | null>(null);
+  const [scriptRun, setScriptRun] = useState<TmxScriptViewState | null>(null);
   const [varPrompt, setVarPrompt] = useState<{
     snippet: Snippet;
     fromPanel: boolean;
@@ -375,10 +375,10 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   };
 
   const sendSnippet = (s: Snippet, fromPanel = false) => {
-    // 兼容分流：language=javascript 走 Worker 运行时（nct.* API），
+    // 兼容分流：language=javascript 走 Worker 运行时（tmx.* API），
     // 空 / shell 保持旧 `#@` 文本路径，把脚本原文发送到 shell。
     if (isJavaScriptSnippet(s)) {
-      if (!activeHandle?.runNctScript({ name: s.name, source: s.command })) {
+      if (!activeHandle?.runTmxScript({ name: s.name, source: s.command })) {
         setNotice("脚本未能启动：终端未就绪，或已有脚本正在运行。");
         return;
       }

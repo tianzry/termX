@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-11-08 — 脚本 API 统一为 `tmx`（纯改名）
+
+### 修改
+
+- 对外全局对象统一为 `tmx`；Worker 注入、沙箱工厂参数、脚本 API 代理与 RPC 命名同步。
+- 运行器内部改为 `tmx` 前缀：`src/snippets/tmxRuntime.ts`、`src/snippets/tmxScriptApi.ts`（文件同步重命名）；类型 `TmxScriptApi` / `TmxScriptApiHost` / `TmxScriptSessionSnapshot` / `TmxScriptRunHandle` / `TmxScriptViewState`，入口 `startTmxScript` / `runTmxScript` / `createTmxScriptApi`。
+- `docs/script-runtime.md`、`docs/script-runtime-diff.md` 同步改名；文档直接写明脚本 API 是 `tmx`。diff 文档中 Netcatty 侧的能力描述一律去掉前缀，避免与 termX 命名混淆。
+- 清掉历史遗留的不准确注释（如「JS 运行时未移植」）。
+- 历史 changelogs 记录保持原文不改写。
+
+### 踩坑
+
+- PowerShell `-replace` 默认大小写不敏感，`'Nct'` 会命中 `function` 里的 `nct`（产生 `fuTmxion`）；机械改名必须用 `-creplace`。
+- 词边界 `\bnct` 漏掉了字符串里的 `\nnct`（前一个字符是转义序列的 `n`，仍算单词字符）；`npm run test:run` 暴露后补改。
+
+### 验证
+
+- `npm run test:run`：80 文件 / 910 用例通过。
+- `npm run build`：通过。
+- `cargo check --lib`、`cargo check --lib --features server`、`cargo test --lib`：通过（仅既有 warnings）。
+
 ## 2026-11-08 — 脚本运行时阶段 1（3/7）：nct API 子集接线
 
 ### 修改

@@ -1,4 +1,4 @@
-// 脚本执行 Worker：只注入 `nct`，其余宿主能力通过 postMessage RPC 回主线程。
+// 脚本执行 Worker：只注入 `tmx`，其余宿主能力通过 postMessage RPC 回主线程。
 //
 // 与 Netcatty `scriptExecutionWorker.cjs` 的差异：浏览器 Worker 没有
 // `Atomics/SharedArrayBuffer` 心跳，改为 100ms 定时 postMessage；看门狗在主线程。
@@ -6,14 +6,14 @@
 
 import { compileScriptRunner } from "./scriptSandbox";
 import type {
-  NctScriptSessionSnapshot,
+  TmxScriptSessionSnapshot,
   SerializedScriptError,
-} from "./nctRuntime";
+} from "./tmxRuntime";
 
 interface StartConfig {
   source: string;
   filename: string;
-  snapshot: NctScriptSessionSnapshot;
+  snapshot: TmxScriptSessionSnapshot;
 }
 
 interface PendingRequest {
@@ -33,7 +33,7 @@ let nextRequestId = 1;
 let started = false;
 let finished = false;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-let snapshot: NctScriptSessionSnapshot = {
+let snapshot: TmxScriptSessionSnapshot = {
   connected: false,
   name: "",
   hostname: "",
@@ -70,7 +70,7 @@ function notifyHost(method: string, args: unknown[] = []): void {
   post({ type: "notify", method, args });
 }
 
-const nct = {
+const tmx = {
   screen: {
     send: (text: unknown) => callHost("screen.send", [String(text ?? "")]),
     sendLine: (text: unknown) => callHost("screen.sendLine", [String(text ?? "")]),
@@ -119,7 +119,7 @@ async function run(config: StartConfig): Promise<void> {
   beat();
   try {
     const runner = compileScriptRunner(config.source);
-    await runner(nct);
+    await runner(tmx);
     finished = true;
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     post({ type: "completed" });

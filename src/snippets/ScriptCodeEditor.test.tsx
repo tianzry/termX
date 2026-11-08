@@ -6,15 +6,15 @@ describe("ScriptCodeEditor", () => {
   it("挂载后展示源码，外部 value 变化会同步到编辑器", async () => {
     const onChange = vi.fn();
     const { container, rerender } = render(
-      <ScriptCodeEditor value="nct.log('one');" onChange={onChange} />,
+      <ScriptCodeEditor value="tmx.log('one');" onChange={onChange} />,
     );
 
     const content = container.querySelector(".cm-content");
-    expect(content?.textContent).toContain("nct.log('one');");
+    expect(content?.textContent).toContain("tmx.log('one');");
 
-    rerender(<ScriptCodeEditor value="nct.log('two');" onChange={onChange} />);
+    rerender(<ScriptCodeEditor value="tmx.log('two');" onChange={onChange} />);
     await waitFor(() => {
-      expect(container.querySelector(".cm-content")?.textContent).toContain("nct.log('two');");
+      expect(container.querySelector(".cm-content")?.textContent).toContain("tmx.log('two');");
     });
   });
 

@@ -1,14 +1,14 @@
 // 脚本运行时宿主（渲染层主线程）。
 //
 // 对应 Netcatty `electron/scripts/scriptRuntime.cjs`：负责 Worker 生命周期、
-// RPC 转发、心跳看门狗、总超时与停止。真正的终端操作由注入的 `NctScriptApi`
-// 完成（见 block 3 的 `createNctScriptApi`），本模块只处理协议与资源上限。
+// RPC 转发、心跳看门狗、总超时与停止。真正的终端操作由注入的 `TmxScriptApi`
+// 完成（见 block 3 的 `createTmxScriptApi`），本模块只处理协议与资源上限。
 //
 // 资源上限（超出即终止运行）：
 // - 待处理 RPC 128、日志 200 条、总通知 20000 条；
 // - 2 秒无心跳（同步死循环）、单次运行 30 分钟。
 
-export interface NctScriptSessionSnapshot {
+export interface TmxScriptSessionSnapshot {
   connected: boolean;
   name: string;
   hostname: string;
@@ -16,7 +16,7 @@ export interface NctScriptSessionSnapshot {
 }
 
 /** 脚本可调用的宿主能力子集（阶段 1）。 */
-export interface NctScriptApi extends NctScriptSessionSnapshot {
+export interface TmxScriptApi extends TmxScriptSessionSnapshot {
   send(text: string): void;
   sendLine(text: string): Promise<void>;
   clear(): void;
@@ -38,23 +38,23 @@ export interface WorkerLike {
   removeEventListener(type: string, listener: (event: unknown) => void): void;
 }
 
-export type NctScriptStatus = "running" | "completed" | "failed" | "stopped";
+export type TmxScriptStatus = "running" | "completed" | "failed" | "stopped";
 
-export type NctScriptRunResult =
+export type TmxScriptRunResult =
   | { status: "completed" }
   | { status: "failed"; error: string }
   | { status: "stopped" };
 
-export interface NctScriptRunHandle {
+export interface TmxScriptRunHandle {
   runId: string;
-  done: Promise<NctScriptRunResult>;
-  status(): NctScriptStatus;
+  done: Promise<TmxScriptRunResult>;
+  status(): TmxScriptStatus;
   stop(): void;
 }
 
-export interface StartNctScriptOptions {
+export interface StartTmxScriptOptions {
   source: string;
-  api: NctScriptApi;
+  api: TmxScriptApi;
   runId?: string;
   createWorker?: () => WorkerLike;
   heartbeatTimeoutMs?: number;
@@ -64,7 +64,7 @@ export interface StartNctScriptOptions {
   maxLogNotifications?: number;
   maxTotalNotifications?: number;
   onLog?: (line: string) => void;
-  onStatus?: (status: NctScriptStatus) => void;
+  onStatus?: (status: TmxScriptStatus) => void;
 }
 
 export interface SerializedScriptError {
@@ -100,7 +100,7 @@ type HostMessage =
       config: {
         source: string;
         filename: string;
-        snapshot: NctScriptSessionSnapshot;
+        snapshot: TmxScriptSessionSnapshot;
       };
     }
   | {
@@ -131,7 +131,7 @@ export function createDefaultScriptWorker(): WorkerLike {
   }) as unknown as WorkerLike;
 }
 
-function describeStart(api: NctScriptApi): NctScriptSessionSnapshot {
+function describeStart(api: TmxScriptApi): TmxScriptSessionSnapshot {
   return {
     connected: api.connected,
     name: api.name,
@@ -148,7 +148,7 @@ function makeRunId(): string {
  * 启动一次脚本运行。源码为空会同步抛错；其余失败通过 `done` 的
  * `failed` 结果返回，不 reject Promise。
  */
-export function startNctScript(options: StartNctScriptOptions): NctScriptRunHandle {
+export function startTmxScript(options: StartTmxScriptOptions): TmxScriptRunHandle {
   if (!String(options.source ?? "").trim()) throw new Error("Script content is empty");
 
   const runId = options.runId ?? makeRunId();
@@ -162,15 +162,15 @@ export function startNctScript(options: StartNctScriptOptions): NctScriptRunHand
   const api = options.api;
   const worker = (options.createWorker ?? createDefaultScriptWorker)();
 
-  let status: NctScriptStatus = "running";
+  let status: TmxScriptStatus = "running";
   let settled = false;
   let lastHeartbeat = Date.now();
   let pendingCount = 0;
   let logCount = 0;
   let notifyCount = 0;
 
-  let resolveDone!: (result: NctScriptRunResult) => void;
-  const done = new Promise<NctScriptRunResult>((resolve) => {
+  let resolveDone!: (result: TmxScriptRunResult) => void;
+  const done = new Promise<TmxScriptRunResult>((resolve) => {
     resolveDone = resolve;
   });
 
@@ -198,7 +198,7 @@ export function startNctScript(options: StartNctScriptOptions): NctScriptRunHand
     });
   }, startTimeoutMs);
 
-  function finish(result: NctScriptRunResult): void {
+  function finish(result: TmxScriptRunResult): void {
     if (settled) return;
     settled = true;
     status = result.status;
@@ -352,7 +352,7 @@ export function startNctScript(options: StartNctScriptOptions): NctScriptRunHand
 
 /** 把 Worker 发来的 RPC 方法分发到宿主 API。 */
 export async function invokeApi(
-  api: NctScriptApi,
+  api: TmxScriptApi,
   method: string,
   args: unknown[],
 ): Promise<unknown> {

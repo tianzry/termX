@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { createNctScriptApi, type NctScriptApiHost } from "./nctScriptApi";
-import type { NctScriptSessionSnapshot } from "./nctRuntime";
+import { createTmxScriptApi, type TmxScriptApiHost } from "./tmxScriptApi";
+import type { TmxScriptSessionSnapshot } from "./tmxRuntime";
 import { SessionTextBuffer } from "./sessionTextBuffer";
 
-const snapshot: NctScriptSessionSnapshot = {
+const snapshot: TmxScriptSessionSnapshot = {
   connected: true,
   name: "term-a",
   hostname: "host-a",
   username: "user-a",
 };
 
-function setup(overrides: Partial<NctScriptApiHost> = {}) {
+function setup(overrides: Partial<TmxScriptApiHost> = {}) {
   const buffer = new SessionTextBuffer({ pollMs: 10 });
   const writes: string[] = [];
   const logs: string[] = [];
   let aborted = false;
-  const api = createNctScriptApi({
+  const api = createTmxScriptApi({
     write: (text) => writes.push(text),
     buffer,
     snapshot,
@@ -34,7 +34,7 @@ function setup(overrides: Partial<NctScriptApiHost> = {}) {
   };
 }
 
-describe("nct API screen 基础操作", () => {
+describe("tmx API screen 基础操作", () => {
   it("send 原样写入并记录日志", () => {
     const { api, writes, logs } = setup();
     api.send("echo hi\r");
@@ -78,7 +78,7 @@ describe("nct API screen 基础操作", () => {
   });
 });
 
-describe("nct API sendLine 两包时序", () => {
+describe("tmx API sendLine 两包时序", () => {
   it("先写正文、等间隔、再写 CR，且只消费发送前长度", async () => {
     const { api, buffer, writes, logs } = setup({
       sleep: async () => {
@@ -123,7 +123,7 @@ describe("nct API sendLine 两包时序", () => {
   it("默认间隔为 30ms（用真实定时器验证顺序）", async () => {
     const buffer = new SessionTextBuffer();
     const writes: Array<{ text: string; at: number }> = [];
-    const api = createNctScriptApi({
+    const api = createTmxScriptApi({
       write: (text) => writes.push({ text, at: Date.now() }),
       buffer,
       snapshot,
@@ -135,7 +135,7 @@ describe("nct API sendLine 两包时序", () => {
   });
 });
 
-describe("nct API 等待与 sleep", () => {
+describe("tmx API 等待与 sleep", () => {
   it("waitForText / waitForRegex / waitForAny 委托缓冲并响应停止", async () => {
     const { api, buffer, setAborted } = setup();
     buffer.append("READY\nline-42\n");

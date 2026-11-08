@@ -7,7 +7,7 @@
  * - `#@wait-text <文本> [ms]` 等待输出中出现该文本；
  * - `#@wait-regex <正则> [ms]` 等待输出匹配该正则。
  *
- * Netcatty 的 nct.* JS 运行时 / dialog / progress / startLog 不在这里实现。
+ * Netcatty 的 JS 运行时 / dialog / progress / startLog 不在这里实现（新运行时见 tmxRuntime.ts）。
  */
 
 export type ScriptBlock =

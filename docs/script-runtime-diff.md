@@ -4,7 +4,7 @@
 >
 > 核查范围：Netcatty 的 `Snippet(kind=script)` 全链路（数据模型、编辑器、运行时、触发、录制、分享）；termX 的 `src/snippets/`、`TerminalPane.tsx` 及相关 Rust 命令。
 >
-> 一句话结论：Netcatty 的「自动化脚本」是**真正执行 JavaScript** 的运行时（Node `worker_threads` + `vm` 沙箱 + `nct` API 驱动终端）；termX 目前只是**带 `#@` 等待指令的 shell 文本**，没有 JS 运行时。Netcatty **不存在**节点图 / 流程编排器，所谓“编排”就是 JS 原生控制流。
+> 一句话结论：Netcatty 的「自动化脚本」是**真正执行 JavaScript** 的运行时（Node `worker_threads` + `vm` 沙箱 + 脚本 API 驱动终端）；termX 目前只是**带 `#@` 等待指令的 shell 文本**，没有 JS 运行时。Netcatty **不存在**节点图 / 流程编排器，所谓“编排”就是 JS 原生控制流。
 
 ---
 
@@ -13,7 +13,7 @@
 1. **判断成立**：Netcatty 脚本可写代码、可真正运行、可取屏幕结果、可弹表单、可上报进度。
 2. **需要修正的预期**：Netcatty 没有“脚本节点 / 步骤树 / 可视化流程编排”。数据模型里没有 steps/nodes 字段，条件、循环、并行都靠 JavaScript 语法，多主机并行靠运行参数 `sequential | parallel`。
 3. **termX 现状**：手动点“运行”只是把脚本正文粘贴进终端并回车；`#@wait-*` 指令在手动运行时不会被解释（`#` 开头被 shell 当注释）。自动触发（onConnect / onOutput）才走 `scriptRunner` 的文本等待子集。
-4. **差距本质**：不是 UI 差距，而是**运行时缺失**。补齐的关键是“执行容器 + nct API + 输出缓冲 + 超时 / 停止”，编辑器与面板是配套。
+4. **差距本质**：不是 UI 差距，而是**运行时缺失**。补齐的关键是“执行容器 + 脚本 API + 输出缓冲 + 超时 / 停止”，编辑器与面板是配套。
 
 ---
 
@@ -86,12 +86,12 @@
 | # | 能力 | Netcatty 证据 | termX 证据 | 类型 | 难度 | 依赖 |
 |---|---|---|---|---|---|---|
 | 1 | 用户代码真实执行 | [worker + vm 沙箱](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptExecutionWorker.cjs#L177-L211)；[源码包装](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L70-L90) | [scriptRunner 仅文本](file:///g:/AiCode/termX/termX/src/snippets/scriptRunner.ts#L1-L19)；[language 仅标签](file:///g:/AiCode/termX/termX/src-tauri/src/models.rs#L793-L796) | 缺失 | 高 | Web Worker 沙箱 |
-| 2 | 代码编辑器 | [Monaco 组件](file:///g:/AiCode/termX/Netcatty/components/scripts/ScriptCodeEditor.tsx#L1-L17)；[nct 补全](file:///g:/AiCode/termX/Netcatty/infrastructure/scripts/nctMonacoCompletion.ts#L5-L45) | [textarea](file:///g:/AiCode/termX/termX/src/snippets/SnippetsView.tsx#L1011-L1031) | 缺失 | 中 | CodeMirror 6 |
-| 3 | `nct.screen.*` 全套 | [API 清单](file:///g:/AiCode/termX/Netcatty/domain/scriptApiReference.ts#L24-L71)；[send/sendLine](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L1054-L1097) | [仅 3 条 #@ 指令](file:///g:/AiCode/termX/termX/src/snippets/scriptRunner.ts#L13-L60) | 简化 | 中 | 输出缓冲 + 等待器 |
+| 2 | 代码编辑器 | [Monaco 组件](file:///g:/AiCode/termX/Netcatty/components/scripts/ScriptCodeEditor.tsx#L1-L17) | [textarea](file:///g:/AiCode/termX/termX/src/snippets/SnippetsView.tsx#L1011-L1031) | 缺失 | 中 | CodeMirror 6 |
+| 3 | `screen.*` 全套 | [API 清单](file:///g:/AiCode/termX/Netcatty/domain/scriptApiReference.ts#L24-L71)；[send/sendLine](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L1054-L1097) | [仅 3 条 #@ 指令](file:///g:/AiCode/termX/termX/src/snippets/scriptRunner.ts#L13-L60) | 简化 | 中 | 输出缓冲 + 等待器 |
 | 4 | `screen.getText` | [实现](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L1120-L1136) | [仅内部读缓冲](file:///g:/AiCode/termX/termX/src/TerminalPane.tsx#L803-L813) | 缺失 | 低 | 缓冲 API |
-| 5 | `nct.dialog.*`（含表单） | [API 清单](file:///g:/AiCode/termX/Netcatty/domain/scriptApiReference.ts#L24-L71)；[实现](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L1153-L1174) | [无](file:///g:/AiCode/termX/termX/src/snippets/scriptRunner.ts#L1-L19) | 缺失 | 中高 | React 弹窗宿主 |
-| 6 | `nct.progress.*` | [API 清单](file:///g:/AiCode/termX/Netcatty/domain/scriptApiReference.ts#L24-L71)；[实现](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L946-L1005) | [无](file:///g:/AiCode/termX/termX/src/snippets/scriptRunner.ts#L1-L19) | 缺失 | 低 | 运行面板 |
-| 7 | `nct.log` + 运行日志面板 | [日志弹窗](file:///g:/AiCode/termX/Netcatty/components/scripts/ScriptRunLogDialog.tsx#L37)；[运行列表](file:///g:/AiCode/termX/Netcatty/components/scripts/ScriptRunList.tsx#L34-L58) | [仅触发日志（100 条）](file:///g:/AiCode/termX/termX/src/snippets/scriptTriggerLog.ts#L15-L40) | 简化 | 低 | run store |
+| 5 | `dialog.*`（含表单） | [API 清单](file:///g:/AiCode/termX/Netcatty/domain/scriptApiReference.ts#L24-L71)；[实现](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L1153-L1174) | [无](file:///g:/AiCode/termX/termX/src/snippets/scriptRunner.ts#L1-L19) | 缺失 | 中高 | React 弹窗宿主 |
+| 6 | `progress.*` | [API 清单](file:///g:/AiCode/termX/Netcatty/domain/scriptApiReference.ts#L24-L71)；[实现](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L946-L1005) | [无](file:///g:/AiCode/termX/termX/src/snippets/scriptRunner.ts#L1-L19) | 缺失 | 低 | 运行面板 |
+| 7 | `log` + 运行日志面板 | [日志弹窗](file:///g:/AiCode/termX/Netcatty/components/scripts/ScriptRunLogDialog.tsx#L37)；[运行列表](file:///g:/AiCode/termX/Netcatty/components/scripts/ScriptRunList.tsx#L34-L58) | [仅触发日志（100 条）](file:///g:/AiCode/termX/termX/src/snippets/scriptTriggerLog.ts#L15-L40) | 简化 | 低 | run store |
 | 8 | 脚本级暂停 / 恢复 | [waitIfPaused](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L1241-L1250)；[IPC 暂停/恢复](file:///g:/AiCode/termX/Netcatty/electron/bridges/scriptBridge.cjs#L705-L720) | [Ctrl-Z / fg](file:///g:/AiCode/termX/termX/src/snippets/SnippetsView.tsx#L404-L421) | 简化 | 中 | 引擎暂停点 |
 | 9 | 脚本级停止（中止等待/RPC） | [handleScriptStop](file:///g:/AiCode/termX/Netcatty/electron/bridges/scriptBridge.cjs#L681-L700) | [Ctrl-C](file:///g:/AiCode/termX/termX/src/snippets/SnippetsView.tsx#L404-L421) | 简化 | 中 | 中止令牌 |
 | 10 | 等待超时“重试/跳过/中止” | [恢复循环](file:///g:/AiCode/termX/Netcatty/electron/scripts/scriptRuntime.cjs#L825-L944) | [直接抛错](file:///g:/AiCode/termX/termX/src/snippets/scriptRunner.ts#L36-L60) | 缺失 | 低 | 弹窗宿主 |
@@ -114,11 +114,11 @@
 
 | 差异项 | 处理 |
 |---|---|
-| 1 用户代码真实执行 | 实现（Web Worker + nct 子集） |
+| 1 用户代码真实执行 | 实现（Web Worker + tmx 子集） |
 | 2 编辑器 | 实现（CodeMirror 6） |
 | 3 `screen.send/sendLine/clear/getText/waitForText/waitForRegex/waitForPrompt/waitForAny` | 实现 |
 | 4 `screen.getText` | 实现（基于 xterm 文本缓冲，语义与 Netcatty 屏幕快照有差异） |
-| 7 `nct.log` + 脚本运行日志面板 | 实现（内存日志，不落库） |
+| 7 `tmx.log` + 脚本运行日志面板 | 实现（内存日志，不落库） |
 | 9 脚本级停止 | 实现（abort + terminate） |
 | 10 等待超时 | 本期仅失败上报；重试/跳过弹窗留到阶段 2 |
 | 11 防死循环看门狗 | 实现（心跳 + terminate） |
@@ -126,7 +126,7 @@
 
 ### 4.2 本期不做（仅记录）
 
-- 阶段 2：`nct.dialog.*`、`nct.progress.*`、脚本级暂停/恢复、等待超时“重试/跳过/中止”弹窗、录制生成 JS、`session.startLog/stopLog/disconnect`。
+- 阶段 2：`tmx.dialog.*`、`tmx.progress.*`、脚本级暂停/恢复、等待超时“重试/跳过/中止”弹窗、录制生成 JS、`session.startLog/stopLog/disconnect`。
 - 阶段 3：多目标并行/串行运行、`onConnect` / `onOutput` 改为执行 JS、`targetGroups`、主机级连接脚本队列、权限模式（Observer/确认/自动）与运行历史持久化。
 
 ---
