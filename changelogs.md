@@ -7523,5 +7523,35 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
   - 终端命令文件用 PowerShell `Set-Content` 会带 BOM，首个命令可能变成
     `command not found`；应使用 `[IO.File]::WriteAllText`。
 
+## 2026-11-08 — 内存分进程分解测量（四场景 + 回滚行数收益）
+
+- 用 release 包 + `Win32_Process` 20 秒一次采样（`processes.csv`：`WorkingSetSize` / `PrivatePageCount`，
+  按 `--type=` 归 browser / renderer / GPU / utility），**按 termx 进程树过滤**——本机另一个 WebView2
+  应用约 +550 MB，不过滤会把总量算成 ~1000 MB。前端侧经 CDP 读新增的门控诊断桩
+  `window.__termxXtermStats()`（仅 `localStorage['termx.debug.xterm']='1'` 时挂载）。
+- 四场景（0 / 5 / 15 / 30 分钟工作集，只统计 termx 进程树）：
+  - 空闲单窗口：381.3 → 380.7 → 389.7 → 390.6 MB；browser 30.6% / renderer 26.3% / GPU 17.7% /
+    utility 14.8% / main 7.7%；
+  - 单 129 会话（回滚 10000）：409.2 → 424.8 → 445.0 → 450.3 MB，renderer 111.2 → 148.5，
+    JS 堆 9.0 → 30.3 MB，缓冲 307 → 10039 行（15 分钟触顶）；
+  - 129 + 本地并行（回滚 10000）：472.6 → 476.2 → 483.4 → 517.6 MB，renderer 163.3 → 197.3，
+    JS 堆 15.3 → 31.4 MB，两个 xterm 缓冲 10005 / 3798 行；与用户实测 465.1 → 504.9 → 518.8 基本一致；
+  - 回滚 2000 复测单 129：458.4 → 460.2 → 465.4 → 466.8 MB，renderer 165.6 → 176.7，
+    JS 堆 8.9 → 13.7 MB（峰值 16.0），缓冲 5 分钟触顶 2039 后收敛。
+- 结论：大头是 WebView2 固定底座（browser + GPU + utility 约 247~257 MB，与会话无关），Rust 主进程
+  仅 33 MB（6.5%~7.7%）；Tauri 省掉的是 Electron 主进程 / Node，省不掉 Chromium 渲染栈，空闲
+  ~390 MB 属结构性成本；会话增长几乎全在 renderer 的 xterm 滚动缓冲（约 2.2 KB/行 JS 堆 +
+  3.8 KB/行 renderer 工作集）。
+- 回滚收益（同口径 30 分钟增量对比）：10000 → 2000 使总增量从 +41.1 MB 降到 +8.4 MB（−32.7 MB），
+  renderer 增量 +37.3 → +11.1 MB，JS 堆峰值 30.3 → 16.0 MB；**建议默认保持 3000 行**
+  （30 分钟约 +15 MB，比 10000 省 ~26 MB，比 2000 只多 ~6 MB），5000 保留为按需调高的选项，
+  不再推荐把默认调到 10000。
+- 报告落在 `docs/memory-breakdown.md`（含口径说明、四场景表、逐进程占比与建议值）。
+- 门禁：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo check --lib` ✓、
+  `cargo check --lib --features server` ✓、`cargo test --lib` ✓（973）、`npx tauri build --no-bundle` ✓。
+- 踩坑：采样必须按进程树过滤；`Start-Process` 启动的 GUI 在工具命令结束时会被连带回收，需用常驻
+  后台循环持有；PowerShell 重定向写 UTF-8 会带 BOM，`JSON.parse` 前要剥 `\uFEFF`；隐藏标签页的
+  xterm 会被 fit 收缩成 5×10，并行场景「每行单元格数」与可见标签不可比。
+
 
 

@@ -367,6 +367,31 @@ export function readTerminalSelection(term: Terminal, normalize: boolean): strin
   return normalize ? normalizeTerminalSelection(term) : term.getSelection();
 }
 
+/**
+ * 内存诊断：仅当 localStorage `termx.debug.xterm` 为 "1" 时暴露只读统计，
+ * 供 release 包通过 CDP 读取 xterm 实例数与缓冲行数；默认关闭，不影响运行。
+ */
+const xtermDiagnostics = new Set<Terminal>();
+try {
+  if (
+    typeof window !== "undefined" &&
+    window.localStorage.getItem("termx.debug.xterm") === "1"
+  ) {
+    (window as unknown as { __termxXtermStats?: () => unknown }).__termxXtermStats = () => ({
+      count: xtermDiagnostics.size,
+      instances: [...xtermDiagnostics].map((term) => ({
+        rows: term.rows,
+        cols: term.cols,
+        bufferLength: term.buffer.active.length,
+        baseY: term.buffer.active.baseY,
+        viewportY: term.buffer.active.viewportY,
+      })),
+    });
+  }
+} catch {
+  // 存储不可用时不暴露诊断入口。
+}
+
 /** 单例 xterm 画布：创建即 fit + focus，销毁时 unmount 清理。 */
 export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut, showTimestamps = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -404,6 +429,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
     );
     term.open(containerRef.current!);
     xtermRef.current = term;
+    xtermDiagnostics.add(term);
     fitRef.current = fit;
     // 内嵌图片：SIXEL / Kitty / iTerm IIP（@xterm/addon-image，对照 Netcatty）。
     // 总开关关闭或三个协议全关时不加载 addon，避免向远端声明图形能力。
@@ -666,6 +692,7 @@ export function TerminalView({ onReady, onData, onResize, onOsc7, onFindShortcut
       textarea?.removeEventListener("keypress", preserveSelectionOnInput, true);
       highlighter.dispose();
       disposables.forEach((d) => d.dispose());
+      xtermDiagnostics.delete(term);
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
