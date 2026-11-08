@@ -208,7 +208,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
     - [x] 4/7 运行与停止入口（`PaneHandle.runNctScript` / `scriptControl`、运行状态、脚本日志面板）。实机：本地 Git Bash `uname -a` 输出 `MINGW64_NT-…`、等待词 `MINGW` 命中；129 Ubuntu `Linux` 命中；`while(true){}` 约 2.1s 被心跳看门狗终止（`Script execution timed out after 2000ms (no heartbeat)`）；停止 → 已停止、关闭面板可用。
     - [x] 5/7 CodeMirror 6 编辑器（javascript 高亮、`Mod-Enter` 运行、Tab 缩进）。实机：本地 Git Bash 行号/高亮/Tab 两空格正常；Ctrl+Enter 保存并运行 → 面板「已完成」且 `nct.log('mod-enter-ok')` 进日志；键位须排在 `basicSetup` 前（否则被其 `Mod-Enter → insertBlankLine` 先消费）。等待词按目标设备实际输出写。
     - [x] 6/7 执行前 `{{var}}` 替换 + 脚本区变量提示。实机：脚本编辑区出现 `host` chip；「保存并运行」→ 填写变量 `web1` → 已完成且日志 `host=web1`。
-    - [ ] 7/7 兼容分流（`kind=script && language=javascript` 走新运行时，其余旧 `#@`；新建脚本默认 javascript）。
+    - [x] 7/7 兼容分流（`kind=script && language=javascript` 走新运行时，其余旧 `#@`；新建脚本默认 javascript）。实机：新脚本落库 javascript；JS 脚本面板已完成+日志；shell 脚本走旧路径并终端回显；自动触发排除 JS。
     - [ ] **阶段 1 全部完成后**：脚本 API 纯改名 `nct` → `tmx`（不留兼容别名）：对外全局对象只用 `tmx`，运行器内部的文件名、类型、变量、宿主接口名一并改到 `tmx` 前缀；代码、补全、文档、示例、新建模板中不再出现 `nct`（历史 changelogs 旧记录保持原文不改写）；文档直接写明脚本 API 是 `tmx`；独立提交，门禁同前。
     - 编辑器/文档提示：等待词按目标设备实际输出写（Git Bash 为 MINGW 输出，不含 `Linux`）；Worker 屏蔽全局仅防呆，不是安全边界。
 - [x] ✅ **14. 主机监控面板**

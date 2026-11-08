@@ -60,6 +60,7 @@ import * as api from "./backend/client";
 import { SessionMonitorPopover } from "./monitor/SessionMonitorPopover";
 import {
   SNIPPETS_CHANGED_EVENT,
+  isJavaScriptSnippet,
   isScriptSnippet,
   parseShortkey,
   parseSnippetVariables,
@@ -879,6 +880,8 @@ export function TerminalPane({
     const scripts = all.filter(
       (s) =>
         isScriptSnippet(s) &&
+        // 阶段 1 只允许手动运行 JS：自动触发仍只走旧 #@ 文本路径。
+        !isJavaScriptSnippet(s) &&
         resolveScriptTrigger(s.trigger) === "onConnect" &&
         scriptAppliesToThisHost(s),
     );
@@ -905,6 +908,7 @@ export function TerminalPane({
     if (!text) return;
     for (const s of snippetsRef.current) {
       if (!isScriptSnippet(s) || resolveScriptTrigger(s.trigger) !== "onOutput") continue;
+      if (isJavaScriptSnippet(s)) continue; // 阶段 1 JS 仅手动运行
       if (!scriptAppliesToThisHost(s)) continue;
       if (!s.trigger_pattern || firedOutputRef.current.has(s.id)) continue;
       let re: RegExp;
@@ -1213,11 +1217,14 @@ export function TerminalPane({
   /**
    * 插入片段 / 运行脚本：仅当前窗格会话，禁止跨会话发送；未连接时不动作。
    * 多行方式对齐 Netcatty：paste 整段 + 末尾单回车；lineDelay 逐行 250ms。
-   * 脚本（kind=script）走同一链路——把脚本文本发送到活动 shell，输出在本终端回显。
-   * （Netcatty 的 nct.* JS 运行时未移植，见 todo/changelogs 留档。）
+   * JavaScript 脚本（language=javascript）交给 Worker 运行时，不把源码发给 shell；
+   * 空 / shell 脚本保持旧 `#@` 文本路径（输出在本终端回显）。
    */
   const insertSnippet = (s: api.Snippet): boolean => {
     if (status !== "connected") return false;
+    if (isJavaScriptSnippet(s)) {
+      return runNctScript({ name: s.name, source: s.command });
+    }
     clearPendingWrites();
     const plan = snippetWritePlan(s.command, s.no_auto_run, s.multi_line_run_mode);
     if (plan.delayMs <= 0 || plan.chunks.length === 1) {

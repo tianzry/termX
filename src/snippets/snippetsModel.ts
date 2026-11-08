@@ -136,6 +136,13 @@ export function isScriptSnippet(s: Pick<Snippet, "kind">): boolean {
   return s.kind === "script";
 }
 
+/** JavaScript 脚本（新 Worker 运行时）；空 / shell 保持旧 `#@` 文本路径。 */
+export function isJavaScriptSnippet(
+  s: Pick<Snippet, "kind" | "language">,
+): boolean {
+  return isScriptSnippet(s) && (s.language || "") === "javascript";
+}
+
 export type ScriptTrigger = "manual" | "onConnect" | "onOutput";
 
 /** 触发方式归一化（对齐 Netcatty trigger；空 / 未知 = manual）。 */

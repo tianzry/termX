@@ -55,6 +55,7 @@ import {
   findShortkeyConflict,
   flattenSnippetCommandPreview,
   formatShortkeyEvent,
+  isJavaScriptSnippet,
   parseShortkey,
   parseSnippetVariables,
   previewSnippetCommand,
@@ -142,7 +143,8 @@ function emptyDraft(kind: SnippetKind = "", pkg = ""): Draft {
     noAutoRun: false,
     kind,
     multiLineRunMode: "",
-    language: "shell",
+    // 新建脚本默认 JavaScript；片段仍写 shell（kind 为空时保存会清空）。
+    language: kind === "script" ? "javascript" : "shell",
     trigger: "",
     triggerPattern: "",
     targets: [],
@@ -373,10 +375,9 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
   };
 
   const sendSnippet = (s: Snippet, fromPanel = false) => {
-    // JavaScript 脚本走 Worker 运行时（nct.* API），不把源码发给 shell。
-    // 阶段 1 无语言选择入口：kind=script 的条目暂时全部按 JavaScript 处理，
-    // 兼容分流在后续块收敛为 language==="javascript"。
-    if (s.kind === "script") {
+    // 兼容分流：language=javascript 走 Worker 运行时（nct.* API），
+    // 空 / shell 保持旧 `#@` 文本路径，把脚本原文发送到 shell。
+    if (isJavaScriptSnippet(s)) {
       if (!activeHandle?.runNctScript({ name: s.name, source: s.command })) {
         setNotice("脚本未能启动：终端未就绪，或已有脚本正在运行。");
         return;
@@ -1094,6 +1095,20 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
                     </span>
                   ))}
                 </div>
+              )}
+              {isScript && (
+                <p className="sn-hint">
+                  脚本会向当前会话发送命令（等价于手动输入）。等待词按目标设备实际输出写（例：Git
+                  Bash 的 <code>uname -a</code> 输出 <code>MINGW…</code>，不含{" "}
+                  <code>Linux</code>）。
+                </p>
+              )}
+              {isScript && draft.language !== "javascript" && (
+                <p className="sn-hint">
+                  当前 language=<code>{draft.language || "shell"}</code>
+                  ，按旧 `#@` 文本路径发送；如需 JS 运行时请新建 JavaScript
+                  脚本（已有脚本不自动改写）。
+                </p>
               )}
             </div>
 

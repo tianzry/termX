@@ -7794,3 +7794,13 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 补 1 例纯逻辑测试：JS 字符串内的 `'echo {{host}}'` 替换后仍保持原引号（源码结构不被改变）。
 - 实机（本地 Git Bash，CDP）：脚本 `nct.log('host={{host}}');` 在编辑区出现 `host` chip；点「保存并运行」弹出「填写变量」，填 `web1` 后运行 → 面板「已完成」且日志 `host=web1`；验证用脚本随后删除。
 - 门禁：`npm run test:run` ✓（80 文件 / 909）、`npm run build` ✓、`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` ✓。
+
+## 2026-11-08 — 脚本运行时阶段 1（7/7）：兼容分流收尾
+
+- `SnippetsView`：新建脚本默认 `language=javascript`；`sendSnippet` 改按 `isJavaScriptSnippet` 分流——`kind=script && language=javascript` 走 Worker 运行时，空 / `shell` 保持旧 `#@` 文本路径。
+- `TerminalPane`：`insertSnippet`（快捷键 / 侧栏 / 组合栏的统一入口）同样分流；`onConnect` / `onOutput` 自动触发排除 JavaScript 脚本（阶段 1 仅允许手动运行）。
+- `snippetsModel` 新增 `isJavaScriptSnippet` + 表驱动单测（javascript / shell / 空 / 非脚本）。
+- 脚本编辑区提示：脚本会向当前会话发送命令；等待词按目标设备实际输出写（Git Bash 的 `uname -a` 输出 `MINGW…`，不含 `Linux`）；`language=shell` 的旧脚本显示「按旧 #@ 文本路径发送」。
+- 文档同步：§6.3 补「等待词按目标设备实际输出写」说明。
+- 实机（重启调试构建、重开 Git Bash + 129）：新建脚本落库 `language=javascript`；JS 脚本运行 → 面板「已完成」+ 日志 `b7-js-ok`；`language=shell` 的 `echo B7_OLD_PATH` 走旧路径（运行条出现、129 终端回显 `B7_OLD_PATH`、无脚本面板）；验证脚本随后删除。
+- 门禁：`npm run test:run` ✓（80 文件 / 910）、`npm run build` ✓、`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` ✓。

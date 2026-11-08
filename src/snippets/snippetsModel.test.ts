@@ -6,6 +6,7 @@ import {
   filterSnippets,
   findShortkeyConflict,
   groupSnippets,
+  isJavaScriptSnippet,
   isScriptSnippet,
   normalizeLineEndings,
   parseShortkey,
@@ -251,6 +252,15 @@ describe("isScriptSnippet", () => {
   it("kind=script 才算脚本", () => {
     expect(isScriptSnippet({ kind: "script" })).toBe(true);
     expect(isScriptSnippet({ kind: "" })).toBe(false);
+  });
+});
+
+describe("isJavaScriptSnippet", () => {
+  it("仅 kind=script 且 language=javascript 走新运行时，空/shell 保持旧路径", () => {
+    expect(isJavaScriptSnippet({ kind: "script", language: "javascript" })).toBe(true);
+    expect(isJavaScriptSnippet({ kind: "script", language: "shell" })).toBe(false);
+    expect(isJavaScriptSnippet({ kind: "script", language: "" })).toBe(false);
+    expect(isJavaScriptSnippet({ kind: "", language: "javascript" })).toBe(false);
   });
 });
 
