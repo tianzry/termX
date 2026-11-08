@@ -7786,3 +7786,11 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 实机（本地 Git Bash，CDP）：编辑器高约 181.6px、行号存在、Tab 插入 2 空格、`const/await` 关键字与字符串/数字高亮；焦点在编辑器时 Ctrl+Enter 保存并运行 → 面板「已完成」且日志出现 `nct.log('mod-enter-ok')`；验证用脚本随后删除。
 - 坑：等待词按目标设备实际输出写。`waitForText('MINGW')` 在空闲 Git Bash 上会超时——等待只匹配脚本启动后的新输出，不扫滚动缓冲；要等现成输出需先 `sendLine('uname -a')` 触发。
 - 门禁：`npm run test:run` ✓（80 文件 / 908）、`npm run build` ✓、`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` ✓。
+
+## 2026-11-08 — 脚本运行时阶段 1（6/7）：执行前 {{var}} 替换与脚本区变量提示
+
+- 脚本编辑区恢复变量提示：原逻辑只在非脚本区显示，去掉 `!isScript` 门禁后，脚本与片段都显示「变量占位符（运行前替换）」提示与「检测到变量」chips；文案明确替换发生在运行前。
+- 执行顺序确认：`runScript → parseSnippetVariables → 填写变量弹窗 → previewSnippetCommand 替换 → runNctScript(source)`，即占位符替换先于 Worker 编译；`{{name}}` 与 `{{name:默认值}}` 都走同一条链路。
+- 补 1 例纯逻辑测试：JS 字符串内的 `'echo {{host}}'` 替换后仍保持原引号（源码结构不被改变）。
+- 实机（本地 Git Bash，CDP）：脚本 `nct.log('host={{host}}');` 在编辑区出现 `host` chip；点「保存并运行」弹出「填写变量」，填 `web1` 后运行 → 面板「已完成」且日志 `host=web1`；验证用脚本随后删除。
+- 门禁：`npm run test:run` ✓（80 文件 / 909）、`npm run build` ✓、`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` ✓。

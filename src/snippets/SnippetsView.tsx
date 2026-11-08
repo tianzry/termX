@@ -1079,25 +1079,21 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
                   onChange={(e) => setDraft({ ...draft, command: e.target.value })}
                 />
               )}
-              {!isScript && (
-                <>
-                  <p className="sn-hint">
-                    变量占位符：<code>{"{{name}}"}</code>、<code>{"{{name:默认值}}"}</code>
-                  </p>
-                  {variables.length > 0 && (
-                    <div className="sn-vars">
-                      <span className="sn-vars-label">检测到变量：</span>
-                      {variables.map((v) => (
-                        <span key={v.name} className="sn-var">
-                          {v.name}
-                          {v.defaultValue !== undefined && (
-                            <em>（{v.defaultValue}）</em>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </>
+              <p className="sn-hint">
+                变量占位符（运行前替换）：<code>{"{{name}}"}</code>、<code>{"{{name:默认值}}"}</code>
+              </p>
+              {variables.length > 0 && (
+                <div className="sn-vars">
+                  <span className="sn-vars-label">检测到变量：</span>
+                  {variables.map((v) => (
+                    <span key={v.name} className="sn-var">
+                      {v.name}
+                      {v.defaultValue !== undefined && (
+                        <em>（{v.defaultValue}）</em>
+                      )}
+                    </span>
+                  ))}
+                </div>
               )}
             </div>
 

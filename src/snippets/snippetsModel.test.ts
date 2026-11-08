@@ -87,6 +87,14 @@ describe("列表派生（排序 / 分组树 / 变量 / 快捷键录制）", () =
     );
   });
 
+  it("变量替换先于脚本编译：JS 字符串里的占位符按原引号替换", () => {
+    const source = "await nct.screen.sendLine('echo {{host}}');";
+    expect(parseSnippetVariables(source)).toEqual([{ name: "host" }]);
+    expect(previewSnippetCommand(source, { host: "web1" })).toBe(
+      "await nct.screen.sendLine('echo web1');",
+    );
+  });
+
   it("快捷键录制：忽略纯修饰键，主键大写并拼接修饰键", () => {
     expect(formatShortkeyEvent({ key: "Control", ctrlKey: true, shiftKey: false, altKey: false, metaKey: false })).toBeNull();
     expect(
