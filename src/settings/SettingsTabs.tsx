@@ -21,6 +21,10 @@ import {
   type UpdateCheckResult,
 } from "../backend/client";
 import { Icon, type IconName } from "../ui/icons";
+import {
+  HighlightColorField,
+  HighlightColorPicker,
+} from "../terminal/HighlightColorPicker";
 import { decodeAppError, userVisibleError } from "../domain/sshErrors";
 import {
   disableAppLock,
@@ -892,9 +896,12 @@ function KeywordRuleDialog({
               placeholder={t("settings.terminal.keywordHighlight.labelPlaceholder")}
               onChange={(e) => setLabel(e.target.value)}
             />
-            <label className="nc-set-rule-color is-lg" style={{ background: color }}>
-              <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
-            </label>
+          </div>
+          <div className="nc-set-field-row">
+            <HighlightColorPicker
+              value={color}
+              onChange={(next) => setColor(next.toUpperCase())}
+            />
           </div>
         </div>
         <div className="nc-set-field">
@@ -947,6 +954,8 @@ export function KeywordHighlightRulesEditor({
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<KeywordHighlightRule | null>(null);
+  /** 同一时间只开一个行内选色浮层。 */
+  const [openColorRuleId, setOpenColorRuleId] = useState<string | null>(null);
 
   const isBuiltIn = (id: string) => DEFAULT_KEYWORD_HIGHLIGHT_RULES.some((r) => r.id === id);
   const canAdd = rules.length < MAX_KEYWORD_HIGHLIGHT_RULES;
@@ -1012,17 +1021,15 @@ export function KeywordHighlightRulesEditor({
                   <Icon name="trash" size={12} />
                 </button>
               )}
-              <label
-                className="nc-set-rule-color"
-                style={{ background: rule.color }}
+              <HighlightColorField
+                value={rule.color}
+                onChange={(color) => updateRule(rule.id, { color })}
+                open={openColorRuleId === rule.id}
+                onOpenChange={(open) =>
+                  setOpenColorRuleId(open ? rule.id : null)
+                }
                 title={t("settings.terminal.keywordHighlight.labelField")}
-              >
-                <input
-                  type="color"
-                  value={rule.color}
-                  onChange={(e) => updateRule(rule.id, { color: e.target.value.toUpperCase() })}
-                />
-              </label>
+              />
               <Toggle checked={rule.enabled} onChange={(v) => updateRule(rule.id, { enabled: v })} />
             </div>
           );

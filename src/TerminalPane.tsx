@@ -55,6 +55,7 @@ import {
   withPathBudget,
   type PathEntry,
 } from "./terminal/autocompletePathModel";
+import { HighlightColorPicker } from "./terminal/HighlightColorPicker";
 import { Icon } from "./ui/icons";
 import * as api from "./backend/client";
 import { SessionMonitorPopover } from "./monitor/SessionMonitorPopover";
@@ -324,96 +325,6 @@ function pad2(value: number): string {
 
 function clockLabel(now: Date): string {
   return `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-}
-
-/**
- * 常用标准色块：黑/红/绿/黄/蓝/品红/青/白 + 橙/紫/灰。
- * 深浅主题下都选中间明度，避免纯黑/纯白在另一种主题里糊成一片。
- */
-const HIGHLIGHT_COLOR_SWATCHES: { name: string; color: string }[] = [
-  { name: "黑", color: "#111111" },
-  { name: "红", color: "#F87171" },
-  { name: "绿", color: "#34D399" },
-  { name: "黄", color: "#FBBF24" },
-  { name: "蓝", color: "#3B82F6" },
-  { name: "品红", color: "#EC4899" },
-  { name: "青", color: "#22CCCC" },
-  { name: "白", color: "#FFFFFF" },
-  { name: "橙", color: "#FB923C" },
-  { name: "紫", color: "#A78BFA" },
-  { name: "灰", color: "#94A3B8" },
-];
-
-/** 色块选中对勾的对比色：浅色块配深勾，深色块配白勾。 */
-function highlightCheckTone(hex: string): string {
-  const value = hex.replace("#", "");
-  if (value.length !== 6) return "#FFFFFF";
-  const r = parseInt(value.slice(0, 2), 16);
-  const g = parseInt(value.slice(2, 4), 16);
-  const b = parseInt(value.slice(4, 6), 16);
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#111111" : "#FFFFFF";
-}
-
-/**
- * 颜色选择：一排标准色块点选；自定义取色是补充入口（原生取色器），
- * 不再作为唯一方式。当前值不命中标准色时「自定义」块高亮并显示该颜色值。
- */
-function HighlightColorPicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (color: string) => void;
-}) {
-  const normalized = value.toUpperCase();
-  const isStandard = HIGHLIGHT_COLOR_SWATCHES.some(
-    (swatch) => swatch.color.toUpperCase() === normalized,
-  );
-  return (
-    <div className="term-highlight-color-picker">
-      <div className="term-highlight-color-swatches" role="radiogroup" aria-label="规则颜色">
-        {HIGHLIGHT_COLOR_SWATCHES.map((swatch) => {
-          const selected = swatch.color.toUpperCase() === normalized;
-          return (
-            <button
-              key={swatch.color}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              aria-label={swatch.name}
-              title={swatch.name}
-              className={`term-highlight-color-chip${selected ? " is-selected" : ""}`}
-              style={{ background: swatch.color }}
-              onClick={() => onChange(swatch.color)}
-            >
-              {selected && (
-                <Icon name="check" size={11} style={{ color: highlightCheckTone(swatch.color) }} />
-              )}
-            </button>
-          );
-        })}
-        <label
-          className={`term-highlight-color-custom${isStandard ? "" : " is-active"}`}
-          title="自定义颜色"
-        >
-          <input
-            type="color"
-            value={normalized}
-            onChange={(event) => onChange(event.target.value.toUpperCase())}
-            aria-label="自定义颜色"
-          />
-          {isStandard ? (
-            <Icon name="pencil" size={11} />
-          ) : (
-            <span className="term-highlight-color-dot" style={{ background: normalized }} />
-          )}
-          <span className="term-highlight-color-custom-text">
-            {isStandard ? "自定义" : normalized}
-          </span>
-        </label>
-      </div>
-    </div>
-  );
 }
 
 /**

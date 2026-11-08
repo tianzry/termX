@@ -12094,11 +12094,42 @@ html[data-theme="dark"] .nc-settings-overlay {
   flex: none;
   width: 32px;
   height: 20px;
+  padding: 0;
   border: 1px solid hsl(var(--border) / 0.5);
   border-radius: 4px;
   overflow: hidden;
   cursor: pointer;
   transition: border-color 0.15s;
+}
+
+.nc-set-rule-color:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* 设置页行内选色浮层：与工具栏共用 11 色块 + 自定义面板。 */
+.nc-set-color-popover {
+  position: fixed;
+  z-index: 10000;
+  width: 240px;
+  padding: 10px;
+  overflow: visible;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 10px;
+  background: hsl(var(--popover));
+  box-shadow: 0 14px 40px hsl(var(--foreground) / 0.16);
+}
+
+.nc-set-color-popover .term-highlight-color-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, 20px);
+  gap: 6px;
+  justify-content: start;
+}
+
+.nc-set-color-popover .term-highlight-color-custom {
+  grid-column: span 2;
+  justify-content: center;
 }
 
 .nc-set-rule-color:hover {

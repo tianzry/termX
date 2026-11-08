@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-11-08 — 关键字高亮选色控件共用化（设置页对齐工具栏）
+
+### 修改
+
+- 抽出 `src/terminal/HighlightColorPicker.tsx`：11 个标准色块 + 「自定义」原生取色，工具栏弹层与设置页调用同一套控件。
+- 设置页「关键字高亮」每行右侧由原生取色块改为色块按钮 + 弹出面板；面板 `fixed` 挂到 body，避开滚动容器裁切；7 条内置规则与自定义规则统一。
+- 设置页规则弹窗内的颜色输入也改用同一控件。
+- 选中颜色即时回写 `rule.color`，左侧关键字与色块同步；同一时间只开一个行内面板，点击外部 / Esc 关闭，方向键在色块间移动焦点，关闭后焦点回到触发按钮。
+
+### 验证
+
+- 设置页 7 行触发按钮均 32×20、行高保持 22px；弹层 240×68、8 列网格；选「绿」后色块与关键字文字均为 `rgb(52, 211, 153)`。
+- 终端回归：工具栏弹层仍显示 11 色块 + 自定义（`docs/verify-ui/hl-color-picker-toolbar.png`）；把设置中的 Error 规则改为绿色后，SSH 终端输出 `keyword-error-test` 显示为绿色（`docs/verify-ui/hl-color-picker-terminal.png`）。
+- `npx tsc --noEmit`、`vitest src/terminal/keywordHighlight.test.ts` 通过。
+
+---
+
 ## 2026-11-08 — 面向用户的 MCP 接入指南文档
 
 ### 修改
