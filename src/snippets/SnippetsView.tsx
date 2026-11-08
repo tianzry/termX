@@ -46,6 +46,7 @@ import type { Snippet } from "../backend/client";
 import type { PaneHandle } from "../TerminalPane";
 import { userVisibleError } from "../domain/sshErrors";
 import {
+  DEFAULT_SCRIPT_TEMPLATE,
   SNIPPETS_CHANGED_EVENT,
   SNIPPET_SORT_LABELS,
   buildSnippetPackageTree,
@@ -132,10 +133,13 @@ function toDraft(s: Snippet): Draft {
 }
 
 function emptyDraft(kind: SnippetKind = "", pkg = ""): Draft {
+  // 新建脚本默认 JavaScript；片段仍写 shell（kind 为空时保存会清空）。
+  const language = kind === "script" ? "javascript" : "shell";
   return {
     id: "",
     name: "",
-    command: "",
+    // 只有新建 JS 脚本才预填全注释模板；打开已有脚本走 toDraft，不会覆盖用户内容。
+    command: language === "javascript" ? DEFAULT_SCRIPT_TEMPLATE : "",
     description: "",
     package: pkg,
     tagsText: "",
@@ -143,8 +147,7 @@ function emptyDraft(kind: SnippetKind = "", pkg = ""): Draft {
     noAutoRun: false,
     kind,
     multiLineRunMode: "",
-    // 新建脚本默认 JavaScript；片段仍写 shell（kind 为空时保存会清空）。
-    language: kind === "script" ? "javascript" : "shell",
+    language,
     trigger: "",
     triggerPattern: "",
     targets: [],

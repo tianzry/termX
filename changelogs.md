@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-11-08 — 新建 JS 脚本预填全注释 tmx API 模板
+
+### 修改
+
+- `src/snippets/snippetsModel.ts`：新增 `DEFAULT_SCRIPT_TEMPLATE`，对齐 Netcatty `DEFAULT_SCRIPT_TEMPLATE` 的「先列 API、再给示例」结构，API 全部换成 termX 的 `tmx`（旧 `nct` 前缀不再出现）：`tmx.screen.send/sendLine/clear/getText/waitForText/waitForRegex/waitForPrompt/waitForAny`、`tmx.session.sleep/connected/name/hostname/username`、`tmx.log`，每条一行带简短说明。
+- 模板全部是 `//` 注释（三行示例也同样注释掉），直接运行不会产生副作用。
+- `src/snippets/SnippetsView.tsx::emptyDraft()`：只有新建设为 javascript 的脚本才预填模板；打开已保存脚本走 `toDraft()`、不经过这里，绝不覆盖用户内容；普通片段与非 JS 语言保持空内容。
+- `src/snippets/snippetsModel.test.ts`：新增 2 例，断言模板「全部为注释」、覆盖 14 个 tmx API 且不含 `nct.`。
+
+### 实机验证（debug + Vite HMR）
+
+- 新建脚本：编辑器预填 22 行注释，固定高 181.6px，`scrollHeight 382` > `clientHeight 165`，纵向滚动正常（长行同时出现横向滚动，属 CodeMirror 默认行为）。
+- 打开已保存的「窗口标题」脚本：仍是原 `printf '\033]0;termX\007'` 一行，未被模板覆盖。
+
+### 截图（`docs/verify-ui/`）
+
+- `ui6-new-script-template.png`：新建脚本预填全注释 tmx 模板。
+- `ui6-edit-existing-script.png`：打开已有脚本内容保持原样。
+
+### 门禁
+
+- `npm run test:run`：81 文件 / 915 通过（新增 2 例）。
+- `npm run build`：通过。
+
+---
+
 ## 2026-11-08 — 主机卡片去掉悬停终端小图标
 
 ### 修改

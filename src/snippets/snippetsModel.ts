@@ -143,6 +143,34 @@ export function isJavaScriptSnippet(
   return isScriptSnippet(s) && (s.language || "") === "javascript";
 }
 
+/**
+ * 新建 JavaScript 脚本的初始内容：全部是注释，直接运行不产生副作用。
+ * 对齐 Netcatty `DEFAULT_SCRIPT_TEMPLATE` 的「先列 API 再给示例」结构，
+ * API 换成 termX 的 `tmx`（旧 nct 前缀已废弃，不要再出现在模板里）。
+ */
+export const DEFAULT_SCRIPT_TEMPLATE = `// termX 自动化脚本（JavaScript，在活动终端会话中异步执行）
+//
+// tmx.screen.send(text)                直接写入按键，不追加回车
+// tmx.screen.sendLine(cmd)             输入一行命令并回车
+// tmx.screen.clear()                   清屏
+// tmx.screen.getText(start?, end?)     读取终端缓冲文本（可限定行范围）
+// tmx.screen.waitForText(text, ms?)    等待输出中出现指定文本
+// tmx.screen.waitForRegex(pattern, ms?) 等待输出匹配正则（字符串模式）
+// tmx.screen.waitForPrompt(ms?)        等待 shell 提示符（# root / $ user）
+// tmx.screen.waitForAny([...], ms?)    等待任一模式匹配
+// tmx.session.sleep(ms)                等待指定毫秒数
+// tmx.session.connected                当前会话是否已连接（只读）
+// tmx.session.name                     会话显示名（只读）
+// tmx.session.hostname                 主机名或地址（只读）
+// tmx.session.username                 登录用户名（只读）
+// tmx.log(message)                     写入脚本运行日志
+//
+// 下面是示例；取消注释后才会真正执行：
+// await tmx.screen.waitForPrompt(30000);
+// await tmx.screen.sendLine('echo hello');
+// tmx.log('Done');
+`;
+
 export type ScriptTrigger = "manual" | "onConnect" | "onOutput";
 
 /** 触发方式归一化（对齐 Netcatty trigger；空 / 未知 = manual）。 */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Snippet } from "../backend/client";
 import {
+  DEFAULT_SCRIPT_TEMPLATE,
   deleteSnippetPackage,
   ensureSnippetIds,
   filterSnippets,
@@ -390,6 +391,38 @@ describe("renameSnippetPackage", () => {
     const list = [snip({ id: "a", package: "ops" })];
     expect(renameSnippetPackage(list, "ops", "  ")).toBe(list);
     expect(renameSnippetPackage(list, "ops", "ops")).toBe(list);
+  });
+});
+
+describe("DEFAULT_SCRIPT_TEMPLATE", () => {
+  it("全部是注释，直接运行不产生副作用", () => {
+    const lines = DEFAULT_SCRIPT_TEMPLATE.split("\n").filter((line) => line.trim());
+    expect(lines.length).toBeGreaterThan(10);
+    for (const line of lines) {
+      expect(line.trim().startsWith("//")).toBe(true);
+    }
+  });
+
+  it("覆盖 tmx 可用的 screen / session / log API，且不再出现废弃的 nct 前缀", () => {
+    for (const api of [
+      "tmx.screen.send(",
+      "tmx.screen.sendLine(",
+      "tmx.screen.clear(",
+      "tmx.screen.getText(",
+      "tmx.screen.waitForText(",
+      "tmx.screen.waitForRegex(",
+      "tmx.screen.waitForPrompt(",
+      "tmx.screen.waitForAny(",
+      "tmx.session.sleep(",
+      "tmx.session.connected",
+      "tmx.session.name",
+      "tmx.session.hostname",
+      "tmx.session.username",
+      "tmx.log(",
+    ]) {
+      expect(DEFAULT_SCRIPT_TEMPLATE).toContain(api);
+    }
+    expect(DEFAULT_SCRIPT_TEMPLATE).not.toMatch(/\bnct\./);
   });
 });
 
