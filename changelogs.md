@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-11-08 — 对外 MCP 工具接入合入主干
+
+### 修改
+
+- 把 `feat/mcp-server`（基于 `c9208e2`，提交 `ee0d10a` 后端 + `0961536` 设置页）本地合并进 `main`（合并提交 `bf1cc4b`），无冲突：`src/backend/client.ts`、`src/settings/i18n.ts`、`src/styles.css` 均自动合并，主干已有改动（主机卡排版、scrollback 5000、关键字高亮）全部保留。
+- 新增进程内 Streamable HTTP MCP host（`src-tauri/src/mcp/{config,server,tools}.rs`）：`POST /mcp` + `Authorization: Bearer`，默认 `127.0.0.1:47391`，Host/Origin 白名单、header 8KB / body 4MB 上限、无 SSE；`mcp_status / mcp_set_config / mcp_rotate_token / mcp_client_config` 四个命令在 `lib.rs` 与 headless `server.rs` 双注册。
+- 5 个工具：`get_environment`、`vault_hosts_list`、`snippets_list`（只读）+ `terminal_execute`、`session_close`（写，受权限档位与命令黑名单约束）。
+- 设置中心新增 AI tab（`src/settings/AiTab.tsx`）：状态胶囊、启用开关、权限三档、端口/监听地址/客户端 host、连接详情（URL / 打码 token / 轮换 / Codex TOML / Claude 命令 / 通用 JSON），3 秒静默轮询。
+
+### 实测（debug 构建 + CDP 9222 启用监听，真实 HTTP 客户端）
+
+- `initialize` → `protocolVersion 2025-06-18`，`serverInfo { name: "termX", version: "0.0.1" }`。
+- `tools/list` → 5 个工具：`get_environment / vault_hosts_list / snippets_list / terminal_execute / session_close`。
+- `tools/call get_environment` → `{"hostCount":7,"sessions":[]}`，`isError: false`。
+- 无 `Authorization` 头 → HTTP 401 `{"error":"unauthorized"}`。
+- 验证后已把 `mcp.enabled` 还原为 `0`（默认保持关闭）。
+
+### 踩坑
+
+- debug 构建走 `devUrl`，WebView2 会先加载 `http://localhost:1420`；未起 Vite 时页面 origin 无效，Tauri IPC 直接抛 `Origin header is not a valid URL`。需先 `npm run dev` 再刷新页面，或改用 release 构建做实机验证。
+- 主检出合并前只有两份未跟踪文档（`docs/script-runtime*.md`），已作为独立提交 `0b6f3d6` 落地；worktree `g:\AiCode\termX-wt-mcp` 与 `feat/mcp-server` 分支已删除。
+
+### 门禁
+
+- `cargo check --lib`✓（2 个 warning：`mcp/server.rs` 未用的 `Duration` 导入、`config.rs` 未用的 `token_url`）；`cargo check --lib --features server`✓；`cargo test --lib` 977✓；`npm run test:run` 841✓；`npm run build`✓；`cargo build`（debug）✓。
+
+---
+
 ## 2026-11-08 — 终端默认回滚行数 3000 → 5000
 
 ### 修改
