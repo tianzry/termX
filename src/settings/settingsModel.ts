@@ -231,6 +231,8 @@ export interface TerminalSettings {
   dynamicTabTitleMode: DynamicTabTitleMode;
   oscNotifications: OscNotificationMode;
   osc52Clipboard: Osc52ClipboardMode;
+  /** 撰写栏发送后保留输入内容（关闭则发送后清空）。 */
+  keepComposeText: boolean;
   linkModifier: LinkModifier;
   linkBrowser: LinkBrowser;
   /** 终端主题跟随应用主题；关闭后终端固定深色（Netcatty settings.terminal.theme.followApp）。 */
@@ -400,6 +402,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   dynamicTabTitleMode: "agent",
   oscNotifications: "always",
   osc52Clipboard: "write-only",
+  keepComposeText: false,
   linkModifier: "none",
   linkBrowser: "netcatty",
   followAppTheme: true,
@@ -625,6 +628,7 @@ function normalizeTerminal(raw: unknown): TerminalSettings {
       ["off", "write-only", "read-write", "prompt"] as const,
       d.osc52Clipboard,
     ),
+    keepComposeText: pickBool(r.keepComposeText, d.keepComposeText),
     linkModifier: pickOne(
       r.linkModifier,
       ["none", "ctrl", "alt", "meta"] as const,

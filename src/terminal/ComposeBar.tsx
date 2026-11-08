@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Pin, Plus, Search, X } from "lucide-react";
 import type { Snippet } from "../backend/client";
-import { useSettings } from "../settings/settingsStore";
+import { useSettings, updateSettings } from "../settings/settingsStore";
 import { isDarkTerminal, TERM_THEME_DARK, TERM_THEME_LIGHT } from "../Terminal";
 import {
   COMPOSE_PINNED_STORAGE_KEY,
@@ -301,7 +301,7 @@ export function ComposeBar({
     if (!text.trim()) return;
     if (!connected || !onSend(text)) return;
     resetHistory();
-    onChange("");
+    if (!settings.terminal.keepComposeText) onChange("");
     textareaRef.current?.focus();
   }
 
@@ -313,7 +313,7 @@ export function ComposeBar({
     if (!slice.line.trim()) return;
     if (!connected || !onSend(slice.line)) return;
     resetHistory();
-    onChange(slice.rest);
+    if (!settings.terminal.keepComposeText) onChange(slice.rest);
     requestAnimationFrame(() => {
       const node = textareaRef.current;
       if (!node) return;
@@ -499,17 +499,34 @@ export function ComposeBar({
           onChange={(e) => handleChange(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <button
-          type="button"
-          className="term-compose-close"
-          title="关闭撰写栏"
-          aria-label="关闭撰写栏"
-          onClick={onClose}
-        >
-          <span className="term-compose-close-icon" aria-hidden="true">
-            ×
-          </span>
-        </button>
+        <div className="term-compose-actions">
+          <button
+            type="button"
+            className="term-compose-close"
+            title="关闭撰写栏"
+            aria-label="关闭撰写栏"
+            onClick={onClose}
+          >
+            <span className="term-compose-close-icon" aria-hidden="true">
+              ×
+            </span>
+          </button>
+          <label className="term-compose-keep" title="勾选后发送不清空输入框">
+            <input
+              type="checkbox"
+              checked={settings.terminal.keepComposeText}
+              onChange={(e) =>
+                updateSettings({
+                  terminal: {
+                    ...settings.terminal,
+                    keepComposeText: e.target.checked,
+                  },
+                })
+              }
+            />
+            <span>保留发送文本</span>
+          </label>
+        </div>
       </div>
     </div>
   );

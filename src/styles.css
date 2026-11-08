@@ -7380,6 +7380,33 @@ button:disabled {
   color: hsl(var(--muted-foreground) / 0.7);
 }
 
+.term-compose-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.term-compose-keep {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.term-compose-keep input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: hsl(var(--primary));
+  cursor: pointer;
+}
+
 .term-compose-close {
   flex: 0 0 auto;
   display: flex;

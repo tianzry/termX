@@ -7598,5 +7598,15 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
   `npx tauri build --no-bundle` ✓。
 
+## 2026-11-08 — 撰写栏新增「保留发送文本」选项
+
+- 撰写栏右侧关闭按钮外包 `.term-compose-actions`，正下方新增「保留发送文本」复选框（11px、主题色）；
+- 勾选后发送（Enter / 发送整行）不再清空或替换草稿，取消勾选恢复发送后清空；
+- 新增设置项 `terminal.keepComposeText`（默认 false），`settingsModel` 补齐 normalize。
+- 实机（本地 Git Bash）：复选框位于关闭按钮下方；勾选后发送 `echo TERMX-COMPOSE-KEEP` 文本保留，
+  取消勾选后发送 `echo TERMX-COMPOSE-CLEAR` 文本清空；截图 `docs/verify-ui/func1-compose-keep.png`。
+- 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
+  `npx tauri build --no-bundle` ✓。
+
 
 

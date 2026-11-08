@@ -60,6 +60,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 
 | 能力 | 状态 | 位置 |
 |---|---|---|
+| 撰写栏「保留发送文本」选项（勾选后发送不清空草稿） | ✅ | `src/terminal/ComposeBar.tsx`、`src/settings/settingsModel.ts`（`terminal.keepComposeText`）、`src/styles.css`；实机截图 `docs/verify-ui/func1-compose-keep.png` |
 | 右栏脚本视图运行后不再显示「已运行 xxx」提示 | ✅ | `src/terminal/ScriptsSidePanel.tsx`；实机截图 `docs/verify-ui/ui4-scripts-no-run-notice.png` |
 | 终端标题后的 LOG 标识移除（录制功能保留） | ✅ | `src/TerminalPane.tsx`、`src/styles.css`；实机截图 `docs/verify-ui/ui3-recording-no-log-badge.png` |
 | 关键字高亮总开关与「仅显示匹配行」同排联动（关闭总开关即禁用过滤） | ✅ | `src/TerminalPane.tsx`（`setHighlightMasterEnabled`）、`src/styles.css`；实机截图 `docs/verify-ui/ui2-*.png` |
