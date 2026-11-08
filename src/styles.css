@@ -3003,7 +3003,7 @@ button:disabled {
 
 /* 主机卡：68px / rounded-xl / soft-card + elevate */
 .vault-host-card {
-  min-height: 68px;
+  height: 68px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -3025,8 +3025,7 @@ button:disabled {
 }
 
 .vault-host-card.list {
-  height: auto;
-  min-height: 56px;
+  height: 56px;
   gap: 12px;
   padding: 8px;
   border-color: transparent;
@@ -3050,6 +3049,11 @@ button:disabled {
   gap: 2px;
 }
 
+/* 左侧发行版 / 协议图标固定尺寸，不参与伸缩（netcatty DistroAvatar lg = 44px）。 */
+.vault-host-card > .nc-distro-avatar {
+  flex-shrink: 0;
+}
+
 .vault-host-card-main strong {
   font-size: 14px;
   font-weight: 600;
@@ -3070,12 +3074,17 @@ button:disabled {
 }
 
 .vault-host-card-go {
+  position: absolute;
+  right: 50px;
+  top: 50%;
+  transform: translateY(-50%);
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   color: hsl(var(--muted-foreground));
   opacity: 0;
+  pointer-events: none;
   transition: opacity 120ms ease;
 }
 
@@ -7864,7 +7873,7 @@ button:disabled {
 
 .vault-host-star {
   position: absolute;
-  top: 5px;
+  top: 6px;
   right: 6px;
   display: flex;
   color: hsl(38 92% 50%);
@@ -7881,9 +7890,14 @@ button:disabled {
   color: hsl(var(--primary));
 }
 
+/* 画笔尺寸对齐 Netcatty：网格 h-8 w-8（32px，图标 14），列表 h-6 w-6（24px，图标 13）。 */
 .vault-host-edit {
-  width: 24px;
-  height: 24px;
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -7894,6 +7908,12 @@ button:disabled {
   color: hsl(var(--muted-foreground));
   opacity: 0;
   transition: opacity 120ms ease, background 120ms ease;
+}
+
+.vault-host-card.list .vault-host-edit {
+  right: 8px;
+  width: 24px;
+  height: 24px;
 }
 
 .vault-host-card:hover .vault-host-edit,
@@ -9734,27 +9754,51 @@ button:disabled {
   background: hsl(var(--primary) / 0.12);
 }
 
-/* 主机卡片上的标签 chip（位于标题上方，单行展示） */
+/* 主机卡片上的标签 chip：单行、不撑高卡片、不压标题。
+ * 列表视图横向空间充裕，标签按行内元素贴右上角，右侧为画笔让位；
+ * 网格视图放在标题上方的空白带（绝对定位），标题仍可用满整行宽度。 */
 .vault-host-tags {
+  flex: 0 1 auto;
+  align-self: flex-start;
+  margin-top: -3px;
+  /* 列表视图右侧让出画笔（8px 右偏移 + 24px 按钮 + 4px 间距），标签不会压到画笔。 */
+  margin-right: 28px;
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
   min-width: 0;
-  max-width: 100%;
-  margin-bottom: 1px;
+  max-width: 65%;
   overflow: hidden;
+}
+
+.vault-host-card:not(.list) .vault-host-tags {
+  position: absolute;
+  top: 2px;
+  right: 12px;
+  margin: 0;
+  max-width: 60%;
+}
+
+.vault-host-card.list .vault-host-card-go {
+  right: 36px;
+}
+
+/* 置顶星标也在右上角：带标签时把标签左移，避免互相遮挡。 */
+.vault-host-card.pinned .vault-host-tags {
+  right: 26px;
 }
 
 .vault-host-tag {
   flex: 0 0 auto;
   max-width: 9em;
-  padding: 1px 6px;
+  padding: 0 6px;
   border-radius: 999px;
   background: hsl(var(--primary) / 0.1);
   color: hsl(var(--primary));
   font-size: 10px;
-  line-height: 1.4;
+  line-height: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

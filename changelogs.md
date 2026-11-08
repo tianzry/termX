@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-11-08 — 首页主机卡重做（按 Netcatty 结构对齐）
+
+### 修改
+
+- 撤回 `4a40081` 的错误排版：发行版 / 协议 / 本地终端图标恢复到卡片最左侧（`DistroAvatar lg` = 44px、圆角 12，对齐 Netcatty `h-11 w-11 rounded-xl`），不再删图标，也不再让标签位于标题上方。
+- 标签 chip 统一放卡片右上角、单行排布：网格视图绝对定位在标题上方的空白带（top 2px / right 12px），标题仍可用满整行宽，长标题走 `text-overflow: ellipsis` 省略而不是被遮盖；列表视图按行内元素贴右上角，右侧为画笔预留 28px。chip 沿用 termX 既有样式（primary 10% 底、999 圆角、10px 字号、0 6px 内边距、12px 行高）。
+- 画笔（编辑）按钮绝对定位在卡片最右侧、垂直居中：网格 32×32（图标 14）、列表 24×24（图标 13），右偏移 12 / 8px，对齐 Netcatty `h-8 w-8` / `h-6 w-6` 与 `px-3 py-2` / `px-2 py-2`；连接图标左移，画笔始终最右。
+- 卡片高度恢复固定：网格 68px、列表 56px（不再用 min-height 随标签撑高）；标题 14/20、副标题 11/16 mono、行间距 2px 与 Netcatty 一致；置顶星标改 10px / top 6 / right 6，带标签时标签右移 26px 避让。
+
+### 踩坑
+
+- Netcatty 首页主机卡本身不渲染 tags（标签是 termX 既有增强），chip 的底色 / 圆角 / 字号只能沿用 termX 令牌，需要按尺寸和间距对齐的只有头像、标题、副标题与画笔。
+- 标签放在行内会直接挤占标题宽度：227px 网格卡 + 两个标签时标题只剩 11px；改为网格视图绝对定位到标题上方空白带（标签 12px 高、标题 20px 行高，二者底/顶边齐平），标题宽度恢复到 145px。
+
+### 实测（release + CDP 9222）
+
+- 网格视图：带标签（`local` `production`）与不带标签各一张截图，卡片均 227×68；头像 44×44 左对齐且垂直居中；标签距顶 3px、距右 12px，底边与标题行顶边齐平不重叠；画笔 32×32、中心偏移 0px、距右 13px；长标题 `Telnet Echo 2324` 完整占 145px。
+- 列表视图：带标签 / 不带标签各一张，行高 56px；头像 44；标签右上角、距右 37px（让出 24px 画笔 + 8px 偏移），画笔 24×24、中心偏移 0px。
+- 截图：`docs/verify-ui/ui1-grid-tags.png`、`ui1-grid-no-tags.png`、`ui1-list-tags.png`、`ui1-list-no-tags.png`；验证用的临时标签已还原（只保留 Git Bash 的 `local`）。
+
+### 门禁
+
+- `npm run test:run` 841✓；`npm run build`✓；`cargo check --lib`✓；`cargo check --lib --features server`✓；`cargo test --lib` 973✓；`npx tauri build --no-bundle`✓。
+
+---
+
 ## 2026-11-07 — 撰写栏：片段单击语义、草稿持久化、三档发送按键
 
 ### 修改

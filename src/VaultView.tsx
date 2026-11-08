@@ -3481,7 +3481,9 @@ export function VaultView({
         data-host-id={p.id}
         className={`vault-host-card${compact ? " list" : ""}${
           isSelected ? " selected" : ""
-        }${focusId === p.id ? " focused" : ""}`}
+        }${focusId === p.id ? " focused" : ""}${
+          ownTags.length > 0 ? " has-tags" : ""
+        }${!compact && isPinned && !selectMode ? " pinned" : ""}`}
         role={selectMode ? "checkbox" : "button"}
         aria-checked={selectMode ? isSelected : undefined}
         tabIndex={0}
@@ -3503,22 +3505,23 @@ export function VaultView({
         )}
         {!selectMode && view === "grid" && isPinned && (
           <span className="vault-host-star" title="已置顶">
-            <Icon name="pin" size={12} />
+            <Icon name="pin" size={10} />
           </span>
         )}
+        <DistroAvatar profile={p} size="lg" />
         <span className="vault-host-card-main">
-          {ownTags.length > 0 && (
-            <span className="vault-host-tags">
-              {ownTags.slice(0, 3).map((t) => (
-                <span key={t} className="vault-host-tag">
-                  {t}
-                </span>
-              ))}
-            </span>
-          )}
           <strong>{p.name}</strong>
           <span className="vault-host-card-sub">{subtitle(p)}</span>
         </span>
+        {ownTags.length > 0 && (
+          <span className="vault-host-tags">
+            {ownTags.slice(0, 3).map((t) => (
+              <span key={t} className="vault-host-tag">
+                {t}
+              </span>
+            ))}
+          </span>
+        )}
         {!selectMode && (
           <button
             className="vault-host-edit"
@@ -3530,7 +3533,7 @@ export function VaultView({
               else openComposerForEdit(p);
             }}
           >
-            <Icon name="pencil" size={13} />
+            <Icon name="pencil" size={compact ? 13 : 14} />
           </button>
         )}
         <span className="vault-host-card-go">
