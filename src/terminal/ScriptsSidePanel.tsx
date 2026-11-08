@@ -68,7 +68,7 @@ export function ScriptsSidePane({ activeHandle }: Props) {
       return;
     }
     const ok = activeHandle.runSnippet(snippet);
-    setNotice(ok ? `已运行：${snippet.name}` : "运行失败：窗格未连接");
+    if (!ok) setNotice("运行失败：窗格未连接");
   };
 
   return (

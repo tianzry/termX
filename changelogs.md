@@ -7588,5 +7588,15 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
   `npx tauri build --no-bundle` ✓。
 
+## 2026-11-08 — 右栏脚本视图运行后不再显示「已运行 xxx」提示
+
+- `ScriptsSidePanel` 运行成功后不再 `setNotice`；只在失败（窗格未连接）时保留「运行失败：窗格未连接」提示。
+  脚本运行链路本身不变。
+- 实机（本地 Git Bash 终端 → 侧栏脚本视图）：点「开箱初始化」运行按钮，脚本内容（`set -e` / `apt-get update`）
+  确实写入终端；侧栏 `.nc-sftp-pane-hint` 为空、面板文本不含「已运行」。
+  截图 `docs/verify-ui/ui4-scripts-no-run-notice.png`。
+- 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
+  `npx tauri build --no-bundle` ✓。
+
 
 
