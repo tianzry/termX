@@ -720,6 +720,24 @@
   resize: none;
 }
 
+/* CodeMirror 脚本编辑器：外观对齐 .sn-code，聚焦时高亮边框。 */
+.sn-cm-host {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid hsl(var(--nc-border) / 0.8);
+  border-radius: 6px;
+  background: hsl(var(--nc-bg) / 0.8);
+  overflow: hidden;
+  font-size: 12px;
+}
+.sn-cm-host:focus-within {
+  border-color: hsl(var(--nc-primary) / 0.6);
+}
+.sn-cm-host[data-height="fill"] {
+  flex: 1;
+  min-height: 0;
+}
+
 .sn-mini-btn {
   display: inline-flex;
   align-items: center;

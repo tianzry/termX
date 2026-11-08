@@ -72,6 +72,7 @@ import {
   parseSnippetImportPayload,
   type SnippetExportPayload,
 } from "./snippetsTransfer";
+import { ScriptCodeEditor } from "./ScriptCodeEditor";
 import { ScriptRunPanel, type NctScriptViewState } from "./ScriptRunPanel";
 import "./snippets.css";
 
@@ -411,6 +412,16 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
       return;
     }
     sendSnippet(s, fromPanel);
+  };
+
+  /** 底部主按钮 / 编辑器 Mod-Enter：脚本可直接保存并运行，其它只保存。 */
+  const submitDraft = () => {
+    if (isScript && canRunActive) {
+      const saved = saveDraft();
+      if (saved) runScript(saved, true);
+      return;
+    }
+    saveDraft();
   };
 
   const confirmVarPrompt = () => {
@@ -1052,14 +1063,22 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
                   <Maximize2 size={13} /> 放大
                 </button>
               </div>
-              <textarea
-                className="sn-code"
-                value={draft.command}
-                placeholder={isScript ? "如：\nset -e\nuptime" : "如：df -h"}
-                spellCheck={false}
-                rows={8}
-                onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-              />
+              {isScript ? (
+                <ScriptCodeEditor
+                  value={draft.command}
+                  onChange={(command) => setDraft({ ...draft, command })}
+                  onRun={submitDraft}
+                />
+              ) : (
+                <textarea
+                  className="sn-code"
+                  value={draft.command}
+                  placeholder="如：df -h"
+                  spellCheck={false}
+                  rows={8}
+                  onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+                />
+              )}
               {!isScript && (
                 <>
                   <p className="sn-hint">
@@ -1272,14 +1291,7 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
             <button
               className="sn-btn is-primary is-block"
               disabled={!canSubmit || busy}
-              onClick={() => {
-                if (isScript && canRunActive) {
-                  const saved = saveDraft();
-                  if (saved) runScript(saved, true);
-                } else {
-                  saveDraft();
-                }
-              }}
+              onClick={submitDraft}
             >
               {isScript && canRunActive ? "保存并运行" : "保存"}
             </button>
@@ -1299,13 +1311,22 @@ export function SnippetsView({ activeHandle }: { activeHandle?: PaneHandle | nul
                 <X size={16} />
               </button>
             </header>
-            <textarea
-              className="sn-code is-fill"
-              value={draft.command}
-              autoFocus
-              spellCheck={false}
-              onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-            />
+            {isScript ? (
+              <ScriptCodeEditor
+                value={draft.command}
+                onChange={(command) => setDraft({ ...draft, command })}
+                onRun={submitDraft}
+                height="fill"
+              />
+            ) : (
+              <textarea
+                className="sn-code is-fill"
+                value={draft.command}
+                autoFocus
+                spellCheck={false}
+                onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+              />
+            )}
             <footer>
               <button className="sn-btn" onClick={() => setScriptExpanded(false)}>
                 关闭

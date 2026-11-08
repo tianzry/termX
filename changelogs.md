@@ -7776,3 +7776,13 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 实机（本地 Git Bash + 129 Ubuntu，CDP）：`sendLine('uname -a')` + `waitForText` 命中（Git Bash 命中 `MINGW`、129 命中 `Linux`），xterm 缓冲可见 `MINGW64_NT-10.0-…` / `…GNU/Linux` 真实输出；`while(true){}` 2.17s 被心跳看门狗终止并显示 `Script execution timed out after 2000ms (no heartbeat)`；运行中点「停止」→ 已停止，「关闭」隐藏面板。
 - 坑与已知差异：从 Vault「脚本」页运行时终端处于 `display:none`，期间写入在切回终端后不可见（会话 id 未变、无重连；改用普通手输命令 `echo SURVIVE` 复现，属既有窗格挂载行为，不影响脚本执行与等待词匹配）；等待词须按目标设备实际输出写（Git Bash 为 MINGW 输出、不含 `Linux`）；Worker 屏蔽全局仅防呆，不是安全边界。
 - 门禁：`npm run test:run` ✓（79 文件 / 906）、`npm run build` ✓、`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` ✓。
+
+## 2026-11-08 — 脚本运行时阶段 1（5/7）：脚本内容改用 CodeMirror 6 编辑器
+
+- 新增 `ScriptCodeEditor`（`codemirror` `basicSetup` + `@codemirror/lang-javascript` 高亮、行号、撤销、`@codemirror/commands` 的 `indentWithTab`、主题用 `--nc-*`）；`height` 支持固定 180px 与 `"fill"`（放大弹窗撑满父容器）；外部 `value` 变化时 dispatch 同步，避免受控值回写丢失光标。
+- 键位 `createEditorKeymap` 导出 `Mod-Enter`（运行）与 Tab 缩进；**必须排在 `basicSetup` 之前**——`basicSetup` 的 `defaultKeymap` 已把 `Mod-Enter` 绑到 `insertBlankLine`，放在后面会被先消费（实机首次 Ctrl+Enter 无效即此因，调换顺序后恢复）。
+- `SnippetsView`：脚本内容用 CodeMirror、普通片段仍用 textarea；底部主按钮与 `Mod-Enter` 统一走 `submitDraft`（脚本 = 保存并运行，其余 = 仅保存）；放大弹窗脚本用 `height="fill"`。
+- 新增 2 例测试（挂载展示与外部 value 同步、键位表 `["Mod-Enter","Tab"]` 与 `run()` 回调）；jsdom 会打印 `textRange(...).getClientRects is not a function` 的 stderr 噪声，不影响断言。
+- 实机（本地 Git Bash，CDP）：编辑器高约 181.6px、行号存在、Tab 插入 2 空格、`const/await` 关键字与字符串/数字高亮；焦点在编辑器时 Ctrl+Enter 保存并运行 → 面板「已完成」且日志出现 `nct.log('mod-enter-ok')`；验证用脚本随后删除。
+- 坑：等待词按目标设备实际输出写。`waitForText('MINGW')` 在空闲 Git Bash 上会超时——等待只匹配脚本启动后的新输出，不扫滚动缓冲；要等现成输出需先 `sendLine('uname -a')` 触发。
+- 门禁：`npm run test:run` ✓（80 文件 / 908）、`npm run build` ✓、`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` ✓。
