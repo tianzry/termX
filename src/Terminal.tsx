@@ -382,6 +382,7 @@ try {
       instances: [...xtermDiagnostics].map((term) => ({
         rows: term.rows,
         cols: term.cols,
+        scrollback: term.options.scrollback,
         bufferLength: term.buffer.active.length,
         baseY: term.buffer.active.baseY,
         viewportY: term.buffer.active.viewportY,

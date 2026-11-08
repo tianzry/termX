@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-11-08 — 终端默认回滚行数 3000 → 5000
+
+### 修改
+
+- `DEFAULT_TERMINAL_SETTINGS.scrollback` 由 3000 改为 5000（`src/settings/settingsModel.ts`），并把常量注释补成「默认 5000」。
+- 核对整条链路：设置页回滚输入框 `min=0 / max=MAX_TERMINAL_SCROLLBACK(100000)`，无写死默认值；`clampScrollback` 上限 100000、`resolveXtermScrollback`（0 → 50000）均容得下 5000；`Terminal.tsx` 建 xterm 时读取 `resolveXtermScrollback(clampScrollback(t.scrollback))`，无另写默认值。全仓无其它写死 scrollback 默认的地方。
+- 诊断钩子 `__termxXtermStats()` 增加 `scrollback: term.options.scrollback`，便于实机确认 xterm 实例实际值。
+- `docs/memory-breakdown.md` 结论从「建议默认 3000」改为「用户定案 5000」，并注明 10000 是采样时的临时设置、原代码默认是 3000。
+
+### 实测（release + CDP 9222）
+
+- 清掉持久化设置里的 `terminal.scrollback` 后新建本地终端，`__termxXtermStats()` 读到 `scrollback: 5000`（默认值链路生效）。
+
+### 门禁
+
+- `npm run test:run` 841✓；`npm run build`✓；`cargo check --lib`✓；`cargo check --lib --features server`✓；`cargo test --lib` 973✓；`npx tauri build --no-bundle`✓。
+
+---
+
 ## 2026-11-08 — 首页主机卡重做（按 Netcatty 结构对齐）
 
 ### 修改

@@ -334,7 +334,7 @@ export const SETTINGS_STORAGE_KEY = "settings.center.v1";
 /** 终端字号范围（对照 Netcatty infrastructure/config/fonts.ts MIN/MAX_FONT_SIZE）。 */
 export const MIN_TERMINAL_FONT_SIZE = 10;
 export const MAX_TERMINAL_FONT_SIZE = 32;
-/** 回滚行数：0 = 不限（映射到 50000 行上限），上限 100000（对照 Netcatty resolveXTermScrollback）。 */
+/** 回滚行数：默认 5000，0 = 不限（映射到 50000 行上限），上限 100000（对照 Netcatty resolveXTermScrollback）。 */
 export const MAX_TERMINAL_SCROLLBACK = 100000;
 export const UNLIMITED_SCROLLBACK_CAP = 50000;
 
@@ -358,7 +358,7 @@ export function clampSftpTransferConcurrency(value: unknown): number {
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
-  scrollback: 3000,
+  scrollback: 5000,
   terminalEmulationType: "xterm-256color",
   fontLigatures: true,
   fontSmoothing: true,
