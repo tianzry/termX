@@ -7578,5 +7578,15 @@ d633866 / 60d8deb 两个 WIP 提交已在历史里（后端 `ssh/proxy.rs`、Pro
 - 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
   `npx tauri build --no-bundle` ✓。
 
+## 2026-11-08 — 终端标题后的 LOG 标识移除
+
+- 删除标题栏里 `sessionLog` 对应的 `term-recording-badge is-log`（「LOG」徽标）及其样式；
+  会话日志录制功能本身保留，工具栏日志按钮与录制小圆点照旧。
+- 实机（129 终端）：点击「开始记录会话日志」后按钮进入录制态（aria 变为停止、`.term-log-dot` 出现），
+  标题仍为 `129`、`.term-recording-badge.is-log` 数量为 0、工具栏文本不含 LOG；
+  截图 `docs/verify-ui/ui3-recording-no-log-badge.png`。
+- 门禁（含本项改动）：`npm run test:run` ✓（841）、`npm run build` ✓、`cargo test --lib` ✓（973）、
+  `npx tauri build --no-bundle` ✓。
+
 
 

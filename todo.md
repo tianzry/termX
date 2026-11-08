@@ -60,6 +60,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 
 | 能力 | 状态 | 位置 |
 |---|---|---|
+| 终端标题后的 LOG 标识移除（录制功能保留） | ✅ | `src/TerminalPane.tsx`、`src/styles.css`；实机截图 `docs/verify-ui/ui3-recording-no-log-badge.png` |
 | 关键字高亮总开关与「仅显示匹配行」同排联动（关闭总开关即禁用过滤） | ✅ | `src/TerminalPane.tsx`（`setHighlightMasterEnabled`）、`src/styles.css`；实机截图 `docs/verify-ui/ui2-*.png` |
 | 主机卡去发行版图标、标签上移、编辑按钮右侧居中 | ✅ | `src/VaultView.tsx`、`src/styles.css`；实机截图 `docs/verify-ui/ui1-vault-cards.png` |
 | 内存分进程分解测量（四场景 0/5/15/30 分钟 + 回滚 10000 vs 2000） | ✅ | `docs/memory-breakdown.md`、`src/Terminal.tsx`（门控 `__termxXtermStats` 诊断桩）；结论：空闲基线 390.6 MB、main 仅 33 MB、renderer 38.1%，建议默认回滚 3000 行 |

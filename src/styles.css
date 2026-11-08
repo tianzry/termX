@@ -6089,15 +6089,6 @@ button:disabled {
   color: hsl(var(--destructive));
 }
 
-.term-recording-badge.is-log {
-  background: hsl(var(--primary) / 0.12);
-  color: hsl(var(--primary));
-}
-
-.term-recording-badge.is-log::before {
-  background: hsl(var(--primary));
-}
-
 .term-menu-empty {
   padding: 6px 8px;
   font-size: 12px;

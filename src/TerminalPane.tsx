@@ -3752,14 +3752,6 @@ export function TerminalPane({
           <span className="term-toolbar-title" title={tab.title}>
             {tab.title}
           </span>
-          {sessionLog && (
-            <span
-              className="term-recording-badge is-log"
-              title={`会话日志录制中：${sessionLog.path}`}
-            >
-              LOG
-            </span>
-          )}
           {scriptRec && (
             <span
               className="term-recording-badge is-rec"
