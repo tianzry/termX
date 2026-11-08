@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-11-08 — 脚本运行时阶段 1（2/7）：Worker 沙箱与宿主运行器
+
+### 修改
+
+- 新增 `src/snippets/scriptSandbox.ts`：按 Netcatty 规则包装源码（已有 async IIFE / `main()` / 普通脚本三种），用 `new Function` 编译；把 `fetch`、`XMLHttpRequest`、`WebSocket`、`indexedDB`、`importScripts`、`eval`、`Function` 以参数置 `undefined`，用户代码在内层 `"use strict"` async 箭头中执行。
+- 新增 `src/snippets/scriptWorker.ts`：module Worker 入口，只注入 `nct`（screen/session/log 代理），宿主调用走 RPC；100ms postMessage 心跳。
+- 新增 `src/snippets/nctRuntime.ts`：主线程宿主。ready→start 握手、RPC 分发（`invokeApi` 映射阶段 1 方法并补默认超时）、通知与日志转发，以及资源上限（待处理 RPC 128 / 日志 200 / 总通知 20000）、2s 心跳看门狗、30min 总超时、启动 5s 超时、`stop()` 终止并拒绝等待。
+- 新增 `src/snippets/scriptSandbox.test.ts`（11）与 `src/snippets/nctRuntime.test.ts`（17）：三种包装、七个全局置空、严格模式、RPC 分发/错误/上限、看门狗与总超时、停止与启动超时。
+- 同步 `docs/script-runtime.md` §7.2：明确 `eval`/`Function` 也以参数置空、严格模式放在内层箭头（参数名 `eval` 与严格模式冲突）、心跳改为 postMessage，并强调**只是防呆、不是安全边界**。
+
+### 踩坑
+
+- 「参数名 `eval`」和 `"use strict"` 不能同时出现在同一个函数上：严格模式下 `eval` 是非法绑定名，`new Function("eval", "'use strict'; ...")` 直接 SyntaxError。做法是外层工厂保持非严格模式，内层 async 箭头带 `"use strict"`。
+- 已写成 `(async () => { ... })();` 的源码不能简单前置 `"use strict"`（会让外层工厂变严格），改为统一包进严格箭头并 `return await (原表达式)`。
+- 浏览器 Worker 没有 `Atomics.wait`，心跳只能走 postMessage；同步死循环仍能靠主线程看门狗终止 worker。
+
+### 门禁
+
+- `npx vitest run src/snippets/scriptSandbox.test.ts src/snippets/nctRuntime.test.ts` → 28✓。
+
+---
+
 ## 2026-11-08 — 脚本运行时阶段 1（1/7）：SessionTextBuffer
 
 ### 修改

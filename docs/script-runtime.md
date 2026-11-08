@@ -209,14 +209,15 @@ idle → running → completed
 ### 7.2 沙箱措施（与 Netcatty 同等定位：防呆，不防恶意）
 
 1. Worker 中无 `window` / `document`，因此无法访问 Tauri IPC 与 DOM。
-2. 包装函数时把以下全局以参数形式置空：
-   `fetch`、`XMLHttpRequest`、`WebSocket`、`indexedDB`、`importScripts`、`Function`。
+2. 包装函数时把以下全局以参数形式置空（实现见 `scriptSandbox.ts`）：
+   `fetch`、`XMLHttpRequest`、`WebSocket`、`indexedDB`、`importScripts`、`eval`、`Function`。
+   > 工厂函数本身保持非严格模式（严格模式下参数名 `eval` 是 SyntaxError），用户代码在内层 `"use strict"` async 箭头中执行。
 3. 源码使用 `"use strict"`。
 4. 资源上限：日志 200 条、待处理 RPC 128 条、总通知 20000 条（超出终止）。
-5. 2 秒无心跳强制终止；30 分钟总超时。
+5. 2 秒无心跳强制终止；30 分钟总超时。浏览器 Worker 无 `Atomics/SharedArrayBuffer`，心跳改为 100ms `postMessage`，看门狗在主线程。
 6. 所有 `screen.send/sendLine` 写入运行日志；后续可对敏感输入做掩码（阶段 2）。
 
-> **必须写明的局限**：浏览器 Worker 不是安全边界，`eval` / 构造器链仍可能绕过全局屏蔽；这与 Netcatty 的 Node `vm` 定位一致（Node 官方也明确 `vm` 不是安全机制）。若需要真正隔离，应改用跨源 `sandbox="allow-scripts"` iframe 或 Rust `rquickjs`，而不是继续在 Worker 内加固。
+> **必须写明的局限**：浏览器 Worker 不是安全边界，上面的全局置空只是**防呆**（避免无意识发网络请求 / 动态执行），不是安全边界：`globalThis` 仍可拿到真正的全局对象，`eval` / 构造器链也可能绕过。这与 Netcatty 的 Node `vm` 定位一致（Node 官方也明确 `vm` 不是安全机制）。若需要真正隔离，应改用跨源 `sandbox="allow-scripts"` iframe 或 Rust `rquickjs`，而不是继续在 Worker 内加固。
 
 ### 7.3 提示与确认
 
