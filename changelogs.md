@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-11-08 — MCP 与 Trae CN 真实客户端联调（第二段）
+
+### 修改（仅文档，无源码改动）
+
+- `docs/mcp-port-plan.md` §11 改写为「验证状态」：补 Trae 配置位置/schema、完整握手序列、5 工具 × 三档实调结果、审批三路径耗时与结论、遗留点。
+- 本条目记录联调观察与遗留点。
+
+### 联调配置（Trae CN 3.4.15）
+
+- 配置文件：`%APPDATA%\Trae CN\User\mcp.json`（用户级），只需 `url` + `headers`，无需 `type`：
+  `{"mcpServers":{"termx":{"url":"http://127.0.0.1:47391/mcp","headers":{"Authorization":"Bearer <token>"}}}}`
+- 联调期间在 `47392` 起了一层本地观测代理转发到 `47391`，用于抓全量请求头与报文；观察完可直连 47391。
+- 本轮结束时本机状态：`mcp.enabled = 开`、`permissionMode = confirm`、`allowedTools = []`。
+
+### Trae 侧观察（决定 SSE 是否要做）
+
+- 握手：`initialize`（`protocolVersion 2025-11-25`、`clientInfo Trae/3.4.15`、`capabilities.extensions io.modelcontextprotocol/ui`）→ `notifications/initialized`（无 id，回 202，带 `mcp-protocol-version` 头）→ **`GET /mcp` `Accept: text/event-stream`** → `tools/list`。
+- GET 被 termX 以 `405 {"error":"sse_not_supported"}` 拒绝后，Trae **未重试、未报错**，继续 `tools/list` 并正常工作 → **SSE 非必需，不做**。
+- 全程无 `Mcp-Session-Id`：Trae 不发送、也不期待；termX 无状态可正常工作。
+- Trae 容忍 `Connection: close`（termX 每响应即断连）。
+- POST 均带 `Accept: application/json, text/event-stream`，termX 返回纯 JSON 被接受。
+
+### 5 工具实调（confirm / observer / auto）
+
+- 只读三件套（`get_environment` / `vault_hosts_list` / `snippets_list`）三档均 `isError:false`，confirm 下不弹浮层。
+- `terminal_execute`：observer → `permission_denied: 当前权限档位为 observer`（8ms）；auto → `exitCode:0 / stdout:"trae-auto-ok"`（35ms）。
+- `session_close`：auto → `{"closed":"<id>"}`，`get_environment` 里 phase 由 `ready` 变 `closed`。
+- 审批三条路径：允许一次 → 4.2s 后执行成功；始终允许 → 8.7s 后放行且 `allowedTools=["terminal_execute"]`，后续调用 30ms 免审批；拒绝 → `permission_denied`，会话仍 `ready`。
+- 浮层在设置页之上仍可见（右下角），按钮「允许一次 / 始终允许 terminal_execute / 拒绝」，带 110s 倒计时。
+
+### 发现的问题 / 遗留点
+
+- **改任何 MCP 配置都会重启监听并轮换 token**：`commands/mcp.rs::apply()` 无条件 `rt.start()`，`start()` 内 `new_token()`。切权限档、改端口后旧 token 立即失效，客户端需重新复制；后续可改为「仅连接参数变化才重启、仅手动轮换才换 token」。
+- **Trae 会话的工具表在会话建立时确定**：MCP 服务上线前已存在的会话不会注入这 5 个工具（本轮 Trae 自身完成握手与 `tools/list`，但模型侧无工具可用，`tools/call` 用同一 UA/Accept/protocolVersion/mcp-protocol-version 特征回放执行）。要让 Trae 模型直接调用需新开会话。
+- `mcp-protocol-version` 头 termX 目前不校验，Trae 不因此失败。
+
+### 门禁
+
+- 无源码改动，未跑构建；文档变更仅 Markdown。
+
+---
+
 ## 2026-11-08 — MCP 写操作审批（confirm 档位补齐审批通路）
 
 ### 修改

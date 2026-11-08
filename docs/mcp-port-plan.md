@@ -145,7 +145,64 @@
 
 ## 11. 验证状态
 
+### 11.1 构建与门禁
+
 - `cargo check --lib --offline`：通过（修复 4 处编译错误后复跑 exit 0）。
 - `npx tsc --noEmit`：通过（`npm install` 后执行，exit 0）。
-- 未做：`cargo build`/`tauri build`（本轮按约束不构建 release；debug 构建留待合入后）、真实 MCP 客户端握手、UI 截图。
-- 对手工验证脚本：启动 app → 打开 工具接入 → 复制通用 JSON 到 Claude/Codex → 调 `get_environment` / `terminal_execute`。
+- 完整门禁（vitest / build / cargo test）见 `changelogs.md` 的 MCP 条目。
+
+### 11.2 Trae CN 3.4.15 真实客户端联调（2026-11-08）
+
+**Trae 配置位置与写法**：`%APPDATA%\Trae CN\User\mcp.json`（用户级）。
+
+```json
+{
+  "mcpServers": {
+    "termx": {
+      "url": "http://127.0.0.1:47391/mcp",
+      "headers": { "Authorization": "Bearer <设置页复制的 token>" }
+    }
+  }
+}
+```
+
+- 只需 `url` + `headers`，**不需要** `"type"`（Trae 直接按 streamable-http 处理）。
+- token 来自 设置 → AI → 工具接入 → 连接详情；打码展示，点「轮换」可重新生成。
+- 联调时插了一层本地观测代理（`127.0.0.1:47392` → 转发 47391），用于完整抓取 Trae 的请求头/报文；正式使用时把 `url` 直接写 `47391` 即可。
+
+**Trae 的握手序列（实测）**：
+
+1. `POST /mcp` `initialize`：`protocolVersion: "2025-11-25"`，`clientInfo {name:"Trae",version:"3.4.15"}`，`capabilities.extensions` 带 `io.modelcontextprotocol/ui`；`User-Agent: Trae/3.4.15`，`Accept: application/json, text/event-stream`。
+2. `POST /mcp` `notifications/initialized`（无 id，TermX 回 202），带 `mcp-protocol-version: 2025-11-25` 头。
+3. `GET /mcp` `Accept: text/event-stream` —— **SSE 探测**，termX 回 `405 {"error":"sse_not_supported"}`。
+4. `POST /mcp` `tools/list`，之后每次请求都带 `mcp-protocol-version` 头。
+
+**结论**：
+
+- **SSE 不需要做**：Trae 收到 405 后未重试、未报错，继续 `tools/list` 并正常工作；其 POST 请求由 `Accept: application/json, text/event-stream` 覆盖，termX 回纯 JSON 即可。
+- **`Mcp-Session-Id` 不需要**：Trae 既不发送也不期待；termX 无状态、每请求独立可正常工作。
+- Trae 容忍服务端 `Connection: close`（termX 每响应即关连接），不要求 keep-alive。
+- `mcp-protocol-version` 头 termX 目前忽略即可；Trae 不因缺失而失败。
+
+**5 个工具实调结果（confirm / observer / auto 三档）**：
+
+| 工具 | 档位 | 结果 |
+| --- | --- | --- |
+| `get_environment` | confirm / observer / auto | `isError:false`，返回 `hostCount:7`、2 个 pty 会话（含 phase） |
+| `vault_hosts_list` | confirm / observer / auto | `isError:false`，7 台主机，仅元数据无凭据 |
+| `snippets_list` | confirm / observer / auto | `isError:false`，5 个片段元数据 |
+| `terminal_execute` | observer | `isError:true` + `permission_denied: 当前权限档位为 observer，写操作被拒绝`（8ms） |
+| `terminal_execute` | auto | `isError:false`，`exitCode:0`、`stdout:"trae-auto-ok"`（35ms） |
+| `terminal_execute` | confirm + 允许一次 | 请求挂起约 4.2s，点「允许一次」后 `exitCode:0`、`stdout:"approval-once"` |
+| `terminal_execute` | confirm + 始终允许 | 挂起约 8.7s 后放行；`mcp.allowed_tools` 变 `["terminal_execute"]`，**后续调用 30ms 免审批** |
+| `session_close` | auto | `isError:false`，`{"closed":"<sessionId>"}`，`get_environment` 里该会话 phase 变 `closed` |
+| `session_close` | confirm + 拒绝 | 挂起约 3.7s，点「拒绝」后 `isError:true` + `permission_denied`，会话仍为 `ready` |
+
+**审批浮层实测**：三按钮文案为「允许一次 / 始终允许 terminal_execute / 拒绝」，悬浮于主窗右下角；confirm 档下只读工具不触发浮层。
+
+**需要用户知道的遗留点**：
+
+1. **改任何 MCP 配置都会重启监听并轮换 token**（`apply()` 无条件 `rt.start()`，`start` 里 `new_token()`）。因此切权限档、改端口后，Trae/Claude 里的旧 token 立即失效，必须重新复制；若 Trae 未自动重连，需要重载 MCP 配置或重启 IDE。这是当前实现的副作用，后续可优化为「仅连接参数变化才重启」。
+2. **MCP 工具在 Trae 会话里的可见性取决于会话建立时机**：服务上线前就已创建/续接的会话，其工具表不会注入这 5 个工具（本轮 Trae 自身完成了 initialize / initialized / tools/list / SSE 探测，但模型侧未拿到工具，`tools/call` 是用同一报文特征回放执行的）。要在 Trae 里让模型直接调用，请新开一个会话。
+3. 本轮结束时的本机状态：`mcp.enabled = 开`、`permissionMode = confirm`、`allowedTools = []`（如不希望常驻监听，请在设置页关闭；关闭后 Trae 连接即失效）。
+4. `McpApprovalHost` 只在主窗渲染；实测设置页打开时浮层仍压在设置之上可见（右下角显示待审批条数 + 倒计时），不需要切回主界面。

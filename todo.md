@@ -60,7 +60,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 
 | 能力 | 状态 | 位置 |
 |---|---|---|
-| 对外 MCP 工具接入（进程内 Streamable HTTP + 5 工具 + 设置页 AI tab + confirm 写操作审批） | ✅ | `src-tauri/src/mcp/`、`src-tauri/src/commands/mcp.rs`、`src/mcp/McpApprovalHost.tsx`、`src/settings/AiTab.tsx`、`src/backend/client.ts`、`docs/mcp-port-plan.md`；基础面已合入 `bf1cc4b`，approval 见 changelogs 2026-11-08（允许一次 / 始终允许 / 拒绝三路径 + 断开/停止/重启清空 + 跨重启持久化均已实机验证） |
+| 对外 MCP 工具接入（进程内 Streamable HTTP + 5 工具 + 设置页 AI tab + confirm 写操作审批） | ✅ | `src-tauri/src/mcp/`、`src-tauri/src/commands/mcp.rs`、`src/mcp/McpApprovalHost.tsx`、`src/settings/AiTab.tsx`、`src/backend/client.ts`、`docs/mcp-port-plan.md`；基础面已合入 `bf1cc4b`，approval 见 changelogs 2026-11-08（允许一次 / 始终允许 / 拒绝三路径 + 断开/停止/重启清空 + 跨重启持久化均已实机验证）；Trae CN 3.4.15 真实客户端联调通过，SSE 与 `Mcp-Session-Id` 均非必需（见 `docs/mcp-port-plan.md` §11.2） |
 | 终端设置的关键字高亮对四类终端（SSH/本地/串口/Telnet）统一生效 | ✅ | `src/settings/i18n.ts`、`src/terminal/keywordHighlight.ts`（merge 已全局）；实机截图 `docs/verify-ui/hl-*.png`、`func2-settings-all-terminals.png` |
 | 撰写栏「保留发送文本」选项（勾选后发送不清空草稿） | ✅ | `src/terminal/ComposeBar.tsx`、`src/settings/settingsModel.ts`（`terminal.keepComposeText`）、`src/styles.css`；实机截图 `docs/verify-ui/func1-compose-keep.png` |
 | 右栏脚本视图运行后不再显示「已运行 xxx」提示 | ✅ | `src/terminal/ScriptsSidePanel.tsx`；实机截图 `docs/verify-ui/ui4-scripts-no-run-notice.png` |
