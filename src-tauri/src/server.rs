@@ -1151,6 +1151,7 @@ fn dispatch(
                 allow_custom_bind: cfg.allow_custom_bind,
                 listen_address: cfg.listen_address,
                 client_host: cfg.client_host,
+                workspace_root: crate::mcp::config::workspace_root(&state.db),
                 tool_count: crate::mcp::tools::definitions()
                     .as_array()
                     .map(|a| a.len())
