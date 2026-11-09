@@ -590,7 +590,7 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | M1 只读工具 | ✅ 完成 | `get_environment`（hosts / hostId / origin / ttl）、`fs_read`、`fs_grep`、`fs_glob`；perl 兜底延后 |
 | M2 写工具 | ✅ 完成 | `fs_patch`（多文件 + dryRun + 歧义行号）、`fs_write`（≤512 KiB + sha256 + overwrite 保护）；审批 + 审计接入；`remote_script.rs` 共享转义 |
 | M3 传输 | ✅ 完成 | `sftp_put` / `sftp_get`：`items[]` 批量、递归（≤2000 项）、双向 overwrite 保护、流式 sha256、部分失败逐项返回 |
-| M4 删除 | 🟨 进行中 | `fs_delete`（dry-run + confirmToken） |
-| M5 执行 | ⬜ 未开始 | `build_run`、`term_run` 策略化 |
+| M4 删除 | ✅ 完成 | `fs_delete`：dryRun 默认 true + 5 分钟 confirmToken（绑定会话/路径/递归、取用即失效）+ realpath 复核 |
+| M5 执行 | 🟨 进行中 | `build_run`（尾部偏置截断 + tee）、`term_run` 策略化 |
 | M6 复合 | ⬜ 未开始 | `batch` |
 | M7 文档与前端 | ⬜ 未开始 | `mcp-guide` / `mcp-port-plan` / AI 设置页工具矩阵 + `mcp.workspace_root` 字段 |

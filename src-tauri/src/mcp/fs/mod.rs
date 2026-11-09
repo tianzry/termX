@@ -4,6 +4,7 @@
 //! 不拼 shell、不走命令黑名单；传输只回路径/大小/校验和。
 
 pub mod caps;
+pub mod delete;
 pub mod glob;
 pub mod grep;
 pub mod handle;

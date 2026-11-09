@@ -414,6 +414,39 @@ sessionId 与 hostId 二选一。",
         false,
     ));
 
+    items.push(remote_file_tool(
+        "fs_delete",
+        "写操作（两次确认）。先 dryRun=true 列出将删对象并返回 confirmToken；核对后以 dryRun=false + confirmToken 真正删除。\
+何时用：清理构建产物、临时文件、确认无用的文件；目录必须 recursive=true。\
+何时不用：不确定内容时先用 fs_glob / fs_read；token 5 分钟过期且绑定会话与路径集合，不要臆造或复用。\
+受权限档位约束；sessionId 与 hostId 二选一。",
+        json!({
+            "paths": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 200,
+                "items": { "type": "string" },
+                "description": "远端路径列表，支持 ~ 与相对 workspace 根"
+            },
+            "recursive": {
+                "type": "boolean",
+                "default": false,
+                "description": "允许删除目录（递归）"
+            },
+            "dryRun": {
+                "type": "boolean",
+                "default": true,
+                "description": "默认 true：只返回待删清单与 confirmToken"
+            },
+            "confirmToken": {
+                "type": "string",
+                "description": "dryRun 返回的 token，dryRun=false 时必填"
+            }
+        }),
+        &["paths"],
+        false,
+    ));
+
     list
 }
 
@@ -994,6 +1027,89 @@ pub async fn call_tool(
                 Err(e) => tool_error(e),
             }
         }
+        "fs_delete" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            let dry_run = args
+                .get("dryRun")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let count = args
+                .get("paths")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0);
+            // dry-run 只是预览，不触发审批；真正删除才走权限闸门。
+            if !dry_run {
+                if let Err(e) = approval_gate(
+                    cfg,
+                    rt,
+                    app,
+                    gen,
+                    disconnected.clone(),
+                    "fs_delete",
+                    format!("删除 {count} 项（recursive）"),
+                    args.clone(),
+                    Some(session.session_id.clone()),
+                    Some(session.profile_id.clone()),
+                )
+                .await
+                {
+                    runtime_state::record_audit(change_entry(
+                        "fs_delete",
+                        Some(&session.session_id),
+                        None,
+                        None,
+                        None,
+                        "denied",
+                    ));
+                    return e;
+                }
+            }
+            match super::fs::delete::fs_delete(state, &session.session_id, args, &jail_root).await {
+                Ok(outcome) => {
+                    for entry in &outcome.entries {
+                        runtime_state::record_audit(change_entry(
+                            "fs_delete",
+                            Some(&session.session_id),
+                            Some(&entry.path),
+                            Some(entry.size),
+                            None,
+                            if outcome.dry_run { "dry_run" } else { "applied" },
+                        ));
+                    }
+                    let items: Vec<Value> =
+                        outcome.entries.iter().map(|entry| entry.to_json()).collect();
+                    let data = if outcome.dry_run {
+                        json!({
+                            "dryRun": true,
+                            "wouldDelete": items,
+                            "confirmToken": outcome.confirm_token,
+                            "expiresInSec": runtime_state::DELETE_TOKEN_TTL.as_secs(),
+                        })
+                    } else {
+                        json!({ "dryRun": false, "deleted": items })
+                    };
+                    ToolResult::ok(
+                        if outcome.dry_run {
+                            "删除计划已生成（未删除任何文件）"
+                        } else {
+                            "已删除"
+                        },
+                        if outcome.dry_run {
+                            "核对 wouldDelete 后，以 dryRun=false + confirmToken 再调用执行。"
+                        } else {
+                            "删除不可恢复；如需确认目录状态可再用 fs_glob。"
+                        },
+                        data,
+                    )
+                }
+                Err(e) => tool_error(e),
+            }
+        }
         "terminal_execute" => {
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
@@ -1183,7 +1299,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 12);
+        assert_eq!(list.len(), 13);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
@@ -1239,6 +1355,15 @@ mod tests {
                 "{name}"
             );
         }
+
+        let delete = list.iter().find(|t| t["name"] == "fs_delete").unwrap();
+        assert_eq!(delete["annotations"]["readOnlyHint"], false);
+        assert_eq!(delete["annotations"]["destructiveHint"], true);
+        assert_eq!(delete["inputSchema"]["required"], json!(["paths"]));
+        assert_eq!(
+            delete["inputSchema"]["properties"]["dryRun"]["default"],
+            true
+        );
     }
 
     #[test]

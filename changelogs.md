@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M4：删除工具（fs_delete）
+
+- 新增 `mcp/fs/delete.rs`：`paths[]`（≤200）+ `recursive`；目录未显式 `recursive=true` 直接回 `mcp_delete_is_dir`。
+- 两阶段删除：`dryRun` 默认 **true**，只返回 `wouldDelete[{path,size,isDir}]` + `confirmToken`；`dryRun=false` 必须带 token 才真正删除。
+- token 存储进 `runtime_state`：5 分钟 TTL、绑定「会话 + 规范化路径集合 + recursive」、**取用即失效**（即使后续校验不通过也作废，避免反复试探）；额外错误码 `mcp_delete_token_required` / `mcp_delete_token_invalid` / `mcp_delete_token_mismatch`。
+- 安全：每个路径先 `normalize` + jail，再 `realpath` 复核（防软链逃逸）；文件走 `remove_file`，目录走 lstat + 递归 `remove`，删软链只删链接本身。
+- dry-run 不触发审批弹窗（只预览），真实删除才走 `approval_gate`；dry-run 与真实删除都逐条写审计（`dry_run` / `applied`）。
+- 踩坑 103：`dryRun` 缺省为 true 是刻意设计 —— agent 漏传参数时宁可多一轮也不误删；token 校验失败也消费掉，避免同一 token 被反复枚举路径组合。
+- 门禁：`cargo check --lib` ✓、`cargo test --lib mcp::` 56 ✓（新增 delete 3 条单测）。
+
+---
+
 ## 2026-11-09 — MCP 整改 M3：传输工具（sftp_put / sftp_get）
 
 - 新增 `mcp/fs/transfer.rs`：`items[]` 批量 + 目录递归（本地 `read_dir` 迭代栈 / 远端 `walk_files`），单次展开上限 2000 个文件。
