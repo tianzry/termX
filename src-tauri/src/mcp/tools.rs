@@ -25,6 +25,8 @@ use crate::state::{AppState, SessionKind, SessionOwner};
 const HINT_SESSION_ID: &str =
     "先调用 get_environment 获取当前活跃会话，用返回的 sessions[].id 作为 sessionId；不要臆造 id。";
 const HINT_PERMISSION: &str = "写操作受「设置 → AI → 工具接入」权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接放行。";
+/// 非 SSH 会话（串口 / Telnet）没有 SFTP 与 exec 通道时的 agent 自纠指引。
+const HINT_SSH_ONLY: &str = "该工具需要 SSH 会话的 SFTP / exec 通道，串口（serial）与 Telnet 会话不提供；请改传 get_environment 里 kind 为 ssh 的 sessions[].id，或让用户在 termX 中建立 SSH 连接。";
 
 /// `batch` 允许组合的工具：只读 + 非破坏性写原语。
 const BATCH_TOOLS: &[&str] = &["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write"];
@@ -129,11 +131,14 @@ fn remote_args_common(props: &mut serde_json::Map<String, Value>) {
 }
 
 fn tool_error(e: crate::error::AppError) -> ToolResult {
-    ToolResult::err(
-        e.code(),
-        e.to_string(),
-        "按 code 修正参数；会话/主机相关错误先调用 get_environment 确认。",
-    )
+    let hint = match e.code() {
+        "mcp_unsupported_session_kind" => HINT_SSH_ONLY,
+        "mcp_session_not_ready" => {
+            "该 sessionId 是 SSH 会话但尚未 ready（建连中或已关闭）；先 get_environment 确认 phase=ready 再重试。"
+        }
+        _ => "按 code 修正参数；会话/主机相关错误先调用 get_environment 确认。",
+    };
+    ToolResult::err(e.code(), e.to_string(), hint)
 }
 
 /// 远端只读文件工具的统一构造：`sessionId` / `hostId` 二选一。
@@ -545,19 +550,6 @@ op.args 未带 sessionId / hostId 时自动继承顶层值；stopOnError 默认 
     list
 }
 
-fn kind_name(kind: SessionKind) -> &'static str {
-    match kind {
-        SessionKind::Ssh => "ssh",
-        #[cfg(desktop)]
-        SessionKind::Pty => "pty",
-        #[cfg(desktop)]
-        SessionKind::Serial => "serial",
-        SessionKind::Telnet => "telnet",
-        SessionKind::Sftp => "sftp",
-        SessionKind::Forward => "forward",
-    }
-}
-
 fn summarize_command(command: &str) -> String {
     const MAX_CHARS: usize = 200;
     let trimmed = command.trim();
@@ -721,7 +713,7 @@ fn environment(state: &AppState) -> Result<Value, ToolResult> {
     for (id, record) in registry.iter() {
         sessions.push(json!({
             "id": id,
-            "kind": kind_name(record.kind),
+            "kind": record.kind.as_str(),
             "phase": match record.phase {
                 crate::state::SessionPhase::Pending => "pending",
                 crate::state::SessionPhase::Ready => "ready",
@@ -1497,7 +1489,7 @@ pub async fn call_tool(
                 Ok(v) => v,
                 Err(e) => return e,
             };
-            let target_label = Some(format!("{} · {}", kind_name(kind), session_id));
+            let target_label = Some(format!("{} · {}", kind.as_str(), session_id));
             if let Err(e) = approval_gate(
                 cfg,
                 rt,
@@ -1546,7 +1538,7 @@ pub async fn call_tool(
                 Ok(v) => v,
                 Err(e) => return e,
             };
-            let target_label = Some(format!("{} · {}", kind_name(kind), session_id));
+            let target_label = Some(format!("{} · {}", kind.as_str(), session_id));
             if let Err(e) = approval_gate(
                 cfg,
                 rt,
@@ -1721,5 +1713,24 @@ mod tests {
         let parsed: Value = serde_json::from_str(&ok.text).unwrap();
         assert!(parsed["sessions"].is_array());
         assert_eq!(parsed["hostCount"], 1);
+    }
+
+    #[test]
+    fn unsupported_session_kind_keeps_code_and_points_agent_to_ssh() {
+        let result = tool_error(crate::error::AppError::config(
+            "mcp_unsupported_session_kind",
+            json!({ "id": "serial-1", "kind": "serial" }),
+        ));
+        assert!(result.is_error);
+        let parsed: Value = serde_json::from_str(&result.text).unwrap();
+        assert_eq!(parsed["code"], "mcp_unsupported_session_kind");
+        assert!(parsed["message"]
+            .as_str()
+            .unwrap()
+            .contains("mcp_unsupported_session_kind"));
+        let hint = parsed["hint"].as_str().unwrap();
+        assert!(hint.contains("SSH"));
+        assert!(hint.contains("serial"));
+        assert!(hint.contains("Telnet"));
     }
 }

@@ -74,12 +74,7 @@ fn ready_by_id(state: &AppState, session_id: &str) -> AppResult<ResolvedSession>
         let record = registry.get(session_id).ok_or_else(|| {
             AppError::not_found("mcp_session_not_found", json!({ "id": session_id }))
         })?;
-        if record.kind != SessionKind::Ssh || record.phase != SessionPhase::Ready {
-            return Err(AppError::config(
-                "mcp_session_not_ready",
-                json!({ "id": session_id }),
-            ));
-        }
+        ensure_ssh_ready(session_id, record.kind, record.phase)?;
         origin_of(record.owner.clone())
     };
     let handle = {
@@ -97,6 +92,25 @@ fn ready_by_id(state: &AppState, session_id: &str) -> AppResult<ResolvedSession>
         handle: handle.ssh_handle().clone(),
         origin,
     })
+}
+
+/// 需要 SFTP / exec 通道的工具只接受 ready 的 SSH 会话：
+/// - 其它传输（串口 / Telnet / PTY / SFTP / 转发）回 `mcp_unsupported_session_kind`；
+/// - SSH 但未 ready 回 `mcp_session_not_ready`。
+fn ensure_ssh_ready(session_id: &str, kind: SessionKind, phase: SessionPhase) -> AppResult<()> {
+    if kind != SessionKind::Ssh {
+        return Err(AppError::config(
+            "mcp_unsupported_session_kind",
+            json!({ "id": session_id, "kind": kind.as_str() }),
+        ));
+    }
+    if phase != SessionPhase::Ready {
+        return Err(AppError::config(
+            "mcp_session_not_ready",
+            json!({ "id": session_id }),
+        ));
+    }
+    Ok(())
 }
 
 fn origin_of(owner: SessionOwner) -> SessionOrigin {
@@ -169,4 +183,63 @@ fn find_ready_for_host(state: &AppState, host_id: &str) -> AppResult<Option<Reso
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 取出 `__termx_err__|{...}` 协议串里的 code 与 params。
+    fn error_parts(result: AppResult<()>) -> (&'static str, Value) {
+        let error = result.expect_err("expected an error");
+        let text = error.to_string();
+        let payload = text
+            .strip_prefix("__termx_err__|")
+            .unwrap_or_else(|| panic!("missing protocol prefix: {text}"));
+        let value: Value = serde_json::from_str(payload).expect("params must be JSON");
+        (error.code(), value["params"].clone())
+    }
+
+    #[test]
+    fn non_ssh_session_kinds_report_unsupported() {
+        let (code, params) = error_parts(ensure_ssh_ready(
+            "telnet-1",
+            SessionKind::Telnet,
+            SessionPhase::Ready,
+        ));
+        assert_eq!(code, "mcp_unsupported_session_kind");
+        assert_eq!(params, json!({ "id": "telnet-1", "kind": "telnet" }));
+
+        let (code, params) = error_parts(ensure_ssh_ready(
+            "sftp-1",
+            SessionKind::Sftp,
+            SessionPhase::Pending,
+        ));
+        assert_eq!(code, "mcp_unsupported_session_kind");
+        assert_eq!(params, json!({ "id": "sftp-1", "kind": "sftp" }));
+
+        #[cfg(desktop)]
+        {
+            let (code, params) = error_parts(ensure_ssh_ready(
+                "serial-1",
+                SessionKind::Serial,
+                SessionPhase::Ready,
+            ));
+            assert_eq!(code, "mcp_unsupported_session_kind");
+            assert_eq!(params, json!({ "id": "serial-1", "kind": "serial" }));
+        }
+    }
+
+    #[test]
+    fn ssh_session_only_fails_when_not_ready() {
+        let (code, params) = error_parts(ensure_ssh_ready(
+            "ssh-1",
+            SessionKind::Ssh,
+            SessionPhase::Pending,
+        ));
+        assert_eq!(code, "mcp_session_not_ready");
+        assert_eq!(params, json!({ "id": "ssh-1" }));
+
+        assert!(ensure_ssh_ready("ssh-1", SessionKind::Ssh, SessionPhase::Ready).is_ok());
+    }
 }

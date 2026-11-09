@@ -600,6 +600,8 @@ get_environment（拿 sessionId / hostId / hosts）
 | `command_blocked` | 命令命中黑名单 | 换命令或调整黑名单 |
 | `mcp_command_destructive` | `build_run` / `term_run` 命中破坏性策略 | 拆分命令；确需执行请在终端手动操作 |
 | `mcp_path_outside_jail` | 路径越出 Workspace 根 | 改用 `~` 或 workspace 内路径，或调整「Workspace 根」 |
+| `mcp_unsupported_session_kind` | 该工具需要 SSH 的 SFTP / exec 通道，但 `sessionId` 指向串口 / Telnet / 其它传输（`params` 带 `id` 与 `kind`） | 改用 `kind=ssh` 的会话；串口 / Telnet 只有各自的字节写工具 |
+| `mcp_session_not_ready` | SSH 会话仍在建连或已关闭 | 重新 `get_environment` 确认 `phase=ready` 后重试 |
 | `mcp_file_exists` / `mcp_local_file_exists` | 目标已存在且 `overwrite=false` | 显式传 `overwrite=true` |
 | `mcp_delete_token_required` / `_invalid` / `_mismatch` | 未先 dryRun、token 过期或参数不一致 | 重新 `dryRun=true` 拿新 token，并保持路径/recursive 一致 |
 | `mcp_delete_is_dir` / `mcp_transfer_is_dir` | 目录未显式递归 | 传 `recursive=true` |

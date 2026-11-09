@@ -27,6 +27,22 @@ pub enum SessionKind {
     Forward,
 }
 
+impl SessionKind {
+    /// 稳定的小写标识：出现在 MCP 返回、错误 params 与前端文案里，不要随 Debug 变化。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionKind::Ssh => "ssh",
+            #[cfg(desktop)]
+            SessionKind::Pty => "pty",
+            #[cfg(desktop)]
+            SessionKind::Serial => "serial",
+            SessionKind::Telnet => "telnet",
+            SessionKind::Sftp => "sftp",
+            SessionKind::Forward => "forward",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SessionOwner {
     Window(String),
