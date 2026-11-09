@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M3：传输工具（sftp_put / sftp_get）
+
+- 新增 `mcp/fs/transfer.rs`：`items[]` 批量 + 目录递归（本地 `read_dir` 迭代栈 / 远端 `walk_files`），单次展开上限 2000 个文件。
+- `sftp_put` 复用 `SftpHandle::upload_streaming`（分块 + `.termx-*.part` 临时文件 + 原子 rename，父目录自动 `mkdir -p`）；`sftp_get` 复用 `download_streaming`（本地父目录自动创建）；进度事件用 `Host::Tauri` 发到前端，MCP 无窗口也安全。
+- 返回只含 `results[{localPath,remotePath,size,sha256,status,code,message}]` + `ok` / `failed`；sha256 双向都由本地文件流式计算，绝不回文件内容。
+- 安全：远端路径过 `normalize` + jail + `realpath`；本地路径必须是绝对路径（相对路径会落到进程 cwd，歧义且危险）；`overwrite` 默认 false，远端/本地已存在分别回 `mcp_file_exists` / `mcp_local_file_exists`。
+- 部分失败不中断：逐项继续并回 `transfer_partial`，每项带独立 code；成功项逐条写变更审计。
+- 踩坑 101：`TransferOutcome::failure(item.local, remote, &AppError::config(..., json!({"path": item.local})))` 会因实参从左到右求值触发 move-after-move（E0382）；先把 `AppError` 建好再 move 路径。
+- 踩坑 102：递归下载的子项仍要做字符串级 jail 检查；`walk_files` 已对软链目录去环，但不等价于逐文件 `realpath`，根目录仍单独 `realpath` 复核。
+- 门禁：`cargo check --lib` ✓、`cargo test --lib mcp::` 53 ✓（新增 transfer 4 条单测）。
+
+---
+
 ## 2026-11-09 — MCP 整改 M2：写工具（fs_patch / fs_write）
 
 - 新增 `ai/remote_script.rs`：把 `file_ops.rs` 里的 `ansi_c_quote` / `shell_quote` / `validate_path` / `prepare_remote_path` 提成共享纯函数（带单测），`file_ops.rs` 只留 `build_script_cmd` 与会话编排；`mcp/fs/shell.rs` 改为委托 + 错误码映射，两端不再各写一份转义。

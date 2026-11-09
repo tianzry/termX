@@ -44,6 +44,19 @@ impl ToolResult {
             is_error: true,
         }
     }
+
+    /// 失败但仍需回逐项结果（批量/传输部分失败时调用方要看到哪几项成功）。
+    fn err_with_data(
+        code: &str,
+        message: impl Into<String>,
+        hint: impl Into<String>,
+        data: Value,
+    ) -> Self {
+        Self {
+            text: envelope(code, message, hint, Some(data)).to_string(),
+            is_error: true,
+        }
+    }
 }
 
 /// 统一信封：`{code, message, hint}`；成功时把业务字段平铺进来。
@@ -347,6 +360,60 @@ sessionId 与 hostId 二选一。",
         false,
     ));
 
+    items.push(remote_file_tool(
+        "sftp_put",
+        "写操作。把本地文件/目录流式上传到远端，只回 path / size / sha256，不回文件内容。\
+何时用：上传源码树、构建脚本等大文件或整目录（recursive=true）；token 成本与文件大小无关。\
+何时不用：小文本用 fs_write；改局部用 fs_patch；本地路径必须是绝对路径。\
+受权限档位约束；sessionId 与 hostId 二选一。",
+        json!({
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2000,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "localPath": { "type": "string", "description": "本地绝对路径（文件或目录）" },
+                        "remotePath": { "type": "string", "description": "远端目标路径，支持 ~ 与相对 workspace 根" }
+                    },
+                    "required": ["localPath", "remotePath"]
+                }
+            },
+            "overwrite": { "type": "boolean", "default": false, "description": "远端已存在时必须显式置 true" },
+            "recursive": { "type": "boolean", "default": false, "description": "目录递归上传" }
+        }),
+        &["items"],
+        false,
+    ));
+
+    items.push(remote_file_tool(
+        "sftp_get",
+        "写操作。把远端文件/目录流式下载到本地，只回 path / size / sha256，不回文件内容。\
+何时用：下载编译产物、日志归档等；recursive=true 可整目录拉回。\
+何时不用：只需要查看内容用 fs_read 开窗；本地路径必须是绝对路径且默认不覆盖已存在文件。\
+受权限档位约束；sessionId 与 hostId 二选一。",
+        json!({
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2000,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "remotePath": { "type": "string", "description": "远端源路径，支持 ~ 与相对 workspace 根" },
+                        "localPath": { "type": "string", "description": "本地目标绝对路径（文件或目录）" }
+                    },
+                    "required": ["remotePath", "localPath"]
+                }
+            },
+            "overwrite": { "type": "boolean", "default": false, "description": "本地已存在时必须显式置 true" },
+            "recursive": { "type": "boolean", "default": false, "description": "目录递归下载" }
+        }),
+        &["items"],
+        false,
+    ));
+
     list
 }
 
@@ -401,6 +468,60 @@ fn patch_targets(args: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn transfer_count(args: &Value) -> usize {
+    args.get("items")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+/// 传输结果统一收口：逐项写审计，回 `results[]` + ok/failed 计数。
+fn transfer_result(
+    tool: &str,
+    session_id: &str,
+    results: Vec<super::fs::transfer::TransferOutcome>,
+) -> ToolResult {
+    let mut items = Vec::with_capacity(results.len());
+    let mut ok = 0usize;
+    for outcome in &results {
+        if outcome.ok {
+            ok += 1;
+            runtime_state::record_audit(change_entry(
+                tool,
+                Some(session_id),
+                Some(&outcome.remote_path),
+                Some(outcome.size),
+                Some(&outcome.sha256),
+                "applied",
+            ));
+        }
+        items.push(outcome.to_json());
+    }
+    let failed = results.len() - ok;
+    let data = json!({ "results": items, "ok": ok, "failed": failed });
+    if failed == 0 {
+        ToolResult::ok(
+            "传输完成",
+            "需要校验时对比返回的 sha256；目录已按文件逐项返回。",
+            data,
+        )
+    } else if ok == 0 {
+        ToolResult::err_with_data(
+            "transfer_failed",
+            format!("{failed} 项全部失败"),
+            "按 results[].code 修正：已存在时置 overwrite=true；目录置 recursive=true；本地路径必须是绝对路径。",
+            data,
+        )
+    } else {
+        ToolResult::err_with_data(
+            "transfer_partial",
+            format!("{ok} 项成功，{failed} 项失败"),
+            "按 results[].code 修正失败项后只重传这部分。",
+            data,
+        )
+    }
 }
 
 /// 写操作审批：auto 直接放行；observer 直接拒绝；confirm 先查许可记忆表，再走 UI 审批。
@@ -785,6 +906,94 @@ pub async fn call_tool(
                 Err(e) => tool_error(e),
             }
         }
+        "sftp_put" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            let count = transfer_count(args);
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "sftp_put",
+                format!("上传 {count} 项到远端"),
+                args.clone(),
+                Some(session.session_id.clone()),
+                Some(session.profile_id.clone()),
+            )
+            .await
+            {
+                runtime_state::record_audit(change_entry(
+                    "sftp_put",
+                    Some(&session.session_id),
+                    None,
+                    None,
+                    None,
+                    "denied",
+                ));
+                return e;
+            }
+            match super::fs::transfer::sftp_put(
+                app,
+                state,
+                &session.session_id,
+                args,
+                &jail_root,
+            )
+            .await
+            {
+                Ok(results) => transfer_result("sftp_put", &session.session_id, results),
+                Err(e) => tool_error(e),
+            }
+        }
+        "sftp_get" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            let count = transfer_count(args);
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "sftp_get",
+                format!("下载 {count} 项到本地"),
+                args.clone(),
+                Some(session.session_id.clone()),
+                Some(session.profile_id.clone()),
+            )
+            .await
+            {
+                runtime_state::record_audit(change_entry(
+                    "sftp_get",
+                    Some(&session.session_id),
+                    None,
+                    None,
+                    None,
+                    "denied",
+                ));
+                return e;
+            }
+            match super::fs::transfer::sftp_get(
+                app,
+                state,
+                &session.session_id,
+                args,
+                &jail_root,
+            )
+            .await
+            {
+                Ok(results) => transfer_result("sftp_get", &session.session_id, results),
+                Err(e) => tool_error(e),
+            }
+        }
         "terminal_execute" => {
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
@@ -974,7 +1183,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 10);
+        assert_eq!(list.len(), 12);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
@@ -1014,6 +1223,22 @@ mod tests {
         let write = list.iter().find(|t| t["name"] == "fs_write").unwrap();
         assert_eq!(write["annotations"]["readOnlyHint"], false);
         assert_eq!(write["inputSchema"]["required"], json!(["path", "content"]));
+
+        for name in ["sftp_put", "sftp_get"] {
+            let tool = list.iter().find(|t| t["name"] == name).unwrap();
+            assert_eq!(tool["annotations"]["readOnlyHint"], false, "{name}");
+            assert_eq!(tool["inputSchema"]["required"], json!(["items"]), "{name}");
+            let expected: &[&str] = if name == "sftp_put" {
+                &["localPath", "remotePath"]
+            } else {
+                &["remotePath", "localPath"]
+            };
+            assert_eq!(
+                tool["inputSchema"]["properties"]["items"]["items"]["required"],
+                json!(expected),
+                "{name}"
+            );
+        }
     }
 
     #[test]

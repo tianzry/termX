@@ -12,6 +12,7 @@ pub mod path;
 pub mod read;
 pub mod session;
 pub mod shell;
+pub mod transfer;
 pub mod write;
 
 /// `fs_read` 默认开窗行数。
