@@ -23,9 +23,11 @@ pub struct DeleteToken {
 }
 
 pub struct McpRuntimeState {
-    /// MCP 自动建连的会话 owner —— 与用户窗口会话区分，便于识别与清理。
+    /// 默认客户端（旧单 token）的会话 owner。
     pub owner: uuid::Uuid,
-    /// `hostId` → 建连闸门：并发请求共享同一次建连。
+    /// 多客户端：客户端 id → 会话 owner。默认客户端复用 `owner`。
+    pub client_owners: Mutex<HashMap<String, uuid::Uuid>>,
+    /// `client:hostId` → 建连闸门：并发请求共享同一次建连，且不同客户端不互相阻塞。
     pub connect_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// `profile_id` → 远端能力探测结果。
     pub caps: Mutex<HashMap<String, RemoteCaps>>,
@@ -38,6 +40,7 @@ impl McpRuntimeState {
     fn new() -> Self {
         Self {
             owner: uuid::Uuid::new_v4(),
+            client_owners: Mutex::new(HashMap::new()),
             connect_gates: Mutex::new(HashMap::new()),
             caps: Mutex::new(HashMap::new()),
             delete_tokens: Mutex::new(HashMap::new()),
@@ -55,15 +58,30 @@ pub fn mcp_owner() -> uuid::Uuid {
     state().owner
 }
 
-/// 取（或创建）某主机的建连闸门。`std::sync::MutexGuard` 在函数返回前释放，
-/// 因此可以在 `await` 前安全调用。
-pub fn connect_gate(host_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+/// 每个客户端一个稳定 owner（进程内首次使用时生成）。默认客户端沿用旧 owner，
+/// 保证升级后旧会话仍可被同一身份识别。
+pub fn owner_for_client(client_id: &str) -> uuid::Uuid {
+    if client_id == "default" {
+        return mcp_owner();
+    }
+    let mut owners = state()
+        .client_owners
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *owners
+        .entry(client_id.to_string())
+        .or_insert_with(uuid::Uuid::new_v4)
+}
+
+/// 取（或创建）某客户端 + 某主机的建连闸门。
+pub fn connect_gate(client_id: &str, host_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let key = format!("{client_id}\u{0}{host_id}");
     let mut gates = state()
         .connect_gates
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     gates
-        .entry(host_id.to_string())
+        .entry(key)
         .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
         .clone()
 }

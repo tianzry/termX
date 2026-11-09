@@ -11,6 +11,7 @@ use crate::error::{locked, AppError, AppResult};
 use crate::ssh::client::SshHandle;
 use crate::state::{AppState, SessionKind, SessionOwner, SessionPhase};
 
+use super::super::config::McpClient;
 use super::super::runtime_state;
 
 /// 会话来源：用户窗口打开，或 MCP 自动建立。
@@ -53,27 +54,47 @@ pub fn host_id_arg(args: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// 会话对客户端可见：用户窗口会话共享；MCP 自动建连的只归建立它的客户端。
+pub fn visible_to_client(owner: &SessionOwner, client: &McpClient) -> bool {
+    match owner {
+        SessionOwner::Window(_) => true,
+        SessionOwner::Headless(id) => *id == runtime_state::owner_for_client(&client.id),
+    }
+}
+
+fn forbidden(session_id: &str) -> AppError {
+    AppError::config("mcp_session_forbidden", json!({ "id": session_id }))
+}
+
 /// 解析工具参数里的会话：`sessionId` 优先，其次 `hostId`。
 pub async fn resolve(
     app: &AppHandle,
     state: &AppState,
     args: &Value,
+    client: &McpClient,
 ) -> AppResult<ResolvedSession> {
     if let Some(session_id) = session_id_arg(args) {
-        return ready_by_id(state, &session_id);
+        return ready_by_id(state, &session_id, client);
     }
     if let Some(host_id) = host_id_arg(args) {
-        return ensure_for_host(app, state, &host_id).await;
+        return ensure_for_host(app, state, &host_id, client).await;
     }
     Err(AppError::config("mcp_session_missing", json!({})))
 }
 
-fn ready_by_id(state: &AppState, session_id: &str) -> AppResult<ResolvedSession> {
+fn ready_by_id(
+    state: &AppState,
+    session_id: &str,
+    client: &McpClient,
+) -> AppResult<ResolvedSession> {
     let origin = {
         let registry = locked(&state.lifecycle_sessions)?;
         let record = registry.get(session_id).ok_or_else(|| {
             AppError::not_found("mcp_session_not_found", json!({ "id": session_id }))
         })?;
+        if !visible_to_client(&record.owner, client) {
+            return Err(forbidden(session_id));
+        }
         ensure_ssh_ready(session_id, record.kind, record.phase)?;
         origin_of(record.owner.clone())
     };
@@ -120,25 +141,26 @@ fn origin_of(owner: SessionOwner) -> SessionOrigin {
     }
 }
 
-/// 复用该主机的 ready 会话；没有就自动建连（并发请求单飞）。
+/// 复用该主机的 ready 会话；没有就自动建连（同客户端同主机单飞）。
 pub async fn ensure_for_host(
     app: &AppHandle,
     state: &AppState,
     host_id: &str,
+    client: &McpClient,
 ) -> AppResult<ResolvedSession> {
     // 先确认 vault 里有这个主机档案；不存在直接回 not_found，避免无意义建连。
     crate::db::profile::get(&state.db, host_id)?;
-    if let Some(found) = find_ready_for_host(state, host_id)? {
+    if let Some(found) = find_ready_for_host(state, host_id, client)? {
         return Ok(found);
     }
 
-    let gate = runtime_state::connect_gate(host_id);
+    let gate = runtime_state::connect_gate(&client.id, host_id);
     let _guard = gate.lock().await;
-    if let Some(found) = find_ready_for_host(state, host_id)? {
+    if let Some(found) = find_ready_for_host(state, host_id, client)? {
         return Ok(found);
     }
 
-    let owner = SessionOwner::Headless(runtime_state::mcp_owner());
+    let owner = SessionOwner::Headless(runtime_state::owner_for_client(&client.id));
     crate::commands::session::connect_profile(
         app.clone(),
         state,
@@ -152,17 +174,23 @@ pub async fn ensure_for_host(
     )
     .await?;
 
-    find_ready_for_host(state, host_id)?
+    find_ready_for_host(state, host_id, client)?
         .ok_or_else(|| AppError::other("mcp_session_lost", json!({ "hostId": host_id })))
 }
 
-fn find_ready_for_host(state: &AppState, host_id: &str) -> AppResult<Option<ResolvedSession>> {
+fn find_ready_for_host(
+    state: &AppState,
+    host_id: &str,
+    client: &McpClient,
+) -> AppResult<Option<ResolvedSession>> {
     let candidates: Vec<(String, SessionOrigin)> = {
         let registry = locked(&state.lifecycle_sessions)?;
         registry
             .iter()
             .filter(|(_, record)| {
-                record.kind == SessionKind::Ssh && record.phase == SessionPhase::Ready
+                record.kind == SessionKind::Ssh
+                    && record.phase == SessionPhase::Ready
+                    && visible_to_client(&record.owner, client)
             })
             .map(|(id, record)| (id.clone(), origin_of(record.owner.clone())))
             .collect()

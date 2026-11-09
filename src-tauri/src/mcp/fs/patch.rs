@@ -12,7 +12,7 @@ use crate::error::{AppError, AppResult};
 use crate::ssh::client::{exec_once, SshHandle};
 use crate::state::AppState;
 
-use super::{caps, handle, path as jail, shell};
+use super::{caps, handle, path as pathutil, shell};
 
 const MAX_EDITS: usize = 20;
 const MAX_OPS_JSON_BYTES: usize = 256 * 1024;
@@ -97,7 +97,6 @@ pub async fn fs_patch(
     profile_id: &str,
     ssh: &SshHandle,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<Vec<PatchResult>> {
     let edits = args
         .get("edits")
@@ -122,7 +121,6 @@ pub async fn fs_patch(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
 
     let mut results = Vec::new();
     for edit in edits {
@@ -138,11 +136,7 @@ pub async fn fs_patch(
             .filter(|list| !list.is_empty())
             .ok_or_else(|| AppError::config("mcp_missing_argument", json!({ "arg": "ops" })))?;
 
-        let target = jail::normalize(input, &home, &root)?;
-        jail::check(&root, &target)?;
-        if let Ok(real) = sftp.realpath(&target).await {
-            jail::check(&root, &real)?;
-        }
+        let target = pathutil::normalize(input, &home, &home)?;
         sftp.stat(&target)
             .await
             .map_err(|_| AppError::not_found("mcp_patch_not_found", json!({ "path": target })))?;

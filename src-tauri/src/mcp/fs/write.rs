@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
-use super::{handle, path as jail};
+use super::{handle, path as pathutil};
 
 /// `fs_write` 只用于小文本；大文件走 `sftp_put`。
 pub const MAX_WRITE_BYTES: usize = 512 * 1024;
@@ -26,7 +26,6 @@ pub async fn fs_write(
     state: &AppState,
     session_id: &str,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<WriteOutcome> {
     let input = args
         .get("path")
@@ -51,12 +50,7 @@ pub async fn fs_write(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
-    let target = jail::normalize(input, &home, &root)?;
-    jail::check(&root, &target)?;
-    if let Ok(real) = sftp.realpath(&target).await {
-        jail::check(&root, &real)?;
-    }
+    let target = pathutil::normalize(input, &home, &home)?;
 
     let created = sftp.stat(&target).await.is_err();
     if !created && !overwrite {

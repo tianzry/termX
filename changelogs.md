@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-09 — MCP 多客户端：移除 workspace 目录限制
+
+- 去掉全局 `mcp.workspace_root` 与 per-client `workspaceRoot`：`McpStatus` / `McpConfigPatch` / `McpClientConfig` / `McpClient` 均不再携带；旧 settings 里的键与 JSON 字段会被忽略（serde 默认忽略未知字段），保存一次客户端后自然清掉。
+- `fs/path.rs` 只保留 `normalize`（`~` 展开、相对 home 解析、`.` / `..` 折叠），删除 `is_within` / `check` 与 `mcp_path_outside_jail`；`fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` / `build_run` 不再做目录范围校验，相对路径与 `cwd` 的基址统一为远端 home。
+- 一个 token 可服务同一 agent 的多个会话与任意工作目录，无需按目录拆分客户端；权限档与工具白名单仍按客户端生效，自动建连会话仍按 owner 隔离。
+- 前端移除 AI 设置页「Workspace 根」与客户端行里的同名输入；同步 `guide.rs` instructions、`docs/mcp-guide.md` 与错误表（删除 `mcp_path_outside_jail`）。
+- 安全边界：路径不再受目录限制，写/删可作用于登录用户有权限的任意远端路径；仍保留权限档、审批、`fs_delete` dry-run + token、破坏性命令策略与审计。
+- 门禁：`tsc --noEmit` ✓、`cargo check` ✓、`cargo test --lib mcp::` 68 ✓、`npm run test:run` 921 ✓。
+
+---
+
 ## 2026-11-09 — MCP 整改 M9：terminal_execute 覆盖四类终端
 
 - `SerialHandle` / `TelnetHandle` 新增 `tap: broadcast::Sender<Vec<u8>>` 与 `subscribe()`：读线程仍是唯一读取者，在把 `Data` 交给前端 sink 的同时按需再广播一份（`receiver_count()>0` 才 clone），不新开串口读取、不改 sink 装配点。MCP 采集与用户 pane 共享同一份字节（物理链路决定的），hint 已写明。

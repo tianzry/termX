@@ -12,7 +12,7 @@ use crate::error::{AppError, AppResult};
 use crate::ssh::client::exec_once;
 use crate::state::AppState;
 
-use super::{caps, handle, path as jail, shell, DEFAULT_MAX_RESULTS, MAX_MAX_RESULTS};
+use super::{caps, handle, path as pathutil, shell, DEFAULT_MAX_RESULTS, MAX_MAX_RESULTS};
 
 const MAX_CONTEXT_LINES: u32 = 3;
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -97,7 +97,6 @@ pub async fn fs_grep(
     profile_id: &str,
     ssh: &crate::ssh::client::SshHandle,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<GrepOutcome> {
     let pattern = args
         .get("pattern")
@@ -137,14 +136,12 @@ pub async fn fs_grep(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
     let input = args
         .get("path")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(".");
-    let search_root = jail::normalize(input, &home, &root)?;
-    jail::check(&root, &search_root)?;
+    let search_root = pathutil::normalize(input, &home, &home)?;
 
     // 多取一条用于判断是否还有下一页。
     let limit = cursor + max_results + 1;

@@ -2014,11 +2014,22 @@ export interface McpStatus {
   allowCustomBind: boolean;
   listenAddress: string;
   clientHost: string;
-  /** 文件类工具的 workspace jail 根（`~` 或绝对路径）。 */
-  workspaceRoot: string;
+  /** 多客户端接入配置：每个 token 一份权限档 / 工具白名单。 */
+  clients: McpClientConfig[];
   toolCount: number;
   /** confirm 档位的放行规则（持久化在设置 KV，见 `PermissionGrant`）。 */
   grants: PermissionGrant[];
+}
+
+/** 一个可接入的 MCP 客户端；token 为空时后端保存时自动生成。 */
+export interface McpClientConfig {
+  id: string;
+  label: string;
+  token: string;
+  /** null = 回退全局权限档。 */
+  permissionMode?: McpPermissionMode | null;
+  /** 空 = 允许全部工具；非空时 tools/list 与 tools/call 都只放行这些名字。 */
+  allowedTools: string[];
 }
 
 /** 许可记忆表规则（1:1 对齐 Netcatty `PermissionGrant`）。 */
@@ -2043,7 +2054,6 @@ export interface McpConfigPatch {
   listenAddress?: string;
   clientHost?: string;
   permissionMode?: McpPermissionMode;
-  workspaceRoot?: string;
 }
 
 export function mcpStatus(): Promise<McpStatus> {
@@ -2056,6 +2066,11 @@ export function mcpSetConfig(patch: McpConfigPatch): Promise<McpStatus> {
 
 export function mcpRotateToken(): Promise<McpStatus> {
   return invoke<McpStatus>("mcp_rotate_token");
+}
+
+/** 保存多客户端配置；空 token 由后端生成。无需重启监听，新 token 立即可用。 */
+export function mcpClientsSave(clients: McpClientConfig[]): Promise<McpClientConfig[]> {
+  return invoke<McpClientConfig[]>("mcp_clients_save", { clients });
 }
 
 /** kind: "codex" | "claude" | "env" | "json"（其余落到通用 JSON）。 */

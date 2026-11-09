@@ -19,7 +19,7 @@ use tokio::sync::Notify;
 
 use crate::state::AppState;
 use super::approval::{self, ApprovalRegistry, ApprovalRequestPayload, TakenApproval};
-use super::config::{self, McpConfig};
+use super::config::{self, McpClient, McpClientConfig, McpConfig};
 use super::tools;
 
 const MAX_HEADER_BYTES: usize = 8 * 1024;
@@ -70,8 +70,8 @@ pub struct McpStatus {
     pub allow_custom_bind: bool,
     pub listen_address: String,
     pub client_host: String,
-    /// 文件类工具的 workspace jail 根（`fs_*` / `sftp_*` 都限制在这里）。
-    pub workspace_root: String,
+    /// 多客户端接入配置（每个 token 一份权限档 / 工具白名单）。
+    pub clients: Vec<McpClientConfig>,
     pub tool_count: usize,
     /// confirm 档位下的放行规则（持久化在设置 KV，形状见 `mcp::grants`）。
     pub grants: Vec<super::grants::PermissionGrant>,
@@ -196,7 +196,7 @@ impl McpRuntime {
             listen_address: cfg.listen_address.clone(),
             client_host: cfg.client_host.clone(),
             // 真实值由 command 层从设置 KV 回填（runtime 不持有 DB）。
-            workspace_root: String::new(),
+            clients: Vec::new(),
             tool_count: tools::definitions().as_array().map(|a| a.len()).unwrap_or(0),
             grants: self.approvals.grants(),
         }
@@ -417,19 +417,27 @@ fn header_ok(req: &HttpRequest, cfg: &McpConfig) -> Result<(), (u16, String)> {
     Ok(())
 }
 
+#[cfg(test)]
 fn auth_ok(req: &HttpRequest, token: Option<&str>) -> bool {
     let Some(expected) = token else {
         return false;
     };
-    let Some(raw) = req.headers.get("authorization") else {
-        return false;
-    };
-    let Some(bearer) = raw.strip_prefix("Bearer ").or_else(|| raw.strip_prefix("bearer ")) else {
-        return false;
-    };
-    // 定长比较，避免时序侧信道。
-    let a = bearer.trim().as_bytes();
-    let b = expected.as_bytes();
+    bearer_token(req)
+        .map(|bearer| token_eq(&bearer, expected))
+        .unwrap_or(false)
+}
+
+fn bearer_token(req: &HttpRequest) -> Option<String> {
+    let raw = req.headers.get("authorization")?;
+    raw.strip_prefix("Bearer ")
+        .or_else(|| raw.strip_prefix("bearer "))
+        .map(|v| v.trim().to_string())
+}
+
+/// 定长比较，避免时序侧信道。
+fn token_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
     if a.len() != b.len() {
         return false;
     }
@@ -438,6 +446,27 @@ fn auth_ok(req: &HttpRequest, token: Option<&str>) -> bool {
         diff |= a[i] ^ b[i];
     }
     diff == 0
+}
+
+/// 认证并解析出客户端身份：
+/// 1. 旧单 token → 默认客户端（沿用全局权限档）；
+/// 2. `mcp.clients` 里的 token → 该客户端自己的权限档 / 工具白名单。
+fn authenticate(
+    req: &HttpRequest,
+    legacy_token: Option<&str>,
+    db: &crate::db::Db,
+    cfg: &McpConfig,
+) -> Option<McpClient> {
+    let bearer = bearer_token(req)?;
+    if let Some(legacy) = legacy_token {
+        if token_eq(&bearer, legacy) {
+            return Some(config::default_client(cfg.permission_mode));
+        }
+    }
+    config::load_clients(db)
+        .into_iter()
+        .find(|client| token_eq(&bearer, &client.token))
+        .map(|client| client.resolve(cfg.permission_mode))
 }
 
 async fn read_request(socket: &mut TcpStream) -> Result<HttpRequest, (u16, String)> {
@@ -564,7 +593,8 @@ async fn serve_connection(
             .await;
         }
         if req.method == "DELETE" {
-            if !auth_ok(&req, token.as_deref()) {
+            let app_state = app.state::<AppState>();
+            if authenticate(&req, token.as_deref(), &app_state.db, &cfg).is_none() {
                 return respond(&mut socket, 401, "application/json", "{\"error\":\"unauthorized\"}", &[("WWW-Authenticate", "Bearer")]).await;
             }
             return respond(&mut socket, 200, "application/json", "{}", &[]).await;
@@ -574,9 +604,13 @@ async fn serve_connection(
     if req.path != "/mcp" && req.path != "/mcp/" {
         return respond(&mut socket, 404, "application/json", "{\"error\":\"not_found\"}", &[]).await;
     }
-    if !auth_ok(&req, token.as_deref()) {
+    let client = {
+        let app_state = app.state::<AppState>();
+        authenticate(&req, token.as_deref(), &app_state.db, &cfg)
+    };
+    let Some(client) = client else {
         return respond(&mut socket, 401, "application/json", "{\"error\":\"unauthorized\"}", &[("WWW-Authenticate", "Bearer")]).await;
-    }
+    };
     let parsed: Result<Value, _> = serde_json::from_slice(&req.body);
     let Ok(payload) = parsed else {
         return respond(&mut socket, 400, "application/json", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"parse_error\"}}", &[]).await;
@@ -609,7 +643,7 @@ async fn serve_connection(
         let mut out = Vec::new();
         let mut only_notifications = true;
         for item in payload.as_array().cloned().unwrap_or_default() {
-            if let Some(resp) = dispatch(&app, &rt, gen, &item, &disconnected).await {
+            if let Some(resp) = dispatch(&app, &rt, gen, &item, &disconnected, &client).await {
                 only_notifications = false;
                 out.push(resp);
             }
@@ -620,7 +654,7 @@ async fn serve_connection(
             (Value::Array(out).to_string(), 200)
         }
     } else {
-        match dispatch(&app, &rt, gen, &payload, &disconnected).await {
+        match dispatch(&app, &rt, gen, &payload, &disconnected, &client).await {
             Some(resp) => (resp.to_string(), 200),
             None => (String::new(), 202),
         }
@@ -634,6 +668,7 @@ async fn dispatch(
     gen: u64,
     req: &Value,
     disconnected: &Arc<AtomicBool>,
+    client: &McpClient,
 ) -> Option<Value> {
     let id = req.get("id").cloned();
     let method = req.get("method").and_then(Value::as_str).unwrap_or("");
@@ -649,7 +684,6 @@ async fn dispatch(
             "error": { "code": -32000, "message": "mcp_restarted" } }));
     }
     let state = app.state::<AppState>();
-    let cfg = rt.config();
 
     let result: Result<Value, (i64, String)> = match method {
         "initialize" => {
@@ -668,13 +702,13 @@ async fn dispatch(
             }))
         }
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools::definitions() })),
+        "tools/list" => Ok(json!({ "tools": tools::definitions_for(client) })),
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             let out = tools::call_tool(
                 &state,
-                &cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -691,7 +725,7 @@ async fn dispatch(
         "resources/list" => Ok(json!({ "resources": tools::resources() })),
         "resources/read" => {
             let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
-            let out = tools::read_resource(&state, uri);
+            let out = tools::read_resource(&state, client, uri);
             if out.is_error {
                 Err((-32602, out.text))
             } else {

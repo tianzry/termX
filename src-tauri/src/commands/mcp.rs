@@ -23,8 +23,6 @@ pub struct McpConfigPatch {
     pub listen_address: Option<String>,
     pub client_host: Option<String>,
     pub permission_mode: Option<String>,
-    /// 文件类工具的 workspace jail 根；空串表示回退默认 `~`。
-    pub workspace_root: Option<String>,
 }
 
 fn runtime(state: &State<'_, McpState>) -> Arc<McpRuntime> {
@@ -89,7 +87,7 @@ fn apply(
     // 启动是异步的：立即读 status 可能仍是 listening=false，把配置里的端口先回给前端，
     // 前端随后通过 mcp_status 轮询到真实 bound port。
     status.enabled = enabled;
-    status.workspace_root = config::workspace_root(&state.db);
+    status.clients = config::load_clients(&state.db);
     Ok(status)
 }
 
@@ -106,8 +104,20 @@ pub fn mcp_status(rt: State<'_, McpState>, state: State<'_, AppState>) -> AppRes
         status.client_host = cfg.client_host.clone();
         status.port = cfg.port;
     }
-    status.workspace_root = config::workspace_root(&state.db);
+    status.clients = config::load_clients(&state.db);
     Ok(status)
+}
+
+/// 保存多客户端接入配置；token 为空时自动生成。
+///
+/// 认证按请求实时读设置，因此保存后无需重启监听，新 token 立即可用。
+#[tauri::command]
+pub fn mcp_clients_save(
+    state: State<'_, AppState>,
+    clients: Vec<config::McpClientConfig>,
+) -> AppResult<Vec<config::McpClientConfig>> {
+    config::save_clients_checked(&state.db, clients)
+        .map_err(|(code, msg)| invalid(code, msg))
 }
 
 #[tauri::command]
@@ -119,16 +129,6 @@ pub fn mcp_set_config(
 ) -> AppResult<McpStatus> {
     let mut cfg = config::load(&state.db);
     merge(&mut cfg, &patch);
-    if let Some(root) = patch.workspace_root.as_ref() {
-        let root = root.trim();
-        if !root.is_empty() && !root.starts_with('~') && !root.starts_with('/') {
-            return Err(invalid(
-                "invalid_workspace_root".to_string(),
-                "workspace 根必须以 ~ 或 / 开头".to_string(),
-            ));
-        }
-        config::save_workspace_root(&state.db, root)?;
-    }
     apply(&app, &state, &runtime(&rt), cfg)
 }
 

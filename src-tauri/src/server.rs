@@ -1151,7 +1151,7 @@ fn dispatch(
                 allow_custom_bind: cfg.allow_custom_bind,
                 listen_address: cfg.listen_address,
                 client_host: cfg.client_host,
-                workspace_root: crate::mcp::config::workspace_root(&state.db),
+                clients: crate::mcp::config::load_clients(&state.db),
                 tool_count: crate::mcp::tools::definitions()
                     .as_array()
                     .map(|a| a.len())
@@ -1163,6 +1163,7 @@ fn dispatch(
         "mcp_set_config"
         | "mcp_rotate_token"
         | "mcp_client_config"
+        | "mcp_clients_save"
         | "mcp_guide"
         | "mcp_approval_pending"
         | "mcp_approval_resolve"

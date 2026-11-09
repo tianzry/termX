@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use super::audit::change_entry;
-use super::config::{McpConfig, PermissionMode};
+use super::config::{McpClient, PermissionMode};
 use super::runtime_state;
 use super::server::McpRuntime;
 use crate::commands::{lifecycle, plugin};
@@ -167,6 +167,49 @@ fn byte_write_tool(name: &str, description: &str, session_desc: &str, example: &
             &["sessionId", "data"]
         ),
         "annotations": { "readOnlyHint": false, "destructiveHint": true }
+    })
+}
+
+/// 串口 / Telnet 只读采集工具：不写线路，只订阅会话输出。
+fn byte_read_tool(name: &str, description: &str, session_desc: &str) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": schema(
+            json!({
+                "sessionId": {
+                    "type": "string",
+                    "description": session_desc,
+                    "examples": ["3f2504e0-4f89-11d3-9a0c-0305e82c3301"]
+                },
+                "idleMs": {
+                    "type": "integer",
+                    "minimum": super::exec::MIN_IDLE_MS,
+                    "maximum": super::exec::MAX_IDLE_MS,
+                    "default": super::exec::DEFAULT_IDLE_MS,
+                    "description": "连续这么多毫秒没有新数据即结束采集"
+                },
+                "timeoutMs": {
+                    "type": "integer",
+                    "minimum": super::exec::MIN_TIMEOUT_MS,
+                    "maximum": super::exec::MAX_TIMEOUT_MS,
+                    "default": super::exec::DEFAULT_TIMEOUT_MS,
+                    "description": "采集总超时"
+                },
+                "waitRegex": {
+                    "type": "string",
+                    "description": "可选。累计输出命中该正则时提前结束"
+                },
+                "encoding": {
+                    "type": "string",
+                    "enum": ["utf8", "base64"],
+                    "default": "utf8",
+                    "description": "stdout 的返回编码；base64 用于非 UTF-8 / 二进制回显"
+                }
+            }),
+            &["sessionId"]
+        ),
+        "annotations": { "readOnlyHint": true, "destructiveHint": false }
     })
 }
 
@@ -322,6 +365,59 @@ pub fn definitions() -> Value {
         "telnet-3c9d10",
     ));
 
+    items.push(json!({
+        "name": "session_open",
+        "description": "写操作。为当前 MCP 客户端建立一个 headless 会话（不占用用户窗口、不出现在标签页），返回 sessionId。\n\
+    · kind=ssh：传 hostId（vault 主机 id），复用或按档案自动建连。\n\
+    · kind=serial：传 port（COM3 / /dev/ttyUSB0）与波特率等线路参数。\n\
+    · kind=telnet：传 host + port（默认 23）。\n\
+    何时用：需要独立会话且不想影响用户界面；串口 / Telnet 需要由 agent 自己建链时。\n\
+    何时不用：已有 ready 会话时直接复用 sessionId；用户正在看的会话不要重复打开。\n\
+    受权限档位约束；会话归属于当前客户端，其它客户端不可见。",
+        "inputSchema": schema(
+            json!({
+                "kind": { "type": "string", "enum": ["ssh", "serial", "telnet"] },
+                "hostId": { "type": "string", "description": "kind=ssh 时必填，vault 主机 id" },
+                "host": { "type": "string", "description": "kind=telnet 时必填" },
+                "port": {
+                    "type": "string",
+                    "description": "kind=serial：端口名；kind=telnet：端口号（默认 23）"
+                },
+                "baudRate": { "type": "integer", "default": 115200, "description": "kind=serial 的波特率" },
+                "dataBits": { "type": "integer", "enum": [5, 6, 7, 8], "default": 8 },
+                "parity": { "type": "string", "enum": ["none", "odd", "even", "mark", "space"], "default": "none" },
+                "stopBits": { "type": "number", "enum": [1, 1.5, 2], "default": 1 },
+                "flowControl": { "type": "string", "enum": ["none", "software", "hardware"], "default": "none" },
+                "charset": { "type": "string", "description": "kind=serial 的字符集标签（如 GBK）；空 = 字节透传" },
+                "xany": { "type": "boolean", "default": false, "description": "kind=serial，仅 unix 生效" },
+                "username": { "type": "string", "description": "自动登录用户名（serial / telnet）" },
+                "password": { "type": "string", "description": "自动登录密码（serial / telnet）" },
+                "cols": { "type": "integer", "default": 80, "description": "kind=telnet 的终端列数" },
+                "rows": { "type": "integer", "default": 24, "description": "kind=telnet 的终端行数" },
+                "inputNewline": { "type": "string", "enum": ["crlf", "lf", "cr", "none"], "default": "crlf" },
+                "profileId": { "type": "string", "description": "可选，来源主机档案 id（用于自动日志）" }
+            }),
+            &["kind"]
+        ),
+        "annotations": { "readOnlyHint": false, "destructiveHint": false }
+    }));
+
+    items.push(byte_read_tool(
+        "serial_read",
+        "只读。订阅串口会话的输出并采集一段，不向线路写任何字节；返回 stdout / bytesRead / terminatedBy。\
+何时用：设备主动上报日志、你只想看当前输出时；也可配合 serial_write 分步交互。\
+何时不用：需要「写入 + 等回显」时用 terminal_execute 或 serial_write 后立刻 serial_read（广播不补发历史，先订阅才不漏包）。",
+        "get_environment 返回的串口会话 sessions[].id（kind=serial）",
+    ));
+
+    items.push(byte_read_tool(
+        "telnet_read",
+        "只读。订阅 Telnet 会话的输出并采集一段，不向线路写任何字节；返回 stdout / bytesRead / terminatedBy。\
+何时用：只想观察设备主动输出、或在上一次 telnet_write 之后读取剩余响应时。\
+何时不用：需要「写入 + 等回显」一次完成时用 terminal_execute。",
+        "get_environment 返回的 Telnet 会话 sessions[].id（kind=telnet）",
+    ));
+
     items.push(file_tool(
         "fs_read",
         "只读。按行开窗读取远端文本文件，返回 lines / totalLines / size / mtime / truncated / nextCursor；走 SFTP 直读，不产生 base64。\
@@ -331,7 +427,7 @@ sessionId 与 hostId 二选一；hostId 无就绪会话时按 vault 档案自动
         json!({
             "path": {
                 "type": "string",
-                "description": "远端路径，支持 ~ 与相对 workspace 根的路径"
+                "description": "远端路径，支持绝对路径、~ 与相对 home 的路径"
             },
             "startLine": { "type": "integer", "minimum": 1, "default": 1 },
             "maxLines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 200 },
@@ -342,13 +438,13 @@ sessionId 与 hostId 二选一；hostId 无就绪会话时按 vault 档案自动
 
     items.push(file_tool(
         "fs_grep",
-        "只读。按 glob + 正则搜索 workspace，返回 matches[{path,line,text}] / total / truncated / nextCursor。\
+        "只读。按 glob + 正则搜索远端文件，返回 matches[{path,line,text}] / total / truncated / nextCursor。\
 何时用：定位符号、报错、配置项，再配合 fs_read 开窗。\
 何时不用：已知精确路径时直接 fs_read；远端缺 python3 会返回 mcp_missing_interpreter。\
 sessionId 与 hostId 二选一。",
         json!({
             "pattern": { "type": "string", "description": "搜索内容或正则" },
-            "path": { "type": "string", "description": "搜索根，默认 workspace 根" },
+            "path": { "type": "string", "description": "搜索根，默认 home" },
             "glob": { "type": "string", "default": "*", "description": "文件过滤，如 **/*.c" },
             "regex": { "type": "boolean", "default": true },
             "ignoreCase": { "type": "boolean", "default": false },
@@ -366,13 +462,13 @@ sessionId 与 hostId 二选一。",
 
     items.push(file_tool(
         "fs_glob",
-        "只读。按 glob 递归列举 workspace 内文件，返回 matches[{path,size}] / total / truncated / nextCursor。\
+        "只读。按 glob 递归列举远端文件，返回 matches[{path,size}] / total / truncated / nextCursor。\
 何时用：了解目录结构、列出某类文件后批量处理。\
 何时不用：需要内容匹配用 fs_grep；不要用它列举整个 home 根。\
 sessionId 与 hostId 二选一。",
         json!({
             "pattern": { "type": "string", "description": "glob，如 **/*.c" },
-            "path": { "type": "string", "description": "搜索根，默认 workspace 根" },
+            "path": { "type": "string", "description": "搜索根，默认 home" },
             "maxResults": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
             "cursor": { "type": "integer", "minimum": 0, "default": 0 }
         }),
@@ -434,7 +530,7 @@ sessionId 与 hostId 二选一。",
 何时不用：大文件用 sftp_put；改局部内容用 fs_patch；不要用它覆盖未确认的现有文件。\
 受权限档位约束；sessionId 与 hostId 二选一。",
         json!({
-            "path": { "type": "string", "description": "远端路径，支持 ~ 与相对 workspace 根的路径" },
+            "path": { "type": "string", "description": "远端路径，支持绝对路径、~ 与相对 home 的路径" },
             "content": { "type": "string", "description": "完整文件内容（UTF-8）" },
             "overwrite": {
                 "type": "boolean",
@@ -461,7 +557,7 @@ sessionId 与 hostId 二选一。",
                     "type": "object",
                     "properties": {
                         "localPath": { "type": "string", "description": "本地绝对路径（文件或目录）" },
-                        "remotePath": { "type": "string", "description": "远端目标路径，支持 ~ 与相对 workspace 根" }
+                        "remotePath": { "type": "string", "description": "远端目标路径，支持绝对路径、~ 与相对 home 的路径" }
                     },
                     "required": ["localPath", "remotePath"]
                 }
@@ -487,7 +583,7 @@ sessionId 与 hostId 二选一。",
                 "items": {
                     "type": "object",
                     "properties": {
-                        "remotePath": { "type": "string", "description": "远端源路径，支持 ~ 与相对 workspace 根" },
+                        "remotePath": { "type": "string", "description": "远端源路径，支持绝对路径、~ 与相对 home 的路径" },
                         "localPath": { "type": "string", "description": "本地目标绝对路径（文件或目录）" }
                     },
                     "required": ["remotePath", "localPath"]
@@ -512,7 +608,7 @@ sessionId 与 hostId 二选一。",
                 "minItems": 1,
                 "maxItems": 200,
                 "items": { "type": "string" },
-                "description": "远端路径列表，支持 ~ 与相对 workspace 根"
+                "description": "远端路径列表，支持绝对路径、~ 与相对 home 的路径"
             },
             "recursive": {
                 "type": "boolean",
@@ -535,13 +631,13 @@ sessionId 与 hostId 二选一。",
 
     items.push(remote_file_tool(
         "build_run",
-        "写操作。在远端非交互执行构建命令：cwd 限定 workspace 内，stdout/stderr 各取尾部 maxOutputBytes，另回总量与 exitCode；可选 teeToRemoteFile 把完整日志落到远端文件。\
+        "写操作。在远端非交互执行构建命令：cwd 可指定任意远端目录，stdout/stderr 各取尾部 maxOutputBytes，另回总量与 exitCode；可选 teeToRemoteFile 把完整日志落到远端文件。\
 何时用：sftp_put 上传源码后直接 make/cmake/gcc/cargo/npm；失败先看 stderrTail，再 fs_read fullLog 开窗。\
 何时不用：需要交互式终端时用 term_run；只读命令用 term_run 即可；不要在这里做文件读写（用 fs_* 工具）。\
 只拦真正破坏性命令（rm -rf /、mkfs、dd 写块设备等），不套终端黑名单。",
         json!({
             "command": { "type": "string", "description": "要执行的构建命令（可多行）" },
-            "cwd": { "type": "string", "description": "工作目录，默认 workspace 根" },
+            "cwd": { "type": "string", "description": "工作目录，默认 home" },
             "timeoutMs": {
                 "type": "integer",
                 "minimum": 1000,
@@ -557,7 +653,7 @@ sessionId 与 hostId 二选一。",
             },
             "teeToRemoteFile": {
                 "type": "string",
-                "description": "可选：把完整日志写到该远端路径（workspace 内）"
+                "description": "可选：把完整日志写到该远端路径"
             }
         }),
         &["command"],
@@ -624,6 +720,42 @@ op.args 未带 sessionId / hostId 时自动继承顶层值；stopOnError 默认 
     ));
 
     list
+}
+
+/// 按客户端白名单过滤工具清单；空白名单 = 全部可见。
+pub fn definitions_for(client: &McpClient) -> Value {
+    let all = definitions();
+    if client.allowed_tools.is_empty() {
+        return all;
+    }
+    let filtered: Vec<Value> = all
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| {
+            item.get("name")
+                .and_then(Value::as_str)
+                .map(|name| client.allowed_tools.iter().any(|allowed| allowed == name))
+                .unwrap_or(false)
+        })
+        .collect();
+    Value::Array(filtered)
+}
+
+/// 会话是否可被该客户端使用：用户窗口会话共享；Headless 会话只给创建它的客户端。
+fn session_visible_to_client(owner: &SessionOwner, client: &McpClient) -> bool {
+    match owner {
+        SessionOwner::Window(_) => true,
+        SessionOwner::Headless(id) => *id == runtime_state::owner_for_client(&client.id),
+    }
+}
+
+fn session_owned_by_client(owner: &SessionOwner, client: &McpClient) -> bool {
+    match owner {
+        SessionOwner::Headless(id) => *id == runtime_state::owner_for_client(&client.id),
+        SessionOwner::Window(_) => false,
+    }
 }
 
 fn summarize_command(command: &str) -> String {
@@ -721,9 +853,10 @@ fn transfer_result(
 }
 
 /// 写操作审批：auto 直接放行；observer 直接拒绝；confirm 先查许可记忆表，再走 UI 审批。
+/// 权限档跟随认证出来的客户端，而不是全局配置。
 #[allow(clippy::too_many_arguments)]
 async fn approval_gate(
-    cfg: &McpConfig,
+    client: &McpClient,
     rt: &Arc<McpRuntime>,
     app: &AppHandle,
     gen: u64,
@@ -734,7 +867,7 @@ async fn approval_gate(
     session_id: Option<String>,
     target_label: Option<String>,
 ) -> Result<(), ToolResult> {
-    match cfg.permission_mode {
+    match client.permission_mode {
         PermissionMode::Auto => Ok(()),
         PermissionMode::Observer => Err(ToolResult::err(
             "permission_denied",
@@ -870,11 +1003,20 @@ fn session_meta(
     }
 }
 
-fn environment(state: &AppState) -> Result<Value, ToolResult> {
+fn environment(state: &AppState, client: &McpClient) -> Result<Value, ToolResult> {
+    let client_owner = SessionOwner::Headless(runtime_state::owner_for_client(&client.id));
     let registry = state.lock_sessions().map_err(|e| internal_error(e))?;
     let handles = crate::error::locked(&state.sessions).map_err(internal_error)?;
     let mut sessions = Vec::new();
     for (id, record) in registry.iter() {
+        if record.phase == crate::state::SessionPhase::Closed {
+            continue;
+        }
+        // 其它 MCP 客户端自动建连的会话不可见；用户窗口会话仍然共享，
+        // 方便 agent 复用用户已经打开的连接。
+        if record.owner != client_owner && matches!(record.owner, SessionOwner::Headless(_)) {
+            continue;
+        }
         sessions.push(json!({
             "id": id,
             "kind": record.kind.as_str(),
@@ -1039,6 +1181,41 @@ fn collect_success(
     )
 }
 
+/// 只读采集结果信封：与「写入 + 采集」同形，但没有 bytesWritten。
+fn read_success(
+    transport: &str,
+    session_id: &str,
+    out: super::exec::CollectOutcome,
+    encoding: &str,
+) -> ToolResult {
+    let stdout = if encoding == "base64" {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(&out.output)
+    } else {
+        String::from_utf8_lossy(&out.output).into_owned()
+    };
+    let hint = if out.bytes_read == 0 {
+        "采集窗口内没有收到字节：设备可能静默、未上电或波特率不符；可提高 timeoutMs 或改用 terminal_execute 主动发送。"
+    } else if out.terminated_by == super::exec::TerminatedBy::Timeout {
+        "命中总超时：设备可能仍在输出；可提高 timeoutMs 或用 waitRegex 精确截断。"
+    } else {
+        "本工具不写线路；广播不补发历史，需要「发送后立刻收」请用 terminal_execute。"
+    };
+    ToolResult::ok(
+        format!("{transport} 输出采集完成"),
+        hint,
+        json!({
+            "sessionId": session_id,
+            "stdout": stdout,
+            "exitCode": Value::Null,
+            "bytesRead": out.bytes_read,
+            "terminatedBy": out.terminated_by.as_str(),
+            "encoding": encoding,
+            "truncated": out.truncated,
+        }),
+    )
+}
+
 #[cfg(desktop)]
 async fn execute_serial(
     state: &AppState,
@@ -1120,7 +1297,7 @@ async fn execute_telnet(
 
 pub async fn call_tool(
     state: &AppState,
-    cfg: &McpConfig,
+    client: &McpClient,
     rt: &Arc<McpRuntime>,
     app: &AppHandle,
     gen: u64,
@@ -1128,6 +1305,13 @@ pub async fn call_tool(
     name: &str,
     args: &Value,
 ) -> ToolResult {
+    if !client.allowed_tools.is_empty() && !client.allowed_tools.iter().any(|t| t == name) {
+        return ToolResult::err(
+            "tool_not_allowed",
+            format!("工具 {name} 不在当前客户端的白名单里"),
+            "换用 allowedTools 内的工具，或请用户在「设置 → AI → 工具接入 → 多客户端」里放行。",
+        );
+    }
     match name {
         "batch" => {
             let ops = match args.get("ops").and_then(Value::as_array) {
@@ -1175,7 +1359,7 @@ pub async fn call_tool(
                 let outcome = if BATCH_TOOLS.contains(&tool.as_str()) {
                     Box::pin(call_tool(
                         state,
-                        cfg,
+                        client,
                         rt,
                         app,
                         gen,
@@ -1220,7 +1404,7 @@ pub async fn call_tool(
                 )
             }
         }
-        "get_environment" => match environment(state) {
+        "get_environment" => match environment(state, client) {
             Ok(v) => ToolResult::ok(
                 "已返回当前环境快照",
                 "用 sessions[].id 作为 terminal_execute / session_close 的 sessionId；phase 为 ready 的会话才能执行命令。",
@@ -1273,12 +1457,11 @@ pub async fn call_tool(
             Err(e) => internal_error(e),
         },
         "fs_read" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
-            match super::fs::read::fs_read(state, &session.session_id, args, &jail_root).await {
+            match super::fs::read::fs_read(state, &session.session_id, args).await {
                 Ok(out) => ToolResult::ok(
                     "已读取文件窗口",
                     "内容未读完时带 startLine = nextCursor 继续；大文件先用 fs_grep 定位。",
@@ -1296,18 +1479,16 @@ pub async fn call_tool(
             }
         }
         "fs_grep" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
             match super::fs::grep::fs_grep(
                 state,
                 &session.session_id,
                 &session.profile_id,
                 &session.handle,
                 args,
-                &jail_root,
             )
             .await
             {
@@ -1325,12 +1506,11 @@ pub async fn call_tool(
             }
         }
         "fs_glob" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
-            match super::fs::glob::fs_glob(state, &session.session_id, args, &jail_root).await {
+            match super::fs::glob::fs_glob(state, &session.session_id, args).await {
                 Ok(out) => ToolResult::ok(
                     "已列举文件",
                     "继续翻页传 cursor = nextCursor；需要内容匹配改用 fs_grep。",
@@ -1345,14 +1525,13 @@ pub async fn call_tool(
             }
         }
         "fs_patch" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
             let targets = patch_targets(args);
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -1385,7 +1564,6 @@ pub async fn call_tool(
                 &session.profile_id,
                 &session.handle,
                 args,
-                &jail_root,
             )
             .await
             {
@@ -1427,18 +1605,17 @@ pub async fn call_tool(
             }
         }
         "fs_write" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
             let target = args
                 .get("path")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -1461,7 +1638,7 @@ pub async fn call_tool(
                 ));
                 return e;
             }
-            match super::fs::write::fs_write(state, &session.session_id, args, &jail_root).await {
+            match super::fs::write::fs_write(state, &session.session_id, args).await {
                 Ok(out) => {
                     runtime_state::record_audit(change_entry(
                         "fs_write",
@@ -1486,14 +1663,13 @@ pub async fn call_tool(
             }
         }
         "sftp_put" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
             let count = transfer_count(args);
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -1516,28 +1692,20 @@ pub async fn call_tool(
                 ));
                 return e;
             }
-            match super::fs::transfer::sftp_put(
-                app,
-                state,
-                &session.session_id,
-                args,
-                &jail_root,
-            )
-            .await
+            match super::fs::transfer::sftp_put(app, state, &session.session_id, args).await
             {
                 Ok(results) => transfer_result("sftp_put", &session.session_id, results),
                 Err(e) => tool_error(e),
             }
         }
         "sftp_get" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
             let count = transfer_count(args);
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -1560,25 +1728,17 @@ pub async fn call_tool(
                 ));
                 return e;
             }
-            match super::fs::transfer::sftp_get(
-                app,
-                state,
-                &session.session_id,
-                args,
-                &jail_root,
-            )
-            .await
+            match super::fs::transfer::sftp_get(app, state, &session.session_id, args).await
             {
                 Ok(results) => transfer_result("sftp_get", &session.session_id, results),
                 Err(e) => tool_error(e),
             }
         }
         "fs_delete" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
             let dry_run = args
                 .get("dryRun")
                 .and_then(Value::as_bool)
@@ -1591,7 +1751,7 @@ pub async fn call_tool(
             // dry-run 只是预览，不触发审批；真正删除才走权限闸门。
             if !dry_run {
                 if let Err(e) = approval_gate(
-                    cfg,
+                    client,
                     rt,
                     app,
                     gen,
@@ -1615,7 +1775,7 @@ pub async fn call_tool(
                     return e;
                 }
             }
-            match super::fs::delete::fs_delete(state, &session.session_id, args, &jail_root).await {
+            match super::fs::delete::fs_delete(state, &session.session_id, args).await {
                 Ok(outcome) => {
                     for entry in &outcome.entries {
                         runtime_state::record_audit(change_entry(
@@ -1657,11 +1817,10 @@ pub async fn call_tool(
             }
         }
         "build_run" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let jail_root = super::config::workspace_root(&state.db);
             let command = match args
                 .get("command")
                 .and_then(Value::as_str)
@@ -1684,7 +1843,7 @@ pub async fn call_tool(
                 );
             }
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -1704,7 +1863,6 @@ pub async fn call_tool(
                 &session.session_id,
                 &session.handle,
                 args,
-                &jail_root,
             )
             .await
             {
@@ -1732,7 +1890,7 @@ pub async fn call_tool(
             }
         }
         "term_run" => {
-            let session = match super::fs::session::resolve(app, state, args).await {
+            let session = match super::fs::session::resolve(app, state, args, client).await {
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
@@ -1758,7 +1916,7 @@ pub async fn call_tool(
                 );
             }
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -1838,6 +1996,13 @@ pub async fn call_tool(
                 Ok(v) => v,
                 Err(e) => return e,
             };
+            if !session_visible_to_client(&owner, client) {
+                return ToolResult::err(
+                    "mcp_session_forbidden",
+                    format!("会话 {session_id} 属于另一个 MCP 客户端"),
+                    "每个客户端只能操作自己自动建连的会话或用户窗口会话；重新 get_environment 获取本客户端的 sessions[].id。",
+                );
+            }
             let executable = match kind {
                 SessionKind::Ssh | SessionKind::Telnet => true,
                 #[cfg(desktop)]
@@ -1897,7 +2062,7 @@ pub async fn call_tool(
             // ⑤ 审批（写操作，四类终端一致）。
             let target_label = Some(format!("{} · {}", kind.as_str(), session_id));
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -1999,6 +2164,181 @@ pub async fn call_tool(
                 ),
             }
         }
+        "session_open" => {
+            let kind = args
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            let opt = |key: &str| -> Option<String> {
+                args.get(key)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+            };
+            let target = match kind.as_str() {
+                "ssh" => match opt("hostId") {
+                    Some(v) => v,
+                    None => {
+                        return ToolResult::err(
+                            "missing_argument",
+                            "kind=ssh 需要 hostId",
+                            "先用 vault_hosts_list / get_environment 获取 hostId。",
+                        )
+                    }
+                },
+                "serial" => match opt("port") {
+                    Some(v) => v,
+                    None => {
+                        return ToolResult::err(
+                            "missing_argument",
+                            "kind=serial 需要 port",
+                            "port 传串口名，例如 COM3 或 /dev/ttyUSB0。",
+                        )
+                    }
+                },
+                "telnet" => match opt("host") {
+                    Some(v) => v,
+                    None => {
+                        return ToolResult::err(
+                            "missing_argument",
+                            "kind=telnet 需要 host",
+                            "host 传 Telnet 服务器地址；端口默认 23，可用 port 覆盖。",
+                        )
+                    }
+                },
+                _ => {
+                    return ToolResult::err(
+                        "invalid_argument",
+                        format!("不支持的 kind：{kind}"),
+                        "kind 只能是 ssh / serial / telnet。",
+                    )
+                }
+            };
+            if let Err(e) = approval_gate(
+                client,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "session_open",
+                format!("打开 {kind} 会话 {target}"),
+                args.clone(),
+                None,
+                Some(format!("{kind} · {target}")),
+            )
+            .await
+            {
+                return e;
+            }
+            let owner = SessionOwner::Headless(runtime_state::owner_for_client(&client.id));
+            let profile_id = opt("profileId");
+            let opened: crate::error::AppResult<String> = match kind.as_str() {
+                "ssh" => {
+                    let host_id = opt("hostId").expect("validated above");
+                    super::fs::session::ensure_for_host(app, state, &host_id, client)
+                        .await
+                        .map(|session| session.session_id)
+                }
+                "serial" => {
+                    #[cfg(desktop)]
+                    {
+                        let port = opt("port").expect("validated above");
+                        let config = crate::terminal::serial::SerialConfig {
+                            baud_rate: args
+                                .get("baudRate")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(115_200)
+                                .clamp(50, 12_000_000) as u32,
+                            data_bits: args
+                                .get("dataBits")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(8)
+                                .clamp(5, 8) as u8,
+                            parity: args
+                                .get("parity")
+                                .and_then(Value::as_str)
+                                .unwrap_or("none")
+                                .to_string(),
+                            stop_bits: args
+                                .get("stopBits")
+                                .and_then(Value::as_f64)
+                                .unwrap_or(1.0),
+                            flow_control: args
+                                .get("flowControl")
+                                .and_then(Value::as_str)
+                                .unwrap_or("none")
+                                .to_string(),
+                            xany: args.get("xany").and_then(Value::as_bool).unwrap_or(false),
+                            charset: opt("charset").unwrap_or_default(),
+                            username: opt("username"),
+                            password: opt("password"),
+                        };
+                        crate::commands::serial::serial_open_for_owner(
+                            app,
+                            state,
+                            owner,
+                            port,
+                            config,
+                            None,
+                            profile_id,
+                        )
+                    }
+                    #[cfg(not(desktop))]
+                    {
+                        Err(crate::error::AppError::config(
+                            "unsupported_platform",
+                            json!({ "kind": "serial" }),
+                        ))
+                    }
+                }
+                "telnet" => {
+                    let host = opt("host").expect("validated above");
+                    let port = match args.get("port") {
+                        None | Some(Value::Null) => 23,
+                        Some(value) => match value
+                            .as_u64()
+                            .or_else(|| value.as_str().and_then(|v| v.trim().parse().ok()))
+                        {
+                            Some(v) if v > 0 && v <= u16::MAX as u64 => v as u16,
+                            _ => {
+                                return ToolResult::err(
+                                    "invalid_argument",
+                                    "port 必须是 1–65535",
+                                    "Telnet 默认 23；传数字或数字字符串。",
+                                )
+                            }
+                        },
+                    };
+                    crate::commands::telnet::telnet_open_for_owner(
+                        app.clone(),
+                        state,
+                        owner,
+                        host,
+                        port,
+                        args.get("cols").and_then(Value::as_u64).unwrap_or(80) as u16,
+                        args.get("rows").and_then(Value::as_u64).unwrap_or(24) as u16,
+                        opt("inputNewline"),
+                        opt("username"),
+                        opt("password"),
+                        None,
+                        profile_id,
+                    )
+                    .await
+                }
+                _ => unreachable!("kind validated above"),
+            };
+            match opened {
+                Ok(session_id) => ToolResult::ok(
+                    "会话已建立",
+                    "用返回的 sessionId 调用 serial_read / telnet_read / terminal_execute；任务结束调用 session_close。该会话归属当前客户端，其它客户端不可见。",
+                    json!({ "sessionId": session_id, "kind": kind, "origin": "mcp" }),
+                ),
+                Err(e) => tool_error(e),
+            }
+        }
         "serial_write" | "telnet_write" => {
             let serial = name == "serial_write";
             let transport = if serial { "serial" } else { "telnet" };
@@ -2016,10 +2356,17 @@ pub async fn call_tool(
                 Ok(value) => value,
                 Err(e) => return e,
             };
-            let (_owner, kind, _phase) = match session_meta(state, &session_id) {
+            let (owner, kind, phase) = match session_meta(state, &session_id) {
                 Ok(v) => v,
                 Err(e) => return e,
             };
+            if !session_visible_to_client(&owner, client) {
+                return ToolResult::err(
+                    "mcp_session_forbidden",
+                    format!("会话 {session_id} 属于另一个 MCP 客户端"),
+                    "每个客户端只能操作自己自动建连的会话或用户窗口会话；重新 get_environment 获取本客户端的 sessions[].id。",
+                );
+            }
             if kind.as_str() != transport {
                 return ToolResult::err(
                     "mcp_unsupported_session_kind",
@@ -2034,10 +2381,17 @@ pub async fn call_tool(
                     },
                 );
             }
+            if phase != crate::state::SessionPhase::Ready {
+                return ToolResult::err(
+                    "mcp_session_not_ready",
+                    format!("会话 {session_id} 当前不是 ready 状态"),
+                    "连接可能已断开；重新 get_environment 确认，或先重新打开会话。",
+                );
+            }
             let count = bytes.len();
             let target_label = Some(format!("{} · {}", kind.as_str(), session_id));
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -2076,6 +2430,109 @@ pub async fn call_tool(
                 Err(e) => e,
             }
         }
+        "serial_read" | "telnet_read" => {
+            let serial = name == "serial_read";
+            let transport = if serial { "serial" } else { "telnet" };
+            let session_id = match args.get("sessionId").and_then(Value::as_str) {
+                Some(v) if !v.is_empty() => v.to_string(),
+                _ => {
+                    return ToolResult::err(
+                        "missing_argument",
+                        "缺少必填参数 sessionId",
+                        HINT_SESSION_ID,
+                    )
+                }
+            };
+            let opts = match collect_options(args) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            let (owner, kind, phase) = match session_meta(state, &session_id) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            if !session_visible_to_client(&owner, client) {
+                return ToolResult::err(
+                    "mcp_session_forbidden",
+                    format!("会话 {session_id} 属于另一个 MCP 客户端"),
+                    "每个客户端只能读取自己自动建连的会话或用户窗口会话；重新 get_environment 获取本客户端的 sessions[].id。",
+                );
+            }
+            if kind.as_str() != transport {
+                return ToolResult::err(
+                    "mcp_unsupported_session_kind",
+                    format!(
+                        "会话 {session_id} 的类型是 {}，{name} 只接受 kind={transport} 的会话",
+                        kind.as_str()
+                    ),
+                    if serial {
+                        "serial_read 只读串口会话；SSH 输出用 terminal_execute，Telnet 用 telnet_read。"
+                    } else {
+                        "telnet_read 只读 Telnet 会话；SSH 输出用 terminal_execute，串口用 serial_read。"
+                    },
+                );
+            }
+            if phase != crate::state::SessionPhase::Ready {
+                return ToolResult::err(
+                    "mcp_session_not_ready",
+                    format!("会话 {session_id} 当前不是 ready 状态"),
+                    "连接可能已断开；重新 get_environment 确认，或先用 session_open 重新建链。",
+                );
+            }
+            if serial {
+                #[cfg(desktop)]
+                {
+                    let handle = match crate::error::locked(&state.serial_sessions) {
+                        Ok(sessions) => sessions.get(&session_id).cloned(),
+                        Err(e) => return internal_error(e),
+                    };
+                    let Some(handle) = handle else {
+                        return ToolResult::err(
+                            "mcp_session_not_ready",
+                            format!("串口会话 {session_id} 的句柄已不存在"),
+                            "串口可能刚被关闭或拔出；重新 get_environment 确认 phase=ready 后重试。",
+                        );
+                    };
+                    let mut subscriber = handle.subscribe();
+                    let out = super::exec::collect(
+                        &mut subscriber,
+                        opts.idle,
+                        opts.timeout,
+                        opts.wait.as_ref(),
+                    )
+                    .await;
+                    return read_success("serial", &session_id, out, opts.encoding);
+                }
+                #[cfg(not(desktop))]
+                {
+                    return ToolResult::err(
+                        "unsupported_platform",
+                        "当前平台不支持串口",
+                        "串口工具只在桌面端可用。",
+                    );
+                }
+            }
+            let handle = match crate::error::locked(&state.telnet_sessions) {
+                Ok(sessions) => sessions.get(&session_id).cloned(),
+                Err(e) => return internal_error(e),
+            };
+            let Some(handle) = handle else {
+                return ToolResult::err(
+                    "mcp_session_not_ready",
+                    format!("Telnet 会话 {session_id} 的句柄已不存在"),
+                    "会话可能刚被关闭；重新 get_environment 确认 phase=ready 后重试。",
+                );
+            };
+            let mut subscriber = handle.subscribe();
+            let out = super::exec::collect(
+                &mut subscriber,
+                opts.idle,
+                opts.timeout,
+                opts.wait.as_ref(),
+            )
+            .await;
+            read_success("telnet", &session_id, out, opts.encoding)
+        }
         "session_close" => {
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
@@ -2091,9 +2548,16 @@ pub async fn call_tool(
                 Ok(v) => v,
                 Err(e) => return e,
             };
+            if !session_owned_by_client(&owner, client) {
+                return ToolResult::err(
+                    "mcp_session_forbidden",
+                    format!("会话 {session_id} 不是当前客户端建立的，拒绝关闭"),
+                    "只允许关闭本客户端自动建连的会话；用户窗口会话请在 termX 界面关闭，其它客户端的会话由它自己关闭。",
+                );
+            }
             let target_label = Some(format!("{} · {}", kind.as_str(), session_id));
             if let Err(e) = approval_gate(
-                cfg,
+                client,
                 rt,
                 app,
                 gen,
@@ -2140,9 +2604,9 @@ pub fn resources() -> Value {
     ])
 }
 
-pub fn read_resource(state: &AppState, uri: &str) -> ToolResult {
+pub fn read_resource(state: &AppState, client: &McpClient, uri: &str) -> ToolResult {
     match uri {
-        "termx://environment" => match environment(state) {
+        "termx://environment" => match environment(state, client) {
             Ok(v) => ToolResult::ok(
                 "已返回当前环境快照",
                 "该资源等同 get_environment；需要执行命令时改用 terminal_execute。",
@@ -2185,7 +2649,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 18);
+        assert_eq!(list.len(), 21);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();

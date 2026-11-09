@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
-use super::{handle, path as jail, shell};
+use super::{handle, path as pathutil, shell};
 
 pub const MAX_DELETE_PATHS: usize = 200;
 
@@ -60,7 +60,6 @@ pub async fn fs_delete(
     state: &AppState,
     session_id: &str,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<DeleteOutcome> {
     let inputs = parse_paths(args)?;
     let recursive = args
@@ -71,17 +70,13 @@ pub async fn fs_delete(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
 
     let mut entries = Vec::with_capacity(inputs.len());
     for input in &inputs {
-        let target = jail::normalize(input, &home, &root)?;
-        jail::check(&root, &target)?;
-        let real = sftp
-            .realpath(&target)
+        let target = pathutil::normalize(input, &home, &home)?;
+        sftp.realpath(&target)
             .await
             .map_err(|_| AppError::not_found("mcp_delete_not_found", json!({ "path": target })))?;
-        jail::check(&root, &real)?;
         let stat = sftp.stat(&target).await?;
         if stat.is_dir && !recursive {
             return Err(AppError::config(

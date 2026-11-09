@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
-use super::{handle, path as jail, window_lines, DEFAULT_READ_LINES, MAX_READ_LINES};
+use super::{handle, path as pathutil, window_lines, DEFAULT_READ_LINES, MAX_READ_LINES};
 
 const MAX_READ_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -41,7 +41,6 @@ pub async fn fs_read(
     state: &AppState,
     session_id: &str,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<ReadOutcome> {
     let input = required_str(args, "path")?;
     super::shell::validate_remote_path(input)?;
@@ -63,12 +62,7 @@ pub async fn fs_read(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
-    let target = jail::normalize(input, &home, &root)?;
-    jail::check(&root, &target)?;
-    if let Ok(real) = sftp.realpath(&target).await {
-        jail::check(&root, &real)?;
-    }
+    let target = pathutil::normalize(input, &home, &home)?;
 
     let stat = sftp.stat(&target).await?;
     if stat.is_dir {

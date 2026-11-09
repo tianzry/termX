@@ -517,6 +517,7 @@ pub fn run() {
             commands::mcp::mcp_set_config,
             commands::mcp::mcp_rotate_token,
             commands::mcp::mcp_client_config,
+            commands::mcp::mcp_clients_save,
             commands::mcp::mcp_guide,
             commands::mcp::mcp_approval_pending,
             commands::mcp::mcp_approval_resolve,

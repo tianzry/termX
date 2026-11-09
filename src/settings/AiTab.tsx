@@ -12,6 +12,7 @@ import {
   mcpBlocklistReset,
   mcpBlocklistSet,
   mcpClientConfig,
+  mcpClientsSave,
   mcpGrantRemove,
   mcpGrantsExport,
   mcpGrantsImport,
@@ -21,6 +22,7 @@ import {
   mcpSetConfig,
   mcpStatus,
   type McpConfigPatch,
+  type McpClientConfig,
   type McpGuideBlock,
   type McpPermissionMode,
   type McpStatus,
@@ -46,7 +48,7 @@ const MCP_TOOL_GROUPS: Array<{ plane: "control" | "transfer" | "build" | "sessio
   { plane: "control", tools: ["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write", "fs_delete"] },
   { plane: "transfer", tools: ["sftp_put", "sftp_get"] },
   { plane: "build", tools: ["build_run", "term_run"] },
-  { plane: "session", tools: ["get_environment", "vault_hosts_list", "snippets_list", "terminal_execute", "serial_write", "telnet_write", "session_close"] },
+  { plane: "session", tools: ["get_environment", "vault_hosts_list", "snippets_list", "terminal_execute", "session_open", "session_close", "serial_write", "serial_read", "telnet_write", "telnet_read"] },
   { plane: "composite", tools: ["batch"] },
 ];
 
@@ -61,6 +63,38 @@ function describeError(error: unknown): string {
 
 function maskToken(token: string): string {
   return "•".repeat(Math.min(token.length, 24));
+}
+
+/** 设置页里的可编辑客户端行：可选字段用空串表示「跟随全局 / 全部工具」。 */
+type ClientDraft = {
+  id: string;
+  label: string;
+  token: string;
+  permissionMode: McpPermissionMode | "";
+  allowedTools: string;
+};
+
+function toClientDraft(client: McpClientConfig): ClientDraft {
+  return {
+    id: client.id,
+    label: client.label,
+    token: client.token,
+    permissionMode: client.permissionMode ?? "",
+    allowedTools: client.allowedTools.join(", "),
+  };
+}
+
+function fromClientDraft(draft: ClientDraft): McpClientConfig {
+  return {
+    id: draft.id.trim(),
+    label: draft.label.trim(),
+    token: draft.token.trim(),
+    permissionMode: draft.permissionMode || null,
+    allowedTools: draft.allowedTools
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  };
 }
 
 function StatusPill({ status }: { status: McpStatus | null }) {
@@ -93,8 +127,14 @@ export function AiTab() {
   const [portDraft, setPortDraft] = useState("");
   const [addressDraft, setAddressDraft] = useState("");
   const [clientHostDraft, setClientHostDraft] = useState("");
-  const [workspaceRootDraft, setWorkspaceRootDraft] = useState("~");
   const editingRef = useRef(false);
+
+  // 多客户端接入：编辑态与轮询解耦（用户改动未保存时不被 3 秒轮询覆盖）。
+  const [clients, setClients] = useState<ClientDraft[]>([]);
+  const [clientsDirty, setClientsDirty] = useState(false);
+  const [clientsBusy, setClientsBusy] = useState(false);
+  const [clientsError, setClientsError] = useState<string | null>(null);
+  const clientsDirtyRef = useRef(false);
 
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [snippetKind, setSnippetKind] = useState<SnippetKind>("codex");
@@ -140,11 +180,13 @@ export function AiTab() {
         if (!alive) return;
         setStatus(next);
         setGrants(next.grants ?? []);
+        if (!clientsDirtyRef.current) {
+          setClients((next.clients ?? []).map(toClientDraft));
+        }
         if (!editingRef.current) {
           setPortDraft(String(next.port));
           setAddressDraft(next.listenAddress);
           setClientHostDraft(next.clientHost);
-          setWorkspaceRootDraft(next.workspaceRoot);
         }
       } catch (error) {
         if (alive && !quiet) setActionError(describeError(error));
@@ -231,7 +273,6 @@ export function AiTab() {
         setPortDraft(String(next.port));
         setAddressDraft(next.listenAddress);
         setClientHostDraft(next.clientHost);
-        setWorkspaceRootDraft(next.workspaceRoot);
       }
     } catch (error) {
       setActionError(describeError(error));
@@ -263,12 +304,6 @@ export function AiTab() {
     void apply({ clientHost: trimmed }, "clientHost");
   };
 
-  const commitWorkspaceRoot = () => {
-    const trimmed = workspaceRootDraft.trim() || "~";
-    if (trimmed === (status?.workspaceRoot ?? "~")) return;
-    void apply({ workspaceRoot: trimmed }, "workspaceRoot");
-  };
-
   const rotateToken = async () => {
     setActionError(null);
     setPending("rotate");
@@ -278,6 +313,52 @@ export function AiTab() {
       setActionError(describeError(error));
     } finally {
       setPending(null);
+    }
+  };
+
+  const markClients = (next: ClientDraft[]) => {
+    setClients(next);
+    clientsDirtyRef.current = true;
+    setClientsDirty(true);
+  };
+
+  const addClient = () => {
+    const used = new Set(clients.map((client) => client.id.trim()));
+    let n = clients.length + 1;
+    while (used.has(`client-${n}`)) n += 1;
+    markClients([
+      ...clients,
+      {
+        id: `client-${n}`,
+        label: "",
+        token: "",
+        permissionMode: "",
+        allowedTools: "",
+      },
+    ]);
+  };
+
+  const updateClient = (index: number, patch: Partial<ClientDraft>) => {
+    markClients(clients.map((client, i) => (i === index ? { ...client, ...patch } : client)));
+  };
+
+  const removeClient = (index: number) => {
+    markClients(clients.filter((_, i) => i !== index));
+  };
+
+  const saveClients = async () => {
+    setClientsBusy(true);
+    setClientsError(null);
+    try {
+      const saved = await mcpClientsSave(clients.map(fromClientDraft));
+      setClients(saved.map(toClientDraft));
+      clientsDirtyRef.current = false;
+      setClientsDirty(false);
+      setStatus(await mcpStatus());
+    } catch (error) {
+      setClientsError(describeError(error));
+    } finally {
+      setClientsBusy(false);
     }
   };
 
@@ -596,33 +677,6 @@ export function AiTab() {
             </div>
           </div>
 
-          <div className="nc-set-row">
-            <div className="nc-set-row-text">
-              <div className="nc-set-row-title">{t("settings.ai.workspaceRoot")}</div>
-              <div className="nc-set-row-desc">{t("settings.ai.workspaceRoot.desc")}</div>
-            </div>
-            <div className="nc-set-row-control">
-              <input
-                type="text"
-                className="nc-set-input"
-                aria-label={t("settings.ai.workspaceRoot")}
-                placeholder="~"
-                value={workspaceRootDraft}
-                disabled={!status || pending === "workspaceRoot"}
-                onFocus={() => {
-                  editingRef.current = true;
-                }}
-                onBlur={() => {
-                  editingRef.current = false;
-                  commitWorkspaceRoot();
-                }}
-                onChange={(event) => setWorkspaceRootDraft(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                }}
-              />
-            </div>
-          </div>
         </div>
 
         {status?.running && (
@@ -650,6 +704,130 @@ export function AiTab() {
               </div>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="nc-set-section">
+        <div className="nc-mcp-head">
+          <div>
+            <h2 className="nc-set-section-title">{t("settings.ai.clients.title")}</h2>
+            <p className="nc-set-section-desc">{t("settings.ai.clients.desc")}</p>
+          </div>
+          <div className="nc-grant-actions">
+            <button
+              type="button"
+              className="nc-set-btn is-sm is-ghost"
+              disabled={clientsBusy}
+              onClick={addClient}
+            >
+              {t("settings.ai.clients.add")}
+            </button>
+            <button
+              type="button"
+              className="nc-set-btn is-sm is-primary"
+              disabled={clientsBusy || !clientsDirty}
+              onClick={() => void saveClients()}
+            >
+              {t("settings.ai.clients.save")}
+            </button>
+          </div>
+        </div>
+
+        <div className="nc-set-card">
+          {clients.length === 0 && (
+            <p className="nc-set-hint nc-grant-empty">{t("settings.ai.clients.empty")}</p>
+          )}
+          <div className="nc-client-list">
+            {clients.map((client, index) => (
+              <div className="nc-client-card" key={`${client.id}:${index}`}>
+                <div className="nc-client-head">
+                  <div className="nc-set-row-title">
+                    {client.label.trim() || client.id || t("settings.ai.clients.label")}
+                  </div>
+                  <button
+                    type="button"
+                    className="nc-safety-remove"
+                    aria-label={t("settings.ai.clients.delete")}
+                    title={t("settings.ai.clients.delete")}
+                    disabled={clientsBusy}
+                    onClick={() => removeClient(index)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="nc-client-grid">
+                  <label className="nc-client-field">
+                    <span>{t("settings.ai.clients.id")}</span>
+                    <input
+                      className="nc-set-input"
+                      value={client.id}
+                      placeholder={t("settings.ai.clients.id.placeholder")}
+                      disabled={clientsBusy}
+                      onChange={(event) => updateClient(index, { id: event.currentTarget.value })}
+                    />
+                  </label>
+                  <label className="nc-client-field">
+                    <span>{t("settings.ai.clients.label")}</span>
+                    <input
+                      className="nc-set-input"
+                      value={client.label}
+                      disabled={clientsBusy}
+                      onChange={(event) => updateClient(index, { label: event.currentTarget.value })}
+                    />
+                  </label>
+                  <div className="nc-client-field">
+                    <span>{t("settings.ai.clients.token")}</span>
+                    <div className="nc-client-token-row">
+                      <input
+                        className="nc-set-input"
+                        value={client.token}
+                        placeholder={t("settings.ai.clients.token.placeholder")}
+                        disabled={clientsBusy}
+                        onChange={(event) =>
+                          updateClient(index, { token: event.currentTarget.value })
+                        }
+                      />
+                      {copyButton(`client:${index}`, client.token, !client.token)}
+                    </div>
+                  </div>
+                  <label className="nc-client-field">
+                    <span>{t("settings.ai.clients.permissionMode")}</span>
+                    <select
+                      className="nc-set-input"
+                      value={client.permissionMode}
+                      disabled={clientsBusy}
+                      onChange={(event) =>
+                        updateClient(index, {
+                          permissionMode: event.currentTarget.value as ClientDraft["permissionMode"],
+                        })
+                      }
+                    >
+                      <option value="">{t("settings.ai.clients.followGlobal")}</option>
+                      {PERMISSION_MODES.map((mode) => (
+                        <option key={mode.value} value={mode.value}>
+                          {t(mode.label)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="nc-client-field">
+                    <span>{t("settings.ai.clients.allowedTools")}</span>
+                    <input
+                      className="nc-set-input"
+                      value={client.allowedTools}
+                      placeholder={t("settings.ai.clients.allowedTools.placeholder")}
+                      disabled={clientsBusy}
+                      onChange={(event) =>
+                        updateClient(index, { allowedTools: event.currentTarget.value })
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+          {clientsError && <p className="nc-mcp-error">{clientsError}</p>}
+          <p className="nc-set-hint">{t("settings.ai.clients.note")}</p>
         </div>
       </section>
 

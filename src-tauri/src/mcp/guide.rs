@@ -21,12 +21,13 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 6) 删除：fs_delete 默认 dryRun=true，先拿 confirmToken，再以 dryRun=false 执行。
 7) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
 8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话。
-9) 串口 / Telnet：只写字节用 serial_write / telnet_write（返回 bytesWritten）；要读回响应时用 terminal_execute —— 写入命令后按 idleMs 静默 / waitRegex 命中 / timeoutMs 超时采集，exitCode 恒为 null。这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
+9) 串口 / Telnet：自己建链用 session_open（headless，不占用户窗口）；只写字节用 serial_write / telnet_write（返回 bytesWritten）；只读输出用 serial_read / telnet_read；要「写入 + 等回显」时用 terminal_execute —— 写入命令后按 idleMs 静默 / waitRegex 命中 / timeoutMs 超时采集，exitCode 恒为 null。这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
+10) 多客户端：每个 Bearer token 是一个独立客户端，权限档 / 工具白名单可不同；各自自动建连的会话互相隔离，用户窗口会话仍然共享。一个 token 可服务多个会话与任意工作目录。链路自行断开时会话立即标记 closed，重新 session_open 即可。
 
-可用工具（共 18 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、serial_write、telnet_write、session_close、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
+可用工具（共 21 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、session_open、session_close、serial_write、serial_read、telnet_write、telnet_read、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
 规则：
 - sessionId 必须来自 get_environment（UUID）；hostId 必须来自 hosts[] 或 vault_hosts_list，不要臆造。
-- 远端路径（path / remotePath / cwd）默认 jail 在 workspace 根（设置 → AI → Workspace 根），越界返回 mcp_path_outside_jail；localPath 只校验是绝对路径，不受 jail 约束。
+- 远端路径（path / remotePath / cwd）支持绝对路径、~ 与相对 home 的路径，不限制目录范围；localPath 只校验是绝对路径。
 - terminal_execute 的 pty 分支每次新起子进程（sh -c / cmd /C）一次性收输出，不写入用户可见终端；serial / telnet 分支没有命令边界与退出码（exitCode=null），采集时用户终端会同时收到同一份字节，不要重复解析。
 - 写操作受权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接执行；fs_delete 无论档位都要 confirmToken。
 - 所有工具返回 JSON：成功为 {code:"ok", message, hint, ...数据}，失败为 {code, message, hint}。失败时先按 hint 自纠。
@@ -71,6 +72,10 @@ fn return_example(name: &str) -> &'static str {
             r#"{code:"ok", stdout, stderr, exitCode}；serial/telnet 为 {code:"ok", stdout, exitCode:null, bytesWritten, bytesRead, terminatedBy, idleMs, timeoutMs, encoding, truncated}"#
         }
         "serial_write" | "telnet_write" => r#"{code:"ok", sessionId, bytesWritten}"#,
+        "serial_read" | "telnet_read" => {
+            r#"{code:"ok", sessionId, stdout, exitCode:null, bytesRead, terminatedBy, encoding, truncated}"#
+        }
+        "session_open" => r#"{code:"ok", sessionId, kind, origin:"mcp"}"#,
         "session_close" => r#"{code:"ok", closed: sessionId}"#,
         "fs_read" => r#"{code:"ok", path, lines, totalLines, size, truncated, nextCursor}"#,
         "fs_grep" => r#"{code:"ok", matches:[{path, line, text}], total, truncated, nextCursor}"#,
@@ -208,8 +213,11 @@ mod tests {
             "vault_hosts_list",
             "snippets_list",
             "terminal_execute",
+            "session_open",
             "serial_write",
+            "serial_read",
             "telnet_write",
+            "telnet_read",
             "session_close",
             "fs_read",
             "fs_grep",

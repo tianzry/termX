@@ -30,7 +30,7 @@ termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX
 2. 端口默认 `47391`，允许范围 ≥ 1024。
 3. 监听地址默认 `127.0.0.1`（仅本机可访问）。
 4. 权限档位默认「确认」；初次接入建议保持该档位。
-5. 「Workspace 根」默认 `~`：`fs_*` / `sftp_*` / `build_run` 的**远端路径**（`path` / `remotePath` / `cwd`）都 jail 在这里，越界返回 `mcp_path_outside_jail`；`localPath` 不做 jail，只要求是绝对路径。
+5. 远端路径（`path` / `remotePath` / `cwd`）支持绝对路径、`~` 与相对 home 的路径，不限制目录范围；`localPath` 只要求是绝对路径。一个 token 可服务多个会话与任意工作目录。
 6. 右上角状态显示「运行中」即监听成功。
 
 如果启动失败，状态会显示错误码：
@@ -353,7 +353,7 @@ serial / telnet 返回示例（没有退出码，不伪造 0）：
 
 ### 3.6 文件 / 传输 / 构建工具
 
-这些工具都接受 `sessionId` **或** `hostId`（`anyOf`，二选一）；`hostId` 无就绪会话时自动按 vault 档案建连。远端路径支持 `~` 与相对 workspace 根，最终必须落在 `mcp.workspace_root` 内；`localPath` 不受 jail 约束，只要求是绝对路径。
+这些工具都接受 `sessionId` **或** `hostId`（`anyOf`，二选一）；`hostId` 无就绪会话时自动按 vault 档案建连。远端路径支持绝对路径、`~` 与相对 home 的路径，不限制目录范围；`localPath` 只要求是绝对路径。
 
 | 工具 | 类型 | 主要参数 | 返回要点 |
 | --- | --- | --- | --- |
@@ -621,7 +621,7 @@ get_environment（拿 sessionId / hostId / hosts）
 
 ### 6.4 能做什么风险操作
 
-- **控制平面**：`fs_patch` / `fs_write` / `sftp_put` / `fs_delete` 会在远端写入、覆盖或删除文件 —— 路径被 `mcp.workspace_root` jail，`fs_delete` 另有 dry-run + token；但 jail 内仍是真实文件系统，覆盖/删除不可恢复。
+- **控制平面**：`fs_patch` / `fs_write` / `sftp_put` / `fs_delete` 会在远端写入、覆盖或删除文件 —— 路径可指向远端任意目录，`fs_delete` 另有 dry-run + token；覆盖/删除不可恢复。
 - **传输**：`sftp_get` 会把远端文件写到**本机**（默认不覆盖已有文件），`sftp_put` 会把本机文件上传到远端；本地路径必须是绝对路径。
 - **构建/执行**：`build_run` / `term_run` 在远端执行任意非交互命令（只拦破坏性命令），以登录用户权限运行；`terminal_execute` 仍受全量命令黑名单约束。
 - `session_close`：关闭会话，可能中断用户正在进行的操作。
@@ -652,7 +652,6 @@ get_environment（拿 sessionId / hostId / hosts）
 | `503 {"error":"mcp_restarted"}` | 调用过程中服务被重启 | 重新 initialize 后再调用 |
 | `command_blocked` | 命令命中黑名单 | 换命令或调整黑名单 |
 | `mcp_command_destructive` | `build_run` / `term_run` 命中破坏性策略 | 拆分命令；确需执行请在终端手动操作 |
-| `mcp_path_outside_jail` | 路径越出 Workspace 根 | 改用 `~` 或 workspace 内路径，或调整「Workspace 根」 |
 | `mcp_unsupported_session_kind` | 该工具需要 SSH 的 SFTP / exec 通道，但 `sessionId` 指向串口 / Telnet / SFTP / 端口转发等传输（`params` 带 `id` 与 `kind`） | 改用 `kind=ssh` 的会话；串口 / Telnet 只有各自的字节写工具，`terminal_execute` 不受此限 |
 | `mcp_session_not_ready` | 会话存在但 `phase` 不是 `ready`（SSH 仍在建连 / 已关闭、串口未打开、句柄已释放） | 重新 `get_environment` 确认 `phase=ready` 后重试 |
 | `mcp_file_exists` / `mcp_local_file_exists` | 目标已存在且 `overwrite=false` | 显式传 `overwrite=true` |
@@ -679,7 +678,7 @@ get_environment（拿 sessionId / hostId / hosts）
 - **确认模式无批量允许**：审批按调用逐项进行；「始终允许」只按工具粒度，没有「允许本会话全部命令」。
 - **18 个工具**：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`serial_write`、`telnet_write`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`。
 - **`fs_grep` 依赖远端 `python3`**：缺失时返回 `mcp_missing_interpreter`，可改用 `fs_glob` + `fs_read` 或 `term_run` 的 `grep`。
-- **远端 jail 依赖配置**：`mcp.workspace_root` 默认 `~`；`..` 相对路径只折叠，是否越界由 jail 判定，软链通过 `realpath` 复核。
+- **远端路径不设目录限制**：`~` 与相对路径按远端 home 展开，`..` 只做折叠；绝对路径可指向任意目录，请自行确认目标位置。
 - **`fs_read` 上限 8 MiB**：更大文件请用 `sftp_get` 下载到本地处理，或分段开窗。
 - **`build_run` 只保留尾部**：完整日志需要 `teeToRemoteFile`；stdout/stderr 合并且 stdout 在前，不保证时间交错顺序。
 - **`sftp_get` 的 sha256 是本地文件**：如需确认远端内容，请用 `fs_read` / `build_run` 的远端校验命令自行比对。

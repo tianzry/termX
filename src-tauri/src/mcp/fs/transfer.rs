@@ -17,7 +17,7 @@ use crate::error::{AppError, AppResult};
 use crate::ssh::sftp::SftpHandle;
 use crate::state::AppState;
 
-use super::{handle, path as jail};
+use super::{handle, path as pathutil};
 
 /// 单次调用最多处理的文件数（递归展开后计数）。
 pub const MAX_TRANSFER_ITEMS: usize = 2000;
@@ -193,20 +193,16 @@ async fn collect_local_files(root: &Path) -> AppResult<Vec<(PathBuf, String)>> {
     Ok(files)
 }
 
-/// 远端路径规范化 + jail + 软链复核。`exist_ok=false` 时要求目标已存在。
+/// 远端路径规范化。`exist_ok=false` 时要求目标已存在。
 async fn resolve_remote(
     sftp: &SftpHandle,
     home: &str,
-    root: &str,
     input: &str,
     exist_ok: bool,
 ) -> AppResult<String> {
     super::shell::validate_remote_path(input)?;
-    let target = jail::normalize(input, home, root)?;
-    jail::check(root, &target)?;
-    if let Ok(real) = sftp.realpath(&target).await {
-        jail::check(root, &real)?;
-    } else if !exist_ok {
+    let target = pathutil::normalize(input, home, home)?;
+    if sftp.realpath(&target).await.is_err() && !exist_ok {
         return Err(AppError::not_found(
             "mcp_transfer_not_found",
             json!({ "path": target }),
@@ -269,7 +265,6 @@ pub async fn sftp_put(
     state: &AppState,
     session_id: &str,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<Vec<TransferOutcome>> {
     let items = parse_items(args)?;
     let overwrite = args
@@ -283,13 +278,12 @@ pub async fn sftp_put(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
     let host = Host::Tauri(app.clone());
     let mut results = Vec::new();
     let mut index = 0usize;
 
     for item in items {
-        let remote_base = match resolve_remote(&sftp, &home, &root, &item.remote, true).await {
+        let remote_base = match resolve_remote(&sftp, &home, &item.remote, true).await {
             Ok(value) => value,
             Err(e) => {
                 results.push(TransferOutcome::failure(item.local, item.remote, &e));
@@ -390,7 +384,6 @@ pub async fn sftp_get(
     state: &AppState,
     session_id: &str,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<Vec<TransferOutcome>> {
     let items = parse_items(args)?;
     let overwrite = args
@@ -404,13 +397,12 @@ pub async fn sftp_get(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
     let host = Host::Tauri(app.clone());
     let mut results = Vec::new();
     let mut index = 0usize;
 
     for item in items {
-        let remote_path = match resolve_remote(&sftp, &home, &root, &item.remote, false).await {
+        let remote_path = match resolve_remote(&sftp, &home, &item.remote, false).await {
             Ok(value) => value,
             Err(e) => {
                 results.push(TransferOutcome::failure(item.local, item.remote, &e));
@@ -456,18 +448,6 @@ pub async fn sftp_get(
             for entry in entries {
                 let rel = entry.rel_path.trim_start_matches('/').to_string();
                 if rel.is_empty() {
-                    continue;
-                }
-                // 子项仍按根做字符串级 jail 检查（软链逃逸在 walk 阶段已按真实目录去环）。
-                if !jail::is_within(&root, &join_remote(&remote_path, &rel)) {
-                    results.push(TransferOutcome::failure(
-                        item.local.clone(),
-                        join_remote(&remote_path, &rel),
-                        &AppError::config(
-                            "mcp_path_outside_jail",
-                            json!({ "root": root, "path": join_remote(&remote_path, &rel) }),
-                        ),
-                    ));
                     continue;
                 }
                 let local_target = local_root.join(&rel);

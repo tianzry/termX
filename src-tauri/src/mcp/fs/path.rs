@@ -1,7 +1,7 @@
-//! 远端路径规范化与 workspace jail。
+//! 远端路径规范化。
 //!
-//! 文件类工具在拿到用户路径后必须先 `normalize` 再 `check`，两者都是纯字符串
-//! 运算；真实软链是否逃逸由调用方用 SFTP `realpath` 再校验一次。
+//! 文件类工具在拿到用户路径后先 `normalize`：`~` 用远端 home 展开，相对路径按
+//! `base`（通常是 home）解析，并折叠 `.` / `..`。不做目录范围限制。
 
 use serde_json::json;
 
@@ -52,27 +52,6 @@ pub fn normalize(input: &str, home: &str, base: &str) -> AppResult<String> {
     Ok(format!("/{}", parts.join("/")))
 }
 
-/// `path` 是否位于 `root` 之内（root 自身算内）。两者都应是已规范化的绝对路径。
-pub fn is_within(root: &str, path: &str) -> bool {
-    let root = root.trim_end_matches('/');
-    if root.is_empty() {
-        return path.starts_with('/');
-    }
-    path == root || path.starts_with(&format!("{root}/"))
-}
-
-/// jail 校验：路径必须在 workspace 根内。
-pub fn check(jail_root: &str, path: &str) -> AppResult<()> {
-    if is_within(jail_root, path) {
-        Ok(())
-    } else {
-        Err(AppError::config(
-            "mcp_path_outside_jail",
-            json!({ "path": path, "root": jail_root }),
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,25 +75,15 @@ mod tests {
             normalize("~/code/../code/./a.c", "/home/u", "/home/u").unwrap(),
             "/home/u/code/a.c"
         );
-        // `..` 相对路径只做折叠；是否越出 workspace 由 `check` 判定。
+        // 相对路径可以折叠到 home 之外，不做目录限制。
         let escaped = normalize("../../etc/passwd", "/home/u", "/home/u").unwrap();
         assert_eq!(escaped, "/etc/passwd");
-        assert!(check("/home/u", &escaped).is_err());
-        // 真正越过文件系统根（`..` 栈已空）才在 normalize 阶段报错。
+        // 越过文件系统根（`..` 栈已空）才在 normalize 阶段报错。
         assert_eq!(
             normalize("/../etc", "/home/u", "/home/u")
                 .unwrap_err()
                 .code(),
             "mcp_path_escape"
         );
-    }
-
-    #[test]
-    fn jail_accepts_root_and_descendants_only() {
-        assert!(is_within("/home/u/code", "/home/u/code"));
-        assert!(is_within("/home/u/code", "/home/u/code/a/b.c"));
-        assert!(!is_within("/home/u/code", "/home/u/codex"));
-        assert!(!is_within("/home/u/code", "/etc/passwd"));
-        assert!(check("/home/u/code", "/etc/passwd").is_err());
     }
 }

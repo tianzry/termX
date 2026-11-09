@@ -1,4 +1,4 @@
-//! `fs_glob`：在 workspace 内按 glob 列举文件（SFTP walk，无 shell）。
+//! `fs_glob`：按 glob 递归列举远端文件（SFTP walk，无 shell）。
 
 use regex::Regex;
 use serde_json::{json, Value};
@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
-use super::{handle, path as jail, DEFAULT_MAX_RESULTS, MAX_MAX_RESULTS};
+use super::{handle, path as pathutil, DEFAULT_MAX_RESULTS, MAX_MAX_RESULTS};
 
 pub struct GlobOutcome {
     pub matches: Vec<Value>,
@@ -52,7 +52,6 @@ pub async fn fs_glob(
     state: &AppState,
     session_id: &str,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<GlobOutcome> {
     let pattern = args
         .get("pattern")
@@ -69,14 +68,12 @@ pub async fn fs_glob(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
     let input = args
         .get("path")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(".");
-    let search_root = jail::normalize(input, &home, &root)?;
-    jail::check(&root, &search_root)?;
+    let search_root = pathutil::normalize(input, &home, &home)?;
 
     let matcher = glob_to_regex(pattern)?;
     let match_basename = !pattern.contains('/');

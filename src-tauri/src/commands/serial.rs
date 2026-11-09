@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{locked, AppError, AppResult};
 use crate::models::SerialProfile;
@@ -21,41 +21,64 @@ pub fn serial_open(
     // 来源已保存主机的档案 id；临时串口连接没有，默认不自动记录日志。
     profile_id: Option<String>,
 ) -> AppResult<String> {
+    serial_open_for_owner(
+        &app,
+        &state,
+        SessionOwner::Window(window.label().to_owned()),
+        port,
+        config,
+        session_id,
+        profile_id,
+    )
+}
+
+/// 打开串口会话。UI 与 MCP（headless owner）共用同一条链路。
+pub fn serial_open_for_owner(
+    app: &AppHandle,
+    state: &AppState,
+    owner: SessionOwner,
+    port: String,
+    config: serial::SerialConfig,
+    session_id: Option<String>,
+    profile_id: Option<String>,
+) -> AppResult<String> {
     let session_id = crate::commands::lifecycle::resolve_session_id(session_id)?;
     let reservation = crate::commands::lifecycle::reserve_resource(
-        &state,
+        state,
         &session_id,
         SessionKind::Serial,
-        SessionOwner::Window(window.label().to_owned()),
+        owner,
     )?;
     let auto_log = crate::commands::settings::auto_session_log_path_for_profile_id(
-        &state,
+        state,
         profile_id.as_deref(),
     );
     let log_slots = crate::commands::session_logs::prepare_log_slots(
-        &state,
+        state,
         &session_id,
         auto_log,
     )
     .unwrap_or_default();
     let sink_slots = log_slots.clone();
+    let sink_app = app.clone();
     // Turn transport-agnostic serial output into Tauri events. The headless ws
     // server builds a different sink over the same `serial::open`.
     let sink: serial::SerialSink =
         std::sync::Arc::new(move |id: &str, out: serial::SerialOut| match out {
             serial::SerialOut::Data(b) => {
                 sink_slots.record(&b);
-                let _ = app.emit(
+                let _ = sink_app.emit(
                     &format!("serial:data:{id}"),
                     crate::emitter::b64_payload(&b),
                 );
             }
             serial::SerialOut::Close => {
                 sink_slots.finish();
-                let _ = app.emit(&format!("serial:close:{id}"), ());
+                crate::commands::lifecycle::mark_closed(&sink_app.state::<AppState>(), id);
+                let _ = sink_app.emit(&format!("serial:close:{id}"), ());
             }
             serial::SerialOut::AutoLogin(status) => {
-                let _ = app.emit(
+                let _ = sink_app.emit(
                     &format!("serial:auto_login:{id}"),
                     serde_json::json!({ "status": status }),
                 );

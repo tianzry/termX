@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 use crate::ssh::client::{exec_once, SshHandle};
 use crate::state::AppState;
 
-use super::{handle, path as jail, shell};
+use super::{handle, path as pathutil, shell};
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 pub const MAX_TIMEOUT_MS: u64 = 600_000;
@@ -82,7 +82,6 @@ pub async fn fs_build_run(
     session_id: &str,
     ssh: &SshHandle,
     args: &Value,
-    jail_root: &str,
 ) -> AppResult<BuildOutcome> {
     let command = args
         .get("command")
@@ -114,7 +113,6 @@ pub async fn fs_build_run(
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
-    let root = jail::normalize(jail_root, &home, &home)?;
 
     let cwd = match args
         .get("cwd")
@@ -124,24 +122,16 @@ pub async fn fs_build_run(
     {
         Some(input) => {
             shell::validate_remote_path(input)?;
-            let target = jail::normalize(input, &home, &root)?;
-            jail::check(&root, &target)?;
-            let real = sftp.realpath(&target).await?;
-            jail::check(&root, &real)?;
-            real
+            let target = pathutil::normalize(input, &home, &home)?;
+            sftp.realpath(&target).await?
         }
-        None => root.clone(),
+        None => home.clone(),
     };
 
     let tee = match tee_input {
         Some(input) => {
             shell::validate_remote_path(input)?;
-            let target = jail::normalize(input, &home, &root)?;
-            jail::check(&root, &target)?;
-            if let Ok(real) = sftp.realpath(&target).await {
-                jail::check(&root, &real)?;
-            }
-            Some(target)
+            Some(pathutil::normalize(input, &home, &home)?)
         }
         None => None,
     };

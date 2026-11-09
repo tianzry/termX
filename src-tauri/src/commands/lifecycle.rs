@@ -986,6 +986,60 @@ pub fn close_resource(
     Ok(())
 }
 
+/// 链路自行断开（reader 线程检测到 EOF / 设备拔出）时收尾：
+/// 只标记 Closed 并从句柄表摘掉，**不**调用 `handle.close()`——
+/// 本函数运行在 reader 线程内，close 会等待自身退出而死锁。
+pub fn mark_closed(state: &AppState, session_id: &str) {
+    let (kind, log_slots) = match locked(&state.lifecycle_sessions) {
+        Ok(mut registry) => {
+            let Some(record) = registry.get_mut(session_id) else {
+                return;
+            };
+            if record.phase == SessionPhase::Closed {
+                return;
+            }
+            record.phase = SessionPhase::Closed;
+            (record.kind, record.log_slots.clone())
+        }
+        Err(_) => return,
+    };
+    match kind {
+        SessionKind::Ssh => {
+            if let Ok(mut sessions) = state.sessions.lock() {
+                sessions.remove(session_id);
+            }
+        }
+        #[cfg(desktop)]
+        SessionKind::Pty => {
+            if let Ok(mut sessions) = state.pty_sessions.lock() {
+                sessions.remove(session_id);
+            }
+        }
+        #[cfg(desktop)]
+        SessionKind::Serial => {
+            if let Ok(mut sessions) = state.serial_sessions.lock() {
+                sessions.remove(session_id);
+            }
+        }
+        SessionKind::Telnet => {
+            if let Ok(mut sessions) = state.telnet_sessions.lock() {
+                sessions.remove(session_id);
+            }
+        }
+        SessionKind::Sftp => {
+            if let Ok(mut sessions) = state.sftp_sessions.lock() {
+                sessions.remove(session_id);
+            }
+        }
+        SessionKind::Forward => {
+            if let Ok(mut sessions) = state.active_forwards.lock() {
+                sessions.remove(session_id);
+            }
+        }
+    }
+    log_slots.finish();
+}
+
 pub fn close_ssh_tree(
     state: &AppState,
     session_id: &str,
