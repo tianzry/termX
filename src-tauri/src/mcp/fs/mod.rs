@@ -4,9 +4,13 @@
 //! 不拼 shell、不走命令黑名单；传输只回路径/大小/校验和。
 
 pub mod caps;
+pub mod glob;
+pub mod grep;
 pub mod handle;
 pub mod path;
+pub mod read;
 pub mod session;
+pub mod shell;
 
 /// `fs_read` 默认开窗行数。
 pub const DEFAULT_READ_LINES: usize = 200;

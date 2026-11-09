@@ -14,12 +14,13 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
-use crate::commands::{lifecycle, plugin};
-use crate::state::{AppState, SessionKind, SessionOwner};
 use super::config::{McpConfig, PermissionMode};
 use super::server::McpRuntime;
+use crate::commands::{lifecycle, plugin};
+use crate::state::{AppState, SessionKind, SessionOwner};
 
-const HINT_SESSION_ID: &str = "先调用 get_environment 获取当前活跃会话，用返回的 sessions[].id 作为 sessionId；不要臆造 id。";
+const HINT_SESSION_ID: &str =
+    "先调用 get_environment 获取当前活跃会话，用返回的 sessions[].id 作为 sessionId；不要臆造 id。";
 const HINT_PERMISSION: &str = "写操作受「设置 → AI → 工具接入」权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接放行。";
 
 pub struct ToolResult {
@@ -80,38 +81,88 @@ fn schema(props: Value, required: &[&str]) -> Value {
     })
 }
 
+/// 远端文件类工具统一 schema：`sessionId` 与 `hostId` 二选一。
+fn remote_schema(props: Value, required: &[&str]) -> Value {
+    let mut value = schema(props, required);
+    value["anyOf"] = json!([
+        { "required": ["sessionId"] },
+        { "required": ["hostId"] }
+    ]);
+    value
+}
+
+fn remote_args_common(props: &mut serde_json::Map<String, Value>) {
+    props.insert(
+        "sessionId".to_string(),
+        json!({
+            "type": "string",
+            "description": "get_environment 返回的 sessions[].id（与 hostId 二选一）"
+        }),
+    );
+    props.insert(
+        "hostId".to_string(),
+        json!({
+            "type": "string",
+            "description": "vault 主机 id；无就绪会话时自动按档案建连（与 sessionId 二选一）"
+        }),
+    );
+}
+
+fn tool_error(e: crate::error::AppError) -> ToolResult {
+    ToolResult::err(
+        e.code(),
+        e.to_string(),
+        "按 code 修正参数；会话/主机相关错误先调用 get_environment 确认。",
+    )
+}
+
+/// 远端只读文件工具的统一构造：`sessionId` / `hostId` 二选一。
+fn file_tool(name: &str, description: &str, extra: Value, required: &[&str]) -> Value {
+    let mut props = match extra {
+        Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    remote_args_common(&mut props);
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": remote_schema(Value::Object(props), required),
+        "annotations": { "readOnlyHint": true }
+    })
+}
+
 pub fn definitions() -> Value {
-    json!([
+    let mut list = json!([
         {
             "name": "get_environment",
-            "description": "只读。返回 termX 当前活跃的终端 / SFTP / 端口转发 / 串口会话（id / kind / phase）与已保存主机数量。\
-何时用：会话开始时先调用它拿 sessionId；调用 terminal_execute / session_close 前确认真实会话。\
-何时不用：只需要主机清单时用 vault_hosts_list；不要用它轮询等待新会话。",
+            "description": "只读。返回当前会话（id / kind / phase / hostId / origin）与已保存主机清单（hosts），并标注 cacheable / ttl。\
+    何时用：会话开始时先调用它拿 sessionId 或 hostId；文件类工具可直接传 hostId，无就绪会话时会自动建连。\
+    何时不用：只需要主机清单时也可用 vault_hosts_list；不要用它轮询等待新会话。",
             "inputSchema": schema(json!({}), &[]),
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "vault_hosts_list",
             "description": "只读。返回已保存主机的 id / name / host / port / groupId，不含密码、密钥等凭据。\
-何时用：需要知道用户保存了哪些主机、该选哪台时。\
-何时不用：获取当前活跃会话用 get_environment；本工具不会打开连接，也不会执行命令。",
+    何时用：需要知道用户保存了哪些主机、该选哪台时。\
+    何时不用：获取当前活跃会话用 get_environment；本工具不会打开连接，也不会执行命令。",
             "inputSchema": schema(json!({}), &[]),
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "snippets_list",
             "description": "只读。返回已保存代码片段的 id / name / package / command / description；命令文本可能含敏感信息。\
-何时用：需要复用用户预置的命令或脚本时。\
-何时不用：不要用本工具执行命令；执行请用 terminal_execute。",
+    何时用：需要复用用户预置的命令或脚本时。\
+    何时不用：不要用本工具执行命令；执行请用 terminal_execute。",
             "inputSchema": schema(json!({}), &[]),
             "annotations": { "readOnlyHint": true }
         },
         {
             "name": "terminal_execute",
             "description": "写操作。在 get_environment 返回的某个已打开会话中执行一条命令，返回 stdout / stderr / exitCode。\
-何时用：需要与目标主机的现有会话交互、查看输出或运行命令时。\
-何时不用：只查询会话 / 主机清单时用只读工具；没有 sessionId 时不要调用；不要用它发起与本机会话无关的网络操作。\
-受权限档位与命令黑名单约束。",
+    何时用：需要与目标主机的现有会话交互、查看输出或运行命令时。\
+    何时不用：只查询会话 / 主机清单时用只读工具；没有 sessionId 时不要调用；不要用它发起与本机会话无关的网络操作。\
+    受权限档位与命令黑名单约束。",
             "inputSchema": schema(
                 json!({
                     "sessionId": {
@@ -139,9 +190,9 @@ pub fn definitions() -> Value {
         {
             "name": "session_close",
             "description": "写操作。关闭 get_environment 返回的指定会话。\
-何时用：你打开且任务已完成的会话，或明确需要释放会话资源时。\
-何时不用：用户正在使用的会话不要关闭；会话不存在时先 get_environment 确认。\
-受权限档位约束。",
+    何时用：你打开且任务已完成的会话，或明确需要释放会话资源时。\
+    何时不用：用户正在使用的会话不要关闭；会话不存在时先 get_environment 确认。\
+    受权限档位约束。",
             "inputSchema": schema(
                 json!({
                     "sessionId": {
@@ -154,7 +205,69 @@ pub fn definitions() -> Value {
             ),
             "annotations": { "readOnlyHint": false, "destructiveHint": true }
         }
-    ])
+    ]);
+    let items = list
+        .as_array_mut()
+        .expect("definitions is always a JSON array");
+
+    items.push(file_tool(
+        "fs_read",
+        "只读。按行开窗读取远端文本文件，返回 lines / totalLines / size / mtime / truncated / nextCursor；走 SFTP 直读，不产生 base64。\
+何时用：查看源码、日志、配置；先用 fs_grep 定位再读。\
+何时不用：不要整读大文件（用 startLine 翻页）；二进制文件会被拒绝。\
+sessionId 与 hostId 二选一；hostId 无就绪会话时按 vault 档案自动建连。",
+        json!({
+            "path": {
+                "type": "string",
+                "description": "远端路径，支持 ~ 与相对 workspace 根的路径"
+            },
+            "startLine": { "type": "integer", "minimum": 1, "default": 1 },
+            "maxLines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 200 },
+            "numbered": { "type": "boolean", "default": true, "description": "是否带行号" }
+        }),
+        &["path"],
+    ));
+
+    items.push(file_tool(
+        "fs_grep",
+        "只读。按 glob + 正则搜索 workspace，返回 matches[{path,line,text}] / total / truncated / nextCursor。\
+何时用：定位符号、报错、配置项，再配合 fs_read 开窗。\
+何时不用：已知精确路径时直接 fs_read；远端缺 python3 会返回 mcp_missing_interpreter。\
+sessionId 与 hostId 二选一。",
+        json!({
+            "pattern": { "type": "string", "description": "搜索内容或正则" },
+            "path": { "type": "string", "description": "搜索根，默认 workspace 根" },
+            "glob": { "type": "string", "default": "*", "description": "文件过滤，如 **/*.c" },
+            "regex": { "type": "boolean", "default": true },
+            "ignoreCase": { "type": "boolean", "default": false },
+            "contextLines": { "type": "integer", "minimum": 0, "maximum": 3, "default": 0 },
+            "maxResults": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
+            "cursor": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "上一页返回的 nextCursor"
+            }
+        }),
+        &["pattern"],
+    ));
+
+    items.push(file_tool(
+        "fs_glob",
+        "只读。按 glob 递归列举 workspace 内文件，返回 matches[{path,size}] / total / truncated / nextCursor。\
+何时用：了解目录结构、列出某类文件后批量处理。\
+何时不用：需要内容匹配用 fs_grep；不要用它列举整个 home 根。\
+sessionId 与 hostId 二选一。",
+        json!({
+            "pattern": { "type": "string", "description": "glob，如 **/*.c" },
+            "path": { "type": "string", "description": "搜索根，默认 workspace 根" },
+            "maxResults": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
+            "cursor": { "type": "integer", "minimum": 0, "default": 0 }
+        }),
+        &["pattern"],
+    ));
+
+    Value::Array(list)
 }
 
 fn kind_name(kind: SessionKind) -> &'static str {
@@ -228,7 +341,10 @@ async fn approval_gate(
     }
 }
 
-fn session_meta(state: &AppState, session_id: &str) -> Result<(SessionOwner, SessionKind), ToolResult> {
+fn session_meta(
+    state: &AppState,
+    session_id: &str,
+) -> Result<(SessionOwner, SessionKind), ToolResult> {
     let registry = state.lock_sessions().map_err(|e| internal_error(e))?;
     match registry.get(session_id) {
         Some(record) => Ok((record.owner.clone(), record.kind)),
@@ -242,6 +358,7 @@ fn session_meta(state: &AppState, session_id: &str) -> Result<(SessionOwner, Ses
 
 fn environment(state: &AppState) -> Result<Value, ToolResult> {
     let registry = state.lock_sessions().map_err(|e| internal_error(e))?;
+    let handles = crate::error::locked(&state.sessions).map_err(internal_error)?;
     let mut sessions = Vec::new();
     for (id, record) in registry.iter() {
         sessions.push(json!({
@@ -252,13 +369,34 @@ fn environment(state: &AppState) -> Result<Value, ToolResult> {
                 crate::state::SessionPhase::Ready => "ready",
                 crate::state::SessionPhase::Closed => "closed",
             },
+            "hostId": handles.get(id).map(|handle| handle.profile_id().to_string()),
+            "origin": match &record.owner {
+                SessionOwner::Headless(_) => "mcp",
+                SessionOwner::Window(_) => "user",
+            },
         }));
     }
+    drop(handles);
     drop(registry);
     let hosts = crate::db::profile::list(&state.db).map_err(internal_error)?;
+    let host_items: Vec<Value> = hosts
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p.id,
+                "name": p.name,
+                "host": p.host,
+                "port": p.port,
+                "groupId": p.group_id,
+            })
+        })
+        .collect();
     Ok(json!({
         "sessions": sessions,
+        "hosts": host_items,
         "hostCount": hosts.len(),
+        "cacheable": true,
+        "ttl": 30,
     }))
 }
 
@@ -325,6 +463,78 @@ pub async fn call_tool(
             }
             Err(e) => internal_error(e),
         },
+        "fs_read" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            match super::fs::read::fs_read(state, &session.session_id, args, &jail_root).await {
+                Ok(out) => ToolResult::ok(
+                    "已读取文件窗口",
+                    "内容未读完时带 startLine = nextCursor 继续；大文件先用 fs_grep 定位。",
+                    json!({
+                        "path": out.path,
+                        "lines": out.lines,
+                        "totalLines": out.total_lines,
+                        "size": out.size,
+                        "mtime": out.mtime,
+                        "truncated": out.truncated,
+                        "nextCursor": out.next_cursor,
+                    }),
+                ),
+                Err(e) => tool_error(e),
+            }
+        }
+        "fs_grep" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            match super::fs::grep::fs_grep(
+                state,
+                &session.session_id,
+                &session.profile_id,
+                &session.handle,
+                args,
+                &jail_root,
+            )
+            .await
+            {
+                Ok(out) => ToolResult::ok(
+                    "搜索完成",
+                    "继续翻页传 cursor = nextCursor；定位后用 fs_read 开窗看上下文。",
+                    json!({
+                        "matches": out.matches,
+                        "total": out.total,
+                        "truncated": out.truncated,
+                        "nextCursor": out.next_cursor,
+                    }),
+                ),
+                Err(e) => tool_error(e),
+            }
+        }
+        "fs_glob" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            match super::fs::glob::fs_glob(state, &session.session_id, args, &jail_root).await {
+                Ok(out) => ToolResult::ok(
+                    "已列举文件",
+                    "继续翻页传 cursor = nextCursor；需要内容匹配改用 fs_grep。",
+                    json!({
+                        "matches": out.matches,
+                        "total": out.total,
+                        "truncated": out.truncated,
+                        "nextCursor": out.next_cursor,
+                    }),
+                ),
+                Err(e) => tool_error(e),
+            }
+        }
         "terminal_execute" => {
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
@@ -453,7 +663,7 @@ pub async fn call_tool(
         _ => ToolResult::err(
             "unknown_tool",
             format!("未知工具：{name}"),
-            "调用 tools/list 查看可用工具；仅支持 get_environment / vault_hosts_list / snippets_list / terminal_execute / session_close。",
+            "调用 tools/list 查看可用工具；文件类操作优先用 fs_read / fs_grep / fs_glob / fs_patch / sftp_put / sftp_get，终端交互用 terminal_execute。",
         ),
     }
 }
@@ -511,10 +721,10 @@ mod tests {
     }
 
     #[test]
-    fn definitions_cover_five_tools_with_full_schemas() {
+    fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 5);
+        assert_eq!(list.len(), 8);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
@@ -525,7 +735,10 @@ mod tests {
             assert!(schema["properties"].is_object());
             assert!(schema["required"].is_array());
         }
-        let exec = list.iter().find(|t| t["name"] == "terminal_execute").unwrap();
+        let exec = list
+            .iter()
+            .find(|t| t["name"] == "terminal_execute")
+            .unwrap();
         let props = &exec["inputSchema"]["properties"];
         assert_eq!(props["sessionId"]["type"], "string");
         assert!(props["sessionId"]["examples"].is_array());
@@ -534,6 +747,12 @@ mod tests {
             exec["inputSchema"]["required"],
             json!(["sessionId", "command"])
         );
+
+        let read = list.iter().find(|t| t["name"] == "fs_read").unwrap();
+        assert_eq!(read["annotations"]["readOnlyHint"], true);
+        assert!(read["inputSchema"]["anyOf"].is_array());
+        assert_eq!(read["inputSchema"]["required"], json!(["path"]));
+        assert!(read["inputSchema"]["properties"]["hostId"].is_object());
     }
 
     #[test]

@@ -587,8 +587,8 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | M0 基础设施 | ✅ 完成 | `mcp/fs/{path,session,handle,caps,mod}.rs` + `mcp/{permissions,audit,runtime_state}.rs`；抽取 `connect_profile` 供 MCP 自动建连；rustfmt ✓ / npm build ✓（沙箱无 glib，无法 cargo check） |
-| M1 只读工具 | 🟨 进行中 | `get_environment` 扩展、`fs_read`、`fs_grep`、`fs_glob` |
-| M2 写工具 | ⬜ 未开始 | `fs_patch`（多文件 + dryRun）、`fs_write`；脚本纯函数提取随本阶段做 |
+| M1 只读工具 | ✅ 完成 | `get_environment`（hosts / hostId / origin / ttl）、`fs_read`、`fs_grep`、`fs_glob`；perl 兜底延后到 M2 |
+| M2 写工具 | 🟨 进行中 | `fs_patch`（多文件 + dryRun）、`fs_write`；脚本纯函数提取随本阶段做 |
 | M3 传输 | ⬜ 未开始 | `sftp_put` / `sftp_get`（批量、递归、sha256） |
 | M4 删除 | ⬜ 未开始 | `fs_delete`（dry-run + confirmToken） |
 | M5 执行 | ⬜ 未开始 | `build_run`、`term_run` 策略化 |

@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M1：只读文件工具（fs_read / fs_grep / fs_glob）
+
+- `get_environment` 扩展：`sessions[]` 增加 `hostId` / `origin`（mcp | user），新增 `hosts[]`（id / name / host / port / groupId），并回 `cacheable: true` + `ttl: 30`；保留 `hostCount` 不破坏旧客户端。
+- 新增 `fs_read`：SFTP 直读远端文本，默认 200 行窗口 + `totalLines` / `nextCursor`，可选行号；上限 8 MiB；`realpath` 复核软链不越过 jail；二进制直接拒绝。
+- 新增 `fs_grep`：远端 python3 脚本按 glob + 正则搜索，glob 支持 `**/*.c`，`contextLines` ≤ 3，`maxResults` ≤ 200，单文件 > 2 MiB 跳过；返回 `matches[{path,line,text}]` + `total` + 游标；文本片段截断到 400 字符。
+- 新增 `fs_glob`：SFTP `walk_files` + glob→regex，`**/` 编译为 `(?:.*/)?`（根目录文件也能匹配），游标翻页。
+- 新增 `mcp/fs/shell.rs`：POSIX 单引号转义、`$HOME` 路径准备、路径控制字符校验（M2 与 `ai/session/file_ops.rs` 统一后删除）。
+- `mcp/config.rs` 新增 `mcp.workspace_root`（默认 `~`）与 `workspace_root()` / `save_workspace_root()`；文件类工具统一按此根做 jail。
+- 踩坑 97：`definitions()` 原本是 `json!([...])`，为追加工具直接改成 `vec![...]` 会把 JSON 对象字面量当成 Rust 块表达式；保持 `json!` 数组，再 `as_array_mut().push()`。
+- 踩坑 98：glob 的 `**/` 若编译成 `.*`，`**/*.c` 匹配不到根目录的 `a.c`；必须编译成 `(?:.*/)?`。
+- 延后：`fs_grep` 的 perl 兜底（当前仅 python3，缺解释器返回 `mcp_missing_interpreter`），与 M2 脚本提取一起做。
+- 门禁：`rustfmt`（本轮文件，含语法解析）✓；`cargo check` 不可用（沙箱缺 `glib-2.0`）。
+
+---
+
 ## 2026-11-09 — MCP 整改 M0：文件原语基础设施（不新增工具）
 
 - 新增 `src-tauri/src/mcp/fs/`：

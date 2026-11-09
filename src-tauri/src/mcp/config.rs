@@ -19,6 +19,9 @@ pub const KEY_PERMISSION_MODE: &str = "mcp.permission_mode";
 pub const KEY_ALLOWED_TOOLS: &str = "mcp.allowed_tools";
 /// Bearer token。持久化后只有手动「轮换」才会更换，改配置/重启 app 都不变。
 pub const KEY_TOKEN: &str = "mcp.token";
+/// 文件类工具的 workspace jail 根（`fs_*` / `sftp_*` 都限制在这里）。
+pub const KEY_WORKSPACE_ROOT: &str = "mcp.workspace_root";
+pub const DEFAULT_WORKSPACE_ROOT: &str = "~";
 
 /// Netcatty 默认端口 47391（`ExternalMcpHttpSection` 默认值），保持同值便于用户迁移。
 pub const DEFAULT_PORT: u16 = 47391;
@@ -214,6 +217,20 @@ pub fn load_token(db: &Db) -> Option<String> {
 
 pub fn save_token(db: &Db, token: &str) -> AppResult<()> {
     settings::set(db, KEY_TOKEN, token)
+}
+
+/// 文件类工具的 workspace jail 根；空值回退到远端 home。
+pub fn workspace_root(db: &Db) -> String {
+    settings::get(db, KEY_WORKSPACE_ROOT)
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_WORKSPACE_ROOT.to_string())
+}
+
+pub fn save_workspace_root(db: &Db, root: &str) -> AppResult<()> {
+    settings::set(db, KEY_WORKSPACE_ROOT, root.trim())
 }
 
 #[allow(dead_code)]
