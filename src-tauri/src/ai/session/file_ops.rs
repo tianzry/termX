@@ -17,6 +17,7 @@ use serde_json::json;
 
 use crate::ai::audit::AuditKind;
 use crate::ai::llm::{ChatMessage, ToolCall};
+use crate::ai::remote_script::{ansi_c_quote, prepare_remote_path, shell_quote, validate_path};
 use crate::ai::sanitize;
 use crate::ai::tools::{MatchFileInput, PatchFileInput, MATCH_CONTEXT_DEFAULT, MATCH_CONTEXT_MAX};
 use crate::error::{AppError, AppResult};
@@ -271,102 +272,6 @@ fn select_interpreter(caps: RemoteCapabilities) -> Option<Interpreter> {
         Some(Interpreter::Perl)
     } else {
         None
-    }
-}
-
-// ─── Quoting & path helpers ──────────────────────────────────────
-
-/// ANSI-C quoting (`$'...'`)：shell 把 `\n` `\t` `\\` 等转义序列展开为真字符，
-/// 但**整段字面量在 shell 视角是单行 ASCII** —— 因此长多行脚本能塞进一条单行命令，
-/// 不触发 zsh ZLE 的 multi-line quote race（粘贴长命令进 PTY 时 p10k 会渲染连续
-/// quote> prompt、ZLE buffer 错乱、命令永不执行）。
-///
-/// **单引号编码为 `\x27`，不是 `\'`** —— 实测含多个 `\'` 的长命令在 zsh + p10k
-/// 下偶发卡死（同一命令含 0 个 `\'` 时稳定通过）。怀疑 ZLE 在 `$'...'` 状态机内
-/// 对 `\'` 的转义切换有 race。两者语义等价，但 transition 路径分离 —— hardening。
-///
-/// **其他 C0 控制字符（0x00-0x1F 中除 `\n`/`\r`/`\t` 外的）和 DEL (0x7F) 也 hex 化** ——
-/// 安全：LLM 可控的 `find` / `replace` 含 ESC (`\x1b`) / BEL (`\x07`) / CSI 序列等会通过
-/// PTY echo 触发 terminal escape injection（隐藏文本、伪造 prompt、改终端 title 等）。
-/// 让 on-wire 命令保持 printable ASCII，回程的 PTY echo 也就不会被解释为 escape sequence。
-/// 程序拿到的 argv 仍是原字节（shell 把 `\xHH` 解码回原 byte）。
-///
-/// 适用 bash / zsh（远端常见 shell）；POSIX 纯 sh / busybox sh / dash 不支持。
-/// file_ops 已经硬依赖 python3 / perl，那些极简环境一般连解释器都没有，能力探测
-/// 阶段就被拒。
-fn ansi_c_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    out.push('$');
-    out.push('\'');
-    for ch in s.chars() {
-        match ch {
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\'' => out.push_str("\\x27"),
-            '\\' => out.push_str("\\\\"),
-            // 其他 C0 controls (0x00-0x1F 中未在上面特处理的) + DEL (0x7F) → \xHH
-            c if (c as u32) < 0x20 || (c as u32) == 0x7F => {
-                out.push_str(&format!("\\x{:02x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('\'');
-    out
-}
-
-/// POSIX 单引号转义。所有 termx 后端拼装的 PTY 命令都走这个，避免路径含
-/// 空格/特殊字符时被 shell 错误解析。
-///
-/// 转义规则：把整个串包在单引号里；输入中的每个单引号替换为 `'\''`
-/// （关闭引号 → 转义字面单引号 → 重开引号）。这是 POSIX shell 通用形态，
-/// bash/dash/zsh/ash/busybox 都正确解析，且能可靠覆盖所有 shell 元字符
-/// （$ ` * ? & | ; < > 等单引号内都按字面）。
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
-/// 校验 path 不含会破坏单行命令的字符。
-///
-/// 必须拒：
-/// - `\n` / `\r`：shell_quote 用 POSIX 单引号包，单引号内换行**字面保留**，命令字节流就有
-///   真 `\n` byte，重新触发 zsh ZLE multi-line quote race —— 这正是本 PR 拿 ansi_c_quote 把
-///   脚本/find/replace 全单行化要规避的问题。path 走的是 shell_quote 不经 ansi_c_quote，必须
-///   在入口直接拒。
-/// - 其他 C0 控制字符 (0x00-0x1F) 和 DEL (0x7F)：terminal escape injection 防御（同 ansi_c_quote
-///   注释里 ESC/BEL 的理由）。Unix 文件名理论上允许这些字符，但 termx 用户场景里它们没合理用法。
-fn validate_path(path: &str) -> Result<(), &'static str> {
-    if path.is_empty() {
-        return Err("empty path");
-    }
-    for c in path.chars() {
-        let code = c as u32;
-        if c == '\n' || c == '\r' {
-            return Err("path contains newline (\\n or \\r) — would break the single-line command");
-        }
-        if code < 0x20 || code == 0x7F {
-            return Err("path contains control character");
-        }
-    }
-    Ok(())
-}
-
-/// 远端文件路径准备：处理 `~` / `~/...` 前缀展开，其余走 shell_quote。
-///
-/// 直接 shell_quote `~/foo` → `'~/foo'`，单引号禁掉 `~` 展开，shell 看到字面波浪号
-/// → 文件找不到。这里把 `~/` 替换为 `"$HOME"/`，让 `$HOME` 在双引号里展开，
-/// 而 rest 部分仍走单引号保护特殊字符。
-///
-/// `~user/...` 形态（其他用户的 home）不支持 —— 这种用例罕见，按字面单引号处理
-/// （LLM 想用就报"路径不存在"，明确的错误胜过悄悄改写）。
-fn prepare_remote_path(path: &str) -> String {
-    if path == "~" {
-        "\"$HOME\"".to_string()
-    } else if let Some(rest) = path.strip_prefix("~/") {
-        format!("\"$HOME\"/{}", shell_quote(rest))
-    } else {
-        shell_quote(path)
     }
 }
 

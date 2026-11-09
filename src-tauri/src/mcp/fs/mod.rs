@@ -7,10 +7,12 @@ pub mod caps;
 pub mod glob;
 pub mod grep;
 pub mod handle;
+pub mod patch;
 pub mod path;
 pub mod read;
 pub mod session;
 pub mod shell;
+pub mod write;
 
 /// `fs_read` 默认开窗行数。
 pub const DEFAULT_READ_LINES: usize = 200;
@@ -107,6 +109,8 @@ mod tests {
         let (tail, truncated) = tail_bytes(text, 4);
         assert!(truncated);
         assert!(text.ends_with(&tail));
-        assert_eq!(tail, "信息");
+        // 4 字节装不下两个汉字（各 3 字节），只能回最后一个完整字符。
+        assert_eq!(tail, "息");
+        assert!(tail.len() <= 4);
     }
 }

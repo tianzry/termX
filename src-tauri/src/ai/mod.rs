@@ -17,6 +17,7 @@ pub mod commands;
 pub mod llm;
 pub mod prompts;
 pub mod redact_rules;
+pub mod remote_script;
 pub mod sanitize;
 pub mod session;
 pub mod shell;

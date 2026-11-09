@@ -1718,7 +1718,9 @@ impl Actor {
             );
             return Ok(self.make_tool_error(
                 &tc.id,
-                &format!("{reason}. Try a compliant rewrite or ask the user to adjust the blocklist."),
+                &format!(
+                    "{reason}. Try a compliant rewrite or ask the user to adjust the blocklist."
+                ),
             ));
         }
 

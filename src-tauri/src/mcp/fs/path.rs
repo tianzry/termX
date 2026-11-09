@@ -96,8 +96,13 @@ mod tests {
             normalize("~/code/../code/./a.c", "/home/u", "/home/u").unwrap(),
             "/home/u/code/a.c"
         );
+        // `..` 相对路径只做折叠；是否越出 workspace 由 `check` 判定。
+        let escaped = normalize("../../etc/passwd", "/home/u", "/home/u").unwrap();
+        assert_eq!(escaped, "/etc/passwd");
+        assert!(check("/home/u", &escaped).is_err());
+        // 真正越过文件系统根（`..` 栈已空）才在 normalize 阶段报错。
         assert_eq!(
-            normalize("../../etc/passwd", "/home/u", "/home/u")
+            normalize("/../etc", "/home/u", "/home/u")
                 .unwrap_err()
                 .code(),
             "mcp_path_escape"

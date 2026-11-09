@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M2：写工具（fs_patch / fs_write）
+
+- 新增 `ai/remote_script.rs`：把 `file_ops.rs` 里的 `ansi_c_quote` / `shell_quote` / `validate_path` / `prepare_remote_path` 提成共享纯函数（带单测），`file_ops.rs` 只留 `build_script_cmd` 与会话编排；`mcp/fs/shell.rs` 改为委托 + 错误码映射，两端不再各写一份转义。
+- 新增 `fs_write`：SFTP 直写小文本（≤ 512 KiB），返回 `size` / `sha256` / `created`；目标已存在且未显式 `overwrite=true` 直接回 `mcp_file_exists`；路径先 `normalize` + `check`，存在时用 `realpath` 再验一次软链。
+- 新增 `fs_patch`：远端 python3 脚本按 `oldText/newText` 精确替换，一次最多 20 个文件、每个文件多个 op；`dryRun` 只回 unified diff（截断 12k 字符），落盘用 `临时文件 + os.replace` 原子替换；`oldText` 不唯一回 `ambiguous` + 候选行号（≤ 20），空 `oldText` / 二进制 / 未命中分别给出独立 code。
+- `tools.rs` 注册两工具（`readOnlyHint:false`，复用 `sessionId`/`hostId` 二选一 schema），dispatch 先过 `approval_gate` 再执行，成功/被拒都写入 `runtime_state` 审计（`applied` / `dry_run` / `denied`）；`definitions()` 测试断言工具数 10。
+- 踩坑 99：`PluginExecResult.exit_code` 是 `Option<i32>`（`None` 表示无退出码），不能与 `0` 直接比较，否则 E0308；统一写 `!= Some(0)`。
+- 踩坑 100：沙箱原缺 `glib-2.0`，`cargo check` 被 pkg-config 拦下。本轮装上 `libglib2.0-dev` / `libgtk-3-dev` / `libwebkit2gtk-4.1-dev` / `libudev-dev` 等依赖后恢复编译门禁，才发现并修掉三条历史问题：M0 的 `tail_bytes` 单测期望值超过预算字节数（4 字节装不下「信息」，改为「息」）、`normalize("../../etc/passwd")` 单测误判（`..` 只折叠，越狱由 `check` 判定）、`terminal/shell_discovery.rs` 对 `shells` 的两次 `iter_mut` 借用冲突（`or_else` 改 `else if`，语义等价）。
+- 顺延：`fs_grep` 的 perl 兜底仍未做（当前 python3-only）。
+- 门禁：`cargo check --lib` ✓（仅剩「尚未使用」的后续阶段 warning）、`cargo test --lib mcp::` 49 ✓、`remote_script` 4 ✓、`shell_discovery` 3 ✓；`src/ai/session.rs` 仅 rustfmt 换行，无逻辑改动。
+
+---
+
 ## 2026-11-09 — MCP 整改 M1：只读文件工具（fs_read / fs_grep / fs_glob）
 
 - `get_environment` 扩展：`sessions[]` 增加 `hostId` / `origin`（mcp | user），新增 `hosts[]`（id / name / host / port / groupId），并回 `cacheable: true` + `ttl: 30`；保留 `hostCount` 不破坏旧客户端。

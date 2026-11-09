@@ -14,7 +14,9 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
+use super::audit::change_entry;
 use super::config::{McpConfig, PermissionMode};
+use super::runtime_state;
 use super::server::McpRuntime;
 use crate::commands::{lifecycle, plugin};
 use crate::state::{AppState, SessionKind, SessionOwner};
@@ -118,6 +120,17 @@ fn tool_error(e: crate::error::AppError) -> ToolResult {
 
 /// 远端只读文件工具的统一构造：`sessionId` / `hostId` 二选一。
 fn file_tool(name: &str, description: &str, extra: Value, required: &[&str]) -> Value {
+    remote_file_tool(name, description, extra, required, true)
+}
+
+/// 远端文件工具通用构造。`read_only=false` 时标注可写，供审批卡片区分。
+fn remote_file_tool(
+    name: &str,
+    description: &str,
+    extra: Value,
+    required: &[&str],
+    read_only: bool,
+) -> Value {
     let mut props = match extra {
         Value::Object(map) => map,
         _ => serde_json::Map::new(),
@@ -127,7 +140,7 @@ fn file_tool(name: &str, description: &str, extra: Value, required: &[&str]) -> 
         "name": name,
         "description": description,
         "inputSchema": remote_schema(Value::Object(props), required),
-        "annotations": { "readOnlyHint": true }
+        "annotations": { "readOnlyHint": read_only, "destructiveHint": !read_only }
     })
 }
 
@@ -267,7 +280,74 @@ sessionId 与 hostId 二选一。",
         &["pattern"],
     ));
 
-    Value::Array(list)
+    items.push(remote_file_tool(
+        "fs_patch",
+        "写操作。按 oldText/newText 做精确替换，可一次改多个文件的多个片段；支持 dryRun 只回 unified diff。\
+何时用：已用 fs_read 看过上下文、需要做小范围修改时；先 dryRun 再落盘。\
+何时不用：整体覆盖用 fs_write；oldText 必须唯一（不唯一会回候选行号，要求 replaceAll 或加长上下文）。\
+受权限档位约束；sessionId 与 hostId 二选一。",
+        json!({
+            "edits": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "description": "要修改的文件列表",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "远端文件路径" },
+                        "ops": {
+                            "type": "array",
+                            "minItems": 1,
+                            "description": "按顺序应用的替换操作",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "oldText": { "type": "string", "description": "原文片段，必须能匹配" },
+                                    "newText": { "type": "string", "description": "替换后的文本" },
+                                    "replaceAll": {
+                                        "type": "boolean",
+                                        "default": false,
+                                        "description": "true 时替换全部命中（默认要求唯一）"
+                                    }
+                                },
+                                "required": ["oldText", "newText"]
+                            }
+                        }
+                    },
+                    "required": ["path", "ops"]
+                }
+            },
+            "dryRun": {
+                "type": "boolean",
+                "default": false,
+                "description": "只返回 diff，不写入文件"
+            }
+        }),
+        &["edits"],
+        false,
+    ));
+
+    items.push(remote_file_tool(
+        "fs_write",
+        "写操作。新建或整体覆盖一个小文本文件（≤512 KiB），走 SFTP 直写，返回 size / sha256 / created。\
+何时用：从零生成脚本、配置等小文件；或确知需要整体覆盖时（显式 overwrite=true）。\
+何时不用：大文件用 sftp_put；改局部内容用 fs_patch；不要用它覆盖未确认的现有文件。\
+受权限档位约束；sessionId 与 hostId 二选一。",
+        json!({
+            "path": { "type": "string", "description": "远端路径，支持 ~ 与相对 workspace 根的路径" },
+            "content": { "type": "string", "description": "完整文件内容（UTF-8）" },
+            "overwrite": {
+                "type": "boolean",
+                "default": false,
+                "description": "目标已存在时必须显式置 true"
+            }
+        }),
+        &["path", "content"],
+        false,
+    ));
+
+    list
 }
 
 fn kind_name(kind: SessionKind) -> &'static str {
@@ -292,6 +372,35 @@ fn summarize_command(command: &str) -> String {
         let head: String = trimmed.chars().take(MAX_CHARS).collect();
         format!("{head}…")
     }
+}
+
+/// `fs_patch` / `fs_write` 审批摘要中展示的目标路径（最多 3 个）。
+fn summarize_paths(paths: &[String]) -> String {
+    const MAX_SHOWN: usize = 3;
+    let mut summary = paths
+        .iter()
+        .take(MAX_SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if paths.len() > MAX_SHOWN {
+        summary.push_str(&format!(" 等 {} 个文件", paths.len()));
+    }
+    summary
+}
+
+/// 从 `fs_patch` 参数里收集目标路径，审批摘要用。
+fn patch_targets(args: &Value) -> Vec<String> {
+    args.get("edits")
+        .and_then(Value::as_array)
+        .map(|edits| {
+            edits
+                .iter()
+                .filter_map(|edit| edit.get("path").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 写操作审批：auto 直接放行；observer 直接拒绝；confirm 先查许可记忆表，再走 UI 审批。
@@ -535,6 +644,147 @@ pub async fn call_tool(
                 Err(e) => tool_error(e),
             }
         }
+        "fs_patch" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            let targets = patch_targets(args);
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "fs_patch",
+                format!("修改 {}", summarize_paths(&targets)),
+                args.clone(),
+                Some(session.session_id.clone()),
+                Some(session.profile_id.clone()),
+            )
+            .await
+            {
+                runtime_state::record_audit(change_entry(
+                    "fs_patch",
+                    Some(&session.session_id),
+                    None,
+                    None,
+                    None,
+                    "denied",
+                ));
+                return e;
+            }
+            let dry_run = args
+                .get("dryRun")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            match super::fs::patch::fs_patch(
+                state,
+                &session.session_id,
+                &session.profile_id,
+                &session.handle,
+                args,
+                &jail_root,
+            )
+            .await
+            {
+                Ok(results) => {
+                    let items: Vec<Value> = results
+                        .iter()
+                        .map(|item| {
+                            runtime_state::record_audit(change_entry(
+                                "fs_patch",
+                                Some(&session.session_id),
+                                Some(&item.path),
+                                None,
+                                Some(&item.sha256),
+                                if dry_run { "dry_run" } else { "applied" },
+                            ));
+                            json!({
+                                "path": item.path,
+                                "applied": item.applied,
+                                "sha256": item.sha256,
+                                "diff": item.diff,
+                            })
+                        })
+                        .collect();
+                    ToolResult::ok(
+                        if dry_run {
+                            "已生成 diff（未写入）"
+                        } else {
+                            "替换已写入"
+                        },
+                        if dry_run {
+                            "确认 diff 无误后以 dryRun=false 再次调用落盘。"
+                        } else {
+                            "需要验证时用 fs_read 查看改动位置；no_match / ambiguous 时按返回的 lines 调整 oldText。"
+                        },
+                        json!({ "dryRun": dry_run, "results": items }),
+                    )
+                }
+                Err(e) => tool_error(e),
+            }
+        }
+        "fs_write" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            let target = args
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "fs_write",
+                format!("写入 {target}"),
+                args.clone(),
+                Some(session.session_id.clone()),
+                Some(session.profile_id.clone()),
+            )
+            .await
+            {
+                runtime_state::record_audit(change_entry(
+                    "fs_write",
+                    Some(&session.session_id),
+                    Some(&target),
+                    None,
+                    None,
+                    "denied",
+                ));
+                return e;
+            }
+            match super::fs::write::fs_write(state, &session.session_id, args, &jail_root).await {
+                Ok(out) => {
+                    runtime_state::record_audit(change_entry(
+                        "fs_write",
+                        Some(&session.session_id),
+                        Some(&out.path),
+                        Some(out.size),
+                        Some(&out.sha256),
+                        "applied",
+                    ));
+                    ToolResult::ok(
+                        "文件已写入",
+                        "需要校验时用 fs_read 或对比 sha256；大文件改用 sftp_put。",
+                        json!({
+                            "path": out.path,
+                            "size": out.size,
+                            "sha256": out.sha256,
+                            "created": out.created,
+                        }),
+                    )
+                }
+                Err(e) => tool_error(e),
+            }
+        }
         "terminal_execute" => {
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
@@ -724,7 +974,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 8);
+        assert_eq!(list.len(), 10);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
@@ -753,6 +1003,17 @@ mod tests {
         assert!(read["inputSchema"]["anyOf"].is_array());
         assert_eq!(read["inputSchema"]["required"], json!(["path"]));
         assert!(read["inputSchema"]["properties"]["hostId"].is_object());
+
+        let patch = list.iter().find(|t| t["name"] == "fs_patch").unwrap();
+        assert_eq!(patch["annotations"]["readOnlyHint"], false);
+        assert_eq!(patch["inputSchema"]["required"], json!(["edits"]));
+        assert_eq!(
+            patch["inputSchema"]["properties"]["edits"]["items"]["required"],
+            json!(["path", "ops"])
+        );
+        let write = list.iter().find(|t| t["name"] == "fs_write").unwrap();
+        assert_eq!(write["annotations"]["readOnlyHint"], false);
+        assert_eq!(write["inputSchema"]["required"], json!(["path", "content"]));
     }
 
     #[test]

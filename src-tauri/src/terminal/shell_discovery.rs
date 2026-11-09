@@ -654,11 +654,9 @@ fn discover_unix_shells() -> Vec<DiscoveredShell> {
         let env_shell = env_shell.trim().to_string();
         if !env_shell.is_empty() {
             let base = basename_of(&env_shell);
-            if let Some(s) = shells
-                .iter_mut()
-                .find(|s| s.command == env_shell)
-                .or_else(|| shells.iter_mut().find(|s| s.id == base))
-            {
+            if let Some(s) = shells.iter_mut().find(|s| s.command == env_shell) {
+                s.is_default = true;
+            } else if let Some(s) = shells.iter_mut().find(|s| s.id == base) {
                 s.is_default = true;
             }
         }

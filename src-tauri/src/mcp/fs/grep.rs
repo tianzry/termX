@@ -164,7 +164,7 @@ pub async fn fs_grep(
     );
 
     let out = exec_once(ssh, &cmd, Duration::from_secs(120), false).await?;
-    if out.exit_code != 0 {
+    if out.exit_code != Some(0) {
         return Err(AppError::ssh(
             "mcp_grep_failed",
             json!({ "exitCode": out.exit_code, "stderr": out.stderr }),
