@@ -558,9 +558,14 @@ fn local_extract_timeout_err() -> AppError {
 pub fn open_with_system(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        // GUI 进程拉 cmd 会闪一个控制台窗口：CREATE_NO_WINDOW 隐藏 cmd 自身，
+        // 被 `start` 拉起的关联程序仍按正常方式显示窗口。
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         // `start` 的第一个带引号参数会被当作窗口标题，先传空标题占位。
         std::process::Command::new("cmd")
             .args(["/C", "start", "", &path.to_string_lossy()])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()?;
     }
     #[cfg(target_os = "macos")]
