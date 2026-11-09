@@ -592,5 +592,5 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | M3 传输 | ✅ 完成 | `sftp_put` / `sftp_get`：`items[]` 批量、递归（≤2000 项）、双向 overwrite 保护、流式 sha256、部分失败逐项返回 |
 | M4 删除 | ✅ 完成 | `fs_delete`：dryRun 默认 true + 5 分钟 confirmToken（绑定会话/路径/递归、取用即失效）+ realpath 复核 |
 | M5 执行 | ✅ 完成 | `build_run`（远端落盘 + 尾部偏置 + tee）、`term_run`（只拦破坏性命令）、`mcp/policy.rs` |
-| M6 复合 | 🟨 进行中 | `batch` |
-| M7 文档与前端 | ⬜ 未开始 | `mcp-guide` / `mcp-port-plan` / AI 设置页工具矩阵 + `mcp.workspace_root` 字段 |
+| M6 复合 | ✅ 完成 | `batch`：ops 1–50、session/host 继承、stopOnError、按序复用内层审批与审计 |
+| M7 文档与前端 | 🟨 进行中 | `mcp-guide` / `mcp-port-plan` / AI 设置页工具矩阵 + `mcp.workspace_root` 字段 |

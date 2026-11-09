@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M6：复合工具（batch）
+
+- 新增 `batch`：`ops[]`（1–50）按顺序执行，允许组合 `fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write`，把「搜索 → 读 → 改」压成一次 MCP 调用。
+- `op.args` 未带 `sessionId` / `hostId` 时自动继承顶层值；`stopOnError` 默认 true，失败即停；返回 `results[{tool,isError,result}]` + `failed`，`result` 是内层工具的完整信封（含 code/hint）。
+- 安全边界：`fs_delete` / `build_run` / `term_run` / `sftp_*` / 嵌套 `batch` 一律拒绝（`batch_tool_not_allowed`），确保删除 token、构建日志、传输 overwrite 等保护不被复合调用绕过；写类 op 仍逐个触发审批与审计。
+- 踩坑 107：`call_tool` 递归调用自身时 async fn 需要 `Box::pin(call_tool(...)).await`，否则编译器按无限大小 future 报错。
+- 踩坑 108：batch 的「省 token」收益来自减少往返，不是放宽权限 —— 复合操作必须复用内层工具的单次执行链路，不能另起一套简化逻辑。
+- 门禁：`cargo check --lib` ✓、`cargo test --lib mcp::` 60 ✓（工具面 16 个，schema 断言覆盖 batch）。
+
+---
+
 ## 2026-11-09 — MCP 整改 M5：构建与执行（build_run / term_run）
 
 - 新增 `mcp/policy.rs`：逃生平面只拦**真正破坏性**命令（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机、fork 炸弹、`wipefs/fdisk/parted`、`chmod -R 777 /`、直写块设备），不套终端全量黑名单。

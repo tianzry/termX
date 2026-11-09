@@ -26,6 +26,10 @@ const HINT_SESSION_ID: &str =
     "先调用 get_environment 获取当前活跃会话，用返回的 sessions[].id 作为 sessionId；不要臆造 id。";
 const HINT_PERMISSION: &str = "写操作受「设置 → AI → 工具接入」权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接放行。";
 
+/// `batch` 允许组合的工具：只读 + 非破坏性写原语。
+const BATCH_TOOLS: &[&str] = &["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write"];
+const MAX_BATCH_OPS: usize = 50;
+
 pub struct ToolResult {
     pub text: String,
     pub is_error: bool,
@@ -504,6 +508,40 @@ sessionId 与 hostId 二选一。",
         false,
     ));
 
+    items.push(remote_file_tool(
+        "batch",
+        "写操作（复合）。按顺序执行 1–50 个只读/写原语，把「搜索 → 读 → 改」压成一次 MCP 调用；每个 op 独立审批、独立返回。\
+何时用：定位代码后连续 grep/read/patch；减少往返与 schema 开销。\
+何时不用：破坏性操作（fs_delete / term_run / build_run / sftp_*）必须单独调用；不要嵌套 batch。\
+op.args 未带 sessionId / hostId 时自动继承顶层值；stopOnError 默认 true。",
+        json!({
+            "ops": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {
+                            "type": "string",
+                            "enum": ["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write"],
+                            "description": "允许组合的工具"
+                        },
+                        "args": { "type": "object", "description": "该工具的参数" }
+                    },
+                    "required": ["tool"]
+                }
+            },
+            "stopOnError": {
+                "type": "boolean",
+                "default": true,
+                "description": "遇到失败即停止后续 op"
+            }
+        }),
+        &["ops"],
+        false,
+    ));
+
     list
 }
 
@@ -731,6 +769,97 @@ pub async fn call_tool(
     args: &Value,
 ) -> ToolResult {
     match name {
+        "batch" => {
+            let ops = match args.get("ops").and_then(Value::as_array) {
+                Some(list) if !list.is_empty() => list,
+                _ => {
+                    return ToolResult::err(
+                        "missing_argument",
+                        "缺少必填参数 ops",
+                        "ops 必须是 1–50 个 {tool, args} 对象。",
+                    )
+                }
+            };
+            if ops.len() > MAX_BATCH_OPS {
+                return ToolResult::err(
+                    "mcp_too_many_items",
+                    format!("ops 超过上限 {MAX_BATCH_OPS}"),
+                    "拆分为多次 batch 调用。",
+                );
+            }
+            let stop_on_error = args
+                .get("stopOnError")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let inherit_session = args.get("sessionId").and_then(Value::as_str);
+            let inherit_host = args.get("hostId").and_then(Value::as_str);
+            let mut results = Vec::with_capacity(ops.len());
+            let mut failed = 0usize;
+            for op in ops {
+                let tool = op
+                    .get("tool")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let mut op_args = op.get("args").cloned().unwrap_or_else(|| json!({}));
+                if !op_args.is_object() {
+                    op_args = json!({});
+                }
+                if op_args.get("sessionId").is_none() && op_args.get("hostId").is_none() {
+                    if let Some(session_id) = inherit_session {
+                        op_args["sessionId"] = json!(session_id);
+                    } else if let Some(host_id) = inherit_host {
+                        op_args["hostId"] = json!(host_id);
+                    }
+                }
+                let outcome = if BATCH_TOOLS.contains(&tool.as_str()) {
+                    Box::pin(call_tool(
+                        state,
+                        cfg,
+                        rt,
+                        app,
+                        gen,
+                        disconnected.clone(),
+                        &tool,
+                        &op_args,
+                    ))
+                    .await
+                } else {
+                    ToolResult::err(
+                        "batch_tool_not_allowed",
+                        format!("batch 不支持工具：{tool}"),
+                        "仅允许 fs_read / fs_grep / fs_glob / fs_patch / fs_write；其余请单独调用。",
+                    )
+                };
+                if outcome.is_error {
+                    failed += 1;
+                }
+                let parsed = serde_json::from_str::<Value>(&outcome.text).unwrap_or(Value::Null);
+                results.push(json!({
+                    "tool": tool,
+                    "isError": outcome.is_error,
+                    "result": parsed,
+                }));
+                if outcome.is_error && stop_on_error {
+                    break;
+                }
+            }
+            let data = json!({ "results": results, "failed": failed });
+            if failed == 0 {
+                ToolResult::ok(
+                    "batch 执行完成",
+                    "结果按 ops 顺序返回；失败项会带 code。",
+                    data,
+                )
+            } else {
+                ToolResult::err_with_data(
+                    "batch_partial",
+                    format!("{failed} 个 op 失败"),
+                    "按 results[].result.code 修正失败步骤后重跑。",
+                    data,
+                )
+            }
+        }
         "get_environment" => match environment(state) {
             Ok(v) => ToolResult::ok(
                 "已返回当前环境快照",
@@ -1511,7 +1640,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 15);
+        assert_eq!(list.len(), 16);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
@@ -1575,6 +1704,13 @@ mod tests {
         assert_eq!(
             delete["inputSchema"]["properties"]["dryRun"]["default"],
             true
+        );
+
+        let batch = list.iter().find(|t| t["name"] == "batch").unwrap();
+        assert_eq!(batch["inputSchema"]["required"], json!(["ops"]));
+        assert_eq!(
+            batch["inputSchema"]["properties"]["ops"]["items"]["properties"]["tool"]["enum"],
+            json!(["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write"])
         );
     }
 
