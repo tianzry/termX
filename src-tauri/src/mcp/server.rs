@@ -70,6 +70,8 @@ pub struct McpStatus {
     pub allow_custom_bind: bool,
     pub listen_address: String,
     pub client_host: String,
+    /// 文件类工具的 workspace jail 根（`fs_*` / `sftp_*` 都限制在这里）。
+    pub workspace_root: String,
     pub tool_count: usize,
     /// confirm 档位下的放行规则（持久化在设置 KV，形状见 `mcp::grants`）。
     pub grants: Vec<super::grants::PermissionGrant>,
@@ -193,6 +195,8 @@ impl McpRuntime {
             allow_custom_bind: cfg.allow_custom_bind,
             listen_address: cfg.listen_address.clone(),
             client_host: cfg.client_host.clone(),
+            // 真实值由 command 层从设置 KV 回填（runtime 不持有 DB）。
+            workspace_root: String::new(),
             tool_count: tools::definitions().as_array().map(|a| a.len()).unwrap_or(0),
             grants: self.approvals.grants(),
         }

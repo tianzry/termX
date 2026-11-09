@@ -1,7 +1,8 @@
 # 对外 MCP 移植方案（Settings → AI → 工具接入）
 
 > 状态：方案 + 后端已落地（`feat/mcp-server` 分支，独立 worktree）。
-> 前端设置页 UI 未落地（见 §9），其余实现与未实现清单见 §6/§10。
+> 前端设置页 UI 已落地；文件原语 M0–M6 已落地（`fs_*` / `sftp_*` / `build_run` / `term_run` / `batch`，见 §6.2），
+> 其余未实现清单见 §6.3/§10。
 
 ## 1. Netcatty 侧取证（唯一基准）
 
@@ -83,14 +84,33 @@
 | `get_environment` | 只读 | `AppState.lifecycle_sessions` + `db::profile::list` | 返回 `sessions[{id,kind,phase}]` 与 `hostCount`；同时对 `termx://environment` resource 提供同一快照 |
 | `vault_hosts_list` | 只读 | `db::profile::list` | 只回 `id/name/host/port/groupId`，**不回凭据** |
 | `snippets_list` | 只读 | `db::snippet::load` | 回 `id/name/package/command/description` |
-| `terminal_execute` | 写 | `plugin::plugin_exec_impl` | `timeoutMs` 默认沿用 impl；执行前 `validate_with` 过黑名单；owner 从注册表取 |
+| `terminal_execute` | 写 | `plugin::plugin_exec_impl` | 旧客户端兼容保留：全量命令黑名单 + PTY 执行；新接入建议用 `term_run` |
 | `session_close` | 写 | `lifecycle::close_resource` | kind/owner 从注册表取，避免越权关闭他人会话 |
 
-### 6.1 写操作审批（confirm）
+### 6.2 文件原语（M0–M6）
+
+| 工具 | 类型 | 底座 | 关键约束 |
+| --- | --- | --- | --- |
+| `fs_read` | 只读 | SFTP 直读 + 行开窗 | 默认 200 行 / 上限 2000 行；8 MiB 上限；二进制拒绝 |
+| `fs_grep` | 只读 | 远端 python3 脚本 | 远端 `total`/`truncated` + 游标分页；缺解释器回 `mcp_missing_interpreter` |
+| `fs_glob` | 只读 | SFTP `walk_files` | `**/` 支持根目录匹配；结果分页 |
+| `fs_patch` | 写 | python3 精确替换 | `dryRun` 回 unified diff；`ambiguous` 带行号；临时文件 + `os.replace` |
+| `fs_write` | 写 | SFTP `upload` | ≤512 KiB；`overwrite` 默认 false；回 `sha256` |
+| `sftp_put` / `sftp_get` | 写 | `upload_streaming` / `download_streaming` | `items[]` 批量 + 递归（≤2000）；双向 overwrite 保护；流式 sha256 |
+| `fs_delete` | 写 | SFTP `remove` / `remove_file` | `dryRun` 默认 true；5 分钟 `confirmToken` 绑定会话/路径/递归；`realpath` 复核 |
+| `build_run` | 写 | `exec_once` + 远端临时文件 | 尾部偏置截断 + `teeToRemoteFile`；只拦破坏性命令 |
+| `term_run` | 写 | `exec_once` | 逃生平面；非交互；只拦破坏性命令 |
+| `batch` | 写 | 复用内层 dispatch | 仅允许 `fs_read/grep/glob/patch/write`；写类 op 仍逐个审批 |
+
+支撑模块：`mcp/fs/{path,session,handle,caps,read,glob,grep,write,patch,transfer,delete,build,shell}.rs`、
+`mcp/{permissions,policy,runtime_state,audit}.rs`、`ai/remote_script.rs`（与 AI 面板共用 shell 转义）。
+`hostId` 无就绪会话时按 vault 档案自动建连（`SessionOwner::Headless`，单飞 `connect_gate`，复用 `commands::session::connect_profile`）。
+
+### 6.3 写操作审批（confirm）
 
 对齐 Netcatty `mcpServerBridge` 的 approval gate，落在 `src-tauri/src/mcp/approval.rs`：
 
-- 触发：`confirm` 档位下的 `terminal_execute` / `session_close`。参数校验（缺失参数、命令黑名单、会话不存在）先做，通过后才生成审批项。
+- 触发：`confirm` 档位下的所有写工具（`terminal_execute` / `term_run` / `build_run` / `fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` 真实删除阶段 / `session_close`，以及 `batch` 内层的写 op）。参数校验（缺失参数、命令黑名单 / 破坏性策略、会话不存在）先做，通过后才生成审批项。
 - 待审批项：`approvalId / toolName / argsSummary / sessionId / targetLabel / timeoutMs / createdAtMs`；主进程通过 `mcp:approval-request` 广播，结算后广播 `mcp:approval-cleared`（`approvalIds + reason`）。
 - 前端：`src/mcp/McpApprovalHost.tsx` 常驻主窗右下角，提供「允许一次 / 始终允许该工具 / 拒绝」；窗口不在前台时后端 `request_user_attention` 闪任务栏。
 - 超时：110 秒（外部客户端常见 120 秒工具调用上限之前），到时按拒绝结算。
@@ -98,17 +118,19 @@
 - 「始终允许」：按工具粒度存 `mcp.allowed_tools`（settings KV，JSON 数组），重启后仍生效；设置页 confirm 档位下列出已允许工具并可撤销。
 - 只读工具（`get_environment` / `vault_hosts_list` / `snippets_list`）不进入审批。
 
-未实现（与 Netcatty 对应关系，**不注册假工具**）：
+#### 6.4 仍未移植
+
+尚未移植（与 Netcatty 对应关系，**不注册假工具**）：
 
 | Netcatty 工具组 | 未实现原因 | 补齐前提 |
 | --- | --- | --- |
 | `terminal_start / poll / stop` | termX 有 SSH/PTY 会话创建，但没有「MCP 拥有并可见于 UI 的 tab」语义；`SessionOwner::Headless` 开的会话前端不可见 | 需要前端 tab 绑定 + 关闭事件回放（Phase 2） |
-| `sftp.*`（11 个） | `commands/sftp.rs` 只有 `#[tauri::command]` 直连 `State`，没有 `*_impl` 可复用；MCP 不能持有 `State` | 先把 sftp 命令抽成 `*_impl(state, ...)`（与 plugin/session 同风格） |
+| `sftp.*`（11 个） | 已用 `sftp_put` / `sftp_get` 覆盖文件级传输；目录操作、权限、压缩等高级能力未暴露 | 按需求在 `mcp/fs/transfer.rs` 增加原语 |
 | `vault.host.open` | 依赖上面两条 | Phase 2 |
 | `vault.notes.*` / `scripts.*` / `snippets.*` 写 | 未暴露写入口（只读已覆盖） | 按需求逐项开 |
 | `portforward.*` | 代理与端口转发已按既定决策暂停 | 恢复该模块后同步开 |
 | `attachments` / `web_search` / `web_fetch` | termX 无对应能力 | 不移植 |
-| `load_netcatty_tools` 渐进式加载 | termX 只有 5 个工具，无需渐进 | 工具数 > 15 时再引入分组 |
+| `load_netcatty_tools` 渐进式加载 | termX 现有 16 个工具，未到必须分组的规模 | 工具数显著增加时再引入分组 |
 | stdio 传输 / Node launcher | 单进程 Tauri，HTTP 已覆盖主流客户端 | 若必须支持仅 stdio 的客户端，再单独做 `termx-mcp-stdio` 小二进制 |
 
 ## 7. 失败与取消语义

@@ -41,6 +41,15 @@ const PERMISSION_MODES: Array<{ value: McpPermissionMode; label: string; desc: s
   { value: "auto", label: "settings.ai.permission.auto", desc: "settings.ai.permission.auto.desc" },
 ];
 
+/** 对外工具矩阵（与后端 `mcp::tools::definitions` 同源，按平面分组展示）。 */
+const MCP_TOOL_GROUPS: Array<{ plane: "control" | "transfer" | "build" | "session" | "composite"; tools: string[] }> = [
+  { plane: "control", tools: ["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write", "fs_delete"] },
+  { plane: "transfer", tools: ["sftp_put", "sftp_get"] },
+  { plane: "build", tools: ["build_run", "term_run"] },
+  { plane: "session", tools: ["get_environment", "vault_hosts_list", "snippets_list", "terminal_execute", "session_close"] },
+  { plane: "composite", tools: ["batch"] },
+];
+
 /** 从 Tauri 错误信封中取出后端给的 message（mcp_invalid_config 携带 code/message）。 */
 function describeError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
@@ -84,6 +93,7 @@ export function AiTab() {
   const [portDraft, setPortDraft] = useState("");
   const [addressDraft, setAddressDraft] = useState("");
   const [clientHostDraft, setClientHostDraft] = useState("");
+  const [workspaceRootDraft, setWorkspaceRootDraft] = useState("~");
   const editingRef = useRef(false);
 
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -134,6 +144,7 @@ export function AiTab() {
           setPortDraft(String(next.port));
           setAddressDraft(next.listenAddress);
           setClientHostDraft(next.clientHost);
+          setWorkspaceRootDraft(next.workspaceRoot);
         }
       } catch (error) {
         if (alive && !quiet) setActionError(describeError(error));
@@ -220,6 +231,7 @@ export function AiTab() {
         setPortDraft(String(next.port));
         setAddressDraft(next.listenAddress);
         setClientHostDraft(next.clientHost);
+        setWorkspaceRootDraft(next.workspaceRoot);
       }
     } catch (error) {
       setActionError(describeError(error));
@@ -249,6 +261,12 @@ export function AiTab() {
     const trimmed = clientHostDraft.trim();
     if (trimmed === (status?.clientHost ?? "")) return;
     void apply({ clientHost: trimmed }, "clientHost");
+  };
+
+  const commitWorkspaceRoot = () => {
+    const trimmed = workspaceRootDraft.trim() || "~";
+    if (trimmed === (status?.workspaceRoot ?? "~")) return;
+    void apply({ workspaceRoot: trimmed }, "workspaceRoot");
   };
 
   const rotateToken = async () => {
@@ -577,6 +595,34 @@ export function AiTab() {
               />
             </div>
           </div>
+
+          <div className="nc-set-row">
+            <div className="nc-set-row-text">
+              <div className="nc-set-row-title">{t("settings.ai.workspaceRoot")}</div>
+              <div className="nc-set-row-desc">{t("settings.ai.workspaceRoot.desc")}</div>
+            </div>
+            <div className="nc-set-row-control">
+              <input
+                type="text"
+                className="nc-set-input"
+                aria-label={t("settings.ai.workspaceRoot")}
+                placeholder="~"
+                value={workspaceRootDraft}
+                disabled={!status || pending === "workspaceRoot"}
+                onFocus={() => {
+                  editingRef.current = true;
+                }}
+                onBlur={() => {
+                  editingRef.current = false;
+                  commitWorkspaceRoot();
+                }}
+                onChange={(event) => setWorkspaceRootDraft(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            </div>
+          </div>
         </div>
 
         {status?.running && (
@@ -584,6 +630,27 @@ export function AiTab() {
             {t("settings.ai.status.toolCount", { count: status.toolCount })}
           </p>
         )}
+      </section>
+
+      <section className="nc-set-section">
+        <h2 className="nc-set-section-title">{t("settings.ai.tools.title")}</h2>
+        <p className="nc-set-section-desc">{t("settings.ai.tools.desc")}</p>
+        <div className="nc-mcp-tool-matrix">
+          {MCP_TOOL_GROUPS.map((group) => (
+            <div className="nc-mcp-tool-group" key={group.plane}>
+              <span className={`nc-mcp-tool-badge is-${group.plane}`}>
+                {t(`settings.ai.tools.plane.${group.plane}`)}
+              </span>
+              <div className="nc-mcp-tool-items">
+                {group.tools.map((name) => (
+                  <code className="nc-mcp-tool" key={name}>
+                    {name}
+                  </code>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="nc-set-section">

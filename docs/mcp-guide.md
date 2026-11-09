@@ -4,15 +4,20 @@
 
 ## 1. termX MCP 是什么
 
-termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX 会在本机启动一个 Streamable HTTP 端点（默认 `http://127.0.0.1:47391/mcp`），把它**已经打开的会话**和**已保存的主机清单**以 5 个工具暴露给外部 AI 客户端（Trae、Claude Desktop、Cursor、Claude Code 等）。
+termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX 会在本机启动一个 Streamable HTTP 端点（默认 `http://127.0.0.1:47391/mcp`），把**已保存的主机**和**已打开的会话**以 16 个工具暴露给外部 AI 客户端（Trae、Claude Desktop、Cursor、Claude Code 等）。
+
+工具分两个平面：
+
+- **控制平面（typed）**：`fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` / `build_run`，按文件语义操作，token 成本与文件大小无关。
+- **逃生平面（pty/exec）**：`term_run`（及兼容保留的 `terminal_execute`），执行任意非交互命令，只拦真正破坏性的操作。
 
 调用方向是单向的：
 
 ```text
-外部 AI 客户端  ──HTTP POST + Bearer token──▶  termX MCP 服务  ──▶  termX 内已打开的会话
+外部 AI 客户端  ──HTTP POST + Bearer token──▶  termX MCP 服务  ──▶  termX 内已打开的会话 / vault 主机
 ```
 
-termX 不会因为一次 MCP 调用去新建 SSH / 串口连接。要操作某台主机，必须先在 termX 里把对应会话打开；MCP 只是把已有能力交给外部 agent 使用。
+`sessionId` 必须来自 `get_environment`；`hostId` 来自 `hosts[]` 或 `vault_hosts_list`。**传 `hostId` 时会按 vault 档案自动建连**（`SessionOwner::Headless`，与 UI 同链路：堡垒机链 / 代理 / known_hosts / 录制 / 发行版探测），无需先在 termX 里打开窗口。
 
 ## 2. 快速开始
 
@@ -24,7 +29,8 @@ termX 不会因为一次 MCP 调用去新建 SSH / 串口连接。要操作某�
 2. 端口默认 `47391`，允许范围 ≥ 1024。
 3. 监听地址默认 `127.0.0.1`（仅本机可访问）。
 4. 权限档位默认「确认」；初次接入建议保持该档位。
-5. 右上角状态显示「运行中」即监听成功。
+5. 「Workspace 根」默认 `~`：`fs_*` / `sftp_*` / `build_run` 的远端路径都 jail 在这里，越界返回 `mcp_path_outside_jail`。
+6. 右上角状态显示「运行中」即监听成功。
 
 如果启动失败，状态会显示错误码：
 
@@ -126,7 +132,7 @@ curl -s "$URL" \
 接通成功的标志：
 
 - `initialize` 的 `result.serverInfo.name` 是 `termX`，并带有非空 `instructions`；
-- `tools/list` 返回 5 个工具：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`session_close`；
+- `tools/list` 返回 16 个工具：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`；
 - `tools/call` 返回 `content[0].text`，能解析出 `code`、`message`、`hint` 与业务字段。
 
 ## 3. 工具参考
@@ -151,10 +157,10 @@ curl -s "$URL" \
 
 ### 3.1 `get_environment`
 
-**用途**：返回当前活跃会话和已保存主机数量，是拿 `sessionId` 的唯一入口。
+**用途**：返回当前活跃会话和已保存主机清单，是拿 `sessionId` / `hostId` 的入口。
 
-**该用**：会话开始时；调用 `terminal_execute` / `session_close` 前确认目标会话存在。
-**不该用**：只需要主机清单时用 `vault_hosts_list`；不要用它轮询等待新会话。
+**该用**：会话开始时；调用其它工具前确认目标会话或主机存在。
+**不该用**：只需要主机清单时也可用 `vault_hosts_list`；不要用它轮询等待新会话。
 
 参数：无。
 
@@ -164,16 +170,21 @@ curl -s "$URL" \
 {
   "code": "ok",
   "message": "已返回当前环境快照",
-  "hint": "用 sessions[].id 作为 terminal_execute / session_close 的 sessionId；phase 为 ready 的会话才能执行命令。",
+  "hint": "用 sessions[].id 或 hosts[].id 作为后续工具的 sessionId / hostId；hostId 无就绪会话时会自动建连。",
+  "cacheable": true,
+  "ttl": 30,
   "sessions": [
-    { "id": "ssh-1a2b3c", "kind": "ssh", "phase": "ready" },
-    { "id": "serial-7f00aa", "kind": "serial", "phase": "ready" }
+    { "id": "ssh-1a2b3c", "kind": "ssh", "phase": "ready", "hostId": "h-01", "origin": "window" },
+    { "id": "serial-7f00aa", "kind": "serial", "phase": "ready", "origin": "window" }
+  ],
+  "hosts": [
+    { "id": "h-01", "name": "dev", "host": "10.0.0.5", "port": 22, "groupId": "g-1" }
   ],
   "hostCount": 3
 }
 ```
 
-`kind` 可能为 `ssh` / `pty` / `serial` / `telnet` / `sftp` / `forward`；`phase` 为 `pending` / `ready` / `closed`。
+`kind` 可能为 `ssh` / `pty` / `serial` / `telnet` / `sftp` / `forward`；`phase` 为 `pending` / `ready` / `closed`；`origin` 为 `window`（UI 打开）或 `mcp`（MCP 自动建连）。
 
 常见错误：`internal_error`（本地数据库读取失败，重试或查看 termX 日志）。
 
@@ -303,16 +314,43 @@ curl -s "$URL" \
 | `permission_denied` | observer 档位或审批未通过 | 请用户放行 |
 | `close_failed` | 关闭链路失败 | 重新确认会话是否仍存在；已关闭可忽略 |
 
+### 3.6 文件 / 传输 / 构建工具
+
+这些工具都接受 `sessionId` **或** `hostId`（`anyOf`，二选一）；`hostId` 无就绪会话时自动按 vault 档案建连。路径支持 `~` 与相对 workspace 根，最终必须落在 `mcp.workspace_root` 内。
+
+| 工具 | 类型 | 主要参数 | 返回要点 |
+| --- | --- | --- | --- |
+| `fs_read` | 只读 | `path` / `startLine`(1) / `maxLines`(200，≤2000) / `numbered`(true) | `lines` / `totalLines` / `size` / `truncated` / `nextCursor` |
+| `fs_grep` | 只读 | `pattern` / `path` / `glob`(`*`) / `regex`(true) / `ignoreCase` / `contextLines`(0–3) / `maxResults`(50，≤200) / `cursor` | `matches[{path,line,text}]` / `total` / `truncated` / `nextCursor` |
+| `fs_glob` | 只读 | `pattern` / `path` / `maxResults`(50，≤200) / `cursor` | `matches[{path,size}]` / `total` / `nextCursor` |
+| `fs_patch` | 写 | `edits[{path, ops:[{oldText,newText,replaceAll}]}]`（≤20 文件）/ `dryRun` | `results[{path,applied,sha256,diff}]` |
+| `fs_write` | 写 | `path` / `content`(≤512 KiB) / `overwrite`(false) | `path` / `size` / `sha256` / `created` |
+| `sftp_put` | 写 | `items[{localPath,remotePath}]`（≤2000）/ `overwrite`(false) / `recursive`(false) | `ok` / `failed` / `results[{...,size,sha256,status}]` |
+| `sftp_get` | 写 | `items[{remotePath,localPath}]` / `overwrite`(false) / `recursive`(false) | 同上 |
+| `fs_delete` | 写 | `paths`(≤200) / `recursive`(false) / `dryRun`(**true**) / `confirmToken` | dry-run：`wouldDelete` + `confirmToken`；执行：`deleted` |
+| `build_run` | 写 | `command` / `cwd` / `timeoutMs`(120s) / `maxOutputBytes`(16 KiB) / `teeToRemoteFile` | `exitCode` / `stdoutTail` / `stderrTail` / `totalBytes` / `truncated` / `fullLog` |
+| `term_run` | 写 | `command` / `timeoutMs`(30s) / `maxOutputBytes`(16 KiB) | 同上（无 `fullLog`） |
+| `batch` | 写 | `ops[{tool,args}]`(1–50) / `stopOnError`(true) | `results[{tool,isError,result}]` / `failed` |
+
+关键行为：
+
+- **fs_patch**：`oldText` 必须唯一；不唯一返回 `ambiguous` + 候选行号，加长上下文或 `replaceAll=true`。`dryRun=true` 只回 unified diff。
+- **fs_write / sftp_***：`overwrite` 默认 false，已存在返回 `mcp_file_exists` / `mcp_local_file_exists`；本地路径必须是绝对路径。
+- **fs_delete**：`dryRun` 默认 true；把返回的 `confirmToken` 原样带回并置 `dryRun=false` 才会删除。token 5 分钟过期、绑定会话/路径/递归、取用即失效。**任何权限档位都需要 token。**
+- **build_run**：远端把 stdout/stderr 落到临时文件后取**尾部**，失败信息不会因日志过长被丢掉；`teeToRemoteFile` 写完整日志（stdout 后接 stderr），失败回 `teeFailed=true`。
+- **term_run / build_run**：只拦破坏性命令（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机、fork 炸弹等），不套 `terminal_execute` 的全量黑名单。
+- **batch**：只允许 `fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write`；`fs_delete` / `build_run` / `term_run` / `sftp_*` 与嵌套 `batch` 会被拒绝（`batch_tool_not_allowed`）。
+
 ## 4. 推荐调用顺序与示例
 
-推荐顺序：
-
 ```text
-get_environment
-   ├─（需要选主机）vault_hosts_list
-   ├─（需要复用命令）snippets_list
-   ├─ terminal_execute（可多次，复用同一 sessionId）
-   └─ session_close（只关闭你打开且不再需要的会话）
+get_environment（拿 sessionId / hostId / hosts）
+   ├─ fs_glob → fs_grep → fs_read            查阅（先定位再开窗）
+   ├─ fs_patch dryRun → fs_patch 落盘        修改（小文件整体覆盖用 fs_write）
+   ├─ sftp_put → build_run → sftp_get        上传源码 → 编译 → 下载产物
+   ├─ fs_delete dryRun → fs_delete + token   删除（两次确认）
+   ├─ batch [fs_grep, fs_read, fs_patch]     一次往返完成「搜索→读→改」
+   └─ term_run / session_close               逃生执行 / 释放会话
 ```
 
 ### 示例 1：握手并查看环境
@@ -438,11 +476,13 @@ get_environment
 
 ### 5.1 三档权限
 
-| 档位 | 只读工具 | 写操作（`terminal_execute` / `session_close`） |
+| 档位 | 只读工具（`fs_read` / `fs_grep` / `fs_glob` / `get_environment` / `vault_hosts_list` / `snippets_list`） | 写操作（`fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` 真实删除 / `build_run` / `term_run` / `terminal_execute` / `session_close`，含 `batch` 内层写 op） |
 | --- | --- | --- |
 | 只读（`observer`） | 正常可用 | 直接拒绝，返回 `permission_denied` |
 | 确认（`confirm`，默认） | 正常可用 | 生成审批项，等用户在 termX 主窗选择；110 秒未处理自动拒绝 |
-| 自动（`auto`） | 正常可用 | 直接执行，不弹审批 |
+| 自动（`auto`） | 正常可用 | 直接执行，不弹审批（`fs_delete` 仍必须带 confirmToken） |
+
+`fs_delete` 的 `dryRun=true` 只做预览，不触发审批；只有 `dryRun=false` 的真实删除才进入审批。
 
 切换档位原地生效：不重启监听、不更换 token、不踢掉已连接客户端。已经挂起的审批项可以继续在浮层里处理，新档位只影响之后发起的调用。
 
@@ -493,6 +533,7 @@ get_environment
     "hint": "改用等价但更具体的命令，或请用户在「设置 → AI → 命令黑名单」中调整规则。" }
   ```
 - **只拦 AI / MCP 发起的执行，不拦用户在终端里的手动输入**：黑名单挂在 MCP / agent 执行链路，用户键盘输入不经过该检查。termX 原有的一层「裸命令名 + 分类」黑名单（如 `rm`、`cp`）仍在其后执行，两层叠加，本层只负责正则级拦截。
+- **`build_run` / `term_run` 不走本黑名单**：构建命令经常包含 `rm -rf build/`、`grep -r mkfs docs/` 等正常内容，全量黑名单会误杀。这两个工具只应用 `mcp/policy.rs` 的破坏性模式（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机、fork 炸弹、`wipefs/fdisk/parted`、`chmod -R 777 /`、直写块设备），命中返回 `mcp_command_destructive`。`terminal_execute` 仍走本黑名单。
 
 
 ## 6. 安全说明
@@ -527,9 +568,11 @@ get_environment
 
 ### 6.4 能做什么风险操作
 
-- `terminal_execute`：在已打开会话中执行任意命令（受黑名单约束），命令以该会话的用户权限运行。
+- **控制平面**：`fs_patch` / `fs_write` / `sftp_put` / `fs_delete` 会在远端写入、覆盖或删除文件 —— 路径被 `mcp.workspace_root` jail，`fs_delete` 另有 dry-run + token；但 jail 内仍是真实文件系统，覆盖/删除不可恢复。
+- **传输**：`sftp_get` 会把远端文件写到**本机**（默认不覆盖已有文件），`sftp_put` 会把本机文件上传到远端；本地路径必须是绝对路径。
+- **构建/执行**：`build_run` / `term_run` 在远端执行任意非交互命令（只拦破坏性命令），以登录用户权限运行；`terminal_execute` 仍受全量命令黑名单约束。
 - `session_close`：关闭会话，可能中断用户正在进行的操作。
-- 读取类工具会返回主机清单、会话信息和代码片段命令文本，后者可能含敏感信息。
+- 读取类工具会返回主机清单、会话信息、文件内容与代码片段命令文本，后者可能含敏感信息。
 
 ### 6.5 审批不是强隔离
 
@@ -555,6 +598,13 @@ get_environment
 | `503 {"error":"mcp_disabled"}` | 请求到达时服务已停止 | 在设置页重新开启服务 |
 | `503 {"error":"mcp_restarted"}` | 调用过程中服务被重启 | 重新 initialize 后再调用 |
 | `command_blocked` | 命令命中黑名单 | 换命令或调整黑名单 |
+| `mcp_command_destructive` | `build_run` / `term_run` 命中破坏性策略 | 拆分命令；确需执行请在终端手动操作 |
+| `mcp_path_outside_jail` | 路径越出 Workspace 根 | 改用 `~` 或 workspace 内路径，或调整「Workspace 根」 |
+| `mcp_file_exists` / `mcp_local_file_exists` | 目标已存在且 `overwrite=false` | 显式传 `overwrite=true` |
+| `mcp_delete_token_required` / `_invalid` / `_mismatch` | 未先 dryRun、token 过期或参数不一致 | 重新 `dryRun=true` 拿新 token，并保持路径/recursive 一致 |
+| `mcp_delete_is_dir` / `mcp_transfer_is_dir` | 目录未显式递归 | 传 `recursive=true` |
+| `mcp_missing_interpreter` | 远端缺 `python3` | 安装 python3，或改用 `fs_glob` + `fs_read` |
+| `transfer_partial` | 批量传输部分失败 | 按 `results[].code` 只重传失败项 |
 | `session_not_found` | 会话已关闭或 id 过期 | 重新 `get_environment` |
 | `400 parse_error` | 请求体不是合法 JSON | 检查 `Content-Type: application/json` 与 JSON 语法 |
 | `413 body_too_large` / `431 headers_too_large` | 请求体 > 4 MB / 请求头 > 8 KB | 拆小请求；工具参数不应当这么大 |
@@ -572,7 +622,13 @@ get_environment
 - **无 stdio 传输**：只提供 HTTP 端点，不附带 Node launcher。
 - **无 OAuth / 多用户**：只有一个 Bearer token；没有按用户或按客户端区分的权限。
 - **确认模式无批量允许**：审批按调用逐项进行；「始终允许」只按工具粒度，没有「允许本会话全部命令」。
-- **只支持 5 个工具**：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`session_close`。
+- **16 个工具**：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`。
+- **`fs_grep` 依赖远端 `python3`**：缺失时返回 `mcp_missing_interpreter`，可改用 `fs_glob` + `fs_read` 或 `term_run` 的 `grep`。
+- **远端 jail 依赖配置**：`mcp.workspace_root` 默认 `~`；`..` 相对路径只折叠，是否越界由 jail 判定，软链通过 `realpath` 复核。
+- **`fs_read` 上限 8 MiB**：更大文件请用 `sftp_get` 下载到本地处理，或分段开窗。
+- **`build_run` 只保留尾部**：完整日志需要 `teeToRemoteFile`；stdout/stderr 合并且 stdout 在前，不保证时间交错顺序。
+- **`sftp_get` 的 sha256 是本地文件**：如需确认远端内容，请用 `fs_read` / `build_run` 的远端校验命令自行比对。
+- **MCP 进度事件无人订阅**：传输走 `Host::Tauri` 发事件，但 MCP 没有窗口，客户端看不到进度；只能等工具调用返回。
 - **资源只有一个**：`termx://environment`（等价 `get_environment` 只读快照）。
 - **不支持服务端通知/订阅**：`listChanged: false`、`subscribe: false`，没有进度或日志推送。
 - **protocolVersion 回显**：服务端把客户端请求的版本原样返回，不做严格协商。

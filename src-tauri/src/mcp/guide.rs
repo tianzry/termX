@@ -9,19 +9,26 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 /// 给外部 agent 的精简接入指南（`initialize.instructions` 与设置页 system prompt 同源）。
-pub const INSTRUCTIONS: &str = r#"termX 是本机的 SSH / 串口 / 终端客户端；本 MCP 服务器只操作 termX 中已经打开的会话和已保存的主机，不会自行发起新的网络连接。
-可用工具（共 5 个）：
-1) get_environment：只读。列出当前活跃会话（id / kind / phase）和已保存主机数量。会话开始时先调用它拿到 sessionId。
-2) vault_hosts_list：只读。列出已保存主机的 id / name / host / port / groupId，不含密码、密钥等凭据。
-3) snippets_list：只读。列出已保存代码片段（id / name / package / command / description），命令文本可能含敏感信息。
-4) terminal_execute：写操作。在指定 sessionId 的已打开会话中执行一条命令，返回 stdout / stderr / exitCode。
-5) session_close：写操作。关闭指定 sessionId 的会话。
-推荐调用顺序：get_environment → vault_hosts_list（需要选主机时）→ snippets_list（需要复用命令时）→ terminal_execute → 任务完成后按需 session_close（只关闭你打开且不再需要的会话）。
+pub const INSTRUCTIONS: &str = r#"termX 是本机的 SSH / 串口 / 终端客户端；本 MCP 服务器操作 termX 已保存的主机和已打开的会话。
+sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该主机时按档案自动建连，无需先开窗口）。
+
+推荐工作流（token 高效）：
+1) get_environment：拿 sessions[].id / hosts[]（cacheable 30s）。
+2) 查阅：fs_glob 列文件 → fs_grep 定位 → fs_read 按行开窗；不要整读大文件。
+3) 修改：fs_patch 先 dryRun 看 diff 再落盘；小文件整体覆盖用 fs_write。
+4) 传输：sftp_put / sftp_get 流式传输，返回只有路径 / size / sha256，token 与文件大小无关。
+5) 构建：build_run 只回尾部日志与 exitCode；需要完整日志时传 teeToRemoteFile。
+6) 删除：fs_delete 默认 dryRun=true，先拿 confirmToken，再以 dryRun=false 执行。
+7) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
+8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 为旧客户端保留。
+
+可用工具（共 16 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、session_close、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
 规则：
-- sessionId 必须来自 get_environment 的 sessions[].id，不要臆造；phase 不是 ready 的会话不能执行命令。
-- 写操作是否放行由「设置 → AI → 工具接入」的权限档位决定：observer 只读并拒绝写操作、confirm 需要用户在 termX 弹窗中允许、auto 直接执行。
-- 所有工具返回 JSON：成功为 {code:"ok", message, hint, ...数据}，失败为 {code, message, hint}。失败时先按 hint 自纠：session_not_found 重新 get_environment；permission_denied 请用户在 termX 中放行或切换档位；command_blocked 换用更具体的命令。
-- 只在需要与目标主机交互时调用 terminal_execute；只查询信息优先使用只读工具，不要泄露 token 或凭据。"#;
+- sessionId 必须来自 get_environment；hostId 必须来自 hosts[] 或 vault_hosts_list，不要臆造。
+- 文件路径默认 jail 在 workspace 根（设置 → AI → Workspace 根），越界返回 mcp_path_outside_jail。
+- 写操作受权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接执行；fs_delete 无论档位都要 confirmToken。
+- 所有工具返回 JSON：成功为 {code:"ok", message, hint, ...数据}，失败为 {code, message, hint}。失败时先按 hint 自纠。
+- 大文件用传输/开窗工具，不要把内容塞进 arguments；不要泄露 token 或凭据。"#;
 
 /// 设置页展示的一个可复制区块。
 #[derive(Clone, Debug, Serialize)]
@@ -41,7 +48,7 @@ curl -s "$URL" \
   -H "$AUTH" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
 
-# 2) tools/list：查看 5 个工具与完整 inputSchema
+# 2) tools/list：查看全部工具与完整 inputSchema
 curl -s "$URL" \
   -H "$AUTH" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
@@ -53,11 +60,27 @@ curl -s "$URL" \
 
 fn return_example(name: &str) -> &'static str {
     match name {
-        "get_environment" => r#"{code:"ok", sessions:[{id, kind, phase}], hostCount}"#,
+        "get_environment" => {
+            r#"{code:"ok", sessions:[{id, kind, phase, hostId, origin}], hosts:[...], hostCount}"#
+        }
         "vault_hosts_list" => r#"{code:"ok", hosts:[{id, name, host, port, groupId}]}"#,
         "snippets_list" => r#"{code:"ok", snippets:[{id, name, package, command, description}]}"#,
         "terminal_execute" => r#"{code:"ok", stdout, stderr, exitCode}"#,
         "session_close" => r#"{code:"ok", closed: sessionId}"#,
+        "fs_read" => r#"{code:"ok", path, lines, totalLines, size, truncated, nextCursor}"#,
+        "fs_grep" => r#"{code:"ok", matches:[{path, line, text}], total, truncated, nextCursor}"#,
+        "fs_glob" => r#"{code:"ok", matches:[{path, size}], total, truncated, nextCursor}"#,
+        "fs_patch" => r#"{code:"ok", dryRun, results:[{path, applied, sha256, diff}]}"#,
+        "fs_write" => r#"{code:"ok", path, size, sha256, created}"#,
+        "sftp_put" | "sftp_get" => {
+            r#"{code:"ok", ok, failed, results:[{localPath, remotePath, size, sha256, status}]}"#
+        }
+        "fs_delete" => r#"{code:"ok", dryRun, wouldDelete:[{path, size, isDir}], confirmToken}"#,
+        "build_run" => {
+            r#"{code:"ok", exitCode, stdoutTail, stderrTail, totalBytes, truncated, fullLog}"#
+        }
+        "term_run" => r#"{code:"ok", exitCode, stdoutTail, stderrTail, totalBytes, truncated}"#,
+        "batch" => r#"{code:"ok", results:[{tool, isError, result}], failed}"#,
         _ => "",
     }
 }
@@ -89,7 +112,7 @@ fn param_text(schema: &Value) -> String {
         .join("；")
 }
 
-/// 5 个工具的参数速查表（参数从 definitions 实时生成，返回示例保持一句话）。
+/// 全部工具的参数速查表（参数从 definitions 实时生成，返回示例保持一句话）。
 pub fn tools_table() -> String {
     let defs = super::tools::definitions();
     let mut lines = vec![
@@ -165,7 +188,7 @@ pub fn blocks(url: Option<&str>, token: Option<&str>) -> Vec<GuideBlock> {
             "可直接粘贴的 system prompt",
             INSTRUCTIONS.to_string(),
         ),
-        block("tools", "5 个工具参数速查表", tools_table()),
+        block("tools", "工具参数速查表", tools_table()),
     ]
 }
 
@@ -181,10 +204,22 @@ mod tests {
             "snippets_list",
             "terminal_execute",
             "session_close",
+            "fs_read",
+            "fs_grep",
+            "fs_glob",
+            "fs_patch",
+            "fs_write",
+            "sftp_put",
+            "sftp_get",
+            "fs_delete",
+            "build_run",
+            "term_run",
+            "batch",
         ] {
             assert!(INSTRUCTIONS.contains(name), "instructions 缺少 {name}");
         }
-        assert!(INSTRUCTIONS.contains("推荐调用顺序"));
+        assert!(INSTRUCTIONS.contains("推荐工作流"));
+        assert!(INSTRUCTIONS.contains("confirmToken"));
         assert!(INSTRUCTIONS.contains("{code, message, hint}"));
     }
 

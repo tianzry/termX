@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M7：文档与前端设置页
+
+- `mcp.workspace_root` 前后端打通：`McpStatus` 新增 `workspaceRoot`，`McpConfigPatch` 新增 `workspaceRoot`；校验空串回退 `~`、必须以 `~` 或 `/` 开头（否则 `invalid_workspace_root`），持久化到 settings KV `mcp.workspace_root`，`mcp_status` 与配置生效后统一回填。
+- AI 设置页新增「Workspace 根」输入行（失焦 / Enter 提交，与端口、客户端 host 同一交互）；新增「工具矩阵」分区，按控制 / 传输 / 构建 / 会话 / 复合五个平面展示 16 个工具，配中英文案与徽标样式。
+- `mcp/guide.rs`：`INSTRUCTIONS` 重写为 16 工具 + token 高效工作流 + hostId 自动建连 + jail / 权限 / confirmToken 说明；`return_example` 覆盖全部工具；单测改为断言 16 个工具名与关键提示语。
+- 文档同步：`docs/mcp-guide.md`（双平面、16 工具、Workspace 根、权限矩阵、错误码、限制）与 `docs/mcp-port-plan.md`（工具清单、审批范围、未移植项、渐进加载状态）。
+- 顺带修复：`composeBarSnippets` 排序固定 `zh-CN` collation —— 默认 `localeCompare` 跟随系统 locale，CI/沙箱（en-US）下汉字会排到拉丁字母之后，原有单测在非中文环境必挂。
+- 踩坑 109：`McpStatus` 由 `McpRuntime::status()` 生成，runtime 不持有 DB，`workspace_root` 只能先填空串、由 command 层回填；否则要么把 DB 塞进 runtime，要么状态页永远显示 `~`。
+- 门禁：`cargo check --lib` ✓、`cargo test --lib mcp::` 60 ✓、`npm run test:run` 921 ✓、`npm run build` ✓。
+
+---
+
 ## 2026-11-09 — MCP 整改 M6：复合工具（batch）
 
 - 新增 `batch`：`ops[]`（1–50）按顺序执行，允许组合 `fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write`，把「搜索 → 读 → 改」压成一次 MCP 调用。

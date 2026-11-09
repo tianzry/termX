@@ -2014,6 +2014,8 @@ export interface McpStatus {
   allowCustomBind: boolean;
   listenAddress: string;
   clientHost: string;
+  /** 文件类工具的 workspace jail 根（`~` 或绝对路径）。 */
+  workspaceRoot: string;
   toolCount: number;
   /** confirm 档位的放行规则（持久化在设置 KV，见 `PermissionGrant`）。 */
   grants: PermissionGrant[];
@@ -2041,6 +2043,7 @@ export interface McpConfigPatch {
   listenAddress?: string;
   clientHost?: string;
   permissionMode?: McpPermissionMode;
+  workspaceRoot?: string;
 }
 
 export function mcpStatus(): Promise<McpStatus> {

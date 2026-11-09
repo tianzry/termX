@@ -13993,6 +13993,55 @@ html[data-theme="dark"] .nc-shell-icon.mono {
   color: hsl(var(--muted-foreground));
 }
 
+.nc-mcp-tool-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nc-mcp-tool-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.nc-mcp-tool-badge {
+  flex: 0 0 auto;
+  min-width: 64px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-mcp-tool-badge.is-control,
+.nc-mcp-tool-badge.is-composite {
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+}
+
+.nc-mcp-tool-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nc-mcp-tool {
+  padding: 2px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
 .nc-mcp-allowed-list {
   display: flex;
   flex-wrap: wrap;
