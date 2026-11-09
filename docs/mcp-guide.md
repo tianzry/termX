@@ -30,7 +30,7 @@ termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX
 2. 端口默认 `47391`，允许范围 ≥ 1024。
 3. 监听地址默认 `127.0.0.1`（仅本机可访问）。
 4. 权限档位默认「确认」；初次接入建议保持该档位。
-5. 「Workspace 根」默认 `~`：`fs_*` / `sftp_*` / `build_run` 的远端路径都 jail 在这里，越界返回 `mcp_path_outside_jail`。
+5. 「Workspace 根」默认 `~`：`fs_*` / `sftp_*` / `build_run` 的**远端路径**（`path` / `remotePath` / `cwd`）都 jail 在这里，越界返回 `mcp_path_outside_jail`；`localPath` 不做 jail，只要求是绝对路径。
 6. 右上角状态显示「运行中」即监听成功。
 
 如果启动失败，状态会显示错误码：
@@ -318,7 +318,7 @@ curl -s "$URL" \
 
 ### 3.6 文件 / 传输 / 构建工具
 
-这些工具都接受 `sessionId` **或** `hostId`（`anyOf`，二选一）；`hostId` 无就绪会话时自动按 vault 档案建连。路径支持 `~` 与相对 workspace 根，最终必须落在 `mcp.workspace_root` 内。
+这些工具都接受 `sessionId` **或** `hostId`（`anyOf`，二选一）；`hostId` 无就绪会话时自动按 vault 档案建连。远端路径支持 `~` 与相对 workspace 根，最终必须落在 `mcp.workspace_root` 内；`localPath` 不受 jail 约束，只要求是绝对路径。
 
 | 工具 | 类型 | 主要参数 | 返回要点 |
 | --- | --- | --- | --- |

@@ -26,7 +26,7 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 可用工具（共 18 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、serial_write、telnet_write、session_close、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
 规则：
 - sessionId 必须来自 get_environment；hostId 必须来自 hosts[] 或 vault_hosts_list，不要臆造。
-- 文件路径默认 jail 在 workspace 根（设置 → AI → Workspace 根），越界返回 mcp_path_outside_jail。
+- 远端路径（path / remotePath / cwd）默认 jail 在 workspace 根（设置 → AI → Workspace 根），越界返回 mcp_path_outside_jail；localPath 只校验是绝对路径，不受 jail 约束。
 - 写操作受权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接执行；fs_delete 无论档位都要 confirmToken。
 - 所有工具返回 JSON：成功为 {code:"ok", message, hint, ...数据}，失败为 {code, message, hint}。失败时先按 hint 自纠。
 - 大文件用传输/开窗工具，不要把内容塞进 arguments；不要泄露 token 或凭据。"#;
