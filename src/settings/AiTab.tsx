@@ -12,7 +12,6 @@ import {
   mcpBlocklistReset,
   mcpBlocklistSet,
   mcpClientConfig,
-  mcpClientsSave,
   mcpGrantRemove,
   mcpGrantsExport,
   mcpGrantsImport,
@@ -22,7 +21,6 @@ import {
   mcpSetConfig,
   mcpStatus,
   type McpConfigPatch,
-  type McpClientConfig,
   type McpGuideBlock,
   type McpPermissionMode,
   type McpStatus,
@@ -65,38 +63,6 @@ function maskToken(token: string): string {
   return "•".repeat(Math.min(token.length, 24));
 }
 
-/** 设置页里的可编辑客户端行：可选字段用空串表示「跟随全局 / 全部工具」。 */
-type ClientDraft = {
-  id: string;
-  label: string;
-  token: string;
-  permissionMode: McpPermissionMode | "";
-  allowedTools: string;
-};
-
-function toClientDraft(client: McpClientConfig): ClientDraft {
-  return {
-    id: client.id,
-    label: client.label,
-    token: client.token,
-    permissionMode: client.permissionMode ?? "",
-    allowedTools: client.allowedTools.join(", "),
-  };
-}
-
-function fromClientDraft(draft: ClientDraft): McpClientConfig {
-  return {
-    id: draft.id.trim(),
-    label: draft.label.trim(),
-    token: draft.token.trim(),
-    permissionMode: draft.permissionMode || null,
-    allowedTools: draft.allowedTools
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
-  };
-}
-
 function StatusPill({ status }: { status: McpStatus | null }) {
   const s = useSettings();
   const t = (k: string) => settingsT(s.language, k);
@@ -129,14 +95,6 @@ export function AiTab() {
   const [clientHostDraft, setClientHostDraft] = useState("");
   const editingRef = useRef(false);
 
-  // 多客户端接入：编辑态与轮询解耦（用户改动未保存时不被 3 秒轮询覆盖）。
-  const [clients, setClients] = useState<ClientDraft[]>([]);
-  const [clientsDirty, setClientsDirty] = useState(false);
-  const [clientsBusy, setClientsBusy] = useState(false);
-  const [clientsError, setClientsError] = useState<string | null>(null);
-  const clientsDirtyRef = useRef(false);
-
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [snippetKind, setSnippetKind] = useState<SnippetKind>("codex");
   const [snippet, setSnippet] = useState("");
   const [snippetLoading, setSnippetLoading] = useState(false);
@@ -180,9 +138,6 @@ export function AiTab() {
         if (!alive) return;
         setStatus(next);
         setGrants(next.grants ?? []);
-        if (!clientsDirtyRef.current) {
-          setClients((next.clients ?? []).map(toClientDraft));
-        }
         if (!editingRef.current) {
           setPortDraft(String(next.port));
           setAddressDraft(next.listenAddress);
@@ -203,9 +158,9 @@ export function AiTab() {
     };
   }, []);
 
-  // 连接详情展开时按片段类型拉取；token 轮换 / 端口变化后自动刷新。
+  // 连接详情常驻展开：按片段类型拉取；token 轮换 / 端口变化后自动刷新。
   useEffect(() => {
-    if (!detailsOpen || !status?.running) return;
+    if (!status?.running) return;
     let alive = true;
     setSnippetLoading(true);
     setSnippetError(null);
@@ -222,7 +177,7 @@ export function AiTab() {
     return () => {
       alive = false;
     };
-  }, [detailsOpen, snippetKind, status?.running, status?.url, status?.bearerToken]);
+  }, [snippetKind, status?.running, status?.url, status?.bearerToken]);
 
   // 服务运行 / 轮换 token 后重新生成指南，保证复制出来的 URL 与 token 是最新的。
   useEffect(() => {
@@ -313,52 +268,6 @@ export function AiTab() {
       setActionError(describeError(error));
     } finally {
       setPending(null);
-    }
-  };
-
-  const markClients = (next: ClientDraft[]) => {
-    setClients(next);
-    clientsDirtyRef.current = true;
-    setClientsDirty(true);
-  };
-
-  const addClient = () => {
-    const used = new Set(clients.map((client) => client.id.trim()));
-    let n = clients.length + 1;
-    while (used.has(`client-${n}`)) n += 1;
-    markClients([
-      ...clients,
-      {
-        id: `client-${n}`,
-        label: "",
-        token: "",
-        permissionMode: "",
-        allowedTools: "",
-      },
-    ]);
-  };
-
-  const updateClient = (index: number, patch: Partial<ClientDraft>) => {
-    markClients(clients.map((client, i) => (i === index ? { ...client, ...patch } : client)));
-  };
-
-  const removeClient = (index: number) => {
-    markClients(clients.filter((_, i) => i !== index));
-  };
-
-  const saveClients = async () => {
-    setClientsBusy(true);
-    setClientsError(null);
-    try {
-      const saved = await mcpClientsSave(clients.map(fromClientDraft));
-      setClients(saved.map(toClientDraft));
-      clientsDirtyRef.current = false;
-      setClientsDirty(false);
-      setStatus(await mcpStatus());
-    } catch (error) {
-      setClientsError(describeError(error));
-    } finally {
-      setClientsBusy(false);
     }
   };
 
@@ -710,130 +619,6 @@ export function AiTab() {
       <section className="nc-set-section">
         <div className="nc-mcp-head">
           <div>
-            <h2 className="nc-set-section-title">{t("settings.ai.clients.title")}</h2>
-            <p className="nc-set-section-desc">{t("settings.ai.clients.desc")}</p>
-          </div>
-          <div className="nc-grant-actions">
-            <button
-              type="button"
-              className="nc-set-btn is-sm is-ghost"
-              disabled={clientsBusy}
-              onClick={addClient}
-            >
-              {t("settings.ai.clients.add")}
-            </button>
-            <button
-              type="button"
-              className="nc-set-btn is-sm is-primary"
-              disabled={clientsBusy || !clientsDirty}
-              onClick={() => void saveClients()}
-            >
-              {t("settings.ai.clients.save")}
-            </button>
-          </div>
-        </div>
-
-        <div className="nc-set-card">
-          {clients.length === 0 && (
-            <p className="nc-set-hint nc-grant-empty">{t("settings.ai.clients.empty")}</p>
-          )}
-          <div className="nc-client-list">
-            {clients.map((client, index) => (
-              <div className="nc-client-card" key={`${client.id}:${index}`}>
-                <div className="nc-client-head">
-                  <div className="nc-set-row-title">
-                    {client.label.trim() || client.id || t("settings.ai.clients.label")}
-                  </div>
-                  <button
-                    type="button"
-                    className="nc-safety-remove"
-                    aria-label={t("settings.ai.clients.delete")}
-                    title={t("settings.ai.clients.delete")}
-                    disabled={clientsBusy}
-                    onClick={() => removeClient(index)}
-                  >
-                    ×
-                  </button>
-                </div>
-                <div className="nc-client-grid">
-                  <label className="nc-client-field">
-                    <span>{t("settings.ai.clients.id")}</span>
-                    <input
-                      className="nc-set-input"
-                      value={client.id}
-                      placeholder={t("settings.ai.clients.id.placeholder")}
-                      disabled={clientsBusy}
-                      onChange={(event) => updateClient(index, { id: event.currentTarget.value })}
-                    />
-                  </label>
-                  <label className="nc-client-field">
-                    <span>{t("settings.ai.clients.label")}</span>
-                    <input
-                      className="nc-set-input"
-                      value={client.label}
-                      disabled={clientsBusy}
-                      onChange={(event) => updateClient(index, { label: event.currentTarget.value })}
-                    />
-                  </label>
-                  <div className="nc-client-field">
-                    <span>{t("settings.ai.clients.token")}</span>
-                    <div className="nc-client-token-row">
-                      <input
-                        className="nc-set-input"
-                        value={client.token}
-                        placeholder={t("settings.ai.clients.token.placeholder")}
-                        disabled={clientsBusy}
-                        onChange={(event) =>
-                          updateClient(index, { token: event.currentTarget.value })
-                        }
-                      />
-                      {copyButton(`client:${index}`, client.token, !client.token)}
-                    </div>
-                  </div>
-                  <label className="nc-client-field">
-                    <span>{t("settings.ai.clients.permissionMode")}</span>
-                    <select
-                      className="nc-set-input"
-                      value={client.permissionMode}
-                      disabled={clientsBusy}
-                      onChange={(event) =>
-                        updateClient(index, {
-                          permissionMode: event.currentTarget.value as ClientDraft["permissionMode"],
-                        })
-                      }
-                    >
-                      <option value="">{t("settings.ai.clients.followGlobal")}</option>
-                      {PERMISSION_MODES.map((mode) => (
-                        <option key={mode.value} value={mode.value}>
-                          {t(mode.label)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="nc-client-field">
-                    <span>{t("settings.ai.clients.allowedTools")}</span>
-                    <input
-                      className="nc-set-input"
-                      value={client.allowedTools}
-                      placeholder={t("settings.ai.clients.allowedTools.placeholder")}
-                      disabled={clientsBusy}
-                      onChange={(event) =>
-                        updateClient(index, { allowedTools: event.currentTarget.value })
-                      }
-                    />
-                  </label>
-                </div>
-              </div>
-            ))}
-          </div>
-          {clientsError && <p className="nc-mcp-error">{clientsError}</p>}
-          <p className="nc-set-hint">{t("settings.ai.clients.note")}</p>
-        </div>
-      </section>
-
-      <section className="nc-set-section">
-        <div className="nc-mcp-head">
-          <div>
             <h2 className="nc-set-section-title">{t("settings.ai.blocklist")}</h2>
             <p className="nc-set-section-desc">{t("settings.ai.blocklist.desc")}</p>
           </div>
@@ -981,12 +766,12 @@ export function AiTab() {
       </section>
 
       {status?.running && (
-        <details
-          className="nc-mcp-details"
-          open={detailsOpen}
-          onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
-        >
-          <summary className="nc-set-section-title nc-mcp-summary">{t("settings.ai.details")}</summary>
+        <section className="nc-set-section">
+          <div className="nc-mcp-head">
+            <div className="nc-mcp-head-text">
+              <h2 className="nc-set-section-title">{t("settings.ai.details")}</h2>
+            </div>
+          </div>
           <div className="nc-set-card">
             <div className="nc-mcp-copy-row">
               <div className="nc-mcp-copy-label">{t("settings.ai.url")}</div>
@@ -1049,7 +834,7 @@ export function AiTab() {
               )}
             </div>
           </div>
-        </details>
+        </section>
       )}
 
       {status?.running && (

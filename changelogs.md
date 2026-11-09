@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-09 — MCP 接入简化：移除多客户端设置 + 连接详情常展开 + 会话级隔离
+
+- 删除设置 → AI 的「多客户端接入」：`mcp.clients` 配置、`mcp_clients_save` 命令、`McpStatus.clients`、每客户端权限档 / 工具白名单及认证分支全部移除；只保留一个 Bearer token + 全局权限档。旧 `mcp.clients` 里的 token 不再可用（设置页只显示主 token）。
+- 「连接详情」不再默认折叠：去掉 `<details>/<summary>`，改为常驻展开区块，服务运行时就加载 URL / token / 配置片段。
+- 恢复隔离语义：单 token 下用 MCP 协议层 `Mcp-Session-Id` 区分 agent —— `initialize` 响应下发会话 id，之后请求按会话身份映射到独立 owner；`origin: "mcp"` 的自动建连会话只对本会话可见，`session_close` 也只允许关闭本会话建立的会话；无会话头的无状态客户端按 `User-Agent` 兜底区分，仍无 UA 时才回落到共享 default。最多 1024 个会话，淘汰最老会话并回收 owner。
+- 接入指南首块由 Trae 改为 Qoder（`~/.qoder/settings.json` 的 `mcpServers`，`url` + `headers` 即可）。
+- 同步 `guide.rs` instructions、`docs/mcp-guide.md`（会话隔离说明、get_environment 可见范围、Qoder 示例）。
+- 门禁：`tsc --noEmit` ✓、`cargo test --lib mcp::` 74 ✓。
+
+---
+
 ## 2026-11-09 — MCP terminal_execute：ssh / pty 输出改为尾部截断
 
 - `terminal_execute` 新增 `maxOutputBytes`（仅 ssh / pty，范围 256–65536，默认 16384，复用 `fs::build` 常量）：stdout、stderr 各自只回尾部；返回新增 `stdoutBytes` / `stderrBytes` / `totalBytes` / `truncated`。此前 ssh 单路最多完整回传 256 KiB，一次大输出可能灌满 agent 上下文且没有截断标记。

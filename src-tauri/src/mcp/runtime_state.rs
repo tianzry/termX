@@ -25,7 +25,7 @@ pub struct DeleteToken {
 pub struct McpRuntimeState {
     /// 默认客户端（旧单 token）的会话 owner。
     pub owner: uuid::Uuid,
-    /// 多客户端：客户端 id → 会话 owner。默认客户端复用 `owner`。
+    /// 接入身份 id → 会话 owner（当前仅 default，复用 `owner`）。
     pub client_owners: Mutex<HashMap<String, uuid::Uuid>>,
     /// `client:hostId` → 建连闸门：并发请求共享同一次建连，且不同客户端不互相阻塞。
     pub connect_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -58,8 +58,7 @@ pub fn mcp_owner() -> uuid::Uuid {
     state().owner
 }
 
-/// 每个客户端一个稳定 owner（进程内首次使用时生成）。默认客户端沿用旧 owner，
-/// 保证升级后旧会话仍可被同一身份识别。
+/// 接入身份的稳定 owner：default 沿用旧 owner，保证升级后旧会话仍可被同一身份识别。
 pub fn owner_for_client(client_id: &str) -> uuid::Uuid {
     if client_id == "default" {
         return mcp_owner();
@@ -71,6 +70,15 @@ pub fn owner_for_client(client_id: &str) -> uuid::Uuid {
     *owners
         .entry(client_id.to_string())
         .or_insert_with(uuid::Uuid::new_v4)
+}
+
+/// 会话结束后回收其 owner，避免长期运行时映射无界增长。
+pub fn forget_client_owner(client_id: &str) {
+    state()
+        .client_owners
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(client_id);
 }
 
 /// 取（或创建）某客户端 + 某主机的建连闸门。

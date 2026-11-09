@@ -22,7 +22,7 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 7) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
 8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话，ssh / pty 只回尾部 maxOutputBytes（默认 16 KiB）。
 9) 串口 / Telnet：自己建链用 session_open（headless，不占用户窗口）；只写字节用 serial_write / telnet_write（返回 bytesWritten）；只读输出用 serial_read / telnet_read；要「写入 + 等回显」时用 terminal_execute —— 写入命令后按 idleMs 静默 / waitRegex 命中 / timeoutMs 超时采集，exitCode 恒为 null。这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
-10) 多客户端：每个 Bearer token 是一个独立客户端，权限档 / 工具白名单可不同；各自自动建连的会话互相隔离，用户窗口会话仍然共享。一个 token 可服务多个会话与任意工作目录。链路自行断开时会话立即标记 closed，重新 session_open 即可。
+10) 隔离：每个 MCP 会话（initialize 下发的 Mcp-Session-Id）各自独立，自动建连的会话只有本会话可见，用户窗口会话共享（无会话头的客户端按 User-Agent 区分）；一个 token 可服务多个会话与任意工作目录。链路自行断开时会话立即标记 closed，重新 session_open 即可。
 
 可用工具（共 21 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、session_open、session_close、serial_write、serial_read、telnet_write、telnet_read、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
 规则：
@@ -161,7 +161,7 @@ fn http_config(url: &str, token: &str, with_type: bool) -> String {
     pretty(json!({ "mcpServers": { "termx": server } }))
 }
 
-/// 设置页「接入指南」的六个区块。内容全部由后端生成，前端只做展示与复制。
+/// 设置页「接入指南」的六个区块：Qoder / Claude Desktop / Cursor / curl / system prompt / 速查表。
 pub fn blocks(url: Option<&str>, token: Option<&str>) -> Vec<GuideBlock> {
     let url = url.unwrap_or_default();
     let token = token.unwrap_or_default();
@@ -172,8 +172,8 @@ pub fn blocks(url: Option<&str>, token: Option<&str>) -> Vec<GuideBlock> {
     };
     vec![
         block(
-            "trae",
-            "Trae · %APPDATA%\\Trae CN\\User\\mcp.json",
+            "qoder",
+            "Qoder · ~/.qoder/settings.json",
             http_config(url, token, false),
         ),
         block(
@@ -259,5 +259,16 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn guide_starts_with_qoder_example() {
+        let list = blocks(Some("http://127.0.0.1:47391/mcp"), Some("tok"));
+        let first = &list[0];
+        assert_eq!(first.id, "qoder");
+        assert!(first.title.contains(".qoder/settings.json"));
+        assert!(first.content.contains("\"mcpServers\""));
+        assert!(first.content.contains("Bearer tok"));
+        assert!(list.iter().all(|block| block.id != "trae"));
     }
 }

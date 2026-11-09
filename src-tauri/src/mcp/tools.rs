@@ -730,27 +730,6 @@ op.args 未带 sessionId / hostId 时自动继承顶层值；stopOnError 默认 
     list
 }
 
-/// 按客户端白名单过滤工具清单；空白名单 = 全部可见。
-pub fn definitions_for(client: &McpClient) -> Value {
-    let all = definitions();
-    if client.allowed_tools.is_empty() {
-        return all;
-    }
-    let filtered: Vec<Value> = all
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|item| {
-            item.get("name")
-                .and_then(Value::as_str)
-                .map(|name| client.allowed_tools.iter().any(|allowed| allowed == name))
-                .unwrap_or(false)
-        })
-        .collect();
-    Value::Array(filtered)
-}
-
 /// 会话是否可被该客户端使用：用户窗口会话共享；Headless 会话只给创建它的客户端。
 fn session_visible_to_client(owner: &SessionOwner, client: &McpClient) -> bool {
     match owner {
@@ -1348,13 +1327,6 @@ pub async fn call_tool(
     name: &str,
     args: &Value,
 ) -> ToolResult {
-    if !client.allowed_tools.is_empty() && !client.allowed_tools.iter().any(|t| t == name) {
-        return ToolResult::err(
-            "tool_not_allowed",
-            format!("工具 {name} 不在当前客户端的白名单里"),
-            "换用 allowedTools 内的工具，或请用户在「设置 → AI → 工具接入 → 多客户端」里放行。",
-        );
-    }
     match name {
         "batch" => {
             let ops = match args.get("ops").and_then(Value::as_array) {
@@ -2042,8 +2014,8 @@ pub async fn call_tool(
             if !session_visible_to_client(&owner, client) {
                 return ToolResult::err(
                     "mcp_session_forbidden",
-                    format!("会话 {session_id} 属于另一个 MCP 客户端"),
-                    "每个客户端只能操作自己自动建连的会话或用户窗口会话；重新 get_environment 获取本客户端的 sessions[].id。",
+                    format!("会话 {session_id} 属于另一个 MCP 会话"),
+                    "每个 MCP 会话只能操作自己自动建连的会话或用户窗口会话；重新 get_environment 获取本会话的 sessions[].id。",
                 );
             }
             let executable = match kind {
@@ -2378,7 +2350,7 @@ pub async fn call_tool(
             match opened {
                 Ok(session_id) => ToolResult::ok(
                     "会话已建立",
-                    "用返回的 sessionId 调用 serial_read / telnet_read / terminal_execute；任务结束调用 session_close。该会话归属当前客户端，其它客户端不可见。",
+                    "用返回的 sessionId 调用 serial_read / telnet_read / terminal_execute；任务结束调用 session_close。该会话归属当前 MCP 会话，其它会话不可见。",
                     json!({ "sessionId": session_id, "kind": kind, "origin": "mcp" }),
                 ),
                 Err(e) => tool_error(e),
@@ -2408,8 +2380,8 @@ pub async fn call_tool(
             if !session_visible_to_client(&owner, client) {
                 return ToolResult::err(
                     "mcp_session_forbidden",
-                    format!("会话 {session_id} 属于另一个 MCP 客户端"),
-                    "每个客户端只能操作自己自动建连的会话或用户窗口会话；重新 get_environment 获取本客户端的 sessions[].id。",
+                    format!("会话 {session_id} 属于另一个 MCP 会话"),
+                    "每个 MCP 会话只能操作自己自动建连的会话或用户窗口会话；重新 get_environment 获取本会话的 sessions[].id。",
                 );
             }
             if kind.as_str() != transport {
@@ -2499,8 +2471,8 @@ pub async fn call_tool(
             if !session_visible_to_client(&owner, client) {
                 return ToolResult::err(
                     "mcp_session_forbidden",
-                    format!("会话 {session_id} 属于另一个 MCP 客户端"),
-                    "每个客户端只能读取自己自动建连的会话或用户窗口会话；重新 get_environment 获取本客户端的 sessions[].id。",
+                    format!("会话 {session_id} 属于另一个 MCP 会话"),
+                    "每个 MCP 会话只能读取自己自动建连的会话或用户窗口会话；重新 get_environment 获取本会话的 sessions[].id。",
                 );
             }
             if kind.as_str() != transport {
@@ -2597,7 +2569,7 @@ pub async fn call_tool(
                 return ToolResult::err(
                     "mcp_session_forbidden",
                     format!("会话 {session_id} 不是当前客户端建立的，拒绝关闭"),
-                    "只允许关闭本客户端自动建连的会话；用户窗口会话请在 termX 界面关闭，其它客户端的会话由它自己关闭。",
+                    "只允许关闭本会话自动建连的会话；用户窗口会话请在 termX 界面关闭，其它会话由其所属 MCP 会话自行关闭。",
                 );
             }
             let target_label = Some(format!("{} · {}", kind.as_str(), session_id));

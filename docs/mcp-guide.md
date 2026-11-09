@@ -4,7 +4,7 @@
 
 ## 1. termX MCP 是什么
 
-termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX 会在本机启动一个 Streamable HTTP 端点（默认 `http://127.0.0.1:47391/mcp`），把**已保存的主机**和**已打开的会话**以 18 个工具暴露给外部 AI 客户端（Trae、Claude Desktop、Cursor、Claude Code 等）。
+termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX 会在本机启动一个 Streamable HTTP 端点（默认 `http://127.0.0.1:47391/mcp`），把**已保存的主机**和**已打开的会话**以 18 个工具暴露给外部 AI 客户端（Qoder、Claude Desktop、Cursor、Claude Code 等）。
 
 工具分三个平面：
 
@@ -19,6 +19,8 @@ termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX
 ```
 
 `sessionId` 必须来自 `get_environment`；`hostId` 来自 `hosts[]` 或 `vault_hosts_list`。**传 `hostId` 时会按 vault 档案自动建连**（`SessionOwner::Headless`，与 UI 同链路：堡垒机链 / 代理 / known_hosts / 录制 / 发行版探测），无需先在 termX 里打开窗口。
+
+**会话隔离**：服务端在 `initialize` 响应头下发 `Mcp-Session-Id`，客户端之后每次请求需带回该头（MCP 规范行为）。不同 MCP 会话各自独立：自动建连（`origin: "mcp"`）的会话只对建立它的会话可见，用户窗口会话共享，因此多个 agent 共用一个 token 也不会互相串会话。未带会话头的无状态请求按 `User-Agent` 区分客户端，仍无 UA 时才按共享的默认身份处理；服务端不认识的会话 id 返回 404，客户端重新 `initialize` 即可。
 
 ## 2. 快速开始
 
@@ -56,7 +58,7 @@ token 只在手动轮换时更换。关闭再开启服务、修改权限档位�
 
 设置页「接入指南」里每块都有独立复制按钮，下面的片段与它一致。
 
-**Trae** — 写入 `%APPDATA%\Trae CN\User\mcp.json`（macOS/Linux 为对应 Trae 用户目录）：
+**Qoder** — 写入 `~/.qoder/settings.json` 的 `mcpServers`（Windows 为 `%USERPROFILE%\.qoder\settings.json`）：
 
 ```json
 {
@@ -158,7 +160,7 @@ curl -s "$URL" \
 
 ### 3.1 `get_environment`
 
-**用途**：返回当前活跃会话和已保存主机清单，是拿 `sessionId` / `hostId` 的入口。
+**用途**：返回当前活跃会话和已保存主机清单，是拿 `sessionId` / `hostId` 的入口。`sessions` 只包含本 MCP 会话可见的会话：用户窗口打开的会话 + 本会话自动建连的会话。
 
 **该用**：会话开始时；调用其它工具前确认目标会话或主机存在。
 **不该用**：只需要主机清单时也可用 `vault_hosts_list`；不要用它轮询等待新会话。

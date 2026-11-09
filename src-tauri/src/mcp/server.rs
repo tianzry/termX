@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -19,7 +19,8 @@ use tokio::sync::Notify;
 
 use crate::state::AppState;
 use super::approval::{self, ApprovalRegistry, ApprovalRequestPayload, TakenApproval};
-use super::config::{self, McpClient, McpClientConfig, McpConfig};
+use super::config::{self, McpClient, McpConfig};
+use super::runtime_state;
 use super::tools;
 
 const MAX_HEADER_BYTES: usize = 8 * 1024;
@@ -70,8 +71,6 @@ pub struct McpStatus {
     pub allow_custom_bind: bool,
     pub listen_address: String,
     pub client_host: String,
-    /// 多客户端接入配置（每个 token 一份权限档 / 工具白名单）。
-    pub clients: Vec<McpClientConfig>,
     pub tool_count: usize,
     /// confirm 档位下的放行规则（持久化在设置 KV，形状见 `mcp::grants`）。
     pub grants: Vec<super::grants::PermissionGrant>,
@@ -195,8 +194,6 @@ impl McpRuntime {
             allow_custom_bind: cfg.allow_custom_bind,
             listen_address: cfg.listen_address.clone(),
             client_host: cfg.client_host.clone(),
-            // 真实值由 command 层从设置 KV 回填（runtime 不持有 DB）。
-            clients: Vec::new(),
             tool_count: tools::definitions().as_array().map(|a| a.len()).unwrap_or(0),
             grants: self.approvals.grants(),
         }
@@ -211,7 +208,7 @@ impl McpRuntime {
 
     /// 原地更新配置：权限档 / client_host 等纯设置项使用。
     ///
-    /// 不重启监听、不换 token，已连接客户端与 Trae/Claude 里配置的 token 继续有效。
+    /// 不重启监听、不换 token，已连接客户端与 Qoder/Claude 里配置的 token 继续有效。
     pub fn set_config(&self, cfg: McpConfig) {
         let mut inner = self.lock();
         inner.config = cfg;
@@ -448,25 +445,83 @@ fn token_eq(a: &str, b: &str) -> bool {
     diff == 0
 }
 
-/// 认证并解析出客户端身份：
-/// 1. 旧单 token → 默认客户端（沿用全局权限档）；
-/// 2. `mcp.clients` 里的 token → 该客户端自己的权限档 / 工具白名单。
+/// 认证并解析出请求身份：单 Bearer token → 默认客户端（沿用全局权限档）。
 fn authenticate(
     req: &HttpRequest,
     legacy_token: Option<&str>,
-    db: &crate::db::Db,
     cfg: &McpConfig,
 ) -> Option<McpClient> {
     let bearer = bearer_token(req)?;
-    if let Some(legacy) = legacy_token {
-        if token_eq(&bearer, legacy) {
-            return Some(config::default_client(cfg.permission_mode));
+    let legacy = legacy_token?;
+    if token_eq(&bearer, legacy) {
+        Some(config::default_client(cfg.permission_mode))
+    } else {
+        None
+    }
+}
+
+/// MCP 会话表：`Mcp-Session-Id` → 建立时间。
+///
+/// 单 token 无法再靠 token 区分 agent，改用协议层会话 id：initialize 时下发，
+/// 后续请求带回；不同会话自动建连的会话互不可见。不带会话头的调用回落到
+/// 共享的 default 身份（兼容无状态客户端）。
+static MCP_SESSIONS: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+
+const MAX_SESSIONS: usize = 1024;
+
+fn sessions() -> &'static Mutex<HashMap<String, Instant>> {
+    MCP_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_session() -> String {
+    let id = format!("mcp-{}", uuid::Uuid::new_v4().simple());
+    let mut map = sessions().lock().unwrap_or_else(|e| e.into_inner());
+    if map.len() >= MAX_SESSIONS {
+        // 淘汰最老会话并回收 owner；其自动建连的会话随后不再对外可见。
+        if let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_, created)| **created)
+            .map(|(id, _)| id.clone())
+        {
+            map.remove(&oldest);
+            runtime_state::forget_client_owner(&oldest);
         }
     }
-    config::load_clients(db)
-        .into_iter()
-        .find(|client| token_eq(&bearer, &client.token))
-        .map(|client| client.resolve(cfg.permission_mode))
+    map.insert(id.clone(), Instant::now());
+    id
+}
+
+fn session_known(id: &str) -> bool {
+    sessions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(id)
+}
+
+fn end_session(id: &str) {
+    let removed = sessions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(id)
+        .is_some();
+    if removed {
+        runtime_state::forget_client_owner(id);
+    }
+}
+
+fn is_initialize(item: &Value) -> bool {
+    item.get("method").and_then(Value::as_str) == Some("initialize")
+}
+
+/// 不发 `Mcp-Session-Id` 的无状态客户端：按 User-Agent 区分 agent，
+/// 至少保证不同客户端不串会话；同一 agent 的多个实例仍共享一个身份。
+fn user_agent_client(req: &HttpRequest, cfg: &McpConfig) -> Option<McpClient> {
+    let ua = req.headers.get("user-agent")?.trim();
+    if ua.is_empty() {
+        return None;
+    }
+    let short: String = ua.chars().take(120).collect();
+    Some(config::session_client(format!("ua-{short}"), cfg.permission_mode))
 }
 
 async fn read_request(socket: &mut TcpStream) -> Result<HttpRequest, (u16, String)> {
@@ -593,9 +648,14 @@ async fn serve_connection(
             .await;
         }
         if req.method == "DELETE" {
-            let app_state = app.state::<AppState>();
-            if authenticate(&req, token.as_deref(), &app_state.db, &cfg).is_none() {
+            if authenticate(&req, token.as_deref(), &cfg).is_none() {
                 return respond(&mut socket, 401, "application/json", "{\"error\":\"unauthorized\"}", &[("WWW-Authenticate", "Bearer")]).await;
+            }
+            if let Some(session_id) = req.headers.get("mcp-session-id") {
+                if !session_known(session_id) {
+                    return respond(&mut socket, 404, "application/json", "{\"error\":\"session_not_found\"}", &[]).await;
+                }
+                end_session(session_id);
             }
             return respond(&mut socket, 200, "application/json", "{}", &[]).await;
         }
@@ -604,16 +664,38 @@ async fn serve_connection(
     if req.path != "/mcp" && req.path != "/mcp/" {
         return respond(&mut socket, 404, "application/json", "{\"error\":\"not_found\"}", &[]).await;
     }
-    let client = {
-        let app_state = app.state::<AppState>();
-        authenticate(&req, token.as_deref(), &app_state.db, &cfg)
-    };
-    let Some(client) = client else {
+    if authenticate(&req, token.as_deref(), &cfg).is_none() {
         return respond(&mut socket, 401, "application/json", "{\"error\":\"unauthorized\"}", &[("WWW-Authenticate", "Bearer")]).await;
-    };
+    }
     let parsed: Result<Value, _> = serde_json::from_slice(&req.body);
     let Ok(payload) = parsed else {
         return respond(&mut socket, 400, "application/json", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"parse_error\"}}", &[]).await;
+    };
+
+    // 单 token 下按 MCP 会话区分 agent：initialize 新建会话并下发 Mcp-Session-Id，
+    // 后续请求带回已知 id；未知 id 回 404，让客户端重新 initialize。
+    let wants_new_session = payload
+        .as_array()
+        .map(|items| items.iter().any(is_initialize))
+        .unwrap_or_else(|| is_initialize(&payload));
+    let (client, issued_session) = if wants_new_session {
+        let session_id = register_session();
+        (
+            config::session_client(&session_id, cfg.permission_mode),
+            Some(session_id),
+        )
+    } else if let Some(session_id) = req.headers.get("mcp-session-id") {
+        if !session_known(session_id) {
+            return respond(&mut socket, 404, "application/json", "{\"error\":\"session_not_found\"}", &[]).await;
+        }
+        (
+            config::session_client(session_id.clone(), cfg.permission_mode),
+            None,
+        )
+    } else if let Some(client) = user_agent_client(&req, &cfg) {
+        (client, None)
+    } else {
+        (config::default_client(cfg.permission_mode), None)
     };
 
     // 拆分读写半连接：审批等待期间由后台任务监听客户端断开（EOF / 读错误）。
@@ -659,7 +741,11 @@ async fn serve_connection(
             None => (String::new(), 202),
         }
     };
-    respond(&mut write_half, status, "application/json", &body, &[]).await
+    let mut extra: Vec<(&str, &str)> = Vec::new();
+    if let Some(session_id) = issued_session.as_deref() {
+        extra.push(("Mcp-Session-Id", session_id));
+    }
+    respond(&mut write_half, status, "application/json", &body, &extra).await
 }
 
 async fn dispatch(
@@ -702,7 +788,7 @@ async fn dispatch(
             }))
         }
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools::definitions_for(client) })),
+        "tools/list" => Ok(json!({ "tools": tools::definitions() })),
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
@@ -837,5 +923,46 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a.len(), 64);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn initialize_detection_covers_single_and_batch() {
+        assert!(is_initialize(&json!({ "method": "initialize" })));
+        assert!(!is_initialize(&json!({ "method": "tools/list" })));
+        let batch = json!([{ "method": "notifications/initialized" }]);
+        assert!(!batch.as_array().unwrap().iter().any(is_initialize));
+    }
+
+    #[test]
+    fn user_agent_separates_stateless_clients() {
+        let cfg = McpConfig::default();
+        let a = parse_request(b"POST /mcp HTTP/1.1\r\nUser-Agent: Qoder/1.0\r\n\r\n").unwrap();
+        let b = parse_request(b"POST /mcp HTTP/1.1\r\nUser-Agent: Cursor/0.45\r\n\r\n").unwrap();
+        let ca = user_agent_client(&a, &cfg).unwrap();
+        let cb = user_agent_client(&b, &cfg).unwrap();
+        assert_ne!(ca.id, cb.id);
+        assert_ne!(
+            runtime_state::owner_for_client(&ca.id),
+            runtime_state::owner_for_client(&cb.id)
+        );
+        let none = parse_request(b"POST /mcp HTTP/1.1\r\n\r\n").unwrap();
+        assert!(user_agent_client(&none, &cfg).is_none());
+    }
+
+    #[test]
+    fn mcp_sessions_map_to_isolated_owners() {
+        let a = register_session();
+        let b = register_session();
+        assert_ne!(a, b);
+        assert!(session_known(&a) && session_known(&b));
+        // 不同 MCP 会话 → 不同 owner，自动建连的会话互不可见。
+        assert_ne!(
+            runtime_state::owner_for_client(&a),
+            runtime_state::owner_for_client(&b)
+        );
+        end_session(&a);
+        assert!(!session_known(&a));
+        end_session(&b);
+        assert!(!session_known(&b));
     }
 }

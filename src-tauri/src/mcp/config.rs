@@ -19,8 +19,6 @@ pub const KEY_PERMISSION_MODE: &str = "mcp.permission_mode";
 pub const KEY_ALLOWED_TOOLS: &str = "mcp.allowed_tools";
 /// Bearer token。持久化后只有手动「轮换」才会更换，改配置/重启 app 都不变。
 pub const KEY_TOKEN: &str = "mcp.token";
-/// 多客户端：每个 token 对应一个独立客户端（权限档 / 工具白名单）。
-pub const KEY_CLIENTS: &str = "mcp.clients";
 
 /// Netcatty 默认端口 47391（`ExternalMcpHttpSection` 默认值），保持同值便于用户迁移。
 pub const DEFAULT_PORT: u16 = 47391;
@@ -218,155 +216,26 @@ pub fn save_token(db: &Db, token: &str) -> AppResult<()> {
     settings::set(db, KEY_TOKEN, token)
 }
 
-/// 一个可接入的 MCP 客户端。`token` 与旧单 token 一样明文存放在本地 settings，
-/// 只在 `mcp_status` 里回给本机设置页。
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpClientConfig {
-    pub id: String,
-    pub label: String,
-    pub token: String,
-    /// `None` = 回退全局权限档。
-    #[serde(default)]
-    pub permission_mode: Option<PermissionMode>,
-    /// 空 = 允许全部工具；非空时 `tools/list` 与 `tools/call` 都只放行这些名字。
-    #[serde(default)]
-    pub allowed_tools: Vec<String>,
-}
-
 /// 认证通过后的请求身份；贯穿 dispatch → tools → session owner。
 #[derive(Clone, Debug)]
 pub struct McpClient {
     pub id: String,
-    pub label: String,
     pub permission_mode: PermissionMode,
-    pub allowed_tools: Vec<String>,
 }
 
-impl McpClientConfig {
-    pub fn normalized(mut self) -> Self {
-        self.id = self.id.trim().to_string();
-        self.label = self.label.trim().to_string();
-        self.token = self.token.trim().to_string();
-        self.allowed_tools = self
-            .allowed_tools
-            .into_iter()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-            .collect();
-        self
-    }
-
-    pub fn resolve(&self, fallback_mode: PermissionMode) -> McpClient {
-        McpClient {
-            id: self.id.clone(),
-            label: self.label.clone(),
-            permission_mode: self.permission_mode.unwrap_or(fallback_mode),
-            allowed_tools: self.allowed_tools.clone(),
-        }
-    }
-}
-
-pub fn load_clients(db: &Db) -> Vec<McpClientConfig> {
-    settings::get(db, KEY_CLIENTS)
-        .ok()
-        .flatten()
-        .and_then(|raw| serde_json::from_str::<Vec<McpClientConfig>>(&raw).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .map(McpClientConfig::normalized)
-        .filter(|c| !c.id.is_empty() && !c.token.is_empty())
-        .collect()
-}
-
-pub fn save_clients(db: &Db, clients: &[McpClientConfig]) -> AppResult<()> {
-    let raw = serde_json::to_string(clients).unwrap_or_else(|_| "[]".to_string());
-    settings::set(db, KEY_CLIENTS, &raw)
-}
-
-const MAX_CLIENTS: usize = 32;
-
-fn new_client_token() -> String {
-    format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    )
-}
-
-/// 保存前校验并补全：空 token 自动生成；id / token 必须唯一。
-pub fn save_clients_checked(
-    db: &Db,
-    clients: Vec<McpClientConfig>,
-) -> Result<Vec<McpClientConfig>, (String, String)> {
-    if clients.len() > MAX_CLIENTS {
-        return Err((
-            "too_many_clients".to_string(),
-            format!("最多配置 {MAX_CLIENTS} 个客户端"),
-        ));
-    }
-    let mut out: Vec<McpClientConfig> = Vec::new();
-    let legacy_token = load_token(db);
-    for raw in clients {
-        let mut client = raw.normalized();
-        if client.id.is_empty() {
-            return Err(("invalid_client_id".to_string(), "客户端 id 不能为空".to_string()));
-        }
-        if !client
-            .id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        {
-            return Err((
-                "invalid_client_id".to_string(),
-                format!("客户端 id {} 只能包含字母、数字、- _ .", client.id),
-            ));
-        }
-        if client.label.is_empty() {
-            client.label = client.id.clone();
-        }
-        if client.token.is_empty() {
-            client.token = new_client_token();
-        } else if client.token.len() < 16 {
-            return Err((
-                "invalid_client_token".to_string(),
-                format!("客户端 {} 的 token 至少 16 个字符", client.id),
-            ));
-        }
-        if out.iter().any(|c| c.id == client.id) {
-            return Err((
-                "duplicate_client_id".to_string(),
-                format!("客户端 id {} 重复", client.id),
-            ));
-        }
-        if out.iter().any(|c| c.token == client.token) {
-            return Err((
-                "duplicate_client_token".to_string(),
-                format!("客户端 {} 的 token 与其它客户端重复", client.id),
-            ));
-        }
-        if legacy_token.as_deref() == Some(client.token.as_str()) {
-            return Err((
-                "duplicate_client_token".to_string(),
-                format!(
-                    "客户端 {} 的 token 与旧版 Bearer token 相同；请换一个或留空自动生成",
-                    client.id
-                ),
-            ));
-        }
-        out.push(client);
-    }
-    save_clients(db, &out).map_err(|e| ("save_failed".to_string(), e.to_string()))?;
-    Ok(out)
-}
-
-/// 未配置多客户端时的兼容身份：沿用旧单 token + 全局权限档。
+/// 唯一接入身份：单 Bearer token + 全局权限档。
 pub fn default_client(permission_mode: PermissionMode) -> McpClient {
     McpClient {
         id: "default".to_string(),
-        label: "默认".to_string(),
         permission_mode,
-        allowed_tools: Vec::new(),
+    }
+}
+
+/// 会话身份：单 token 下用 MCP 会话 id 区分不同 agent，会话互不可见。
+pub fn session_client(id: impl Into<String>, permission_mode: PermissionMode) -> McpClient {
+    McpClient {
+        id: id.into(),
+        permission_mode,
     }
 }
 
