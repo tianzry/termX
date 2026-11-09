@@ -20,13 +20,14 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 5) 构建：build_run 只回尾部日志与 exitCode；需要完整日志时传 teeToRemoteFile。
 6) 删除：fs_delete 默认 dryRun=true，先拿 confirmToken，再以 dryRun=false 执行。
 7) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
-8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 为旧客户端保留。
-9) 串口 / Telnet：serial_write / telnet_write 只写字节并回 bytesWritten，没有 exitCode；这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
+8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话。
+9) 串口 / Telnet：只写字节用 serial_write / telnet_write（返回 bytesWritten）；要读回响应时用 terminal_execute —— 写入命令后按 idleMs 静默 / waitRegex 命中 / timeoutMs 超时采集，exitCode 恒为 null。这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
 
 可用工具（共 18 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、serial_write、telnet_write、session_close、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
 规则：
-- sessionId 必须来自 get_environment；hostId 必须来自 hosts[] 或 vault_hosts_list，不要臆造。
+- sessionId 必须来自 get_environment（UUID）；hostId 必须来自 hosts[] 或 vault_hosts_list，不要臆造。
 - 远端路径（path / remotePath / cwd）默认 jail 在 workspace 根（设置 → AI → Workspace 根），越界返回 mcp_path_outside_jail；localPath 只校验是绝对路径，不受 jail 约束。
+- terminal_execute 的 pty 分支每次新起子进程（sh -c / cmd /C）一次性收输出，不写入用户可见终端；serial / telnet 分支没有命令边界与退出码（exitCode=null），采集时用户终端会同时收到同一份字节，不要重复解析。
 - 写操作受权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接执行；fs_delete 无论档位都要 confirmToken。
 - 所有工具返回 JSON：成功为 {code:"ok", message, hint, ...数据}，失败为 {code, message, hint}。失败时先按 hint 自纠。
 - 大文件用传输/开窗工具，不要把内容塞进 arguments；不要泄露 token 或凭据。"#;
@@ -66,7 +67,9 @@ fn return_example(name: &str) -> &'static str {
         }
         "vault_hosts_list" => r#"{code:"ok", hosts:[{id, name, host, port, groupId}]}"#,
         "snippets_list" => r#"{code:"ok", snippets:[{id, name, package, command, description}]}"#,
-        "terminal_execute" => r#"{code:"ok", stdout, stderr, exitCode}"#,
+        "terminal_execute" => {
+            r#"{code:"ok", stdout, stderr, exitCode}；serial/telnet 为 {code:"ok", stdout, exitCode:null, bytesWritten, bytesRead, terminatedBy, idleMs, timeoutMs, encoding, truncated}"#
+        }
         "serial_write" | "telnet_write" => r#"{code:"ok", sessionId, bytesWritten}"#,
         "session_close" => r#"{code:"ok", closed: sessionId}"#,
         "fs_read" => r#"{code:"ok", path, lines, totalLines, size, truncated, nextCursor}"#,

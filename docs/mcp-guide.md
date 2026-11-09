@@ -9,7 +9,7 @@ termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX
 工具分三个平面：
 
 - **控制平面（typed）**：`fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` / `build_run`，按文件语义操作，token 成本与文件大小无关。
-- **逃生平面（pty/exec）**：`term_run`（及兼容保留的 `terminal_execute`），执行任意非交互命令，只拦真正破坏性的操作。
+- **逃生平面（pty/exec）**：`term_run` 执行任意非交互命令，只拦真正破坏性的操作；`terminal_execute` 覆盖 ssh / pty / serial / telnet 四类会话（串口 / Telnet 为「写入 + 采集」，没有 exitCode）。
 - **字节写（串口 / Telnet）**：`serial_write` / `telnet_write` 只把字节发到线路并返回 `bytesWritten`，没有命令与 `exitCode` 语义。
 
 调用方向是单向的：
@@ -175,8 +175,8 @@ curl -s "$URL" \
   "cacheable": true,
   "ttl": 30,
   "sessions": [
-    { "id": "ssh-1a2b3c", "kind": "ssh", "phase": "ready", "hostId": "h-01", "origin": "window" },
-    { "id": "serial-7f00aa", "kind": "serial", "phase": "ready", "origin": "window" }
+    { "id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301", "kind": "ssh", "phase": "ready", "hostId": "h-01", "origin": "window" },
+    { "id": "6b8f2c14-2f6a-4d0e-9a55-8f0d1c2e4a71", "kind": "serial", "phase": "ready", "origin": "window" }
   ],
   "hosts": [
     { "id": "h-01", "name": "dev", "host": "10.0.0.5", "port": 22, "groupId": "g-1" }
@@ -247,19 +247,29 @@ curl -s "$URL" \
 
 ### 3.4 `terminal_execute`
 
-**用途**：在已打开的会话里执行一条命令，返回标准输出、错误输出和退出码。
+**用途**：在已打开的会话里执行一条命令。四类终端都支持，语义按 `kind` 区分：
 
-**该用**：需要与目标主机的现有会话交互、查看输出或运行命令时。
-**不该用**：只查询会话/主机清单时用只读工具；没有 `sessionId` 时不要调用；不要用它发起与本机会话无关的网络操作。
-**约束**：写操作，受权限档位和命令黑名单约束。
+| 会话 kind | 执行方式 | 返回要点 |
+| --- | --- | --- |
+| `ssh` | 在既有连接上新开 exec channel，一次性收取输出 | `stdout` / `stderr` / `exitCode` |
+| `pty`（本地终端） | 每次调用新起子进程（POSIX `sh -c` / Windows `cmd /C`）一次性收取输出；**不写入用户可见的终端 pane**，也不继承该 pane 的 cwd / 环境 | `stdout` / `stderr` / `exitCode` |
+| `serial` / `telnet` | 写入「命令 + `lineEnding`」，再从会话输出流采集，直到 `idleMs` 静默 / `waitRegex` 命中 / `timeoutMs` 超时；**没有命令边界与退出码** | `stdout`（采集文本）/ `exitCode: null` / `bytesWritten` / `bytesRead` / `terminatedBy` / `idleMs` / `timeoutMs` / `encoding` / `truncated` |
+
+**该用**：需要与目标会话交互、查看输出或运行命令时；最常见的是 SSH。
+**不该用**：只查询会话/主机清单时用只读工具；串口 / Telnet 只需要写字节时用 `serial_write` / `telnet_write`。
+**约束**：写操作，受权限档位和命令黑名单约束。判定顺序固定为「类型校验 → 长度校验（4096 字节）→ 黑名单 → 审批 → 执行」。
 
 | 参数 | 类型 | 必填 | 说明 | 示例 |
 | --- | --- | --- | --- | --- |
-| `sessionId` | string | 是 | `get_environment` 返回的 `sessions[].id` | `"ssh-1a2b3c"` |
-| `command` | string | 是 | 单条非空命令 | `"uname -a"` |
-| `timeoutMs` | integer | 否 | 超时毫秒，范围 1000–600000，默认 30000 | `30000` |
+| `sessionId` | string | 是 | `get_environment` 返回的 `sessions[].id`（UUID） | `"3f2504e0-4f89-11d3-9a0c-0305e82c3301"` |
+| `command` | string | 是 | 单条非空命令 | `"uname -a"` / `"AT+GMR"` |
+| `timeoutMs` | integer | 否 | 总超时毫秒，范围 1000–60000，默认 30000。ssh / pty 为执行超时，serial / telnet 为采集总超时 | `30000` |
+| `idleMs` | integer | 否 | 仅 serial / telnet。连续多少毫秒无新数据视为响应结束，范围 50–5000，默认 500 | `500` |
+| `waitRegex` | string | 否 | 仅 serial / telnet。累计输出命中该正则即提前结束采集（Rust regex 语法） | `"OK\|ERROR"` |
+| `lineEnding` | string | 否 | 仅 serial / telnet。命令后追加的行结束符：`crlf`(默认) / `lf` / `cr` / `none` | `"crlf"` |
+| `encoding` | string | 否 | 仅 serial / telnet。`stdout` 编码：`utf8`(默认，非法字节按 `from_utf8_lossy` 替换) / `base64`（返回采集到的原始字节） | `"utf8"` |
 
-返回示例：
+SSH / pty 返回示例：
 
 ```json
 {
@@ -272,13 +282,38 @@ curl -s "$URL" \
 }
 ```
 
+serial / telnet 返回示例（没有退出码，不伪造 0）：
+
+```json
+{
+  "code": "ok",
+  "message": "serial 命令已写入并完成采集",
+  "hint": "exitCode 恒为 null（串口 / Telnet 没有命令边界与退出码），结束原因见 terminatedBy。用户正在查看的终端会同时收到同一份字节（物理链路决定的），不要重复解析。",
+  "sessionId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+  "stdout": "AT+GMR\r\r\nAT version:1.7.4.0\r\nOK\r\n",
+  "exitCode": null,
+  "bytesWritten": 8,
+  "bytesRead": 34,
+  "terminatedBy": "idle",
+  "idleMs": 500,
+  "timeoutMs": 30000,
+  "encoding": "utf8",
+  "truncated": false
+}
+```
+
+> 串口 / Telnet 的采集复用会话既有的读线程：**用户正在看的终端会同时收到同一份字节**（一条物理链路不存在独占读取），MCP 只是多一个订阅者。`terminatedBy` 取值 `idle` / `pattern` / `timeout` / `closed`。
+
 常见错误：
 
 | code | 现象 | 处理 |
 | --- | --- | --- |
 | `missing_argument` | 缺少 `sessionId` 或 `command` | 按上表补齐；`sessionId` 必须来自 `get_environment` |
+| `invalid_argument` | `waitRegex` 非法、`idleMs` / `timeoutMs` 不是整数、`lineEnding` / `encoding` 取值不支持 | 按提示改用合法取值 |
 | `session_not_found` | 会话不存在或已关闭 | 重新 `get_environment` 拿新的 id |
-| `mcp_unsupported_session_kind` | 会话是串口 / Telnet 等非 SSH 传输（传输判定在审批之前，不会弹窗） | 改用 SSH 会话；串口 / Telnet 只能发字节，没有 exitCode |
+| `mcp_session_not_ready` | 会话存在但 `phase` 不是 `ready`（串口未打开、SSH 仍在建连 / 已关闭、句柄已释放） | 先在 termX 里打开会话，再 `get_environment` 确认 `phase=ready` |
+| `mcp_unsupported_session_kind` | 会话是 SFTP / 端口转发等确实没有命令通道的类型（类型判定在审批之前，不会弹窗） | 改用 ssh / pty / serial / telnet 会话 |
+| `plugin_exec_command_too_long` | 命令超过 4096 字节（长度校验在审批之前） | 拆分为多条命令，或把长脚本写入远端文件再执行 |
 | `command_blocked` | 命令命中黑名单 | 换用等价但更具体的命令，或请用户调整黑名单 |
 | `permission_denied` | 权限档位为 observer，或审批被拒/超时 | 请用户在设置里放行或切换档位 |
 | `plugin_exec_timeout` / `plugin_exec_spawn_failed` / `session_owner_mismatch` | 执行链路自身失败（不再折叠成 `execute_failed`） | 确认会话仍为 `ready` 后重试；持续失败查看 termX 日志 |
@@ -294,7 +329,7 @@ curl -s "$URL" \
 
 | 参数 | 类型 | 必填 | 说明 | 示例 |
 | --- | --- | --- | --- | --- |
-| `sessionId` | string | 是 | `get_environment` 返回的 `sessions[].id` | `"ssh-1a2b3c"` |
+| `sessionId` | string | 是 | `get_environment` 返回的 `sessions[].id`（UUID） | `"3f2504e0-4f89-11d3-9a0c-0305e82c3301"` |
 
 返回示例：
 
@@ -303,7 +338,7 @@ curl -s "$URL" \
   "code": "ok",
   "message": "会话已关闭",
   "hint": "如需再次连接，请先在 termX 中重新打开会话，再调用 get_environment。",
-  "closed": "ssh-1a2b3c"
+  "closed": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 }
 ```
 
@@ -356,8 +391,8 @@ curl -s "$URL" \
 
 - `bytesWritten` 是**交给传输层**的字节数：串口按会话字符集转码后的长度，Telnet 含 IAC 转义。UTF-8 文本在直连环回时与 `data.len()` 一致。
 - Telnet 不做会话字符集转换；GBK 等内容用 `encoding=base64` 传已编码字节。
-- 工具只写不读，设备回复请在 termX 终端查看。
-- 对 SSH 会话调用返回 `mcp_unsupported_session_kind`；串口 / Telnet 会话调用 `fs_*` / `sftp_*` / `build_run` / `term_run` / `batch` 同样返回该错误码。
+- 工具只写不读，设备回复请在 termX 终端查看；需要在 MCP 里读回响应时用 `terminal_execute`（serial / telnet 分支会写入后采集，见 3.4）。
+- 对 SSH 会话调用返回 `mcp_unsupported_session_kind`；串口 / Telnet 会话调用 `fs_*` / `sftp_*` / `build_run` / `term_run` / `batch` 同样返回该错误码（`terminal_execute` 例外，四类终端都支持）。
 
 ## 4. 推荐调用顺序与示例
 
@@ -418,7 +453,7 @@ get_environment（拿 sessionId / hostId / hosts）
   "params": {
     "name": "terminal_execute",
     "arguments": {
-      "sessionId": "ssh-1a2b3c",
+      "sessionId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
       "command": "uname -a",
       "timeoutMs": 30000
     }
@@ -467,7 +502,7 @@ get_environment（拿 sessionId / hostId / hosts）
   "method": "tools/call",
   "params": {
     "name": "session_close",
-    "arguments": { "sessionId": "ssh-1a2b3c" }
+    "arguments": { "sessionId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301" }
   }
 }
 ```
@@ -482,7 +517,7 @@ get_environment（拿 sessionId / hostId / hosts）
     "content": [
       {
         "type": "text",
-        "text": "{\"code\":\"ok\",\"message\":\"会话已关闭\",\"hint\":\"如需再次连接，请先在 termX 中重新打开会话，再调用 get_environment。\",\"closed\":\"ssh-1a2b3c\"}"
+        "text": "{\"code\":\"ok\",\"message\":\"会话已关闭\",\"hint\":\"如需再次连接，请先在 termX 中重新打开会话，再调用 get_environment。\",\"closed\":\"3f2504e0-4f89-11d3-9a0c-0305e82c3301\"}"
       }
     ],
     "isError": false
@@ -618,8 +653,8 @@ get_environment（拿 sessionId / hostId / hosts）
 | `command_blocked` | 命令命中黑名单 | 换命令或调整黑名单 |
 | `mcp_command_destructive` | `build_run` / `term_run` 命中破坏性策略 | 拆分命令；确需执行请在终端手动操作 |
 | `mcp_path_outside_jail` | 路径越出 Workspace 根 | 改用 `~` 或 workspace 内路径，或调整「Workspace 根」 |
-| `mcp_unsupported_session_kind` | 该工具需要 SSH 的 SFTP / exec 通道，但 `sessionId` 指向串口 / Telnet / 其它传输（`params` 带 `id` 与 `kind`） | 改用 `kind=ssh` 的会话；串口 / Telnet 只有各自的字节写工具 |
-| `mcp_session_not_ready` | SSH 会话仍在建连或已关闭 | 重新 `get_environment` 确认 `phase=ready` 后重试 |
+| `mcp_unsupported_session_kind` | 该工具需要 SSH 的 SFTP / exec 通道，但 `sessionId` 指向串口 / Telnet / SFTP / 端口转发等传输（`params` 带 `id` 与 `kind`） | 改用 `kind=ssh` 的会话；串口 / Telnet 只有各自的字节写工具，`terminal_execute` 不受此限 |
+| `mcp_session_not_ready` | 会话存在但 `phase` 不是 `ready`（SSH 仍在建连 / 已关闭、串口未打开、句柄已释放） | 重新 `get_environment` 确认 `phase=ready` 后重试 |
 | `mcp_file_exists` / `mcp_local_file_exists` | 目标已存在且 `overwrite=false` | 显式传 `overwrite=true` |
 | `mcp_delete_token_required` / `_invalid` / `_mismatch` | 未先 dryRun、token 过期或参数不一致 | 重新 `dryRun=true` 拿新 token，并保持路径/recursive 一致 |
 | `mcp_delete_is_dir` / `mcp_transfer_is_dir` | 目录未显式递归 | 传 `recursive=true` |

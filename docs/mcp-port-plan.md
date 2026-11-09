@@ -41,7 +41,7 @@
 | 唯一 invoke 出口 | `src/backend/client.ts` 扁平导出函数 | 新增 `mcpStatus/mcpSetConfig/mcpRotateToken/mcpClientConfig`（`client.ts:L1983-L2029`），页面不得直接 `invoke` |
 | 嵌套 snake_case | 顶层参数 camelCase，嵌套 struct 原样 snake_case | `McpConfigPatch` 是顶层 struct，`#[serde(rename_all="camelCase")]`；返回 `McpStatus` 同样 camelCase |
 | 设置存储 | `db::settings::get/set`（`src-tauri/src/db/settings.rs:L6/L20`），通用 KV | 用 `mcp.*` 六个键，**不新增表 → 不升 `SCHEMA_VERSION`** |
-| 既有执行能力 | `plugin_exec_impl`（`commands/plugin.rs:L491`，SSH/Local，含超时）与 `ssh_exec_impl`（`commands/session.rs`） | `terminal_execute` 直接复用 `plugin_exec_impl` |
+| 既有执行能力 | `plugin_exec_impl`（`commands/plugin.rs`，SSH/Local，含超时）与 `ssh_exec_impl`（`commands/session.rs`） | `terminal_execute` 的 ssh / pty 分支复用 `plugin_exec_impl`；serial / telnet 分支走 `mcp/exec.rs` 的写入 + 采集 |
 | 关闭能力 | `lifecycle::close_resource`（`commands/lifecycle.rs:L932`，需 `kind + owner`） | `session_close` 复用，owner/kind 从注册表读 |
 | 会话注册表 | `AppState.lifecycle_sessions`（`state.rs:L77`），新增只读 `lock_sessions()`（`state.rs:L118`） | `get_environment` 数据源 |
 | 命令黑名单 | `ai::command_blacklist::load`（`command_blacklist.rs:L91`）+ `sanitize::validate_with`（`sanitize.rs:L374`） | 写工具执行前必过黑名单（与 AI 面板同一套） |
@@ -84,8 +84,8 @@
 | `get_environment` | 只读 | `AppState.lifecycle_sessions` + `db::profile::list` | 返回 `sessions[{id,kind,phase}]` 与 `hostCount`；同时对 `termx://environment` resource 提供同一快照 |
 | `vault_hosts_list` | 只读 | `db::profile::list` | 只回 `id/name/host/port/groupId`，**不回凭据** |
 | `snippets_list` | 只读 | `db::snippet::load` | 回 `id/name/package/command/description` |
-| `terminal_execute` | 写 | `plugin::plugin_exec_impl` | 旧客户端兼容保留：全量命令黑名单 + PTY 执行；非 SSH 会话在审批前直接回 `mcp_unsupported_session_kind`；新接入建议用 `term_run` |
-| `serial_write` / `telnet_write` | 写 | `SerialHandle::write_counted` / `TelnetHandle::write_counted` | 只写字节并回 `bytesWritten`，不等 `exitCode`；与 exec 模型分开，不复用 `plugin_exec_impl` |
+| `terminal_execute` | 写 | SSH/pty → `plugin::plugin_exec_impl`；serial/telnet → `mcp::exec::write_and_collect`（复用会话读线程的 broadcast 订阅） | 四类终端统一入口：ssh / pty 回 `stdout`/`stderr`/`exitCode`；serial / telnet 为「写入 + 采集」，回 `stdout` + `exitCode:null` + `bytesWritten`/`bytesRead`/`terminatedBy`/`idleMs`/`timeoutMs`，终止条件为 idle / waitRegex / timeout。判定顺序：类型 → 长度 → 黑名单 → 审批 → 执行；SFTP / 端口转发仍回 `mcp_unsupported_session_kind`，未就绪回 `mcp_session_not_ready` |
+| `serial_write` / `telnet_write` | 写 | `SerialHandle::write_counted` / `TelnetHandle::write_counted` | 只写字节并回 `bytesWritten`，不等 `exitCode`；与 exec 模型分开，不复用 `plugin_exec_impl`；需要读回响应时改用 `terminal_execute` 的 serial/telnet 分支 |
 | `session_close` | 写 | `lifecycle::close_resource` | kind/owner 从注册表取，避免越权关闭他人会话 |
 
 ### 6.2 文件原语（M0–M6）
