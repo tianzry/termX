@@ -2951,7 +2951,9 @@ export function TerminalPane({
         setStatus("disconnected");
         setError(suffix);
         setProgressLogs((prev) => [...prev, suffix]);
-        setDisconnectedDismissed(false);
+        // 自然断链（对端关闭 / 进程退出）同样不弹遮罩：保留终端文本，
+        // 重连走工具栏或 Enter（对照 Netcatty 的 dismiss 语义）。
+        setDisconnectedDismissed(true);
         onStatus(`${tab.title} ${suffix}`);
         // 会话结束后自动关闭窗格 / 标签（Netcatty autoCloseOnExit）。
         if (getSettings().terminal.autoCloseOnExit) {
@@ -3039,7 +3041,7 @@ export function TerminalPane({
             notifySession(null);
             setStatus("disconnected");
             setError("串口已断开");
-            setDisconnectedDismissed(false);
+            setDisconnectedDismissed(true);
             onStatus(`${tab.title} 串口已断开`);
           }),
         );
@@ -3117,7 +3119,7 @@ export function TerminalPane({
             notifySession(null);
             setStatus("disconnected");
             setError("Telnet 已断开");
-            setDisconnectedDismissed(false);
+            setDisconnectedDismissed(true);
             onStatus(`${tab.title} Telnet 已断开`);
           }),
         );
@@ -3216,6 +3218,9 @@ export function TerminalPane({
         setStatus("disconnected");
         setError(message);
         onStatus(`${tab.title} 连接失败：${message}`);
+        controllerRef.current?.term.write(
+          `\r\n\u001b[90m[连接失败：${message}]\u001b[0m\r\n`,
+        );
       }
       return;
     }
@@ -3771,10 +3776,13 @@ export function TerminalPane({
         // 断开重连提示或片段快捷键抢先拦截（对照 Netcatty capture 跳过 compose textarea）。
         const target = e.target as HTMLElement | null;
         if (target?.closest(".term-compose-bar")) return;
-        // 终端内提示模式下按 Enter 重连（Netcatty disconnectedNoticeMode=terminal）。
+        // 断开后按 Enter 重连；串口 / Telnet 与自然断链不弹遮罩，重连入口
+        // 统一由工具栏按钮和 Enter 提供（静默模式下同样可用）。
         if (
           status === "disconnected" &&
-          getSettings().terminal.disconnectedNoticeMode === "terminal" &&
+          (getSettings().terminal.disconnectedNoticeMode === "terminal" ||
+            !isSsh ||
+            disconnectedDismissed) &&
           e.key === "Enter"
         ) {
           e.preventDefault();
@@ -4870,18 +4878,6 @@ export function TerminalPane({
       {!isSsh && status === "connecting" && (
         <div className="pane-badge">连接中…</div>
       )}
-
-      {!isSsh &&
-        status === "disconnected" &&
-        getSettings().terminal.disconnectedNoticeMode === "dialog" && (
-          <div className="pane-overlay" onContextMenu={openContextMenu}>
-            <div className="pane-overlay-title">会话已结束</div>
-            {error && <div className="pane-overlay-detail">{error}</div>}
-            <button onClick={() => void connect()} className="pane-reconnect">
-              重连
-            </button>
-          </div>
-        )}
 
       {/* 右键菜单（对照 netcatty TerminalContextMenu） */}
       {menu && (

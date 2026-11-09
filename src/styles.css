@@ -1290,47 +1290,6 @@ body {
   pointer-events: none;
 }
 
-.pane-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.92);
-  color: #5a6470;
-  font-size: 13px;
-  z-index: 2;
-}
-
-.pane-overlay-title {
-  color: #16202b;
-  font-size: 14px;
-}
-
-.pane-overlay-detail {
-  max-width: 80%;
-  text-align: center;
-  word-break: break-all;
-  color: #5a6470;
-  font-size: 12px;
-}
-
-.pane-reconnect {
-  background: #eef1f5;
-  color: #16202b;
-  border: 1px solid #d6dce4;
-  border-radius: 6px;
-  padding: 5px 14px;
-  cursor: pointer;
-}
-
-.pane-reconnect:hover {
-  background: #d6dce4;
-  border-color: #0a84ff;
-}
-
 /* ═══════════════════════════════════════════════════════════
    netcatty 界面结构：主题变量 / TopTabs / HostSidebar / Vault / Aside
    ═══════════════════════════════════════════════════════════ */
@@ -2312,10 +2271,6 @@ button {
 
 .nc-main .tab-view-holder {
   background: hsl(var(--nc-bg));
-}
-
-.nc-main .pane-overlay {
-  background: hsl(var(--nc-bg) / 0.86);
 }
 
 @media (max-width: 1100px) {
@@ -5227,11 +5182,6 @@ button:disabled {
 
 .pane.active {
   box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.7);
-}
-
-.pane-overlay {
-  background: hsl(var(--background) / 0.9);
-  color: hsl(var(--muted-foreground));
 }
 
 .ws-empty {
@@ -12307,6 +12257,57 @@ html[data-theme="dark"] .nc-settings-overlay {
   align-items: center;
   gap: 10px;
   margin-top: 2px;
+}
+
+/* 多客户端接入 */
+.nc-client-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.nc-client-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.nc-client-card:last-child {
+  border-bottom: 0;
+}
+
+.nc-client-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nc-client-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.nc-client-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.nc-client-token-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nc-client-token-row .nc-set-input {
+  flex: 1;
+  min-width: 0;
 }
 
 /* 许可记忆表 */
