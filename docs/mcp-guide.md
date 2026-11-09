@@ -277,9 +277,10 @@ curl -s "$URL" \
 | --- | --- | --- |
 | `missing_argument` | 缺少 `sessionId` 或 `command` | 按上表补齐；`sessionId` 必须来自 `get_environment` |
 | `session_not_found` | 会话不存在或已关闭 | 重新 `get_environment` 拿新的 id |
+| `mcp_unsupported_session_kind` | 会话是串口 / Telnet 等非 SSH 传输（传输判定在审批之前，不会弹窗） | 改用 SSH 会话；串口 / Telnet 只能发字节，没有 exitCode |
 | `command_blocked` | 命令命中黑名单 | 换用等价但更具体的命令，或请用户调整黑名单 |
 | `permission_denied` | 权限档位为 observer，或审批被拒/超时 | 请用户在设置里放行或切换档位 |
-| `execute_failed` | 会话断开、命令语法错误等 | 确认会话仍为 `ready` 后重试 |
+| `plugin_exec_timeout` / `plugin_exec_spawn_failed` / `session_owner_mismatch` | 执行链路自身失败（不再折叠成 `execute_failed`） | 确认会话仍为 `ready` 后重试；持续失败查看 termX 日志 |
 | `internal_error` | 本地读取失败 | 重试；持续失败查看 termX 日志 |
 
 ### 3.5 `session_close`

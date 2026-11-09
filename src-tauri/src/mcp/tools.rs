@@ -195,9 +195,9 @@ pub fn definitions() -> Value {
         },
         {
             "name": "terminal_execute",
-            "description": "写操作。在 get_environment 返回的某个已打开会话中执行一条命令，返回 stdout / stderr / exitCode。\
-    何时用：需要与目标主机的现有会话交互、查看输出或运行命令时。\
-    何时不用：只查询会话 / 主机清单时用只读工具；没有 sessionId 时不要调用；不要用它发起与本机会话无关的网络操作。\
+            "description": "写操作。在 get_environment 返回的某个已打开 SSH 会话中执行一条命令，返回 stdout / stderr / exitCode。\
+    何时用：需要与目标主机的现有 SSH 会话交互、查看输出或运行命令时。\
+    何时不用：只查询会话 / 主机清单时用只读工具；没有 sessionId 时不要调用；串口 / Telnet 没有 exec 通道（返回 mcp_unsupported_session_kind），只能发字节。\
     受权限档位与命令黑名单约束。",
             "inputSchema": schema(
                 json!({
@@ -1465,6 +1465,22 @@ pub async fn call_tool(
                 }
             };
             let timeout = args.get("timeoutMs").and_then(Value::as_u64);
+            // 传输判定先于黑名单与审批：terminal_execute 只复用 SSH 的 exec 通道，
+            // 串口 / Telnet 没有 exitCode 语义，直接回明确错误码，不弹审批。
+            let (owner, kind) = match session_meta(state, &session_id) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            if kind != SessionKind::Ssh {
+                return ToolResult::err(
+                    "mcp_unsupported_session_kind",
+                    format!(
+                        "会话 {session_id} 的类型是 {}，terminal_execute 只支持 SSH 会话",
+                        kind.as_str()
+                    ),
+                    HINT_SSH_ONLY,
+                );
+            }
             // 正则层黑名单（Netcatty `commandBlocklist.json` 默认清单 + 用户规则）。
             let blocklist = super::blocklist::load(&state.db);
             if let Some(rule) = super::blocklist::first_match(&blocklist, &command) {
@@ -1485,10 +1501,6 @@ pub async fn call_tool(
                     "改用等价但更具体的命令，或请用户在设置中调整命令黑名单。",
                 );
             }
-            let (owner, kind) = match session_meta(state, &session_id) {
-                Ok(v) => v,
-                Err(e) => return e,
-            };
             let target_label = Some(format!("{} · {}", kind.as_str(), session_id));
             if let Err(e) = approval_gate(
                 cfg,
@@ -1517,7 +1529,7 @@ pub async fn call_tool(
                     }),
                 ),
                 Err(e) => ToolResult::err(
-                    "execute_failed",
+                    e.code(),
                     e.to_string(),
                     "确认会话仍处于 ready 且命令语法正确后重试；会话断开时重新 get_environment。",
                 ),
