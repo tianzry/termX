@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M9：terminal_execute 覆盖四类终端
+
+- `SerialHandle` / `TelnetHandle` 新增 `tap: broadcast::Sender<Vec<u8>>` 与 `subscribe()`：读线程仍是唯一读取者，在把 `Data` 交给前端 sink 的同时按需再广播一份（`receiver_count()>0` 才 clone），不新开串口读取、不改 sink 装配点。MCP 采集与用户 pane 共享同一份字节（物理链路决定的），hint 已写明。
+- 新增 `mcp/exec.rs`：`write_and_collect` 先写入「命令 + 行结束符」，再从订阅流采集，终止条件为 `idleMs` 静默 / `waitRegex` 命中 / `timeoutMs` 总超时 / 会话关闭；单次最多保留 64 KiB（`bytesRead` 仍按实收计数，`truncated` 标记）。默认值：`idleMs=500`（50–5000）、`timeoutMs=30000`（1000–60000），与 `terminal_execute` schema 完全一致。
+- `terminal_execute` 白名单放开到 ssh / pty / serial / telnet；顺序固定为「类型校验 → 长度校验（4096）→ 黑名单 → 审批 → 执行」。`mcp_unsupported_session_kind` 只留给 SFTP / 端口转发等确实无命令通道的类型；phase≠ready 统一回 `mcp_session_not_ready`（含串口未打开、句柄已释放）。
+- serial / telnet 返回 `stdout` + `exitCode: null`（不伪造 0）+ `bytesWritten` / `bytesRead` / `terminatedBy` / `idleMs` / `timeoutMs` / `encoding` / `truncated`；新增参数 `idleMs`、`waitRegex`、`lineEnding(crlf|lf|cr|none)`、`encoding(utf8|base64)`；非 UTF-8 按 `from_utf8_lossy` 处理，`base64` 返回采集原始字节。pty 返回 `stdout`/`stderr`/`exitCode`，hint 明确「每次新起子进程、不写入用户可见 pane」。
+- 文档偏差修正：`timeoutMs` schema 原写默认 30000 / 上限 600000，实际 `plugin_exec_impl` 是 10000 / 60000；现统一为默认 30000、上限 60000（`plugin::DEFAULT_TIMEOUT_MS` 同步改 30000），`sessionId` 的 examples 全部换成真实 UUID 格式。
+- 同步 `mcp/guide.rs`（四类语义 + pty/串口/Telnet 规则）、`docs/mcp-guide.md`（3.4 重写：参数表、两类返回示例、错误表）、`docs/mcp-port-plan.md`（执行链路与工具矩阵）；设置页工具矩阵读的就是这份 instructions，无需额外改计数（工具数仍 18）。
+- 实机数据（129 SSH / 本地 pty / COM2↔COM3 环回 / 127.0.0.1:2324 回显）：
+  - SSH：`uname -a; echo SSH-OK` → `exitCode=0`，stdout 含内核行与 `SSH-OK`。
+  - pty：`echo pty-out & echo pty-err 1>&2 & exit /b 3` → `exitCode=3`，stdout `pty-out\r\n`，stderr `pty-err\r\n`。
+  - serial（idle）：写 `MCP-SERIAL-IDLE` → `bytesWritten=17`（15+CRLF），COM3 实收并回 `COM3-ECHO:MCP-SERIAL-IDLE`，`bytesRead=27`、`terminatedBy=idle`、`exitCode=null`。
+  - serial（timeout）：对端每 100ms 发 `tick-N`，`idleMs=500`/`timeoutMs=1500` → 1841ms 返回 `bytesRead=126`、`stdout` 为连续 tick、`terminatedBy=timeout`、`exitCode=null`。
+  - telnet：`CONFIRM-TELNET` → `bytesRead=16`、`stdout=CONFIRM-TELNET\r\n`、`terminatedBy=idle`；`WAIT-OK` + `waitRegex=WAIT-OK` → 268ms 返回、`terminatedBy=pattern`。
+  - confirm 档：四类各一次 `mcp_approval_pending` 弹窗，CDP 点「允许一次」后均成功（SSH 2108ms / pty 2198ms / serial 2445ms / telnet 2324ms，含人工点击等待）；恢复 auto 档。
+  - `tools/list` 18 个工具；`terminal_execute` schema 默认值与代码一致（timeoutMs 30000/1000–60000、idleMs 500/50–5000、crlf、utf8）。
+- 踩坑 112：广播不补发历史，必须先 `subscribe()` 再写入；顺序反了会漏掉对端首段回显（尤其 Telnet 的即时 echo）。
+- 踩坑 113：`broadcast` 的 `Lagged` 在采集循环里应 `continue` 而不是报错——采集者始终在跑，只有调度抖动会积压，丢旧包比中断采集更符合「看回显」语义。
+- 踩坑 114：Windows PowerShell 5.1 按 ANSI 读取无 BOM 的 `.ps1`，脚本里直接写中文按钮文案会解析失败；验证脚本把文案放 UTF-8 JSON 再读。环回压测首跑因 PowerShell 启停竞赛错过采集窗口（idle 正常终止），延长对端预启动后 timeout 终止通过，非代码问题。
+- 门禁：`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` 1049 ✓（一次首跑偶发失败、重跑全绿）、`npm run test:run` 921 ✓、`npm run build` ✓。
+
+---
+
 ## 2026-11-09 — MCP 整改 M8：会话类型错误码 + 串口/Telnet 字节写
 
 - 新增错误码 `mcp_unsupported_session_kind`（`params={id,kind}`）：`fs_*` / `sftp_*` / `build_run` / `term_run` / `batch` 在非 SSH 会话上统一返回；`mcp_session_not_ready` 收窄为「SSH 但 phase≠ready」。hint 直接告诉 agent 该工具需要 SSH 的 SFTP/exec 通道、应改传 `kind=ssh` 的 sessionId。`SessionKind::as_str()` 成为稳定小写标识，`tools.rs` 里重复的 `kind_name` 删除。

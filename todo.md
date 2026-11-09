@@ -594,3 +594,5 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 | M5 执行 | ✅ 完成 | `build_run`（远端落盘 + 尾部偏置 + tee）、`term_run`（只拦破坏性命令）、`mcp/policy.rs` |
 | M6 复合 | ✅ 完成 | `batch`：ops 1–50、session/host 继承、stopOnError、按序复用内层审批与审计 |
 | M7 文档与前端 | ✅ 完成 | `mcp-guide` / `mcp-port-plan` / AI 设置页工具矩阵 + `mcp.workspace_root` 前后端字段与校验 |
+| M8 传输类型与字节写 | ✅ 完成 | 错误码拆分（`mcp_unsupported_session_kind` / `mcp_session_not_ready`）；`serial_write` / `telnet_write`（只写字节、返回 `bytesWritten`）；工具数 18 |
+| M9 四类终端执行 | ✅ 完成 | `terminal_execute` 覆盖 ssh / pty / serial / telnet：ssh/pty 走 `plugin_exec_impl`，serial/telnet 走 `mcp/exec.rs`「写入 + 采集」（idleMs / waitRegex / timeoutMs，`exitCode=null`）；`SerialHandle`/`TelnetHandle` 增加 broadcast tap；`timeoutMs` 默认 30000 / 上限 60000 与 schema 统一；sessionId examples 改真实 UUID |
