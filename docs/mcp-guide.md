@@ -4,12 +4,13 @@
 
 ## 1. termX MCP 是什么
 
-termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX 会在本机启动一个 Streamable HTTP 端点（默认 `http://127.0.0.1:47391/mcp`），把**已保存的主机**和**已打开的会话**以 16 个工具暴露给外部 AI 客户端（Trae、Claude Desktop、Cursor、Claude Code 等）。
+termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX 会在本机启动一个 Streamable HTTP 端点（默认 `http://127.0.0.1:47391/mcp`），把**已保存的主机**和**已打开的会话**以 18 个工具暴露给外部 AI 客户端（Trae、Claude Desktop、Cursor、Claude Code 等）。
 
-工具分两个平面：
+工具分三个平面：
 
 - **控制平面（typed）**：`fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` / `build_run`，按文件语义操作，token 成本与文件大小无关。
 - **逃生平面（pty/exec）**：`term_run`（及兼容保留的 `terminal_execute`），执行任意非交互命令，只拦真正破坏性的操作。
+- **字节写（串口 / Telnet）**：`serial_write` / `telnet_write` 只把字节发到线路并返回 `bytesWritten`，没有命令与 `exitCode` 语义。
 
 调用方向是单向的：
 
@@ -132,7 +133,7 @@ curl -s "$URL" \
 接通成功的标志：
 
 - `initialize` 的 `result.serverInfo.name` 是 `termX`，并带有非空 `instructions`；
-- `tools/list` 返回 16 个工具：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`；
+- `tools/list` 返回 18 个工具：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`serial_write`、`telnet_write`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`；
 - `tools/call` 返回 `content[0].text`，能解析出 `code`、`message`、`hint` 与业务字段。
 
 ## 3. 工具参考
@@ -342,6 +343,22 @@ curl -s "$URL" \
 - **term_run / build_run**：只拦破坏性命令（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机、fork 炸弹等），不套 `terminal_execute` 的全量黑名单。
 - **batch**：只允许 `fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write`；`fs_delete` / `build_run` / `term_run` / `sftp_*` 与嵌套 `batch` 会被拒绝（`batch_tool_not_allowed`）。
 
+### 3.7 串口 / Telnet 字节写
+
+这两个工具只接受对应传输的会话（`serial_write` → `kind=serial`，`telnet_write` → `kind=telnet`），不做命令解析、不等 `exitCode`，返回实际写出的字节数。
+
+| 工具 | 类型 | 主要参数 | 返回要点 |
+| --- | --- | --- | --- |
+| `serial_write` | 写 | `sessionId` / `data` / `encoding`(`utf8` \| `base64`，默认 utf8) | `sessionId` / `bytesWritten`（按会话字符集转码后） |
+| `telnet_write` | 写 | 同上 | `sessionId` / `bytesWritten`（含 IAC 转义） |
+
+关键行为：
+
+- `bytesWritten` 是**交给传输层**的字节数：串口按会话字符集转码后的长度，Telnet 含 IAC 转义。UTF-8 文本在直连环回时与 `data.len()` 一致。
+- Telnet 不做会话字符集转换；GBK 等内容用 `encoding=base64` 传已编码字节。
+- 工具只写不读，设备回复请在 termX 终端查看。
+- 对 SSH 会话调用返回 `mcp_unsupported_session_kind`；串口 / Telnet 会话调用 `fs_*` / `sftp_*` / `build_run` / `term_run` / `batch` 同样返回该错误码。
+
 ## 4. 推荐调用顺序与示例
 
 ```text
@@ -477,7 +494,7 @@ get_environment（拿 sessionId / hostId / hosts）
 
 ### 5.1 三档权限
 
-| 档位 | 只读工具（`fs_read` / `fs_grep` / `fs_glob` / `get_environment` / `vault_hosts_list` / `snippets_list`） | 写操作（`fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` 真实删除 / `build_run` / `term_run` / `terminal_execute` / `session_close`，含 `batch` 内层写 op） |
+| 档位 | 只读工具（`fs_read` / `fs_grep` / `fs_glob` / `get_environment` / `vault_hosts_list` / `snippets_list`） | 写操作（`fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` 真实删除 / `build_run` / `term_run` / `terminal_execute` / `serial_write` / `telnet_write` / `session_close`，含 `batch` 内层写 op） |
 | --- | --- | --- |
 | 只读（`observer`） | 正常可用 | 直接拒绝，返回 `permission_denied` |
 | 确认（`confirm`，默认） | 正常可用 | 生成审批项，等用户在 termX 主窗选择；110 秒未处理自动拒绝 |
@@ -625,7 +642,7 @@ get_environment（拿 sessionId / hostId / hosts）
 - **无 stdio 传输**：只提供 HTTP 端点，不附带 Node launcher。
 - **无 OAuth / 多用户**：只有一个 Bearer token；没有按用户或按客户端区分的权限。
 - **确认模式无批量允许**：审批按调用逐项进行；「始终允许」只按工具粒度，没有「允许本会话全部命令」。
-- **16 个工具**：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`。
+- **18 个工具**：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`serial_write`、`telnet_write`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`。
 - **`fs_grep` 依赖远端 `python3`**：缺失时返回 `mcp_missing_interpreter`，可改用 `fs_glob` + `fs_read` 或 `term_run` 的 `grep`。
 - **远端 jail 依赖配置**：`mcp.workspace_root` 默认 `~`；`..` 相对路径只折叠，是否越界由 jail 判定，软链通过 `realpath` 复核。
 - **`fs_read` 上限 8 MiB**：更大文件请用 `sftp_get` 下载到本地处理，或分段开窗。

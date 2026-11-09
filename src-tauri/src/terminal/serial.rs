@@ -255,6 +255,11 @@ impl SerialHandle {
     /// 用户键入上行：先过自动登录检测器（裸 CR/LF 唤醒直通不取消；其余输入
     /// 取消自动登录并报一次 cancelled），再按会话字符集编码写线路。
     pub fn write(&self, data: &[u8]) -> AppResult<()> {
+        self.write_counted(data).map(|_| ())
+    }
+
+    /// 同 `write`，额外返回实际交给串口 writer 的字节数（按会话字符集转码后）。
+    pub fn write_counted(&self, data: &[u8]) -> AppResult<usize> {
         let text = String::from_utf8_lossy(data);
         let actions = locked(&self.detector)?
             .as_mut()
@@ -264,7 +269,10 @@ impl SerialHandle {
             self.dispatch(action)?;
         }
         let bytes = encode_write_payload(self.charset, data);
-        locked(&self.writer)?.write_all(&bytes).map_err(serial_op_err)
+        locked(&self.writer)?
+            .write_all(&bytes)
+            .map_err(serial_op_err)?;
+        Ok(bytes.len())
     }
 
     fn dispatch(&self, action: AutoLoginAction) -> AppResult<()> {

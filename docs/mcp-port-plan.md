@@ -84,7 +84,8 @@
 | `get_environment` | 只读 | `AppState.lifecycle_sessions` + `db::profile::list` | 返回 `sessions[{id,kind,phase}]` 与 `hostCount`；同时对 `termx://environment` resource 提供同一快照 |
 | `vault_hosts_list` | 只读 | `db::profile::list` | 只回 `id/name/host/port/groupId`，**不回凭据** |
 | `snippets_list` | 只读 | `db::snippet::load` | 回 `id/name/package/command/description` |
-| `terminal_execute` | 写 | `plugin::plugin_exec_impl` | 旧客户端兼容保留：全量命令黑名单 + PTY 执行；新接入建议用 `term_run` |
+| `terminal_execute` | 写 | `plugin::plugin_exec_impl` | 旧客户端兼容保留：全量命令黑名单 + PTY 执行；非 SSH 会话在审批前直接回 `mcp_unsupported_session_kind`；新接入建议用 `term_run` |
+| `serial_write` / `telnet_write` | 写 | `SerialHandle::write_counted` / `TelnetHandle::write_counted` | 只写字节并回 `bytesWritten`，不等 `exitCode`；与 exec 模型分开，不复用 `plugin_exec_impl` |
 | `session_close` | 写 | `lifecycle::close_resource` | kind/owner 从注册表取，避免越权关闭他人会话 |
 
 ### 6.2 文件原语（M0–M6）
@@ -110,7 +111,7 @@
 
 对齐 Netcatty `mcpServerBridge` 的 approval gate，落在 `src-tauri/src/mcp/approval.rs`：
 
-- 触发：`confirm` 档位下的所有写工具（`terminal_execute` / `term_run` / `build_run` / `fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` 真实删除阶段 / `session_close`，以及 `batch` 内层的写 op）。参数校验（缺失参数、命令黑名单 / 破坏性策略、会话不存在）先做，通过后才生成审批项。
+- 触发：`confirm` 档位下的所有写工具（`terminal_execute` / `term_run` / `build_run` / `fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` 真实删除阶段 / `serial_write` / `telnet_write` / `session_close`，以及 `batch` 内层的写 op）。参数校验（缺失参数、命令黑名单 / 破坏性策略、会话不存在、传输类型不匹配）先做，通过后才生成审批项。
 - 待审批项：`approvalId / toolName / argsSummary / sessionId / targetLabel / timeoutMs / createdAtMs`；主进程通过 `mcp:approval-request` 广播，结算后广播 `mcp:approval-cleared`（`approvalIds + reason`）。
 - 前端：`src/mcp/McpApprovalHost.tsx` 常驻主窗右下角，提供「允许一次 / 始终允许该工具 / 拒绝」；窗口不在前台时后端 `request_user_attention` 闪任务栏。
 - 超时：110 秒（外部客户端常见 120 秒工具调用上限之前），到时按拒绝结算。
@@ -130,7 +131,7 @@
 | `vault.notes.*` / `scripts.*` / `snippets.*` 写 | 未暴露写入口（只读已覆盖） | 按需求逐项开 |
 | `portforward.*` | 代理与端口转发已按既定决策暂停 | 恢复该模块后同步开 |
 | `attachments` / `web_search` / `web_fetch` | termX 无对应能力 | 不移植 |
-| `load_netcatty_tools` 渐进式加载 | termX 现有 16 个工具，未到必须分组的规模 | 工具数显著增加时再引入分组 |
+| `load_netcatty_tools` 渐进式加载 | termX 现有 18 个工具，未到必须分组的规模 | 工具数显著增加时再引入分组 |
 | stdio 传输 / Node launcher | 单进程 Tauri，HTTP 已覆盖主流客户端 | 若必须支持仅 stdio 的客户端，再单独做 `termx-mcp-stdio` 小二进制 |
 
 ## 7. 失败与取消语义

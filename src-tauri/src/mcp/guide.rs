@@ -21,8 +21,9 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 6) 删除：fs_delete 默认 dryRun=true，先拿 confirmToken，再以 dryRun=false 执行。
 7) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
 8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 为旧客户端保留。
+9) 串口 / Telnet：serial_write / telnet_write 只写字节并回 bytesWritten，没有 exitCode；这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
 
-可用工具（共 16 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、session_close、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
+可用工具（共 18 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、serial_write、telnet_write、session_close、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
 规则：
 - sessionId 必须来自 get_environment；hostId 必须来自 hosts[] 或 vault_hosts_list，不要臆造。
 - 文件路径默认 jail 在 workspace 根（设置 → AI → Workspace 根），越界返回 mcp_path_outside_jail。
@@ -66,6 +67,7 @@ fn return_example(name: &str) -> &'static str {
         "vault_hosts_list" => r#"{code:"ok", hosts:[{id, name, host, port, groupId}]}"#,
         "snippets_list" => r#"{code:"ok", snippets:[{id, name, package, command, description}]}"#,
         "terminal_execute" => r#"{code:"ok", stdout, stderr, exitCode}"#,
+        "serial_write" | "telnet_write" => r#"{code:"ok", sessionId, bytesWritten}"#,
         "session_close" => r#"{code:"ok", closed: sessionId}"#,
         "fs_read" => r#"{code:"ok", path, lines, totalLines, size, truncated, nextCursor}"#,
         "fs_grep" => r#"{code:"ok", matches:[{path, line, text}], total, truncated, nextCursor}"#,
@@ -203,6 +205,8 @@ mod tests {
             "vault_hosts_list",
             "snippets_list",
             "terminal_execute",
+            "serial_write",
+            "telnet_write",
             "session_close",
             "fs_read",
             "fs_grep",

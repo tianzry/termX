@@ -46,7 +46,7 @@ const MCP_TOOL_GROUPS: Array<{ plane: "control" | "transfer" | "build" | "sessio
   { plane: "control", tools: ["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write", "fs_delete"] },
   { plane: "transfer", tools: ["sftp_put", "sftp_get"] },
   { plane: "build", tools: ["build_run", "term_run"] },
-  { plane: "session", tools: ["get_environment", "vault_hosts_list", "snippets_list", "terminal_execute", "session_close"] },
+  { plane: "session", tools: ["get_environment", "vault_hosts_list", "snippets_list", "terminal_execute", "serial_write", "telnet_write", "session_close"] },
   { plane: "composite", tools: ["batch"] },
 ];
 

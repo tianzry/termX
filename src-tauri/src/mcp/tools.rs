@@ -141,6 +141,35 @@ fn tool_error(e: crate::error::AppError) -> ToolResult {
     ToolResult::err(e.code(), e.to_string(), hint)
 }
 
+/// 串口 / Telnet 字节写工具：语义只有「写入」，没有 exec / exitCode。
+fn byte_write_tool(name: &str, description: &str, session_desc: &str, example: &str) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": schema(
+            json!({
+                "sessionId": {
+                    "type": "string",
+                    "description": session_desc,
+                    "examples": [example]
+                },
+                "data": {
+                    "type": "string",
+                    "description": "要写入的字节：encoding=utf8（默认）按 UTF-8 编码，base64 时解码为原始字节"
+                },
+                "encoding": {
+                    "type": "string",
+                    "enum": ["utf8", "base64"],
+                    "default": "utf8",
+                    "description": "data 的编码方式"
+                }
+            }),
+            &["sessionId", "data"]
+        ),
+        "annotations": { "readOnlyHint": false, "destructiveHint": true }
+    })
+}
+
 /// 远端只读文件工具的统一构造：`sessionId` / `hostId` 二选一。
 fn file_tool(name: &str, description: &str, extra: Value, required: &[&str]) -> Value {
     remote_file_tool(name, description, extra, required, true)
@@ -245,6 +274,26 @@ pub fn definitions() -> Value {
     let items = list
         .as_array_mut()
         .expect("definitions is always a JSON array");
+
+    items.push(byte_write_tool(
+        "serial_write",
+        "写操作。向串口会话写入原始字节，返回 bytesWritten；串口没有命令与 exitCode 语义，工具只负责把字节发到线路。\
+何时用：给 MCU / 串口设备发送命令、控制序列或二进制帧；先在 get_environment 确认会话 kind=serial。\
+何时不用：SSH 命令用 term_run / terminal_execute；Telnet 用 telnet_write；回复不在返回值里，请在 termX 终端查看。\
+受权限档位约束；写入即发送，不可撤回。",
+        "get_environment 返回的串口会话 sessions[].id（kind=serial）",
+        "serial-7f00aa",
+    ));
+
+    items.push(byte_write_tool(
+        "telnet_write",
+        "写操作。向 Telnet 会话写入原始字节，返回 bytesWritten；不等 exitCode。\
+何时用：登录 Telnet 设备后发送命令或控制序列；先在 get_environment 确认会话 kind=telnet。\
+何时不用：SSH 命令用 term_run / terminal_execute；串口用 serial_write；回复不在返回值里，请在 termX 终端查看。\
+按 data 的字节原样写入（utf8 或 base64），不做会话字符集转换；GBK 等编码请用 base64 传已编码字节。受权限档位约束。",
+        "get_environment 返回的 Telnet 会话 sessions[].id（kind=telnet）",
+        "telnet-3c9d10",
+    ));
 
     items.push(file_tool(
         "fs_read",
@@ -689,6 +738,94 @@ async fn approval_gate(
             }
         }
     }
+}
+
+/// 串口 / Telnet 写工具的公共参数：`data` + `encoding`（utf8 | base64）。
+fn write_payload(args: &Value) -> Result<Vec<u8>, ToolResult> {
+    let data = match args.get("data").and_then(Value::as_str) {
+        Some(value) => value,
+        None => {
+            return Err(ToolResult::err(
+                "missing_argument",
+                "缺少必填参数 data",
+                "data 必须是字符串；二进制内容用 encoding=base64 传原始字节。",
+            ))
+        }
+    };
+    match args.get("encoding").and_then(Value::as_str).unwrap_or("utf8") {
+        "utf8" => Ok(data.as_bytes().to_vec()),
+        "base64" => {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|e| {
+                    ToolResult::err(
+                        "invalid_argument",
+                        format!("data 不是合法 base64：{e}"),
+                        "确认只含 A-Z a-z 0-9 + / =，且不要带 data: 前缀。",
+                    )
+                })
+        }
+        other => Err(ToolResult::err(
+            "invalid_argument",
+            format!("不支持的 encoding：{other}"),
+            "encoding 只能是 utf8 或 base64。",
+        )),
+    }
+}
+
+/// 串口会话写入；返回实际交给 writer 的字节数（按会话字符集转码后）。
+#[cfg(desktop)]
+fn serial_bytes(state: &AppState, session_id: &str, bytes: &[u8]) -> Result<usize, ToolResult> {
+    let handle = {
+        let sessions = crate::error::locked(&state.serial_sessions).map_err(internal_error)?;
+        sessions.get(session_id).cloned()
+    };
+    let handle = handle.ok_or_else(|| {
+        ToolResult::err(
+            "session_not_found",
+            format!("找不到串口会话 {session_id}"),
+            "重新调用 get_environment 获取 kind=serial 的会话 id；会话可能已关闭。",
+        )
+    })?;
+    handle.write_counted(bytes).map_err(|e| {
+        ToolResult::err(
+            e.code(),
+            e.to_string(),
+            "串口可能已断开；重新 get_environment 确认会话状态。",
+        )
+    })
+}
+
+#[cfg(not(desktop))]
+fn serial_bytes(_state: &AppState, _session_id: &str, _bytes: &[u8]) -> Result<usize, ToolResult> {
+    Err(ToolResult::err(
+        "mcp_unsupported_session_kind",
+        "当前平台不提供串口会话",
+        HINT_SSH_ONLY,
+    ))
+}
+
+/// Telnet 会话写入；返回实际写到线路的字节数（含 IAC 转义）。
+fn telnet_bytes(state: &AppState, session_id: &str, bytes: &[u8]) -> Result<usize, ToolResult> {
+    let handle = {
+        let sessions = crate::error::locked(&state.telnet_sessions).map_err(internal_error)?;
+        sessions.get(session_id).cloned()
+    };
+    let handle = handle.ok_or_else(|| {
+        ToolResult::err(
+            "session_not_found",
+            format!("找不到 Telnet 会话 {session_id}"),
+            "重新调用 get_environment 获取 kind=telnet 的会话 id；会话可能已关闭。",
+        )
+    })?;
+    handle.write_counted(bytes).map_err(|e| {
+        ToolResult::err(
+            e.code(),
+            e.to_string(),
+            "Telnet 会话可能已断开；重新 get_environment 确认会话状态。",
+        )
+    })
 }
 
 fn session_meta(
@@ -1535,6 +1672,83 @@ pub async fn call_tool(
                 ),
             }
         }
+        "serial_write" | "telnet_write" => {
+            let serial = name == "serial_write";
+            let transport = if serial { "serial" } else { "telnet" };
+            let session_id = match args.get("sessionId").and_then(Value::as_str) {
+                Some(v) if !v.is_empty() => v.to_string(),
+                _ => {
+                    return ToolResult::err(
+                        "missing_argument",
+                        "缺少必填参数 sessionId",
+                        HINT_SESSION_ID,
+                    )
+                }
+            };
+            let bytes = match write_payload(args) {
+                Ok(value) => value,
+                Err(e) => return e,
+            };
+            let (_owner, kind) = match session_meta(state, &session_id) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            if kind.as_str() != transport {
+                return ToolResult::err(
+                    "mcp_unsupported_session_kind",
+                    format!(
+                        "会话 {session_id} 的类型是 {}，{name} 只接受 kind={transport} 的会话",
+                        kind.as_str()
+                    ),
+                    if serial {
+                        "serial_write 只写串口会话；SSH 命令用 term_run、Telnet 用 telnet_write，sessionId 从 get_environment 的 kind 字段选取。"
+                    } else {
+                        "telnet_write 只写 Telnet 会话；SSH 命令用 term_run、串口用 serial_write，sessionId 从 get_environment 的 kind 字段选取。"
+                    },
+                );
+            }
+            let count = bytes.len();
+            let target_label = Some(format!("{} · {}", kind.as_str(), session_id));
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                name,
+                format!("向 {} 写入 {count} 字节", kind.as_str()),
+                args.clone(),
+                Some(session_id.clone()),
+                target_label,
+            )
+            .await
+            {
+                return e;
+            }
+            let written = if serial {
+                serial_bytes(state, &session_id, &bytes)
+            } else {
+                telnet_bytes(state, &session_id, &bytes)
+            };
+            match written {
+                Ok(written) => {
+                    runtime_state::record_audit(change_entry(
+                        name,
+                        Some(&session_id),
+                        None,
+                        Some(written as u64),
+                        None,
+                        "applied",
+                    ));
+                    ToolResult::ok(
+                        "字节已写入",
+                        "该工具只写不读：回复请在 termX 终端查看；需要确认设备状态时再发一条写序列。",
+                        json!({ "sessionId": session_id, "bytesWritten": written }),
+                    )
+                }
+                Err(e) => e,
+            }
+        }
         "session_close" => {
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
@@ -1644,7 +1858,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 16);
+        assert_eq!(list.len(), 18);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
@@ -1654,6 +1868,15 @@ mod tests {
             assert_eq!(schema["type"], "object");
             assert!(schema["properties"].is_object());
             assert!(schema["required"].is_array());
+        }
+        for name in ["serial_write", "telnet_write"] {
+            let tool = list.iter().find(|t| t["name"] == name).unwrap();
+            assert_eq!(tool["annotations"]["readOnlyHint"], false);
+            assert_eq!(tool["inputSchema"]["required"], json!(["sessionId", "data"]));
+            assert_eq!(
+                tool["inputSchema"]["properties"]["encoding"]["enum"],
+                json!(["utf8", "base64"])
+            );
         }
         let exec = list
             .iter()
@@ -1716,6 +1939,23 @@ mod tests {
             batch["inputSchema"]["properties"]["ops"]["items"]["properties"]["tool"]["enum"],
             json!(["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write"])
         );
+    }
+
+    #[test]
+    fn write_payload_decodes_utf8_and_base64() {
+        assert_eq!(
+            write_payload(&json!({ "data": "AT\r\n" })).ok().unwrap(),
+            b"AT\r\n"
+        );
+        assert_eq!(
+            write_payload(&json!({ "data": "AAEC", "encoding": "base64" }))
+                .ok()
+                .unwrap(),
+            vec![0u8, 1, 2]
+        );
+        assert!(write_payload(&json!({ "data": "%%%", "encoding": "base64" })).is_err());
+        assert!(write_payload(&json!({ "data": "x", "encoding": "gbk" })).is_err());
+        assert!(write_payload(&json!({ "encoding": "utf8" })).is_err());
     }
 
     #[test]
