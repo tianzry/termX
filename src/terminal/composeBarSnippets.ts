@@ -101,7 +101,9 @@ export function filterComposeBarSnippets(
           (s.package ?? "").toLowerCase().includes(q),
       )
     : [...snippets];
-  return list.sort((a, b) => a.name.localeCompare(b.name));
+  // 固定 zh-CN collation：默认 localeCompare 跟随系统 locale（en-US 下汉字排在拉丁字母之后），
+  // 同一份片段在不同机器上顺序会漂移。
+  return list.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
 }
 
 /** 内置片段 + 仓库片段，按 id 覆盖（同 id 以仓库为准）。 */
