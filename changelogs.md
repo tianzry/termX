@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M8：会话类型错误码 + 串口/Telnet 字节写
+
+- 新增错误码 `mcp_unsupported_session_kind`（`params={id,kind}`）：`fs_*` / `sftp_*` / `build_run` / `term_run` / `batch` 在非 SSH 会话上统一返回；`mcp_session_not_ready` 收窄为「SSH 但 phase≠ready」。hint 直接告诉 agent 该工具需要 SSH 的 SFTP/exec 通道、应改传 `kind=ssh` 的 sessionId。`SessionKind::as_str()` 成为稳定小写标识，`tools.rs` 里重复的 `kind_name` 删除。
+- `terminal_execute` 传输判定提到黑名单与 `approval_gate` 之前：串口/Telnet 直接回 `mcp_unsupported_session_kind`，confirm 档位不再弹审批；执行链路错误改为透传真实 code，不再折叠 `execute_failed`。
+- 新增 `serial_write` / `telnet_write`：只写字节、不等 exitCode，返回 `bytesWritten`；参数 `data` + `encoding(utf8|base64)`；`SerialHandle::write_counted` / `TelnetHandle::write_counted` 返回真正交给 writer 的字节数（串口按会话字符集转码、Telnet 含 IAC 转义）。工具数 16→18，同步 `initialize.instructions`、设置页工具矩阵、`docs/mcp-guide.md`、`docs/mcp-port-plan.md`。
+- 文档措辞：jail 只约束远端路径（`path` / `remotePath` / `cwd`），`localPath` 只校验绝对路径；同步 instructions / 使用指南 / 设置页文案。
+- 踩坑 110：`terminal_execute` 若先过审批再判传输，confirm 档位下串口调用会先弹窗、用户允许后才拿到 `plugin_no_exec` 并折叠成 `execute_failed`；传输判定必须在审批之前。
+- 踩坑 111：`write()` 返回 `()` 拿不到真实写入量；加 `write_counted()` 让 `write()` 委托它，避免改 Tauri command 与前端契约。
+- 实机（129 SSH + COM2↔COM3 环回 + 本地 2324 Telnet 回显）：tools/list 18；SSH `terminal_execute` `exitCode=0` / stdout `MCP_M9_SSH_OK\nLinux\n`；串口与 Telnet 会话 `fs_read` / `term_run` / `batch` 内层均回 `mcp_unsupported_session_kind`（params kind=serial/telnet）；`serial_write` 回 `bytesWritten=15`，COM3 实收 15 字节 `MCP-SERIAL-OK\r\n`；`telnet_write` 回 11；confirm 档位串口 `terminal_execute` 4 ms 返回新错误码，`mcp_approval_pending` 前后均为空。
+- 门禁：`cargo check --lib` ✓、`cargo check --lib --features server` ✓、`cargo test --lib` 1044 ✓、`npm run test:run` 921 ✓、`npm run build` ✓。
+
+---
+
 ## 2026-11-09 — MCP 整改 M7：文档与前端设置页
 
 - `mcp.workspace_root` 前后端打通：`McpStatus` 新增 `workspaceRoot`，`McpConfigPatch` 新增 `workspaceRoot`；校验空串回退 `~`、必须以 `~` 或 `/` 开头（否则 `invalid_workspace_root`），持久化到 settings KV `mcp.workspace_root`，`mcp_status` 与配置生效后统一回填。
