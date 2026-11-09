@@ -241,6 +241,9 @@ pub struct SerialHandle {
     sink: SerialSink,
     detector: Arc<Mutex<Option<SerialAutoLogin>>>,
     charset: Option<&'static Encoding>,
+    /// 第二条输出通道：MCP 的「写入 + 采集」需要读回会话输出，但不能抢前端
+    /// 的 sink。读线程照旧只读一次，把同一份 `Data` 再广播给订阅者。
+    tap: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 /// Map any serial I/O failure (write / control-line / break) to a uniform error.
@@ -324,6 +327,12 @@ impl SerialHandle {
     /// Port path actually opened (e.g. `/dev/cu.usbserial-1420`, `COM3`).
     pub fn port_name(&self) -> &str {
         &self.port_name
+    }
+
+    /// 订阅会话输出（与前端终端收到的是同一份字节流）。每个订阅者互不影响，
+    /// 用户 pane 照常接收 —— 一条物理串口线本来就不存在「独占读取」。
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        self.tap.subscribe()
     }
 }
 
@@ -727,6 +736,9 @@ pub fn open(
     let reader_writer = writer.clone();
     let reader_sink = sink.clone();
     let sid = session_id.clone();
+    // 256 个 4KB 块 ≈ 1MB 缓冲；订阅者只有 MCP 的短时采集，正常不会积压。
+    let (tap, _) = tokio::sync::broadcast::channel::<Vec<u8>>(256);
+    let reader_tap = tap.clone();
 
     // Reader thread: serial RX → sink. Exits on close flag or fatal IO error.
     std::thread::spawn(move || {
@@ -748,6 +760,10 @@ pub fn open(
                     let chunk = &buf[..n];
                     let (emit, decoded) = decode_read(decoder.as_mut(), chunk, &mut text);
                     let actions = detector_check(&reader_detector, |d| d.feed(&decoded));
+                    // 无订阅者时不复制（常见路径）；有 MCP 采集时才多一次克隆。
+                    if reader_tap.receiver_count() > 0 && !emit.is_empty() {
+                        let _ = reader_tap.send(emit.clone());
+                    }
                     reader_sink(&sid, SerialOut::Data(emit));
                     dispatch_actions(actions, &reader_writer, &reader_sink, &sid, charset);
                 }
@@ -771,6 +787,7 @@ pub fn open(
         sink,
         detector,
         charset,
+        tap,
     };
 
     Ok((id, handle))

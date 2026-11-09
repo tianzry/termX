@@ -402,6 +402,9 @@ pub struct TelnetHandle {
     detector: Arc<Mutex<Option<SerialAutoLogin>>>,
     session_id: Arc<str>,
     sink: TelnetSink,
+    /// 第二条输出通道：MCP「写入 + 采集」复用它读回会话输出，前端 sink 不受
+    /// 影响。读线程只读一次，同一份 `Data` 再广播给订阅者。
+    tap: tokio::sync::broadcast::Sender<Vec<u8>>,
 }
 
 fn telnet_op_err(e: impl std::fmt::Display) -> AppError {
@@ -471,6 +474,11 @@ impl TelnetHandle {
         data.extend_from_slice(text.as_bytes());
         data.extend_from_slice(&self.input_newline);
         self.write(&data)
+    }
+
+    /// 订阅会话输出（与前端终端收到的是同一份字节流）。
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        self.tap.subscribe()
     }
 }
 
@@ -611,6 +619,7 @@ pub fn open(
     let reader_detector = detector.clone();
 
     let id = session_id;
+    let (tap, _) = tokio::sync::broadcast::channel::<Vec<u8>>(256);
     let handle = TelnetHandle {
         writer: Arc::new(Mutex::new(stream)),
         neg: Arc::new(Mutex::new(negotiator)),
@@ -620,6 +629,7 @@ pub fn open(
         detector: detector.clone(),
         session_id: Arc::from(id.as_str()),
         sink: sink.clone(),
+        tap: tap.clone(),
     };
 
     // Reader thread: socket RX → negotiator → (replies back down the socket,
@@ -670,6 +680,9 @@ pub fn open(
                         // 先喂检测器再推数据，便于凭据紧随提示发出。
                         let decoded = String::from_utf8_lossy(&data);
                         let actions = detector_check(&reader_detector, |d| d.feed(&decoded));
+                        if tap.receiver_count() > 0 {
+                            let _ = tap.send(data.clone());
+                        }
                         sink(&sid, TelnetOut::Data(data));
                         dispatch_actions(actions, &neg, &writer, &sink, &sid);
                     }
