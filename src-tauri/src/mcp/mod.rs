@@ -9,6 +9,7 @@ pub mod approval;
 pub mod audit;
 pub mod blocklist;
 pub mod config;
+pub mod exec;
 pub mod fs;
 pub mod grants;
 pub mod guide;
