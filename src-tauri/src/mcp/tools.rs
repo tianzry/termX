@@ -270,6 +270,7 @@ pub fn definitions() -> Value {
             "description": "写操作。在 get_environment 返回的已打开会话中执行一条命令，结果统一从 stdout / exitCode 返回：\n\
     · ssh：在已有 SSH 会话上新建 exec channel，一次性收取 stdout / stderr / exitCode。\n\
     · pty（本地终端）：每次调用新起子进程（POSIX sh -c / Windows cmd /C），一次性收取输出；不会写进用户正在看的终端 pane，也不继承该 pane 的 cwd / 环境。\n\
+    · ssh / pty 的 stdout、stderr 各只保留尾部 maxOutputBytes（默认 16 KiB），超出时 truncated=true；完整日志请把命令输出重定向到远端文件后 fs_read 开窗。\n\
     · serial / telnet：没有命令边界与退出码，按「写入 + 采集」工作——命令后追加 lineEnding，从会话输出流采集，直到 idleMs 静默 / waitRegex 命中 / timeoutMs 超时；exitCode 恒为 null。用户终端会同时收到同一份字节（物理链路决定的）。\n\
     何时用：与目标会话交互、查看输出或运行命令时；最常见的是 SSH。\n\
     何时不用：只查询会话 / 主机清单时用只读工具；串口 / Telnet 只需要写字节时用 serial_write / telnet_write。\n\
@@ -292,6 +293,13 @@ pub fn definitions() -> Value {
                         "maximum": 60000,
                         "default": 30000,
                         "description": "可选。总超时毫秒，默认 30000，范围 1000–60000。ssh / pty 为命令执行超时；serial / telnet 为采集总超时"
+                    },
+                    "maxOutputBytes": {
+                        "type": "integer",
+                        "minimum": super::fs::build::MIN_MAX_OUTPUT_BYTES,
+                        "maximum": super::fs::build::MAX_MAX_OUTPUT_BYTES,
+                        "default": super::fs::build::DEFAULT_MAX_OUTPUT_BYTES,
+                        "description": "可选，仅 ssh / pty。stdout、stderr 各自保留的尾部字节数，默认 16384；超出时 truncated=true，stdout / stderr 只回尾部"
                     },
                     "idleMs": {
                         "type": "integer",
@@ -1133,6 +1141,41 @@ fn collect_options(args: &Value) -> Result<CollectOptions, ToolResult> {
         line_ending,
         encoding,
         wait,
+    })
+}
+
+/// `terminal_execute` 的 ssh / pty 输出上限：默认 16 KiB，与 `build_run` /
+/// `term_run` 同一组常量。
+fn max_output_bytes(args: &Value) -> usize {
+    args.get("maxOutputBytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(super::fs::build::DEFAULT_MAX_OUTPUT_BYTES)
+        .clamp(
+            super::fs::build::MIN_MAX_OUTPUT_BYTES,
+            super::fs::build::MAX_MAX_OUTPUT_BYTES,
+        ) as usize
+}
+
+/// ssh / pty 的执行结果只回 stdout / stderr 尾部，避免大输出灌满 agent 上下文。
+/// 字节数按收到的完整输出计（exec 层另有 256 KiB / 路上限），截断时标记 `truncated`。
+fn exec_output_fields(
+    stdout: &str,
+    stderr: &str,
+    exit_code: Option<i32>,
+    max_bytes: usize,
+) -> Value {
+    let stdout_bytes = stdout.len();
+    let stderr_bytes = stderr.len();
+    let (stdout_tail, out_cut) = super::fs::tail_bytes(stdout, max_bytes);
+    let (stderr_tail, err_cut) = super::fs::tail_bytes(stderr, max_bytes);
+    json!({
+        "stdout": stdout_tail,
+        "stderr": stderr_tail,
+        "exitCode": exit_code,
+        "stdoutBytes": stdout_bytes,
+        "stderrBytes": stderr_bytes,
+        "totalBytes": stdout_bytes + stderr_bytes,
+        "truncated": out_cut || err_cut,
     })
 }
 
@@ -2096,12 +2139,13 @@ pub async fn call_tool(
                     {
                         Ok(out) => ToolResult::ok(
                             "命令执行完成",
-                            "如需在同一会话继续执行，复用相同的 sessionId；任务结束调用 session_close。",
-                            json!({
-                                "stdout": out.stdout,
-                                "stderr": out.stderr,
-                                "exitCode": out.exit_code,
-                            }),
+                            "如需在同一会话继续执行，复用相同的 sessionId；任务结束调用 session_close。truncated=true 时只返回尾部，完整输出请把命令重定向到远端文件后 fs_read 开窗。",
+                            exec_output_fields(
+                                &out.stdout,
+                                &out.stderr,
+                                out.exit_code,
+                                max_output_bytes(args),
+                            ),
                         ),
                         Err(e) => ToolResult::err(
                             e.code(),
@@ -2128,12 +2172,13 @@ pub async fn call_tool(
                     {
                         Ok(out) => ToolResult::ok(
                             "本地命令执行完成",
-                            "本地终端每次调用都新起子进程（POSIX sh -c / Windows cmd /C）一次性收取输出，不等于往用户可见终端里打字：不要指望它改变该 pane 的 cwd / 环境，交互式程序也请让用户在终端里跑。",
-                            json!({
-                                "stdout": out.stdout,
-                                "stderr": out.stderr,
-                                "exitCode": out.exit_code,
-                            }),
+                            "本地终端每次调用都新起子进程（POSIX sh -c / Windows cmd /C）一次性收取输出，不等于往用户可见终端里打字：不要指望它改变该 pane 的 cwd / 环境，交互式程序也请让用户在终端里跑。truncated=true 时只返回尾部，完整输出请把命令重定向到文件后再分次处理。",
+                            exec_output_fields(
+                                &out.stdout,
+                                &out.stderr,
+                                out.exit_code,
+                                max_output_bytes(args),
+                            ),
                         ),
                         Err(e) => ToolResult::err(
                             e.code(),
@@ -2678,6 +2723,14 @@ mod tests {
         assert!(props["sessionId"]["examples"].is_array());
         assert_eq!(props["timeoutMs"]["type"], "integer");
         assert_eq!(
+            props["maxOutputBytes"]["default"],
+            super::super::fs::build::DEFAULT_MAX_OUTPUT_BYTES
+        );
+        assert_eq!(
+            props["maxOutputBytes"]["maximum"],
+            super::super::fs::build::MAX_MAX_OUTPUT_BYTES
+        );
+        assert_eq!(
             exec["inputSchema"]["required"],
             json!(["sessionId", "command"])
         );
@@ -2747,6 +2800,33 @@ mod tests {
         assert!(write_payload(&json!({ "data": "%%%", "encoding": "base64" })).is_err());
         assert!(write_payload(&json!({ "data": "x", "encoding": "gbk" })).is_err());
         assert!(write_payload(&json!({ "encoding": "utf8" })).is_err());
+    }
+
+    #[test]
+    fn terminal_execute_keeps_only_output_tail() {
+        let long = "x".repeat(40);
+        let fields = exec_output_fields(&long, "err", Some(3), 16);
+        assert_eq!(fields["stdout"], "x".repeat(16));
+        assert_eq!(fields["stderr"], "err");
+        assert_eq!(fields["exitCode"], 3);
+        assert_eq!(fields["stdoutBytes"], 40);
+        assert_eq!(fields["stderrBytes"], 3);
+        assert_eq!(fields["totalBytes"], 43);
+        assert_eq!(fields["truncated"], true);
+
+        let short = exec_output_fields("ok", "", Some(0), 16);
+        assert_eq!(short["stdout"], "ok");
+        assert_eq!(short["truncated"], false);
+    }
+
+    #[test]
+    fn max_output_bytes_defaults_and_clamps() {
+        assert_eq!(max_output_bytes(&json!({})), 16 * 1024);
+        assert_eq!(max_output_bytes(&json!({ "maxOutputBytes": 1 })), 256);
+        assert_eq!(
+            max_output_bytes(&json!({ "maxOutputBytes": 999_999 })),
+            64 * 1024
+        );
     }
 
     #[test]

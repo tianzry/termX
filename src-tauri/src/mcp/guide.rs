@@ -20,7 +20,7 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 5) 构建：build_run 只回尾部日志与 exitCode；需要完整日志时传 teeToRemoteFile。
 6) 删除：fs_delete 默认 dryRun=true，先拿 confirmToken，再以 dryRun=false 执行。
 7) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
-8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话。
+8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话，ssh / pty 只回尾部 maxOutputBytes（默认 16 KiB）。
 9) 串口 / Telnet：自己建链用 session_open（headless，不占用户窗口）；只写字节用 serial_write / telnet_write（返回 bytesWritten）；只读输出用 serial_read / telnet_read；要「写入 + 等回显」时用 terminal_execute —— 写入命令后按 idleMs 静默 / waitRegex 命中 / timeoutMs 超时采集，exitCode 恒为 null。这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
 10) 多客户端：每个 Bearer token 是一个独立客户端，权限档 / 工具白名单可不同；各自自动建连的会话互相隔离，用户窗口会话仍然共享。一个 token 可服务多个会话与任意工作目录。链路自行断开时会话立即标记 closed，重新 session_open 即可。
 
@@ -69,7 +69,7 @@ fn return_example(name: &str) -> &'static str {
         "vault_hosts_list" => r#"{code:"ok", hosts:[{id, name, host, port, groupId}]}"#,
         "snippets_list" => r#"{code:"ok", snippets:[{id, name, package, command, description}]}"#,
         "terminal_execute" => {
-            r#"{code:"ok", stdout, stderr, exitCode}；serial/telnet 为 {code:"ok", stdout, exitCode:null, bytesWritten, bytesRead, terminatedBy, idleMs, timeoutMs, encoding, truncated}"#
+            r#"{code:"ok", stdout, stderr, exitCode, stdoutBytes, stderrBytes, totalBytes, truncated}（ssh/pty 的 stdout/stderr 各只回尾部 maxOutputBytes）；serial/telnet 为 {code:"ok", stdout, exitCode:null, bytesWritten, bytesRead, terminatedBy, idleMs, timeoutMs, encoding, truncated}"#
         }
         "serial_write" | "telnet_write" => r#"{code:"ok", sessionId, bytesWritten}"#,
         "serial_read" | "telnet_read" => {

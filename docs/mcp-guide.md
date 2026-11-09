@@ -251,8 +251,8 @@ curl -s "$URL" \
 
 | 会话 kind | 执行方式 | 返回要点 |
 | --- | --- | --- |
-| `ssh` | 在既有连接上新开 exec channel，一次性收取输出 | `stdout` / `stderr` / `exitCode` |
-| `pty`（本地终端） | 每次调用新起子进程（POSIX `sh -c` / Windows `cmd /C`）一次性收取输出；**不写入用户可见的终端 pane**，也不继承该 pane 的 cwd / 环境 | `stdout` / `stderr` / `exitCode` |
+| `ssh` | 在既有连接上新开 exec channel，一次性收取输出 | `stdout` / `stderr`（各只回尾部 `maxOutputBytes`）/ `exitCode` / `stdoutBytes` / `stderrBytes` / `totalBytes` / `truncated` |
+| `pty`（本地终端） | 每次调用新起子进程（POSIX `sh -c` / Windows `cmd /C`）一次性收取输出；**不写入用户可见的终端 pane**，也不继承该 pane 的 cwd / 环境 | 同 `ssh` |
 | `serial` / `telnet` | 写入「命令 + `lineEnding`」，再从会话输出流采集，直到 `idleMs` 静默 / `waitRegex` 命中 / `timeoutMs` 超时；**没有命令边界与退出码** | `stdout`（采集文本）/ `exitCode: null` / `bytesWritten` / `bytesRead` / `terminatedBy` / `idleMs` / `timeoutMs` / `encoding` / `truncated` |
 
 **该用**：需要与目标会话交互、查看输出或运行命令时；最常见的是 SSH。
@@ -264,6 +264,7 @@ curl -s "$URL" \
 | `sessionId` | string | 是 | `get_environment` 返回的 `sessions[].id`（UUID） | `"3f2504e0-4f89-11d3-9a0c-0305e82c3301"` |
 | `command` | string | 是 | 单条非空命令 | `"uname -a"` / `"AT+GMR"` |
 | `timeoutMs` | integer | 否 | 总超时毫秒，范围 1000–60000，默认 30000。ssh / pty 为执行超时，serial / telnet 为采集总超时 | `30000` |
+| `maxOutputBytes` | integer | 否 | 仅 ssh / pty。`stdout`、`stderr` 各自保留的尾部字节数，范围 256–65536，默认 16384；超出时 `truncated=true` | `16384` |
 | `idleMs` | integer | 否 | 仅 serial / telnet。连续多少毫秒无新数据视为响应结束，范围 50–5000，默认 500 | `500` |
 | `waitRegex` | string | 否 | 仅 serial / telnet。累计输出命中该正则即提前结束采集（Rust regex 语法） | `"OK\|ERROR"` |
 | `lineEnding` | string | 否 | 仅 serial / telnet。命令后追加的行结束符：`crlf`(默认) / `lf` / `cr` / `none` | `"crlf"` |
@@ -278,9 +279,15 @@ SSH / pty 返回示例：
   "hint": "如需在同一会话继续执行，复用相同的 sessionId；任务结束调用 session_close。",
   "stdout": "Linux web-01 6.1.0 x86_64 GNU/Linux\n",
   "stderr": "",
-  "exitCode": 0
+  "exitCode": 0,
+  "stdoutBytes": 37,
+  "stderrBytes": 0,
+  "totalBytes": 37,
+  "truncated": false
 }
 ```
+
+> ssh / pty 默认只保留 `stdout`、`stderr` 各自最后 16 KiB（`maxOutputBytes` 可调到 256–65536）。`truncated=true` 表示有内容被截掉；需要完整日志时，把命令输出重定向到远端文件再用 `fs_read` 翻页，或改用 `build_run` 的 `teeToRemoteFile`。
 
 serial / telnet 返回示例（没有退出码，不伪造 0）：
 
@@ -681,6 +688,7 @@ get_environment（拿 sessionId / hostId / hosts）
 - **远端路径不设目录限制**：`~` 与相对路径按远端 home 展开，`..` 只做折叠；绝对路径可指向任意目录，请自行确认目标位置。
 - **`fs_read` 上限 8 MiB**：更大文件请用 `sftp_get` 下载到本地处理，或分段开窗。
 - **`build_run` 只保留尾部**：完整日志需要 `teeToRemoteFile`；stdout/stderr 合并且 stdout 在前，不保证时间交错顺序。
+- **`terminal_execute` 的 ssh / pty 只保留尾部**：`stdout`、`stderr` 各默认 16 KiB（`maxOutputBytes` 最大 65536），`truncated=true` 时需改用重定向文件或分页方式获取全文。
 - **`sftp_get` 的 sha256 是本地文件**：如需确认远端内容，请用 `fs_read` / `build_run` 的远端校验命令自行比对。
 - **MCP 进度事件无人订阅**：传输走 `Host::Tauri` 发事件，但 MCP 没有窗口，客户端看不到进度；只能等工具调用返回。
 - **资源只有一个**：`termx://environment`（等价 `get_environment` 只读快照）。

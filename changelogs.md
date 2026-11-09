@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-09 — MCP terminal_execute：ssh / pty 输出改为尾部截断
+
+- `terminal_execute` 新增 `maxOutputBytes`（仅 ssh / pty，范围 256–65536，默认 16384，复用 `fs::build` 常量）：stdout、stderr 各自只回尾部；返回新增 `stdoutBytes` / `stderrBytes` / `totalBytes` / `truncated`。此前 ssh 单路最多完整回传 256 KiB，一次大输出可能灌满 agent 上下文且没有截断标记。
+- 字节数按 MCP 层收到的完整输出计；`exec_once` 的 256 KiB / 路硬上限未改动，避免影响 plugin / AI 面板等同链路调用方。serial / telnet 分支保持原样（已有 64 KiB 采集上限与 `truncated`）。
+- 同步 `guide.rs`（工具描述、返回示例、instructions 第 8 条）与 `docs/mcp-guide.md`（3.4 参数表、返回示例、限制说明）。
+- 门禁：`cargo test --lib mcp::` 70 ✓（新增 tail 截断与参数 clamp 两个用例）。
+
+---
+
 ## 2026-11-09 — MCP 多客户端：移除 workspace 目录限制
 
 - 去掉全局 `mcp.workspace_root` 与 per-client `workspaceRoot`：`McpStatus` / `McpConfigPatch` / `McpClientConfig` / `McpClient` 均不再携带；旧 settings 里的键与 JSON 字段会被忽略（serde 默认忽略未知字段），保存一次客户端后自然清掉。
