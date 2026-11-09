@@ -3,6 +3,7 @@
 //! 设计见 `docs/mcp-refactor.md`：文件类工具用结构化参数表达语义，
 //! 不拼 shell、不走命令黑名单；传输只回路径/大小/校验和。
 
+pub mod build;
 pub mod caps;
 pub mod delete;
 pub mod glob;

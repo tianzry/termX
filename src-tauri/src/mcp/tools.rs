@@ -10,6 +10,7 @@
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use tauri::AppHandle;
@@ -444,6 +445,62 @@ sessionId 与 hostId 二选一。",
             }
         }),
         &["paths"],
+        false,
+    ));
+
+    items.push(remote_file_tool(
+        "build_run",
+        "写操作。在远端非交互执行构建命令：cwd 限定 workspace 内，stdout/stderr 各取尾部 maxOutputBytes，另回总量与 exitCode；可选 teeToRemoteFile 把完整日志落到远端文件。\
+何时用：sftp_put 上传源码后直接 make/cmake/gcc/cargo/npm；失败先看 stderrTail，再 fs_read fullLog 开窗。\
+何时不用：需要交互式终端时用 term_run；只读命令用 term_run 即可；不要在这里做文件读写（用 fs_* 工具）。\
+只拦真正破坏性命令（rm -rf /、mkfs、dd 写块设备等），不套终端黑名单。",
+        json!({
+            "command": { "type": "string", "description": "要执行的构建命令（可多行）" },
+            "cwd": { "type": "string", "description": "工作目录，默认 workspace 根" },
+            "timeoutMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 600000,
+                "default": 120000
+            },
+            "maxOutputBytes": {
+                "type": "integer",
+                "minimum": 256,
+                "maximum": 65536,
+                "default": 16384,
+                "description": "stdout / stderr 各自保留的尾部字节数"
+            },
+            "teeToRemoteFile": {
+                "type": "string",
+                "description": "可选：把完整日志写到该远端路径（workspace 内）"
+            }
+        }),
+        &["command"],
+        false,
+    ));
+
+    items.push(remote_file_tool(
+        "term_run",
+        "写操作。逃生平面：在远端非交互执行一条命令，返回 stdoutTail / stderrTail / exitCode / totalBytes。\
+何时用：只需要跑命令看结果，或 build_run 不适用的场景（版本探测、git status 等）。\
+何时不用：文件查阅/编辑/传输用 fs_* 与 sftp_*；不要用它做文件语义操作。\
+只拦真正破坏性命令，不套全量终端黑名单；受权限档位约束。",
+        json!({
+            "command": { "type": "string", "description": "要执行的命令（可多行）" },
+            "timeoutMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 600000,
+                "default": 30000
+            },
+            "maxOutputBytes": {
+                "type": "integer",
+                "minimum": 256,
+                "maximum": 65536,
+                "default": 16384
+            }
+        }),
+        &["command"],
         false,
     ));
 
@@ -1110,6 +1167,161 @@ pub async fn call_tool(
                 Err(e) => tool_error(e),
             }
         }
+        "build_run" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let jail_root = super::config::workspace_root(&state.db);
+            let command = match args
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(value) if !value.is_empty() => value.to_string(),
+                _ => {
+                    return ToolResult::err(
+                        "missing_argument",
+                        "缺少必填参数 command",
+                        "command 必须是非空字符串，例如 \"make -j8\"。",
+                    )
+                }
+            };
+            if let Some(reason) = super::policy::destructive_reason(&command) {
+                return ToolResult::err(
+                    "mcp_command_destructive",
+                    format!("命令命中破坏性策略：{reason}"),
+                    "改用 typed 文件工具或更具体的命令；确需执行请在 termX 终端手动操作。",
+                );
+            }
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "build_run",
+                summarize_command(&command),
+                args.clone(),
+                Some(session.session_id.clone()),
+                Some(session.profile_id.clone()),
+            )
+            .await
+            {
+                return e;
+            }
+            match super::fs::build::fs_build_run(
+                state,
+                &session.session_id,
+                &session.handle,
+                args,
+                &jail_root,
+            )
+            .await
+            {
+                Ok(out) => ToolResult::ok(
+                    if out.exit_code == Some(0) {
+                        "构建成功"
+                    } else {
+                        "构建结束（exitCode 非 0）"
+                    },
+                    "失败先看 stderrTail；完整日志用 fullLog 配 fs_read 开窗；产物用 sftp_get 下载。",
+                    json!({
+                        "exitCode": out.exit_code,
+                        "stdoutTail": out.stdout_tail,
+                        "stderrTail": out.stderr_tail,
+                        "stdoutBytes": out.stdout_bytes,
+                        "stderrBytes": out.stderr_bytes,
+                        "totalBytes": out.stdout_bytes + out.stderr_bytes,
+                        "truncated": out.truncated,
+                        "fullLog": out.full_log,
+                        "teeFailed": out.tee_failed,
+                        "cwd": out.cwd,
+                    }),
+                ),
+                Err(e) => tool_error(e),
+            }
+        }
+        "term_run" => {
+            let session = match super::fs::session::resolve(app, state, args).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let command = match args
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::trim)
+            {
+                Some(value) if !value.is_empty() => value.to_string(),
+                _ => {
+                    return ToolResult::err(
+                        "missing_argument",
+                        "缺少必填参数 command",
+                        "command 必须是非空字符串，例如 \"uname -a\"。",
+                    )
+                }
+            };
+            if let Some(reason) = super::policy::destructive_reason(&command) {
+                return ToolResult::err(
+                    "mcp_command_destructive",
+                    format!("命令命中破坏性策略：{reason}"),
+                    "改用 typed 文件工具或更具体的命令；确需执行请在 termX 终端手动操作。",
+                );
+            }
+            if let Err(e) = approval_gate(
+                cfg,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "term_run",
+                summarize_command(&command),
+                args.clone(),
+                Some(session.session_id.clone()),
+                Some(session.profile_id.clone()),
+            )
+            .await
+            {
+                return e;
+            }
+            let timeout = args
+                .get("timeoutMs")
+                .and_then(Value::as_u64)
+                .unwrap_or(30_000)
+                .clamp(1_000, 600_000);
+            let max_output = args
+                .get("maxOutputBytes")
+                .and_then(Value::as_u64)
+                .unwrap_or(16 * 1024)
+                .clamp(256, 64 * 1024) as usize;
+            match crate::ssh::client::exec_once(
+                &session.handle,
+                &command,
+                Duration::from_millis(timeout),
+                false,
+            )
+            .await
+            {
+                Ok(out) => {
+                    let (stdout_tail, out_cut) = super::fs::tail_bytes(&out.stdout, max_output);
+                    let (stderr_tail, err_cut) = super::fs::tail_bytes(&out.stderr, max_output);
+                    ToolResult::ok(
+                        "命令执行完成",
+                        "exitCode 非 0 时先看 stderrTail；需要完整输出时缩小范围分次执行。",
+                        json!({
+                            "exitCode": out.exit_code,
+                            "stdoutTail": stdout_tail,
+                            "stderrTail": stderr_tail,
+                            "stdoutBytes": out.stdout.len(),
+                            "stderrBytes": out.stderr.len(),
+                            "totalBytes": out.stdout.len() + out.stderr.len(),
+                            "truncated": out_cut || err_cut,
+                        }),
+                    )
+                }
+                Err(e) => tool_error(e),
+            }
+        }
         "terminal_execute" => {
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
@@ -1299,7 +1511,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 13);
+        assert_eq!(list.len(), 15);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();

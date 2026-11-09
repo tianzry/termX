@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M5：构建与执行（build_run / term_run）
+
+- 新增 `mcp/policy.rs`：逃生平面只拦**真正破坏性**命令（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机、fork 炸弹、`wipefs/fdisk/parted`、`chmod -R 777 /`、直写块设备），不套终端全量黑名单。
+- 新增 `mcp/fs/build.rs`：远端先把 stdout/stderr 分别写入 `/tmp/termx-build-*.{out,err}`，再用 `tail -c` 取尾部、`wc -c` 取总量，`exitCode` 独立上报；`cwd` 走 jail + `realpath`，`teeToRemoteFile` 把完整日志落到 workspace 内（失败回 `teeFailed`）；随机 marker 解析，避免日志内容干扰。
+- `build_run` 参数：`command` / `cwd` / `timeoutMs`（默认 120s，上限 600s）/ `maxOutputBytes`（默认 16 KiB，上限 64 KiB）/ `teeToRemoteFile`；`term_run` 参数：`command` / `timeoutMs`（默认 30s）/ `maxOutputBytes`。
+- `term_run` 走 `exec_once` 非交互执行 + 尾部截断，作为逃生平面；`terminal_execute` 保留（兼容既有客户端，仍走全量黑名单）。
+- 踩坑 104：`exec_once` 的 256 KiB 是**头部**封顶，长构建末尾的报错会被丢掉；`build_run` 必须远端落盘后取 `tail`，不能直接吃 `exec_once.stdout`。
+- 踩坑 105：破坏性策略不能裸词匹配 —— `grep -r mkfs docs/`、`rm build/*.o` 都是正常构建操作。改为「命令位」匹配（行首 / `;` `&` `|` 之后 / `sudo` 之后），并补 6 条放行 + 7 条拦截单测。
+- 踩坑 106：`format!` 命名实参默认 move，`cd_failed = m_cd_failed` 会让后续比较拿到已移动值；显式传引用。
+- 门禁：`cargo check --lib` ✓、`cargo test --lib mcp::` 60 ✓。
+
+---
+
 ## 2026-11-09 — MCP 整改 M4：删除工具（fs_delete）
 
 - 新增 `mcp/fs/delete.rs`：`paths[]`（≤200）+ `recursive`；目录未显式 `recursive=true` 直接回 `mcp_delete_is_dir`。

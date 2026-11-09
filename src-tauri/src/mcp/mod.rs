@@ -13,6 +13,7 @@ pub mod fs;
 pub mod grants;
 pub mod guide;
 pub mod permissions;
+pub mod policy;
 pub mod runtime_state;
 pub mod server;
 pub mod tools;
