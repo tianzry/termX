@@ -224,28 +224,55 @@ pub fn definitions() -> Value {
         },
         {
             "name": "terminal_execute",
-            "description": "写操作。在 get_environment 返回的某个已打开 SSH 会话中执行一条命令，返回 stdout / stderr / exitCode。\
-    何时用：需要与目标主机的现有 SSH 会话交互、查看输出或运行命令时。\
-    何时不用：只查询会话 / 主机清单时用只读工具；没有 sessionId 时不要调用；串口 / Telnet 没有 exec 通道（返回 mcp_unsupported_session_kind），只能发字节。\
+            "description": "写操作。在 get_environment 返回的已打开会话中执行一条命令，结果统一从 stdout / exitCode 返回：\n\
+    · ssh：在已有 SSH 会话上新建 exec channel，一次性收取 stdout / stderr / exitCode。\n\
+    · pty（本地终端）：每次调用新起子进程（POSIX sh -c / Windows cmd /C），一次性收取输出；不会写进用户正在看的终端 pane，也不继承该 pane 的 cwd / 环境。\n\
+    · serial / telnet：没有命令边界与退出码，按「写入 + 采集」工作——命令后追加 lineEnding，从会话输出流采集，直到 idleMs 静默 / waitRegex 命中 / timeoutMs 超时；exitCode 恒为 null。用户终端会同时收到同一份字节（物理链路决定的）。\n\
+    何时用：与目标会话交互、查看输出或运行命令时；最常见的是 SSH。\n\
+    何时不用：只查询会话 / 主机清单时用只读工具；串口 / Telnet 只需要写字节时用 serial_write / telnet_write。\n\
     受权限档位与命令黑名单约束。",
             "inputSchema": schema(
                 json!({
                     "sessionId": {
                         "type": "string",
-                        "description": "get_environment 返回的 sessions[].id",
-                        "examples": ["ssh-1a2b3c", "serial-7f00aa"]
+                        "description": "get_environment 返回的 sessions[].id（UUID）",
+                        "examples": ["3f2504e0-4f89-11d3-9a0c-0305e82c3301"]
                     },
                     "command": {
                         "type": "string",
-                        "description": "要执行的单条非空命令",
-                        "examples": ["uname -a", "df -h", "systemctl status nginx"]
+                        "description": "要执行的单条非空命令；serial / telnet 下按原样写入线路（不再追加换行以外的加工）",
+                        "examples": ["uname -a", "df -h", "AT+GMR"]
                     },
                     "timeoutMs": {
                         "type": "integer",
                         "minimum": 1000,
-                        "maximum": 600000,
+                        "maximum": 60000,
                         "default": 30000,
-                        "description": "可选。执行超时毫秒，默认 30000"
+                        "description": "可选。总超时毫秒，默认 30000，范围 1000–60000。ssh / pty 为命令执行超时；serial / telnet 为采集总超时"
+                    },
+                    "idleMs": {
+                        "type": "integer",
+                        "minimum": 50,
+                        "maximum": 5000,
+                        "default": 500,
+                        "description": "可选，仅 serial / telnet。连续多少毫秒没有新数据即视为响应结束，默认 500，范围 50–5000"
+                    },
+                    "waitRegex": {
+                        "type": "string",
+                        "description": "可选，仅 serial / telnet。累计输出命中该正则即提前结束采集（Rust regex 语法）",
+                        "examples": ["OK|ERROR", "login:\\\\s*$"]
+                    },
+                    "lineEnding": {
+                        "type": "string",
+                        "enum": ["crlf", "lf", "cr", "none"],
+                        "default": "crlf",
+                        "description": "可选，仅 serial / telnet。命令后追加的行结束符，默认 crlf（\\\\r\\\\n）"
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "enum": ["utf8", "base64"],
+                        "default": "utf8",
+                        "description": "可选，仅 serial / telnet。stdout 的返回编码；base64 用于非 UTF-8 / 二进制回显，返回采集到的原始字节"
                     }
                 }),
                 &["sessionId", "command"]
@@ -262,8 +289,8 @@ pub fn definitions() -> Value {
                 json!({
                     "sessionId": {
                         "type": "string",
-                        "description": "get_environment 返回的 sessions[].id",
-                        "examples": ["ssh-1a2b3c"]
+                        "description": "get_environment 返回的 sessions[].id（UUID）",
+                        "examples": ["3f2504e0-4f89-11d3-9a0c-0305e82c3301"]
                     }
                 }),
                 &["sessionId"]
@@ -282,7 +309,7 @@ pub fn definitions() -> Value {
 何时不用：SSH 命令用 term_run / terminal_execute；Telnet 用 telnet_write；回复不在返回值里，请在 termX 终端查看。\
 受权限档位约束；写入即发送，不可撤回。",
         "get_environment 返回的串口会话 sessions[].id（kind=serial）",
-        "serial-7f00aa",
+        "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
     ));
 
     items.push(byte_write_tool(
@@ -831,10 +858,10 @@ fn telnet_bytes(state: &AppState, session_id: &str, bytes: &[u8]) -> Result<usiz
 fn session_meta(
     state: &AppState,
     session_id: &str,
-) -> Result<(SessionOwner, SessionKind), ToolResult> {
+) -> Result<(SessionOwner, SessionKind, crate::state::SessionPhase), ToolResult> {
     let registry = state.lock_sessions().map_err(|e| internal_error(e))?;
     match registry.get(session_id) {
-        Some(record) => Ok((record.owner.clone(), record.kind)),
+        Some(record) => Ok((record.owner.clone(), record.kind, record.phase)),
         None => Err(ToolResult::err(
             "session_not_found",
             format!("找不到会话 {session_id}"),
@@ -885,6 +912,210 @@ fn environment(state: &AppState) -> Result<Value, ToolResult> {
         "cacheable": true,
         "ttl": 30,
     }))
+}
+
+/// 串口 / Telnet「写入 + 采集」参数。默认值与范围必须与 `terminal_execute`
+/// 的 schema 声明一致（默认 idleMs=500、timeoutMs=30000）。
+struct CollectOptions {
+    idle: Duration,
+    timeout: Duration,
+    line_ending: &'static str,
+    encoding: &'static str,
+    wait: Option<regex::Regex>,
+}
+
+fn collect_options(args: &Value) -> Result<CollectOptions, ToolResult> {
+    let millis = |key: &str, default: u64, min: u64, max: u64| -> Result<u64, ToolResult> {
+        match args.get(key) {
+            None | Some(Value::Null) => Ok(default),
+            Some(value) => value.as_u64().map(|n| n.clamp(min, max)).ok_or_else(|| {
+                ToolResult::err(
+                    "invalid_argument",
+                    format!("{key} 必须是整数毫秒"),
+                    format!("{key} 允许范围 {min}–{max}。"),
+                )
+            }),
+        }
+    };
+    let idle_ms = millis(
+        "idleMs",
+        super::exec::DEFAULT_IDLE_MS,
+        super::exec::MIN_IDLE_MS,
+        super::exec::MAX_IDLE_MS,
+    )?;
+    let timeout_ms = millis(
+        "timeoutMs",
+        super::exec::DEFAULT_TIMEOUT_MS,
+        super::exec::MIN_TIMEOUT_MS,
+        super::exec::MAX_TIMEOUT_MS,
+    )?;
+    let line_ending = match args.get("lineEnding").and_then(Value::as_str).unwrap_or("crlf") {
+        "crlf" => "\r\n",
+        "lf" => "\n",
+        "cr" => "\r",
+        "none" => "",
+        other => {
+            return Err(ToolResult::err(
+                "invalid_argument",
+                format!("不支持的 lineEnding：{other}"),
+                "lineEnding 只能是 crlf / lf / cr / none。",
+            ))
+        }
+    };
+    let encoding = match args.get("encoding").and_then(Value::as_str).unwrap_or("utf8") {
+        "utf8" => "utf8",
+        "base64" => "base64",
+        other => {
+            return Err(ToolResult::err(
+                "invalid_argument",
+                format!("不支持的 encoding：{other}"),
+                "encoding 只能是 utf8 或 base64。",
+            ))
+        }
+    };
+    let wait = match args.get("waitRegex").and_then(Value::as_str) {
+        Some(pattern) if !pattern.is_empty() => {
+            Some(regex::Regex::new(pattern).map_err(|e| {
+                ToolResult::err(
+                    "invalid_argument",
+                    format!("waitRegex 不是合法正则：{e}"),
+                    "用 Rust regex 语法；匹配字面量括号等元字符时记得转义。",
+                )
+            })?)
+        }
+        _ => None,
+    };
+    Ok(CollectOptions {
+        idle: Duration::from_millis(idle_ms),
+        timeout: Duration::from_millis(timeout_ms),
+        line_ending,
+        encoding,
+        wait,
+    })
+}
+
+/// 把采集结果转成统一信封。`exitCode` 固定为 null —— 串口 / Telnet 没有退出码，
+/// 不伪造 0。
+fn collect_success(
+    session_id: &str,
+    transport: &str,
+    out: super::exec::ExecOutcome,
+    encoding: &str,
+) -> ToolResult {
+    let stdout = if encoding == "base64" {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(&out.output)
+    } else {
+        String::from_utf8_lossy(&out.output).into_owned()
+    };
+    let hint = if out.bytes_read == 0 {
+        format!(
+            "{transport} 在 {}ms 内没有收到任何字节：检查设备是否上电、线序与波特率，或提高 idleMs；也可以直接在 termX 终端里观察。",
+            out.idle_ms
+        )
+    } else if out.terminated_by == super::exec::TerminatedBy::Timeout {
+        format!(
+            "采集到 {}ms 总超时：设备可能仍在输出，可提高 timeoutMs 或用 waitRegex 精确截断。exitCode 恒为 null；用户终端会同时收到同一份字节，不要重复解析。",
+            out.timeout_ms
+        )
+    } else {
+        "exitCode 恒为 null（串口 / Telnet 没有命令边界与退出码），结束原因见 terminatedBy。用户正在查看的终端会同时收到同一份字节（物理链路决定的），不要重复解析。".to_string()
+    };
+    ToolResult::ok(
+        format!("{transport} 命令已写入并完成采集"),
+        hint,
+        json!({
+            "sessionId": session_id,
+            "stdout": stdout,
+            "exitCode": Value::Null,
+            "bytesWritten": out.bytes_written,
+            "bytesRead": out.bytes_read,
+            "terminatedBy": out.terminated_by.as_str(),
+            "idleMs": out.idle_ms,
+            "timeoutMs": out.timeout_ms,
+            "encoding": encoding,
+            "truncated": out.truncated,
+        }),
+    )
+}
+
+#[cfg(desktop)]
+async fn execute_serial(
+    state: &AppState,
+    session_id: &str,
+    command: &str,
+    opts: CollectOptions,
+) -> ToolResult {
+    let handle = match crate::error::locked(&state.serial_sessions) {
+        Ok(sessions) => sessions.get(session_id).cloned(),
+        Err(e) => return internal_error(e),
+    };
+    let Some(handle) = handle else {
+        return ToolResult::err(
+            "mcp_session_not_ready",
+            format!("串口会话 {session_id} 的句柄已不存在"),
+            "串口可能刚被关闭或拔出；重新 get_environment 确认 phase=ready 后再试。",
+        );
+    };
+    // 先订阅再写入：广播不补发历史，顺序反了会漏掉对端首段回显。
+    let subscriber = handle.subscribe();
+    match super::exec::write_and_collect(
+        subscriber,
+        |bytes| handle.write_counted(bytes),
+        command,
+        opts.line_ending,
+        opts.idle,
+        opts.timeout,
+        opts.wait.as_ref(),
+    )
+    .await
+    {
+        Ok(out) => collect_success(session_id, "serial", out, opts.encoding),
+        Err(e) => ToolResult::err(
+            e.code(),
+            e.to_string(),
+            "串口可能已断开；重新 get_environment 确认会话状态。",
+        ),
+    }
+}
+
+async fn execute_telnet(
+    state: &AppState,
+    session_id: &str,
+    command: &str,
+    opts: CollectOptions,
+) -> ToolResult {
+    let handle = match crate::error::locked(&state.telnet_sessions) {
+        Ok(sessions) => sessions.get(session_id).cloned(),
+        Err(e) => return internal_error(e),
+    };
+    let Some(handle) = handle else {
+        return ToolResult::err(
+            "mcp_session_not_ready",
+            format!("Telnet 会话 {session_id} 的句柄已不存在"),
+            "会话可能刚被关闭；重新 get_environment 确认 phase=ready 后再试。",
+        );
+    };
+    // 先订阅再写入：广播不补发历史，顺序反了会漏掉对端首段回显。
+    let subscriber = handle.subscribe();
+    match super::exec::write_and_collect(
+        subscriber,
+        |bytes| handle.write_counted(bytes),
+        command,
+        opts.line_ending,
+        opts.idle,
+        opts.timeout,
+        opts.wait.as_ref(),
+    )
+    .await
+    {
+        Ok(out) => collect_success(session_id, "telnet", out, opts.encoding),
+        Err(e) => ToolResult::err(
+            e.code(),
+            e.to_string(),
+            "Telnet 可能已断开；重新 get_environment 确认会话状态。",
+        ),
+    }
 }
 
 pub async fn call_tool(
@@ -1601,24 +1832,49 @@ pub async fn call_tool(
                     )
                 }
             };
-            let timeout = args.get("timeoutMs").and_then(Value::as_u64);
-            // 传输判定先于黑名单与审批：terminal_execute 只复用 SSH 的 exec 通道，
-            // 串口 / Telnet 没有 exitCode 语义，直接回明确错误码，不弹审批。
-            let (owner, kind) = match session_meta(state, &session_id) {
+            // ① 类型校验：ssh / pty / serial / telnet 可执行；SFTP、端口转发等
+            // 确实没有命令通道的类型才回 mcp_unsupported_session_kind。
+            let (owner, kind, phase) = match session_meta(state, &session_id) {
                 Ok(v) => v,
                 Err(e) => return e,
             };
-            if kind != SessionKind::Ssh {
+            let executable = match kind {
+                SessionKind::Ssh | SessionKind::Telnet => true,
+                #[cfg(desktop)]
+                SessionKind::Pty | SessionKind::Serial => true,
+                _ => false,
+            };
+            if !executable {
                 return ToolResult::err(
                     "mcp_unsupported_session_kind",
                     format!(
-                        "会话 {session_id} 的类型是 {}，terminal_execute 只支持 SSH 会话",
+                        "会话 {session_id} 的类型是 {}，terminal_execute 没有可用的命令通道",
                         kind.as_str()
                     ),
                     HINT_SSH_ONLY,
                 );
             }
-            // 正则层黑名单（Netcatty `commandBlocklist.json` 默认清单 + 用户规则）。
+            // ② 未就绪（串口未打开、SSH 仍在建连 / 已关闭）单独报，别混成执行失败。
+            if phase != crate::state::SessionPhase::Ready {
+                return ToolResult::err(
+                    "mcp_session_not_ready",
+                    format!("会话 {session_id} 当前不是 ready 状态"),
+                    "先 get_environment 确认 phase=ready 再重试；串口未打开或 SSH 仍在建连时不要调用。",
+                );
+            }
+            // ③ 长度校验先于黑名单与审批（schema 声明的一致上限）。
+            if command.len() > plugin::MAX_COMMAND_LEN {
+                return ToolResult::err(
+                    "plugin_exec_command_too_long",
+                    format!(
+                        "命令长度 {} 超过上限 {}",
+                        command.len(),
+                        plugin::MAX_COMMAND_LEN
+                    ),
+                    "拆分为多条命令，或先把长脚本写入远端文件再执行它。",
+                );
+            }
+            // ④ 正则层黑名单（Netcatty `commandBlocklist.json` 默认清单 + 用户规则）。
             let blocklist = super::blocklist::load(&state.db);
             if let Some(rule) = super::blocklist::first_match(&blocklist, &command) {
                 return ToolResult::err(
@@ -1638,6 +1894,7 @@ pub async fn call_tool(
                     "改用等价但更具体的命令，或请用户在设置中调整命令黑名单。",
                 );
             }
+            // ⑤ 审批（写操作，四类终端一致）。
             let target_label = Some(format!("{} · {}", kind.as_str(), session_id));
             if let Err(e) = approval_gate(
                 cfg,
@@ -1655,20 +1912,90 @@ pub async fn call_tool(
             {
                 return e;
             }
-            match plugin::plugin_exec_impl(state, &owner, session_id, command, timeout).await {
-                Ok(out) => ToolResult::ok(
-                    "命令执行完成",
-                    "如需在同一会话继续执行，复用相同的 sessionId；任务结束调用 session_close。",
-                    json!({
-                        "stdout": out.stdout,
-                        "stderr": out.stderr,
-                        "exitCode": out.exit_code,
-                    }),
-                ),
-                Err(e) => ToolResult::err(
-                    e.code(),
-                    e.to_string(),
-                    "确认会话仍处于 ready 且命令语法正确后重试；会话断开时重新 get_environment。",
+            // ⑥ 执行。SSH / pty 走一次性 exec；serial / telnet 走写入 + 采集。
+            match kind {
+                SessionKind::Ssh => {
+                    let timeout_ms = args
+                        .get("timeoutMs")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(super::exec::DEFAULT_TIMEOUT_MS)
+                        .clamp(super::exec::MIN_TIMEOUT_MS, super::exec::MAX_TIMEOUT_MS);
+                    match plugin::plugin_exec_impl(
+                        state,
+                        &owner,
+                        session_id,
+                        command,
+                        Some(timeout_ms),
+                    )
+                    .await
+                    {
+                        Ok(out) => ToolResult::ok(
+                            "命令执行完成",
+                            "如需在同一会话继续执行，复用相同的 sessionId；任务结束调用 session_close。",
+                            json!({
+                                "stdout": out.stdout,
+                                "stderr": out.stderr,
+                                "exitCode": out.exit_code,
+                            }),
+                        ),
+                        Err(e) => ToolResult::err(
+                            e.code(),
+                            e.to_string(),
+                            "确认会话仍处于 ready 且命令语法正确后重试；会话断开时重新 get_environment。",
+                        ),
+                    }
+                }
+                #[cfg(desktop)]
+                SessionKind::Pty => {
+                    let timeout_ms = args
+                        .get("timeoutMs")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(super::exec::DEFAULT_TIMEOUT_MS)
+                        .clamp(super::exec::MIN_TIMEOUT_MS, super::exec::MAX_TIMEOUT_MS);
+                    match plugin::plugin_exec_impl(
+                        state,
+                        &owner,
+                        session_id,
+                        command,
+                        Some(timeout_ms),
+                    )
+                    .await
+                    {
+                        Ok(out) => ToolResult::ok(
+                            "本地命令执行完成",
+                            "本地终端每次调用都新起子进程（POSIX sh -c / Windows cmd /C）一次性收取输出，不等于往用户可见终端里打字：不要指望它改变该 pane 的 cwd / 环境，交互式程序也请让用户在终端里跑。",
+                            json!({
+                                "stdout": out.stdout,
+                                "stderr": out.stderr,
+                                "exitCode": out.exit_code,
+                            }),
+                        ),
+                        Err(e) => ToolResult::err(
+                            e.code(),
+                            e.to_string(),
+                            "确认本地会话仍处于 ready 后重试；命令超时会被整体杀掉。",
+                        ),
+                    }
+                }
+                #[cfg(desktop)]
+                SessionKind::Serial => {
+                    let opts = match collect_options(args) {
+                        Ok(v) => v,
+                        Err(e) => return e,
+                    };
+                    execute_serial(state, &session_id, &command, opts).await
+                }
+                SessionKind::Telnet => {
+                    let opts = match collect_options(args) {
+                        Ok(v) => v,
+                        Err(e) => return e,
+                    };
+                    execute_telnet(state, &session_id, &command, opts).await
+                }
+                _ => ToolResult::err(
+                    "mcp_unsupported_session_kind",
+                    format!("会话 {session_id} 的类型是 {}，没有可用的命令通道", kind.as_str()),
+                    HINT_SSH_ONLY,
                 ),
             }
         }
@@ -1689,7 +2016,7 @@ pub async fn call_tool(
                 Ok(value) => value,
                 Err(e) => return e,
             };
-            let (_owner, kind) = match session_meta(state, &session_id) {
+            let (_owner, kind, _phase) = match session_meta(state, &session_id) {
                 Ok(v) => v,
                 Err(e) => return e,
             };
@@ -1760,7 +2087,7 @@ pub async fn call_tool(
                     )
                 }
             };
-            let (owner, kind) = match session_meta(state, &session_id) {
+            let (owner, kind, _phase) = match session_meta(state, &session_id) {
                 Ok(v) => v,
                 Err(e) => return e,
             };

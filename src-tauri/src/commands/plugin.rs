@@ -31,8 +31,8 @@ const MAX_TOTAL_UNCOMPRESSED: u64 = 64 * 1024 * 1024;
 
 // ── Exec limits ─────────────────────────────────────────────────────────────
 
-const MAX_COMMAND_LEN: usize = 4096;
-const DEFAULT_TIMEOUT_MS: u64 = 10_000;
+pub const MAX_COMMAND_LEN: usize = 4096;
+pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 
