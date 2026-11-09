@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-11-09 — MCP 整改 M0：文件原语基础设施（不新增工具）
+
+- 新增 `src-tauri/src/mcp/fs/`：
+  - `path.rs`：`~` / 相对路径展开、`.`/`..` 折叠，越过根报 `mcp_path_escape`；jail 校验（root 自身算内，`/codex` 不算 `/code` 内）。
+  - `session.rs`：`sessionId` 必须指向 ready 的 SSH 会话；`hostId`/`profileId` 先复用该 profile 的 ready 会话，没有则按 vault 档案自动建连。并发请求按 hostId 单飞（`runtime_state::connect_gate`），连接失败清闸门。
+  - `handle.rs`：优先复用 `state.sftp_sessions` 中同父会话的通道，否则 `SftpHandle::from_handle` 在 SSH 会话上新开 SFTP 子通道（随 `Arc` 释放）。
+  - `caps.rs`：一次探针取 `python3` / `perl` / `diff`，按 profile 缓存（供 M2 的 grep/patch 脚本选型）。
+  - `mod.rs`：`window_lines`（默认开窗 + `totalLines` + `nextCursor`）与 `tail_bytes`（尾部偏置截断，落 UTF-8 边界）。
+- 新增 `mcp/permissions.rs`：read / write / delete / transfer / build / session 分级；read 恒放行，observer 拒绝其余，delete 在任何档位都 `Ask`（auto 也要确认）。
+- 新增 `mcp/audit.rs`：500 条环形审计，字段 `{ts, tool, sessionId, path, size, sha256, decision}`。
+- 新增 `mcp/runtime_state.rs`：进程单例（MCP owner uuid、建连闸门、caps 缓存、审计环）。
+- 抽取 `commands::session::connect_profile(app, &AppState, owner, ...)`：`ssh_connect` 变薄壳，MCP 自动建连复用同一条链路（堡垒机链 / 代理 / known_hosts / 录制 / 发行版探测），owner 用 `SessionOwner::Headless`，不占窗口。
+- 踩坑 95：自动建连不能直接调 `ssh_connect` 命令——它需要 `tauri::Window` 取 label 当 owner；MCP 没有窗口。必须把命令主体抽成接受 `SessionOwner` 的函数，命令与 MCP 各自传入 `Window` / `Headless`。
+- 踩坑 96：MCP 运行时状态若加进 `AppState`，要给 7 处测试构造字面量补字段，而本沙箱无法 `cargo check`，漏改风险高；改用 `OnceLock` 进程单例，零侵入且天然匹配「一个 app 一个 MCP server」。
+- 顺延：`ai/session/file_ops.rs` 的远端脚本纯函数（`build_match_cmd` / `build_cp_cmd` / `build_modify_cmd` / `build_diff_cmd` / `build_mv_cmd`）提取随 M2 的 `fs_patch` 一起提交；前端设置字段随 M7。
+- 门禁：`rustfmt --check`（本轮新增/改动文件）✓、`npm run build` ✓；`cargo check` 不可用（沙箱缺 `glib-2.0`）。
+
+---
+
 ## 2026-11-08 — 合并 `feat/ui-batch` + 主实例补测（日志四按钮 / 四类终端高亮 / 选色控件）
 
 ### 合并

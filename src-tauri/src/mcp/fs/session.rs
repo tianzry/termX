@@ -1,0 +1,172 @@
+//! MCP 会话解析：`sessionId` 直用，`hostId` 复用或按需自动建连。
+//!
+//! 自动建连复用 `commands::session::connect_profile`（与 UI 完全同一条链路：
+//! 堡垒机链、代理、known_hosts、录制设置都一致），owner 使用
+//! `SessionOwner::Headless`，因此不会占用窗口、也不会出现在标签页里。
+
+use serde_json::{json, Value};
+use tauri::AppHandle;
+
+use crate::error::{locked, AppError, AppResult};
+use crate::ssh::client::SshHandle;
+use crate::state::{AppState, SessionKind, SessionOwner, SessionPhase};
+
+use super::super::runtime_state;
+
+/// 会话来源：用户窗口打开，或 MCP 自动建立。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionOrigin {
+    User,
+    Mcp,
+}
+
+pub struct ResolvedSession {
+    pub session_id: String,
+    pub profile_id: String,
+    pub handle: SshHandle,
+    pub origin: SessionOrigin,
+}
+
+impl SessionOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionOrigin::User => "user",
+            SessionOrigin::Mcp => "mcp",
+        }
+    }
+}
+
+pub fn session_id_arg(args: &Value) -> Option<String> {
+    args.get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+pub fn host_id_arg(args: &Value) -> Option<String> {
+    ["hostId", "profileId"]
+        .iter()
+        .find_map(|key| args.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// 解析工具参数里的会话：`sessionId` 优先，其次 `hostId`。
+pub async fn resolve(
+    app: &AppHandle,
+    state: &AppState,
+    args: &Value,
+) -> AppResult<ResolvedSession> {
+    if let Some(session_id) = session_id_arg(args) {
+        return ready_by_id(state, &session_id);
+    }
+    if let Some(host_id) = host_id_arg(args) {
+        return ensure_for_host(app, state, &host_id).await;
+    }
+    Err(AppError::config("mcp_session_missing", json!({})))
+}
+
+fn ready_by_id(state: &AppState, session_id: &str) -> AppResult<ResolvedSession> {
+    let origin = {
+        let registry = locked(&state.lifecycle_sessions)?;
+        let record = registry.get(session_id).ok_or_else(|| {
+            AppError::not_found("mcp_session_not_found", json!({ "id": session_id }))
+        })?;
+        if record.kind != SessionKind::Ssh || record.phase != SessionPhase::Ready {
+            return Err(AppError::config(
+                "mcp_session_not_ready",
+                json!({ "id": session_id }),
+            ));
+        }
+        origin_of(record.owner.clone())
+    };
+    let handle = {
+        let sessions = locked(&state.sessions)?;
+        sessions
+            .get(session_id)
+            .ok_or_else(|| {
+                AppError::not_found("mcp_session_not_found", json!({ "id": session_id }))
+            })?
+            .clone()
+    };
+    Ok(ResolvedSession {
+        session_id: session_id.to_string(),
+        profile_id: handle.profile_id().to_string(),
+        handle: handle.ssh_handle().clone(),
+        origin,
+    })
+}
+
+fn origin_of(owner: SessionOwner) -> SessionOrigin {
+    match owner {
+        SessionOwner::Headless(_) => SessionOrigin::Mcp,
+        SessionOwner::Window(_) => SessionOrigin::User,
+    }
+}
+
+/// 复用该主机的 ready 会话；没有就自动建连（并发请求单飞）。
+pub async fn ensure_for_host(
+    app: &AppHandle,
+    state: &AppState,
+    host_id: &str,
+) -> AppResult<ResolvedSession> {
+    // 先确认 vault 里有这个主机档案；不存在直接回 not_found，避免无意义建连。
+    crate::db::profile::get(&state.db, host_id)?;
+    if let Some(found) = find_ready_for_host(state, host_id)? {
+        return Ok(found);
+    }
+
+    let gate = runtime_state::connect_gate(host_id);
+    let _guard = gate.lock().await;
+    if let Some(found) = find_ready_for_host(state, host_id)? {
+        return Ok(found);
+    }
+
+    let owner = SessionOwner::Headless(runtime_state::mcp_owner());
+    crate::commands::session::connect_profile(
+        app.clone(),
+        state,
+        owner,
+        host_id.to_string(),
+        None,
+        80,
+        24,
+        None,
+        None,
+    )
+    .await?;
+
+    find_ready_for_host(state, host_id)?
+        .ok_or_else(|| AppError::other("mcp_session_lost", json!({ "hostId": host_id })))
+}
+
+fn find_ready_for_host(state: &AppState, host_id: &str) -> AppResult<Option<ResolvedSession>> {
+    let candidates: Vec<(String, SessionOrigin)> = {
+        let registry = locked(&state.lifecycle_sessions)?;
+        registry
+            .iter()
+            .filter(|(_, record)| {
+                record.kind == SessionKind::Ssh && record.phase == SessionPhase::Ready
+            })
+            .map(|(id, record)| (id.clone(), origin_of(record.owner.clone())))
+            .collect()
+    };
+
+    let sessions = locked(&state.sessions)?;
+    for (session_id, origin) in candidates {
+        let Some(handle) = sessions.get(&session_id) else {
+            continue;
+        };
+        if handle.profile_id() == host_id {
+            return Ok(Some(ResolvedSession {
+                session_id,
+                profile_id: handle.profile_id().to_string(),
+                handle: handle.ssh_handle().clone(),
+                origin,
+            }));
+        }
+    }
+    Ok(None)
+}

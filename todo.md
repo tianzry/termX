@@ -579,3 +579,18 @@ P1 已修 2 项（已知主机卡片图标/3 列、端口转发居中空态）�
 > - W2 设置页选色控件：主实例回归通过——8 行色块按钮点击弹出 11 色 + 自定义面板，选「紫」即时回写 `#A78BFA`、Esc 关闭，已恢复红色；与工具栏共用 `HighlightColorPicker`。
 > - W3 日志页四动作：主实例实测通过——行单击 0.7ms 只选中不打开，系统打开 15.4ms 拉起系统窗口，定位 34.2ms，导出弹出系统另存框且后端 txt 25.9ms / html 17.2ms，删除二次确认后文件消失并刷新列表（19→18）。
 > - 门禁：`npm run test:run` 921 通过、`npm run build`、`cargo check --lib`、`cargo check --lib --features server`、`cargo test --lib` 1006 通过、`npx tauri build --no-bundle` 全部通过。
+
+---
+
+## MCP 文件原语整改（2026-11-09 起，方案见 `docs/mcp-refactor.md`）
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| M0 基础设施 | ✅ 完成 | `mcp/fs/{path,session,handle,caps,mod}.rs` + `mcp/{permissions,audit,runtime_state}.rs`；抽取 `connect_profile` 供 MCP 自动建连；rustfmt ✓ / npm build ✓（沙箱无 glib，无法 cargo check） |
+| M1 只读工具 | 🟨 进行中 | `get_environment` 扩展、`fs_read`、`fs_grep`、`fs_glob` |
+| M2 写工具 | ⬜ 未开始 | `fs_patch`（多文件 + dryRun）、`fs_write`；脚本纯函数提取随本阶段做 |
+| M3 传输 | ⬜ 未开始 | `sftp_put` / `sftp_get`（批量、递归、sha256） |
+| M4 删除 | ⬜ 未开始 | `fs_delete`（dry-run + confirmToken） |
+| M5 执行 | ⬜ 未开始 | `build_run`、`term_run` 策略化 |
+| M6 复合 | ⬜ 未开始 | `batch` |
+| M7 文档与前端 | ⬜ 未开始 | `mcp-guide` / `mcp-port-plan` / AI 设置页工具矩阵 + `mcp.workspace_root` 字段 |

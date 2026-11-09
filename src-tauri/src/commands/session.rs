@@ -8,7 +8,7 @@ use crate::ssh::client;
 use crate::state::{AppState, SessionKind, SessionOwner};
 
 /// 把 SecretStore 里的 secret 灌到 Credential 上。
-fn load_secrets(state: &State<'_, AppState>, c: &mut Credential) -> AppResult<()> {
+fn load_secrets(state: &AppState, c: &mut Credential) -> AppResult<()> {
     c.secret = state.secret_store.get(&cred_secret_key(&c.id))?;
     Ok(())
 }
@@ -18,7 +18,7 @@ fn load_secrets(state: &State<'_, AppState>, c: &mut Credential) -> AppResult<()
 /// `credential_id` 换用另一条已保存凭据；`username` / `password` 依次覆盖
 /// 登录名与密码认证。密码覆盖最后生效，因为它是用户在弹窗里刚输入的原文。
 fn apply_auth_override(
-    state: &State<'_, AppState>,
+    state: &AppState,
     credential: &mut Credential,
     override_input: Option<AuthOverride>,
 ) -> AppResult<()> {
@@ -80,15 +80,16 @@ pub fn apply_ssh_runtime_settings(state: &AppState) -> AppResult<()> {
     Ok(())
 }
 
-/// 经 profile_id 建立 SSH 连接（自动带堡垒机链）。
-#[tauri::command]
-#[allow(clippy::too_many_arguments)] // Flat fields preserve the existing invoke wire contract.
-pub async fn ssh_connect(
+/// 建立 SSH 连接的核心实现（Tauri 命令与 MCP 共用）。
+///
+/// `owner` 决定会话归属：窗口会话用 `SessionOwner::Window`，MCP 自动建连用
+/// `SessionOwner::Headless`，两者共用同一条生命周期与清理路径。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn connect_profile(
     app: AppHandle,
-    window: tauri::Window,
-    state: State<'_, AppState>,
+    state: &AppState,
+    owner: SessionOwner,
     profile_id: String,
-    // 前端 tab ID，用于发送连接日志
     log_session_id: Option<String>,
     cols: u32,
     rows: u32,
@@ -97,9 +98,8 @@ pub async fn ssh_connect(
 ) -> AppResult<String> {
     let requested_session_id = session_id.clone();
     let session_id = crate::commands::lifecycle::resolve_session_id(session_id)?;
-    let owner = SessionOwner::Window(window.label().to_owned());
     let reservation = crate::commands::lifecycle::reserve_resource(
-        &state,
+        state,
         &session_id,
         SessionKind::Ssh,
         owner.clone(),
@@ -110,8 +110,8 @@ pub async fn ssh_connect(
             AppError::NotFound(_) => AppError::not_found("profile_cred_not_found", json!({})),
             other => other,
         })?;
-    load_secrets(&state, &mut credential)?;
-    apply_auth_override(&state, &mut credential, auth_override)?;
+    load_secrets(state, &mut credential)?;
+    apply_auth_override(state, &mut credential, auth_override)?;
 
     // 解析整条堡垒机链 + 给每一跳加载凭证（含 secret）
     let chain_profiles = crate::ssh::bastion::resolve_chain(&state.db, &profile)?;
@@ -119,7 +119,7 @@ pub async fn ssh_connect(
     let proxy_configs = {
         let mut all: Vec<&Profile> = vec![&profile];
         all.extend(chain_profiles.iter());
-        resolve_proxy_configs(&state, &all)?
+        resolve_proxy_configs(state, &all)?
     };
     let mut chain: Vec<(Profile, Credential)> = Vec::with_capacity(chain_profiles.len());
     for hop in chain_profiles {
@@ -131,7 +131,7 @@ pub async fn ssh_connect(
                 ),
                 other => other,
             })?;
-        load_secrets(&state, &mut bc)?;
+        load_secrets(state, &mut bc)?;
         chain.push((hop, bc));
     }
 
@@ -143,9 +143,9 @@ pub async fn ssh_connect(
         .and_then(|v| v.parse().ok())
         .unwrap_or(crate::ssh::client::DEFAULT_CONNECT_TIMEOUT);
     // 设置中心 → 终端 → 主机密钥校验策略 / 终端仿真类型。
-    apply_ssh_runtime_settings(&state)?;
+    apply_ssh_runtime_settings(state)?;
     // 主机档案显式开启「自动记录会话日志」时才落 `.log`；默认不录。
-    let auto_log_path = crate::commands::settings::auto_session_log_path(&state, &profile);
+    let auto_log_path = crate::commands::settings::auto_session_log_path(state, &profile);
 
     // Only pass log_session_id if verbose logging is enabled
     let prompt_session_id = requested_session_id
@@ -212,6 +212,35 @@ pub async fn ssh_connect(
     )?;
 
     Ok(session_id)
+}
+
+/// 经 profile_id 建立 SSH 连接（自动带堡垒机链）。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Flat fields preserve the existing invoke wire contract.
+pub async fn ssh_connect(
+    app: AppHandle,
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    profile_id: String,
+    // 前端 tab ID，用于发送连接日志
+    log_session_id: Option<String>,
+    cols: u32,
+    rows: u32,
+    session_id: Option<String>,
+    auth_override: Option<AuthOverride>,
+) -> AppResult<String> {
+    connect_profile(
+        app,
+        state.inner(),
+        SessionOwner::Window(window.label().to_owned()),
+        profile_id,
+        log_session_id,
+        cols,
+        rows,
+        session_id,
+        auth_override,
+    )
+    .await
 }
 
 #[tauri::command]
