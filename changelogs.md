@@ -12,6 +12,7 @@
 - 后台进程写进 `term_run` 描述、instructions 与 `docs/mcp-guide.md`：`cmd &` 会随一次性远端 shell 退出被回收，常驻要用 `setsid nohup <cmd> </dev/null >/tmp/task.log 2>&1 & echo $!` 再轮询日志（不新增 `start_background` 工具，避免多一层进程管理面）。
 - 工具数 21 → 22；同步 `guide.rs`（INSTRUCTIONS 第 5/8/9 条、工具表与返回示例）、`docs/mcp-guide.md`（3.5.1、3.6 参数表、权限表、错误表、已知限制；顺带修正过时的「18 个工具」「无 Mcp-Session-Id」描述）。
 - 门禁：`cargo test --lib mcp::` 80 ✓（新增 env 校验、命令拼装、preamble 读写与合并 5 个用例）、`cargo check --all-targets` ✓。
+- 发布构建踩坑：直接 `cargo build --release` 不会启用 `custom-protocol`，产物仍指向 `devUrl`（`http://localhost:1420`），启动显示「localhost 拒绝连接」。正确命令是 `npm run build && cargo build --release --features custom-protocol`（或 `npm run tauri build`）；本次 release 已按此重建，exe 内含 `dist` 的 `assets/index-*.js`。
 
 ---
 
