@@ -370,7 +370,8 @@ serial / telnet 返回示例（没有退出码，不伪造 0）：
 | `preamble` | string | 是 | setup 命令（可多行，≤ 8 KiB）；**空串表示清除** |
 
 - `session_open` 也接受同名 `preamble` 参数（仅 `kind=ssh`），建链成功后立即注册。
-- preamble 只影响当前 MCP 会话可见的该 SSH 会话，不影响用户窗口或其它 MCP 会话；`session_close` 成功时一并清除。
+- preamble 绑定「当前接入身份 + 该 SSH 会话」：即便用户窗口会话被多个客户端共享，各客户端的 preamble 也互不可见；`session_close` 成功时一并清除。
+- preamble 只存在 termX 进程内存里：termX 重启或会话关闭后需要重新设置（agent 可先 `set_session_preamble` 再跑命令）。
 - 一次性环境差异用 `term_run` / `build_run` 的 `env`，不要为每条命令都改 preamble。
 - 写操作，受权限档位约束；preamble 本身也要通过破坏性命令策略检查。
 

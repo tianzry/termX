@@ -7,7 +7,7 @@
 ## 2026-11-10 — MCP 命令上下文：cwd / env / 会话 preamble（仍然无状态）
 
 - `term_run` 新增 `cwd` 与 `env`，`build_run` 新增 `env`。统一执行顺序 `cd → 会话 preamble → export → command`（本次 env 最后覆盖 preamble），每次调用重新拼装脚本，不保留远端 shell，因此不会出现「上一条命令改了环境、这一条莫名生效」的隐藏状态。`env` 校验变量名（`[A-Za-z_][A-Za-z0-9_]*`、≤64 个、总量 ≤64 KiB），值走 POSIX 单引号转义；`cwd` 进不去回 `mcp_cwd_invalid`，不再悄悄落回 home 执行。
-- 新增会话级 preamble：`session_open` 可选 `preamble`（仅 ssh），或新工具 `set_session_preamble`（sessionId/hostId + preamble，空串清除）。preamble 存在 `runtime_state` 的进程内映射（单条 ≤8 KiB，最多 512 条，`session_close` 成功即回收），只影响该会话的 `term_run` / `build_run`；不是泄漏式状态，而是每次确定性重放。审批摘要与破坏性策略检查都会带上 preamble 文本。
+- 新增会话级 preamble：`session_open` 可选 `preamble`（仅 ssh），或新工具 `set_session_preamble`（sessionId/hostId + preamble，空串清除）。preamble 存在 `runtime_state` 的进程内映射（key = 接入身份 + sessionId；单条 ≤8 KiB，最多 512 条，`session_close` 成功即回收），只影响本客户端对该会话的 `term_run` / `build_run`，共享的用户窗口会话也不会串；不是泄漏式状态，而是每次确定性重放。审批摘要与破坏性策略检查都会带上 preamble 文本。
 - `term_run` 返回新增 `cwd` / `preambleApplied`；`set_session_preamble` 返回 `sessionId` / `preamble` / `cleared`。
 - 后台进程写进 `term_run` 描述、instructions 与 `docs/mcp-guide.md`：`cmd &` 会随一次性远端 shell 退出被回收，常驻要用 `setsid nohup <cmd> </dev/null >/tmp/task.log 2>&1 & echo $!` 再轮询日志（不新增 `start_background` 工具，避免多一层进程管理面）。
 - 工具数 21 → 22；同步 `guide.rs`（INSTRUCTIONS 第 5/8/9 条、工具表与返回示例）、`docs/mcp-guide.md`（3.5.1、3.6 参数表、权限表、错误表、已知限制；顺带修正过时的「18 个工具」「无 Mcp-Session-Id」描述）。

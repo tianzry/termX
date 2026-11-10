@@ -420,7 +420,7 @@ pub fn definitions() -> Value {
         "写操作。为 SSH 会话注册或清除会话级前置命令：之后每次 term_run / build_run 都按 cd → preamble → env → command 确定性重放。\
 何时用：环境初始化只写一次（source ~/zephyrproject/zephyr/zephyr-env.sh、conda activate 等），避免每条命令都拼一长串；preamble 传空串即清除。\
 何时不用：一次性的环境差异直接用 term_run / build_run 的 env；串口 / Telnet 没有 shell，不支持 preamble。\
-只作用于当前 MCP 会话可见的 SSH 会话；受权限档位约束。",
+只作用于当前 MCP 会话可见的 SSH 会话，termX 重启或会话关闭后失效；受权限档位约束。",
         json!({
             "preamble": {
                 "type": "string",
@@ -1918,7 +1918,7 @@ pub async fn call_tool(
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let preamble = runtime_state::session_preamble(&session.session_id);
+            let preamble = runtime_state::session_preamble(&client.id, &session.session_id);
             let effective = command_with_preamble(preamble.as_deref(), &command);
             if let Some(reason) = super::policy::destructive_reason(&effective) {
                 return ToolResult::err(
@@ -2012,7 +2012,7 @@ pub async fn call_tool(
                 Ok(value) => value,
                 Err(e) => return tool_error(e),
             };
-            let preamble = runtime_state::session_preamble(&session.session_id);
+            let preamble = runtime_state::session_preamble(&client.id, &session.session_id);
             let effective = command_with_preamble(preamble.as_deref(), &command);
             if let Some(reason) = super::policy::destructive_reason(&effective) {
                 return ToolResult::err(
@@ -2493,7 +2493,7 @@ pub async fn call_tool(
             match opened {
                 Ok(session_id) => {
                     if let Some(value) = preamble.as_deref() {
-                        runtime_state::set_session_preamble(&session_id, value);
+                        runtime_state::set_session_preamble(&client.id, &session_id, value);
                     }
                     ToolResult::ok(
                         "会话已建立",
@@ -2768,7 +2768,7 @@ pub async fn call_tool(
             {
                 return e;
             }
-            runtime_state::set_session_preamble(&session.session_id, &preamble);
+            runtime_state::set_session_preamble(&client.id, &session.session_id, &preamble);
             ToolResult::ok(
                 if cleared {
                     "会话 preamble 已清除"
@@ -2824,7 +2824,7 @@ pub async fn call_tool(
             }
             match lifecycle::close_resource(state, &session_id, kind, &owner) {
                 Ok(()) => {
-                    runtime_state::forget_session_preamble(&session_id);
+                    runtime_state::forget_session_preamble(&client.id, &session_id);
                     ToolResult::ok(
                         "会话已关闭",
                         "如需再次连接，请先在 termX 中重新打开会话，再调用 get_environment。",
