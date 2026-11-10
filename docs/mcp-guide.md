@@ -4,7 +4,7 @@
 
 ## 1. termX MCP 是什么
 
-termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX 会在本机启动一个 Streamable HTTP 端点（默认 `http://127.0.0.1:47391/mcp`），把**已保存的主机**和**已打开的会话**以 18 个工具暴露给外部 AI 客户端（Qoder、Claude Desktop、Cursor、Claude Code 等）。
+termX 是本机的 SSH / 串口 / 终端客户端。开启 MCP 服务后，termX 会在本机启动一个 Streamable HTTP 端点（默认 `http://127.0.0.1:47391/mcp`），把**已保存的主机**和**已打开的会话**以 22 个工具暴露给外部 AI 客户端（Qoder、Claude Desktop、Cursor、Claude Code 等）。
 
 工具分三个平面：
 
@@ -135,7 +135,7 @@ curl -s "$URL" \
 接通成功的标志：
 
 - `initialize` 的 `result.serverInfo.name` 是 `termX`，并带有非空 `instructions`；
-- `tools/list` 返回 18 个工具：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`serial_write`、`telnet_write`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`；
+- `tools/list` 返回 22 个工具：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`session_open`、`set_session_preamble`、`session_close`、`serial_write`、`serial_read`、`telnet_write`、`telnet_read`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`；
 - `tools/call` 返回 `content[0].text`，能解析出 `code`、`message`、`hint` 与业务字段。
 
 ## 3. 工具参考
@@ -360,6 +360,33 @@ serial / telnet 返回示例（没有退出码，不伪造 0）：
 | `permission_denied` | observer 档位或审批未通过 | 请用户放行 |
 | `close_failed` | 关闭链路失败 | 重新确认会话是否仍存在；已关闭可忽略 |
 
+### 3.5.1 会话 preamble（`set_session_preamble` / `session_open.preamble`）
+
+**用途**：给一个 SSH 会话注册一次性的 setup 命令（例如 `source ~/zephyrproject/zephyr/zephyr-env.sh`），之后该会话每次 `term_run` / `build_run` 都按 `cd → preamble → env → command` **确定性重放**（本次 `env` 最后覆盖 preamble 的同名变量）。不是有状态 shell：termX 不会保留远端 shell，preamble 只是每次拼进脚本的固定前缀，因此不会出现「这条命令跑在上一条命令的环境里」的隐藏状态。
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `sessionId` / `hostId` | string | 二选一 | `hostId` 无就绪会话时按 vault 档案自动建连 |
+| `preamble` | string | 是 | setup 命令（可多行，≤ 8 KiB）；**空串表示清除** |
+
+- `session_open` 也接受同名 `preamble` 参数（仅 `kind=ssh`），建链成功后立即注册。
+- preamble 只影响当前 MCP 会话可见的该 SSH 会话，不影响用户窗口或其它 MCP 会话；`session_close` 成功时一并清除。
+- 一次性环境差异用 `term_run` / `build_run` 的 `env`，不要为每条命令都改 preamble。
+- 写操作，受权限档位约束；preamble 本身也要通过破坏性命令策略检查。
+
+返回示例：
+
+```json
+{
+  "code": "ok",
+  "message": "会话 preamble 已设置",
+  "hint": "该 preamble 只影响本会话：每次 term_run / build_run 前重放，不影响用户窗口或其它 MCP 会话。",
+  "sessionId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+  "preamble": "source ~/zephyrproject/zephyr/zephyr-env.sh",
+  "cleared": false
+}
+```
+
 ### 3.6 文件 / 传输 / 构建工具
 
 这些工具都接受 `sessionId` **或** `hostId`（`anyOf`，二选一）；`hostId` 无就绪会话时自动按 vault 档案建连。远端路径支持绝对路径、`~` 与相对 home 的路径，不限制目录范围；`localPath` 只要求是绝对路径。
@@ -374,8 +401,8 @@ serial / telnet 返回示例（没有退出码，不伪造 0）：
 | `sftp_put` | 写 | `items[{localPath,remotePath}]`（≤2000）/ `overwrite`(false) / `recursive`(false) | `ok` / `failed` / `results[{...,size,sha256,status}]` |
 | `sftp_get` | 写 | `items[{remotePath,localPath}]` / `overwrite`(false) / `recursive`(false) | 同上 |
 | `fs_delete` | 写 | `paths`(≤200) / `recursive`(false) / `dryRun`(**true**) / `confirmToken` | dry-run：`wouldDelete` + `confirmToken`；执行：`deleted` |
-| `build_run` | 写 | `command` / `cwd` / `timeoutMs`(120s) / `maxOutputBytes`(16 KiB) / `teeToRemoteFile` | `exitCode` / `stdoutTail` / `stderrTail` / `totalBytes` / `truncated` / `fullLog` |
-| `term_run` | 写 | `command` / `timeoutMs`(30s) / `maxOutputBytes`(16 KiB) | 同上（无 `fullLog`） |
+| `build_run` | 写 | `command` / `cwd` / `env` / `timeoutMs`(120s) / `maxOutputBytes`(16 KiB) / `teeToRemoteFile` | `exitCode` / `stdoutTail` / `stderrTail` / `totalBytes` / `truncated` / `fullLog` |
+| `term_run` | 写 | `command` / `cwd` / `env` / `timeoutMs`(30s) / `maxOutputBytes`(16 KiB) | 同上（无 `fullLog`），另回 `cwd` / `preambleApplied` |
 | `batch` | 写 | `ops[{tool,args}]`(1–50) / `stopOnError`(true) | `results[{tool,isError,result}]` / `failed` |
 
 关键行为：
@@ -385,6 +412,8 @@ serial / telnet 返回示例（没有退出码，不伪造 0）：
 - **fs_delete**：`dryRun` 默认 true；把返回的 `confirmToken` 原样带回并置 `dryRun=false` 才会删除。token 5 分钟过期、绑定会话/路径/递归、取用即失效。**任何权限档位都需要 token。**
 - **build_run**：远端把 stdout/stderr 落到临时文件后取**尾部**，失败信息不会因日志过长被丢掉；`teeToRemoteFile` 写完整日志（stdout 后接 stderr），失败回 `teeFailed=true`。
 - **term_run / build_run**：只拦破坏性命令（`rm -rf /`、`mkfs`、`dd of=/dev/*`、关机、fork 炸弹等），不套 `terminal_execute` 的全量黑名单。
+- **cwd / env**：执行顺序固定为 `cd → 会话 preamble → export → command`，每次调用都重新拼装，不继承上一条命令的 shell 状态。`env` 是「变量名 → 字符串」对象（最多 64 个，名字须匹配 `[A-Za-z_][A-Za-z0-9_]*`，值走 POSIX 单引号转义）；`cwd` 进不去返回 `mcp_cwd_invalid`。
+- **后台进程**：`term_run` 每次都是全新的远端 shell，`cmd &` 会随 shell 退出被回收；要常驻请 `setsid nohup <cmd> </dev/null >/tmp/task.log 2>&1 & echo $!`，再轮询日志。
 - **batch**：只允许 `fs_read` / `fs_grep` / `fs_glob` / `fs_patch` / `fs_write`；`fs_delete` / `build_run` / `term_run` / `sftp_*` 与嵌套 `batch` 会被拒绝（`batch_tool_not_allowed`）。
 
 ### 3.7 串口 / Telnet 字节写
@@ -538,7 +567,7 @@ get_environment（拿 sessionId / hostId / hosts）
 
 ### 5.1 三档权限
 
-| 档位 | 只读工具（`fs_read` / `fs_grep` / `fs_glob` / `get_environment` / `vault_hosts_list` / `snippets_list`） | 写操作（`fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` 真实删除 / `build_run` / `term_run` / `terminal_execute` / `serial_write` / `telnet_write` / `session_close`，含 `batch` 内层写 op） |
+| 档位 | 只读工具（`fs_read` / `fs_grep` / `fs_glob` / `get_environment` / `vault_hosts_list` / `snippets_list` / `serial_read` / `telnet_read`） | 写操作（`fs_patch` / `fs_write` / `sftp_put` / `sftp_get` / `fs_delete` 真实删除 / `build_run` / `term_run` / `terminal_execute` / `serial_write` / `telnet_write` / `session_open` / `set_session_preamble` / `session_close`，含 `batch` 内层写 op） |
 | --- | --- | --- |
 | 只读（`observer`） | 正常可用 | 直接拒绝，返回 `permission_denied` |
 | 确认（`confirm`，默认） | 正常可用 | 生成审批项，等用户在 termX 主窗选择；110 秒未处理自动拒绝 |
@@ -663,6 +692,9 @@ get_environment（拿 sessionId / hostId / hosts）
 | `mcp_command_destructive` | `build_run` / `term_run` 命中破坏性策略 | 拆分命令；确需执行请在终端手动操作 |
 | `mcp_unsupported_session_kind` | 该工具需要 SSH 的 SFTP / exec 通道，但 `sessionId` 指向串口 / Telnet / SFTP / 端口转发等传输（`params` 带 `id` 与 `kind`） | 改用 `kind=ssh` 的会话；串口 / Telnet 只有各自的字节写工具，`terminal_execute` 不受此限 |
 | `mcp_session_not_ready` | 会话存在但 `phase` 不是 `ready`（SSH 仍在建连 / 已关闭、串口未打开、句柄已释放） | 重新 `get_environment` 确认 `phase=ready` 后重试 |
+| `mcp_env_invalid` | `env` 不是对象、变量名不合法、值不是字符串或总量超限 | 变量名用 `[A-Za-z_][A-Za-z0-9_]*`；最多 64 个；值必须是字符串 |
+| `mcp_preamble_too_long` | preamble 超过 8 KiB | 把初始化逻辑写进远端脚本，preamble 只留 `source` 一行 |
+| `mcp_cwd_invalid` | `cwd` 不存在或当前用户不可进入 | 确认路径；不传 `cwd` 时从 home 开始 |
 | `mcp_file_exists` / `mcp_local_file_exists` | 目标已存在且 `overwrite=false` | 显式传 `overwrite=true` |
 | `mcp_delete_token_required` / `_invalid` / `_mismatch` | 未先 dryRun、token 过期或参数不一致 | 重新 `dryRun=true` 拿新 token，并保持路径/recursive 一致 |
 | `mcp_delete_is_dir` / `mcp_transfer_is_dir` | 目录未显式递归 | 传 `recursive=true` |
@@ -681,11 +713,11 @@ get_environment（拿 sessionId / hostId / hosts）
 ## 8. 已知限制
 
 - **无 SSE**：仅 POST 单次 JSON；GET 返回 405。
-- **无 `Mcp-Session-Id`**：每个 POST 都是独立请求，服务端不签发/校验会话 id；客户端不需要保存 session id。
+- **有 `Mcp-Session-Id`（隔离用，不是有状态执行）**：`initialize` 下发 `Mcp-Session-Id`，客户端回传后各自只看到自己自动建连的会话；不发该头的客户端按 `User-Agent` 区分。命令执行本身仍然无状态，每次调用都是新的远端 shell。
 - **无 stdio 传输**：只提供 HTTP 端点，不附带 Node launcher。
 - **无 OAuth / 多用户**：只有一个 Bearer token；没有按用户或按客户端区分的权限。
 - **确认模式无批量允许**：审批按调用逐项进行；「始终允许」只按工具粒度，没有「允许本会话全部命令」。
-- **18 个工具**：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`serial_write`、`telnet_write`、`session_close`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`。
+- **22 个工具**：`get_environment`、`vault_hosts_list`、`snippets_list`、`terminal_execute`、`session_open`、`set_session_preamble`、`session_close`、`serial_write`、`serial_read`、`telnet_write`、`telnet_read`、`fs_read`、`fs_grep`、`fs_glob`、`fs_patch`、`fs_write`、`sftp_put`、`sftp_get`、`fs_delete`、`build_run`、`term_run`、`batch`。
 - **`fs_grep` 依赖远端 `python3`**：缺失时返回 `mcp_missing_interpreter`，可改用 `fs_glob` + `fs_read` 或 `term_run` 的 `grep`。
 - **远端路径不设目录限制**：`~` 与相对路径按远端 home 展开，`..` 只做折叠；绝对路径可指向任意目录，请自行确认目标位置。
 - **`fs_read` 上限 8 MiB**：更大文件请用 `sftp_get` 下载到本地处理，或分段开窗。

@@ -17,14 +17,15 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 2) 查阅：fs_glob 列文件 → fs_grep 定位 → fs_read 按行开窗；不要整读大文件。
 3) 修改：fs_patch 先 dryRun 看 diff 再落盘；小文件整体覆盖用 fs_write。
 4) 传输：sftp_put / sftp_get 流式传输，返回只有路径 / size / sha256，token 与文件大小无关。
-5) 构建：build_run 只回尾部日志与 exitCode；需要完整日志时传 teeToRemoteFile。
+5) 构建：build_run 只回尾部日志与 exitCode；cwd 指定工作目录、env 注入环境变量，需要完整日志时传 teeToRemoteFile。
 6) 删除：fs_delete 默认 dryRun=true，先拿 confirmToken，再以 dryRun=false 执行。
 7) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
-8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令）；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话，ssh / pty 只回尾部 maxOutputBytes（默认 16 KiB）。
-9) 串口 / Telnet：自己建链用 session_open（headless，不占用户窗口）；只写字节用 serial_write / telnet_write（返回 bytesWritten）；只读输出用 serial_read / telnet_read；要「写入 + 等回显」时用 terminal_execute —— 写入命令后按 idleMs 静默 / waitRegex 命中 / timeoutMs 超时采集，exitCode 恒为 null。这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
-10) 隔离：每个 MCP 会话（initialize 下发的 Mcp-Session-Id）各自独立，自动建连的会话只有本会话可见，用户窗口会话共享（无会话头的客户端按 User-Agent 区分）；一个 token 可服务多个会话与任意工作目录。链路自行断开时会话立即标记 closed，重新 session_open 即可。
+8) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令），同样支持 cwd / env；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话，ssh / pty 只回尾部 maxOutputBytes（默认 16 KiB）。每次调用都是全新的远端 shell，后台常驻进程要 setsid/nohup 并重定向三路 I/O（如 `setsid nohup cmd </dev/null >/tmp/task.log 2>&1 & echo $!`），再轮询日志。
+9) 环境初始化：set_session_preamble 给 SSH 会话注册一次 setup 命令（如 source ~/zephyrproject/zephyr/zephyr-env.sh），之后每次 term_run / build_run 都按 cd → preamble → env → command 确定性重放（env 最后覆盖 preamble）；preamble 传空串清除。session_open 也接受同名参数。
+10) 串口 / Telnet：自己建链用 session_open（headless，不占用户窗口）；只写字节用 serial_write / telnet_write（返回 bytesWritten）；只读输出用 serial_read / telnet_read；要「写入 + 等回显」时用 terminal_execute —— 写入命令后按 idleMs 静默 / waitRegex 命中 / timeoutMs 超时采集，exitCode 恒为 null。这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
+11) 隔离：每个 MCP 会话（initialize 下发的 Mcp-Session-Id）各自独立，自动建连的会话只有本会话可见，用户窗口会话共享（无会话头的客户端按 User-Agent 区分）；一个 token 可服务多个会话与任意工作目录。链路自行断开时会话立即标记 closed，重新 session_open 即可。
 
-可用工具（共 21 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、session_open、session_close、serial_write、serial_read、telnet_write、telnet_read、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
+可用工具（共 22 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、session_open、set_session_preamble、session_close、serial_write、serial_read、telnet_write、telnet_read、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、batch。
 规则：
 - sessionId 必须来自 get_environment（UUID）；hostId 必须来自 hosts[] 或 vault_hosts_list，不要臆造。
 - 远端路径（path / remotePath / cwd）支持绝对路径、~ 与相对 home 的路径，不限制目录范围；localPath 只校验是绝对路径。
@@ -75,7 +76,8 @@ fn return_example(name: &str) -> &'static str {
         "serial_read" | "telnet_read" => {
             r#"{code:"ok", sessionId, stdout, exitCode:null, bytesRead, terminatedBy, encoding, truncated}"#
         }
-        "session_open" => r#"{code:"ok", sessionId, kind, origin:"mcp"}"#,
+        "session_open" => r#"{code:"ok", sessionId, kind, origin:"mcp", preamble}"#,
+        "set_session_preamble" => r#"{code:"ok", sessionId, preamble, cleared}"#,
         "session_close" => r#"{code:"ok", closed: sessionId}"#,
         "fs_read" => r#"{code:"ok", path, lines, totalLines, size, truncated, nextCursor}"#,
         "fs_grep" => r#"{code:"ok", matches:[{path, line, text}], total, truncated, nextCursor}"#,
@@ -214,6 +216,7 @@ mod tests {
             "snippets_list",
             "terminal_execute",
             "session_open",
+            "set_session_preamble",
             "serial_write",
             "serial_read",
             "telnet_write",

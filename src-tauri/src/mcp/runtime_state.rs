@@ -13,6 +13,10 @@ use super::fs::caps::RemoteCaps;
 
 /// `fs_delete` confirmToken 有效期。
 pub const DELETE_TOKEN_TTL: Duration = Duration::from_secs(300);
+/// 单会话 preamble 字节上限。
+pub const MAX_PREAMBLE_BYTES: usize = 8 * 1024;
+/// 未正常关闭的会话不会主动清理 preamble，这里按最旧淘汰封顶。
+const MAX_PREAMBLES: usize = 512;
 
 /// 一次删除计划的快照：token 只能用于同会话、同路径集合、同递归开关。
 pub struct DeleteToken {
@@ -20,6 +24,11 @@ pub struct DeleteToken {
     pub paths: Vec<String>,
     pub recursive: bool,
     pub created: Instant,
+}
+
+struct PreambleEntry {
+    text: String,
+    created: Instant,
 }
 
 pub struct McpRuntimeState {
@@ -33,6 +42,8 @@ pub struct McpRuntimeState {
     pub caps: Mutex<HashMap<String, RemoteCaps>>,
     /// `fs_delete` 的待确认计划。
     pub delete_tokens: Mutex<HashMap<String, DeleteToken>>,
+    /// `sessionId` → 会话级 preamble（每次 term_run / build_run 确定性前置）。
+    preambles: Mutex<HashMap<String, PreambleEntry>>,
     pub audit: AuditLog,
 }
 
@@ -44,6 +55,7 @@ impl McpRuntimeState {
             connect_gates: Mutex::new(HashMap::new()),
             caps: Mutex::new(HashMap::new()),
             delete_tokens: Mutex::new(HashMap::new()),
+            preambles: Mutex::new(HashMap::new()),
             audit: AuditLog::default(),
         }
     }
@@ -79,6 +91,55 @@ pub fn forget_client_owner(client_id: &str) {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .remove(client_id);
+}
+
+/// 设置会话 preamble；空串（或全空白）等价于清除。
+///
+/// 只存文本、不改远端状态：每次 term_run / build_run 都重新前置一遍，
+/// 因此不会出现「上次 source 过、这次却没加载」的泄漏式状态。
+pub fn set_session_preamble(session_id: &str, preamble: &str) {
+    let mut map = state()
+        .preambles
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if preamble.trim().is_empty() {
+        map.remove(session_id);
+        return;
+    }
+    if !map.contains_key(session_id) && map.len() >= MAX_PREAMBLES {
+        if let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_, entry)| entry.created)
+            .map(|(key, _)| key.clone())
+        {
+            map.remove(&oldest);
+        }
+    }
+    map.insert(
+        session_id.to_string(),
+        PreambleEntry {
+            text: preamble.to_string(),
+            created: Instant::now(),
+        },
+    );
+}
+
+pub fn session_preamble(session_id: &str) -> Option<String> {
+    state()
+        .preambles
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(session_id)
+        .map(|entry| entry.text.clone())
+}
+
+/// 会话关闭后立即回收，让重建的同名会话不会继承旧 preamble。
+pub fn forget_session_preamble(session_id: &str) {
+    state()
+        .preambles
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(session_id);
 }
 
 /// 取（或创建）某客户端 + 某主机的建连闸门。
@@ -140,4 +201,23 @@ pub fn take_delete_token(token: &str) -> Option<DeleteToken> {
         return None;
     }
     Some(entry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preamble_roundtrip_and_clear() {
+        let id = format!("test-{}", uuid::Uuid::new_v4());
+        assert_eq!(session_preamble(&id), None);
+        set_session_preamble(&id, "source ~/zephyr-env.sh");
+        assert_eq!(
+            session_preamble(&id).as_deref(),
+            Some("source ~/zephyr-env.sh")
+        );
+        set_session_preamble(&id, "   ");
+        assert_eq!(session_preamble(&id), None);
+        forget_session_preamble(&id);
+    }
 }

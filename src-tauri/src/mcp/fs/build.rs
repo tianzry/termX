@@ -82,6 +82,7 @@ pub async fn fs_build_run(
     session_id: &str,
     ssh: &SshHandle,
     args: &Value,
+    preamble: Option<&str>,
 ) -> AppResult<BuildOutcome> {
     let command = args
         .get("command")
@@ -136,6 +137,18 @@ pub async fn fs_build_run(
         None => None,
     };
 
+    // cwd 之后依次是会话 preamble、本次 env、构建命令：preamble 建立基础环境，
+    // env 最后覆盖。preamble 的输出留在 exec 主 stdout，不进构建日志文件。
+    let mut prefix = String::new();
+    if let Some(preamble) = preamble {
+        let trimmed = preamble.trim_end();
+        if !trimmed.trim().is_empty() {
+            prefix.push_str(trimmed);
+            prefix.push('\n');
+        }
+    }
+    prefix.push_str(&shell::export_lines(&shell::parse_env(args)?));
+
     let tag = {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let short = &id[..8];
@@ -165,6 +178,7 @@ pub async fn fs_build_run(
 
     let script = format!(
         "cd {cwd} || {{ echo {cd_failed}; exit 0; }}\n\
+         {prefix}\
          (\n{command}\n) > {out} 2> {err}\n\
          ec=$?\n\
          echo {m_ec}:$ec\n\

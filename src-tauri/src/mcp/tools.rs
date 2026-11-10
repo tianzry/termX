@@ -381,6 +381,7 @@ pub fn definitions() -> Value {
     · kind=telnet：传 host + port（默认 23）。\n\
     何时用：需要独立会话且不想影响用户界面；串口 / Telnet 需要由 agent 自己建链时。\n\
     何时不用：已有 ready 会话时直接复用 sessionId；用户正在看的会话不要重复打开。\n\
+    可选 preamble（仅 ssh）：注册一次 setup 命令（如 source ~/zephyrproject/zephyr/zephyr-env.sh），之后该会话每次 term_run / build_run 都确定性前置；也可用 set_session_preamble 单独设置。\n\
     受权限档位约束；会话归属于当前客户端，其它客户端不可见。",
         "inputSchema": schema(
             json!({
@@ -403,12 +404,32 @@ pub fn definitions() -> Value {
                 "cols": { "type": "integer", "default": 80, "description": "kind=telnet 的终端列数" },
                 "rows": { "type": "integer", "default": 24, "description": "kind=telnet 的终端行数" },
                 "inputNewline": { "type": "string", "enum": ["crlf", "lf", "cr", "none"], "default": "crlf" },
-                "profileId": { "type": "string", "description": "可选，来源主机档案 id（用于自动日志）" }
+                "profileId": { "type": "string", "description": "可选，来源主机档案 id（用于自动日志）" },
+                "preamble": {
+                    "type": "string",
+                    "description": "可选，仅 kind=ssh：会话级前置命令（如 source ~/zephyrproject/zephyr/zephyr-env.sh），之后每次 term_run / build_run 自动前置；空串表示清除"
+                }
             }),
             &["kind"]
         ),
         "annotations": { "readOnlyHint": false, "destructiveHint": false }
     }));
+
+    items.push(remote_file_tool(
+        "set_session_preamble",
+        "写操作。为 SSH 会话注册或清除会话级前置命令：之后每次 term_run / build_run 都按 cd → preamble → env → command 确定性重放。\
+何时用：环境初始化只写一次（source ~/zephyrproject/zephyr/zephyr-env.sh、conda activate 等），避免每条命令都拼一长串；preamble 传空串即清除。\
+何时不用：一次性的环境差异直接用 term_run / build_run 的 env；串口 / Telnet 没有 shell，不支持 preamble。\
+只作用于当前 MCP 会话可见的 SSH 会话；受权限档位约束。",
+        json!({
+            "preamble": {
+                "type": "string",
+                "description": "会话级 setup 命令（可多行，最长 8 KiB）；空串表示清除"
+            }
+        }),
+        &["preamble"],
+        false,
+    ));
 
     items.push(byte_read_tool(
         "serial_read",
@@ -639,13 +660,19 @@ sessionId 与 hostId 二选一。",
 
     items.push(remote_file_tool(
         "build_run",
-        "写操作。在远端非交互执行构建命令：cwd 可指定任意远端目录，stdout/stderr 各取尾部 maxOutputBytes，另回总量与 exitCode；可选 teeToRemoteFile 把完整日志落到远端文件。\
+        "写操作。在远端非交互执行构建命令：cwd 可指定任意远端目录，env 注入环境变量，stdout/stderr 各取尾部 maxOutputBytes，另回总量与 exitCode；可选 teeToRemoteFile 把完整日志落到远端文件。\
 何时用：sftp_put 上传源码后直接 make/cmake/gcc/cargo/npm；失败先看 stderrTail，再 fs_read fullLog 开窗。\
 何时不用：需要交互式终端时用 term_run；只读命令用 term_run 即可；不要在这里做文件读写（用 fs_* 工具）。\
+执行顺序固定为 cd → 会话 preamble（set_session_preamble 注册的 setup 命令）→ env → command，每次重新应用。\
 只拦真正破坏性命令（rm -rf /、mkfs、dd 写块设备等），不套终端黑名单。",
         json!({
             "command": { "type": "string", "description": "要执行的构建命令（可多行）" },
             "cwd": { "type": "string", "description": "工作目录，默认 home" },
+            "env": {
+                "type": "object",
+                "description": "可选：本次构建的环境变量（名字 → 字符串），在 preamble 之后、构建命令之前 export（覆盖 preamble 的同名变量）；最多 64 个",
+                "additionalProperties": { "type": "string" }
+            },
             "timeoutMs": {
                 "type": "integer",
                 "minimum": 1000,
@@ -673,9 +700,17 @@ sessionId 与 hostId 二选一。",
         "写操作。逃生平面：在远端非交互执行一条命令，返回 stdoutTail / stderrTail / exitCode / totalBytes。\
 何时用：只需要跑命令看结果，或 build_run 不适用的场景（版本探测、git status 等）。\
 何时不用：文件查阅/编辑/传输用 fs_* 与 sftp_*；不要用它做文件语义操作。\
+执行顺序固定为 cd → 会话 preamble（set_session_preamble 注册的 setup 命令）→ env → command，每次都重新应用，不依赖上一条命令留下的 shell 状态。\
+后台进程：直接 `cmd &` 会随本次远端 shell 退出被回收；要常驻请用 setsid/nohup 并重定向三路 I/O，例如 `setsid nohup <cmd> </dev/null >/tmp/task.log 2>&1 & echo $!`，再轮询日志。\
 只拦真正破坏性命令，不套全量终端黑名单；受权限档位约束。",
         json!({
             "command": { "type": "string", "description": "要执行的命令（可多行）" },
+            "cwd": { "type": "string", "description": "可选：工作目录（支持 ~ 与相对 home），不传则从 home 开始" },
+            "env": {
+                "type": "object",
+                "description": "可选：本次命令的环境变量（名字 → 字符串），在 preamble 之后、命令之前 export（覆盖 preamble 的同名变量）；最多 64 个",
+                "additionalProperties": { "type": "string" }
+            },
             "timeoutMs": {
                 "type": "integer",
                 "minimum": 1000,
@@ -742,6 +777,26 @@ fn session_owned_by_client(owner: &SessionOwner, client: &McpClient) -> bool {
     match owner {
         SessionOwner::Headless(id) => *id == runtime_state::owner_for_client(&client.id),
         SessionOwner::Window(_) => false,
+    }
+}
+
+/// 会话 preamble 与本次命令合并成策略检查用的完整文本。
+fn command_with_preamble(preamble: Option<&str>, command: &str) -> String {
+    match preamble {
+        Some(value) if !value.trim().is_empty() => format!("{}\n{command}", value.trim_end()),
+        _ => command.to_string(),
+    }
+}
+
+/// 审批摘要：命令在前，会话 preamble 在后，避免长 preamble 盖住本次命令。
+fn summarize_with_preamble(preamble: Option<&str>, command: &str) -> String {
+    match preamble {
+        Some(value) if !value.trim().is_empty() => format!(
+            "{} ｜ 会话 preamble: {}",
+            summarize_command(command),
+            summarize_command(value)
+        ),
+        _ => summarize_command(command),
     }
 }
 
@@ -1832,10 +1887,6 @@ pub async fn call_tool(
             }
         }
         "build_run" => {
-            let session = match super::fs::session::resolve(app, state, args, client).await {
-                Ok(value) => value,
-                Err(e) => return tool_error(e),
-            };
             let command = match args
                 .get("command")
                 .and_then(Value::as_str)
@@ -1850,7 +1901,26 @@ pub async fn call_tool(
                     )
                 }
             };
-            if let Some(reason) = super::policy::destructive_reason(&command) {
+            if let Err(e) = super::fs::shell::parse_env(args) {
+                return tool_error(e);
+            }
+            if let Some(value) = args
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if let Err(e) = super::fs::shell::validate_remote_path(value) {
+                    return tool_error(e);
+                }
+            }
+            let session = match super::fs::session::resolve(app, state, args, client).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let preamble = runtime_state::session_preamble(&session.session_id);
+            let effective = command_with_preamble(preamble.as_deref(), &command);
+            if let Some(reason) = super::policy::destructive_reason(&effective) {
                 return ToolResult::err(
                     "mcp_command_destructive",
                     format!("命令命中破坏性策略：{reason}"),
@@ -1864,7 +1934,7 @@ pub async fn call_tool(
                 gen,
                 disconnected.clone(),
                 "build_run",
-                summarize_command(&command),
+                summarize_with_preamble(preamble.as_deref(), &command),
                 args.clone(),
                 Some(session.session_id.clone()),
                 Some(session.profile_id.clone()),
@@ -1878,6 +1948,7 @@ pub async fn call_tool(
                 &session.session_id,
                 &session.handle,
                 args,
+                preamble.as_deref(),
             )
             .await
             {
@@ -1905,10 +1976,6 @@ pub async fn call_tool(
             }
         }
         "term_run" => {
-            let session = match super::fs::session::resolve(app, state, args, client).await {
-                Ok(value) => value,
-                Err(e) => return tool_error(e),
-            };
             let command = match args
                 .get("command")
                 .and_then(Value::as_str)
@@ -1923,7 +1990,31 @@ pub async fn call_tool(
                     )
                 }
             };
-            if let Some(reason) = super::policy::destructive_reason(&command) {
+            let cwd = match args
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                Some(value) => {
+                    if let Err(e) = super::fs::shell::validate_remote_path(value) {
+                        return tool_error(e);
+                    }
+                    Some(value.to_string())
+                }
+                None => None,
+            };
+            let env = match super::fs::shell::parse_env(args) {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let session = match super::fs::session::resolve(app, state, args, client).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let preamble = runtime_state::session_preamble(&session.session_id);
+            let effective = command_with_preamble(preamble.as_deref(), &command);
+            if let Some(reason) = super::policy::destructive_reason(&effective) {
                 return ToolResult::err(
                     "mcp_command_destructive",
                     format!("命令命中破坏性策略：{reason}"),
@@ -1937,7 +2028,7 @@ pub async fn call_tool(
                 gen,
                 disconnected.clone(),
                 "term_run",
-                summarize_command(&command),
+                summarize_with_preamble(preamble.as_deref(), &command),
                 args.clone(),
                 Some(session.session_id.clone()),
                 Some(session.profile_id.clone()),
@@ -1956,20 +2047,38 @@ pub async fn call_tool(
                 .and_then(Value::as_u64)
                 .unwrap_or(16 * 1024)
                 .clamp(256, 64 * 1024) as usize;
+            let cd_marker = format!(
+                "__TERMX_CD_{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..8]
+            );
+            let script = super::fs::shell::compose_remote_command(
+                &command,
+                cwd.as_deref(),
+                &env,
+                preamble.as_deref(),
+                &cd_marker,
+            );
             match crate::ssh::client::exec_once(
                 &session.handle,
-                &command,
+                &script,
                 Duration::from_millis(timeout),
                 false,
             )
             .await
             {
                 Ok(out) => {
+                    if out.stderr.lines().any(|line| line.trim() == cd_marker) {
+                        return ToolResult::err(
+                            "mcp_cwd_invalid",
+                            format!("cwd 无法进入：{}", cwd.as_deref().unwrap_or("")),
+                            "确认 cwd 存在且当前登录用户可进入；不传 cwd 时从 home 开始。",
+                        );
+                    }
                     let (stdout_tail, out_cut) = super::fs::tail_bytes(&out.stdout, max_output);
                     let (stderr_tail, err_cut) = super::fs::tail_bytes(&out.stderr, max_output);
                     ToolResult::ok(
                         "命令执行完成",
-                        "exitCode 非 0 时先看 stderrTail；需要完整输出时缩小范围分次执行。",
+                        "exitCode 非 0 时先看 stderrTail；需要完整输出时缩小范围分次执行。后台常驻进程用 setsid/nohup 并重定向三路 I/O，再轮询日志。",
                         json!({
                             "exitCode": out.exit_code,
                             "stdoutTail": stdout_tail,
@@ -1978,6 +2087,8 @@ pub async fn call_tool(
                             "stderrBytes": out.stderr.len(),
                             "totalBytes": out.stdout.len() + out.stderr.len(),
                             "truncated": out_cut || err_cut,
+                            "cwd": cwd,
+                            "preambleApplied": preamble.is_some(),
                         }),
                     )
                 }
@@ -2234,6 +2345,38 @@ pub async fn call_tool(
                     )
                 }
             };
+            let preamble = opt("preamble");
+            if preamble.is_some() && kind != "ssh" {
+                return ToolResult::err(
+                    "invalid_argument",
+                    "preamble 只支持 kind=ssh",
+                    "串口 / Telnet 没有 shell，无法执行 setup 命令；去掉 preamble 后重试。",
+                );
+            }
+            if let Some(value) = &preamble {
+                if value.len() > runtime_state::MAX_PREAMBLE_BYTES {
+                    return ToolResult::err(
+                        "mcp_preamble_too_long",
+                        format!(
+                            "preamble 长度 {} 超过上限 {}",
+                            value.len(),
+                            runtime_state::MAX_PREAMBLE_BYTES
+                        ),
+                        "把初始化逻辑写进远端脚本，preamble 只保留 source 一行。",
+                    );
+                }
+                if let Some(reason) = super::policy::destructive_reason(value) {
+                    return ToolResult::err(
+                        "mcp_command_destructive",
+                        format!("preamble 命中破坏性策略：{reason}"),
+                        "preamble 只用于加载环境；破坏性命令请在终端里手动执行。",
+                    );
+                }
+            }
+            let mut summary = format!("打开 {kind} 会话 {target}");
+            if let Some(value) = &preamble {
+                summary.push_str(&format!("；preamble：{}", summarize_command(value)));
+            }
             if let Err(e) = approval_gate(
                 client,
                 rt,
@@ -2241,7 +2384,7 @@ pub async fn call_tool(
                 gen,
                 disconnected.clone(),
                 "session_open",
-                format!("打开 {kind} 会话 {target}"),
+                summary,
                 args.clone(),
                 None,
                 Some(format!("{kind} · {target}")),
@@ -2348,11 +2491,21 @@ pub async fn call_tool(
                 _ => unreachable!("kind validated above"),
             };
             match opened {
-                Ok(session_id) => ToolResult::ok(
-                    "会话已建立",
-                    "用返回的 sessionId 调用 serial_read / telnet_read / terminal_execute；任务结束调用 session_close。该会话归属当前 MCP 会话，其它会话不可见。",
-                    json!({ "sessionId": session_id, "kind": kind, "origin": "mcp" }),
-                ),
+                Ok(session_id) => {
+                    if let Some(value) = preamble.as_deref() {
+                        runtime_state::set_session_preamble(&session_id, value);
+                    }
+                    ToolResult::ok(
+                        "会话已建立",
+                        "用返回的 sessionId 调用 serial_read / telnet_read / terminal_execute；任务结束调用 session_close。该会话归属当前 MCP 会话，其它会话不可见。preamble 会在每次 term_run / build_run 前重放。",
+                        json!({
+                            "sessionId": session_id,
+                            "kind": kind,
+                            "origin": "mcp",
+                            "preamble": preamble,
+                        }),
+                    )
+                }
                 Err(e) => tool_error(e),
             }
         }
@@ -2550,6 +2703,86 @@ pub async fn call_tool(
             .await;
             read_success("telnet", &session_id, out, opts.encoding)
         }
+        "set_session_preamble" => {
+            let preamble = match args.get("preamble") {
+                Some(Value::String(value)) => value.trim().to_string(),
+                Some(_) => {
+                    return ToolResult::err(
+                        "invalid_argument",
+                        "preamble 必须是字符串",
+                        "传 shell 命令文本；要清除时传空串 \"\"。",
+                    )
+                }
+                None => {
+                    return ToolResult::err(
+                        "missing_argument",
+                        "缺少必填参数 preamble",
+                        "传会话级 setup 命令（如 source ~/zephyr-env.sh）；清除传空串。",
+                    )
+                }
+            };
+            if preamble.len() > runtime_state::MAX_PREAMBLE_BYTES {
+                return ToolResult::err(
+                    "mcp_preamble_too_long",
+                    format!(
+                        "preamble 长度 {} 超过上限 {}",
+                        preamble.len(),
+                        runtime_state::MAX_PREAMBLE_BYTES
+                    ),
+                    "把初始化逻辑写进远端脚本，preamble 只保留 source 一行。",
+                );
+            }
+            if let Some(reason) = super::policy::destructive_reason(&preamble) {
+                return ToolResult::err(
+                    "mcp_command_destructive",
+                    format!("preamble 命中破坏性策略：{reason}"),
+                    "preamble 只用于加载环境；破坏性命令请在终端里手动执行。",
+                );
+            }
+            let session = match super::fs::session::resolve(app, state, args, client).await {
+                Ok(value) => value,
+                Err(e) => return tool_error(e),
+            };
+            let cleared = preamble.is_empty();
+            let summary = if cleared {
+                format!("清除会话 preamble（{}）", session.session_id)
+            } else {
+                format!(
+                    "设置会话 preamble：{}",
+                    summarize_command(&preamble)
+                )
+            };
+            if let Err(e) = approval_gate(
+                client,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "set_session_preamble",
+                summary,
+                args.clone(),
+                Some(session.session_id.clone()),
+                Some(session.profile_id.clone()),
+            )
+            .await
+            {
+                return e;
+            }
+            runtime_state::set_session_preamble(&session.session_id, &preamble);
+            ToolResult::ok(
+                if cleared {
+                    "会话 preamble 已清除"
+                } else {
+                    "会话 preamble 已设置"
+                },
+                "该 preamble 只影响本会话：每次 term_run / build_run 前重放，不影响用户窗口或其它 MCP 会话。",
+                json!({
+                    "sessionId": session.session_id,
+                    "preamble": if cleared { Value::Null } else { json!(preamble) },
+                    "cleared": cleared,
+                }),
+            )
+        }
         "session_close" => {
             let session_id = match args.get("sessionId").and_then(Value::as_str) {
                 Some(v) if !v.is_empty() => v.to_string(),
@@ -2590,11 +2823,14 @@ pub async fn call_tool(
                 return e;
             }
             match lifecycle::close_resource(state, &session_id, kind, &owner) {
-                Ok(()) => ToolResult::ok(
-                    "会话已关闭",
-                    "如需再次连接，请先在 termX 中重新打开会话，再调用 get_environment。",
-                    json!({ "closed": session_id }),
-                ),
+                Ok(()) => {
+                    runtime_state::forget_session_preamble(&session_id);
+                    ToolResult::ok(
+                        "会话已关闭",
+                        "如需再次连接，请先在 termX 中重新打开会话，再调用 get_environment。",
+                        json!({ "closed": session_id }),
+                    )
+                }
                 Err(e) => ToolResult::err(
                     "close_failed",
                     e.to_string(),
@@ -2666,7 +2902,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 21);
+        assert_eq!(list.len(), 22);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
@@ -2749,6 +2985,29 @@ mod tests {
             true
         );
 
+        for name in ["build_run", "term_run"] {
+            let tool = list.iter().find(|t| t["name"] == name).unwrap();
+            assert_eq!(tool["inputSchema"]["properties"]["env"]["type"], "object");
+            assert_eq!(
+                tool["inputSchema"]["properties"]["env"]["additionalProperties"]["type"],
+                "string"
+            );
+        }
+        let term = list.iter().find(|t| t["name"] == "term_run").unwrap();
+        assert_eq!(term["inputSchema"]["properties"]["cwd"]["type"], "string");
+        let build = list.iter().find(|t| t["name"] == "build_run").unwrap();
+        assert_eq!(build["inputSchema"]["properties"]["cwd"]["type"], "string");
+
+        let preamble = list
+            .iter()
+            .find(|t| t["name"] == "set_session_preamble")
+            .unwrap();
+        assert_eq!(preamble["annotations"]["readOnlyHint"], false);
+        assert_eq!(preamble["inputSchema"]["required"], json!(["preamble"]));
+        assert!(preamble["inputSchema"]["anyOf"].is_array());
+        let open = list.iter().find(|t| t["name"] == "session_open").unwrap();
+        assert_eq!(open["inputSchema"]["properties"]["preamble"]["type"], "string");
+
         let batch = list.iter().find(|t| t["name"] == "batch").unwrap();
         assert_eq!(batch["inputSchema"]["required"], json!(["ops"]));
         assert_eq!(
@@ -2789,6 +3048,16 @@ mod tests {
         let short = exec_output_fields("ok", "", Some(0), 16);
         assert_eq!(short["stdout"], "ok");
         assert_eq!(short["truncated"], false);
+    }
+
+    #[test]
+    fn preamble_merges_into_effective_command() {
+        assert_eq!(command_with_preamble(None, "make"), "make");
+        assert_eq!(command_with_preamble(Some("  "), "make"), "make");
+        assert_eq!(
+            command_with_preamble(Some("source env.sh\n"), "make"),
+            "source env.sh\nmake"
+        );
     }
 
     #[test]
