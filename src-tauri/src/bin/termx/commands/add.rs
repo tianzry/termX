@@ -90,6 +90,7 @@ pub fn cmd_add_profile(conn: &CliCtx) -> AppResult<()> {
         serial_backspace: None,
         serial_byte_backspace: None,
         serial_charset: None,
+        serial_term_opts: None,
         distro: None,
         host_key_policy: None,
         telnet_username: None,
