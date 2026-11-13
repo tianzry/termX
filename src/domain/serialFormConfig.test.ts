@@ -27,6 +27,14 @@ describe("串口表单默认值与合并", () => {
       backspaceBehavior: "default",
       byteOrientedBackspace: false,
       charset: "UTF-8",
+      term: {
+        xany: false,
+        input_newline: "cr",
+        output_newline: "raw",
+        slow_send: false,
+        input_mode: "normal",
+        output_mode: "text",
+      },
     });
   });
 
@@ -157,9 +165,19 @@ describe("提交后端的配置映射", () => {
       stop_bits: 2,
       flow_control: "software",
       charset: "GBK",
+      xany: false,
     });
     expect(config.username).toBeUndefined();
     expect(config.password).toBeUndefined();
+  });
+
+  it("XANY 开启时随嵌套 config 下发后端", () => {
+    const config = toSerialConfig({
+      ...SERIAL_FORM_DEFAULTS,
+      port: "COM3",
+      term: { ...SERIAL_FORM_DEFAULTS.term, xany: true },
+    });
+    expect(config.xany).toBe(true);
   });
 
   it("自动登录任一非空即携带，空密码保留为空串", () => {

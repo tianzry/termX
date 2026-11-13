@@ -112,6 +112,14 @@ import {
 import { toHostKeyInfo, type HostKeyInfo } from "./domain/hostKey";
 import { isAuthFailureMessage, userVisibleError } from "./domain/sshErrors";
 import { createSerialInput } from "./domain/serialInput";
+import {
+  SERIAL_TERMINAL_TEXT,
+  createHexDumpFormatter,
+  createReceiveNewlineTransformer,
+  mapSendNewline,
+  parseHexInput,
+  resolveSerialTermOpts,
+} from "./domain/serialStream";
 import { formatTelnetLocalEcho } from "./domain/telnetEcho";
 import {
   appendKeystrokes,
@@ -3018,21 +3026,42 @@ export function TerminalPane({
     if (tab.connector.kind === "serial") {
       const conn = tab.connector;
       const sid = api.newSessionId();
+      const termOpts = resolveSerialTermOpts(conn.session.term);
       const input = createSerialInput({
-        lineMode: conn.session.lineMode,
+        lineMode: termOpts.input_mode === "line",
         localEcho: conn.session.localEcho,
         backspaceBehavior: conn.session.backspaceBehavior,
         byteOrientedBackspace: conn.session.byteOrientedBackspace,
       });
+      // 接收侧流式变换：hex dump 或换行归一，二者互斥（hex 优先）。
+      const recvDecoder = new TextDecoder();
+      const recvEncoder = new TextEncoder();
+      const hexDump =
+        termOpts.output_mode === "hex" ? createHexDumpFormatter() : null;
+      const recvNewline =
+        termOpts.output_newline !== "raw"
+          ? createReceiveNewlineTransformer(termOpts.output_newline)
+          : null;
+      const onSerialBytes = (bytes: Uint8Array) => {
+        if (hexDump) {
+          const text = hexDump.push(bytes);
+          if (text) writeSerialText(recvEncoder.encode(text));
+          return;
+        }
+        if (recvNewline) {
+          const mapped = recvNewline.push(recvDecoder.decode(bytes, { stream: true }));
+          if (mapped) writeSerialText(recvEncoder.encode(mapped));
+          return;
+        }
+        writeSerialText(bytes);
+      };
       try {
         // 先注册监听再 open：串口 data 事件在 open 返回后即可能到达。
         // 逐条入栈（而不是数组字面量整体赋值）：第二个监听注册失败时，
         // 第一个也不会漏退订。
         const unsubs: UnlistenFn[] = [];
         unsubRef.current = unsubs;
-        unsubs.push(
-          await api.onSerialData(sid, (bytes) => writeSerialText(bytes)),
-        );
+        unsubs.push(await api.onSerialData(sid, onSerialBytes));
         unsubs.push(
           await api.onSerialClose(sid, () => {
             // 旧连接关闭事件可能在重连 / 换端口之后才到，别污染新会话状态。
@@ -3056,18 +3085,65 @@ export function TerminalPane({
           void api.serialClose(actual);
           return;
         }
+        const sendBytes = (bytes: Uint8Array) => {
+          if (!termOpts.slow_send) {
+            void api.serialWriteBytes(actual, bytes);
+            return;
+          }
+          // 慢速设备 / bootloader：逐字节写，间隔 10ms 给设备消化时间。
+          void (async () => {
+            for (const byte of bytes) {
+              if (transportRef.current === null) return;
+              await api.serialWriteBytes(actual, Uint8Array.of(byte));
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+          })();
+        };
+        const sendWire = (wire: string) => {
+          sendBytes(
+            new TextEncoder().encode(
+              mapSendNewline(wire, termOpts.input_newline),
+            ),
+          );
+        };
+        // 十六进制输入：本地缓冲可见字符，回车时整体解码发送；非法即报错不发送。
+        let hexBuffer = "";
+        const feedHex = (text: string) => {
+          if (text === "\r" || text === "\n") {
+            const bytes = parseHexInput(hexBuffer);
+            hexBuffer = "";
+            if (bytes === null) {
+              onStatus(SERIAL_TERMINAL_TEXT.hexInputInvalid);
+              return;
+            }
+            if (conn.session.localEcho) writeFilteredText("\r\n");
+            if (bytes.length > 0) sendBytes(bytes);
+            return;
+          }
+          if (text === "\x7f" || text === "\b") {
+            if (hexBuffer === "") return;
+            hexBuffer = hexBuffer.slice(0, -1);
+            if (conn.session.localEcho) writeFilteredText("\b \b");
+            return;
+          }
+          if (text.charCodeAt(0) >= 32 || text.length > 1) {
+            hexBuffer += text;
+            if (conn.session.localEcho) writeFilteredText(text);
+          }
+        };
+        const feedSerial = (text: string) => {
+          if (termOpts.input_mode === "hex") {
+            feedHex(text);
+            return;
+          }
+          const chunk = input.feed(text);
+          if (chunk.echo) writeFilteredText(chunk.echo);
+          if (chunk.wire) sendWire(chunk.wire);
+        };
         transportRef.current = {
           kind: "serial",
-          write: (text) => {
-            const chunk = input.feed(text);
-            if (chunk.echo) writeFilteredText(chunk.echo);
-            if (chunk.wire) void api.serialWrite(actual, chunk.wire);
-          },
-          writeBulk: (text) => {
-            const chunk = input.feed(text);
-            if (chunk.echo) writeFilteredText(chunk.echo);
-            if (chunk.wire) void api.serialWrite(actual, chunk.wire);
-          },
+          write: feedSerial,
+          writeBulk: feedSerial,
           resize: () => {},
           close: () => {
             void api.serialClose(actual);

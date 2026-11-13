@@ -385,6 +385,7 @@ export default function App() {
           localEcho: form.localEcho,
           backspaceBehavior: form.backspaceBehavior,
           byteOrientedBackspace: form.byteOrientedBackspace,
+          term: form.term,
         },
         name: profile.name,
         profileId: profile.id,

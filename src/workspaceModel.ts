@@ -10,6 +10,7 @@
 
 import type { SerialConfig } from "./backend/client";
 import type { SerialBackspaceBehavior } from "./domain/serialFormConfig";
+import type { SerialTermOpts } from "./domain/serialStream";
 import type { TerminalEncoding } from "./terminal/terminalEncoding";
 
 export type SplitDir = "horizontal" | "vertical";
@@ -22,6 +23,8 @@ export interface SerialSessionConfig {
   localEcho: boolean;
   backspaceBehavior: SerialBackspaceBehavior;
   byteOrientedBackspace: boolean;
+  /** 终端分组选项（收发换行 / 慢速 / 输入输出模式 / XANY）。旧工作区快照可缺省。 */
+  term?: SerialTermOpts;
 }
 
 /** Telnet 标签的连接参数（对齐 Netcatty host 的 protocol=telnet；凭据可选）。 */

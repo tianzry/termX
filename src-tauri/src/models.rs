@@ -24,6 +24,39 @@ pub fn validate_name(name: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// 串口「终端」分组选项（Netcatty SerialConnectModal 终端区逐屏对齐）。
+/// 除 `xany` 是 termios 线路标志（`serial::open` 里设置，Windows 无对应能力）外，
+/// 其余都是前端变换：发送换行 / 接收换行归一 / 逐字节慢发 / 输入输出模式。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SerialTermOpts {
+    /// IXANY：任意字符恢复被 XOFF 暂停的输出（仅 Unix 生效）。
+    pub xany: bool,
+    /// 回车 / 粘贴发送的换行符：cr | lf | crlf。
+    pub input_newline: String,
+    /// 接收换行归一：raw | cr | lf | crlf。
+    pub output_newline: String,
+    /// 逐字节慢速发送（慢设备 / bootloader）。
+    pub slow_send: bool,
+    /// 输入模式：normal | line | hex。
+    pub input_mode: String,
+    /// 输出模式：text | hex。
+    pub output_mode: String,
+}
+
+impl Default for SerialTermOpts {
+    fn default() -> Self {
+        Self {
+            xany: false,
+            input_newline: "cr".to_string(),
+            output_newline: "raw".to_string(),
+            slow_send: false,
+            input_mode: "normal".to_string(),
+            output_mode: "text".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub id: String,
@@ -145,6 +178,11 @@ pub struct Profile {
     pub serial_byte_backspace: Option<bool>,
     #[serde(default)]
     pub serial_charset: Option<String>,
+    /// 串口「终端」分组选项（对齐 Netcatty 串口弹窗终端区：XANY / 收发换行 /
+    /// 慢速发送 / 输入输出模式）。整组 JSON 存一列（schema v53）；NULL / 坏 JSON
+    /// 落回 None，前端再回落到默认值。
+    #[serde(default)]
+    pub serial_term_opts: Option<SerialTermOpts>,
     // ── 发行版探测结果（schema v46，对齐 Netcatty Host.distro）──
     /// 连接成功后自动探测到的发行版 / 设备厂商 ID（`ubuntu` / `windows` /
     /// `cisco` …）。NULL = 尚未探测或无法识别，前端回落 Server 图标。

@@ -36,6 +36,18 @@ import type {
   SerialFormValues,
   SerialProfileSnapshot,
 } from "../domain/serialFormConfig";
+import {
+  SERIAL_INPUT_MODE_OPTIONS,
+  SERIAL_INPUT_NEWLINE_OPTIONS,
+  SERIAL_OUTPUT_MODE_OPTIONS,
+  SERIAL_OUTPUT_NEWLINE_OPTIONS,
+  SERIAL_TERMINAL_TEXT,
+  type SerialInputMode,
+  type SerialInputNewline,
+  type SerialOutputMode,
+  type SerialOutputNewline,
+  type SerialTermOpts,
+} from "../domain/serialStream";
 import type { SerialSessionConfig } from "../workspaceModel";
 import "./serial.css";
 
@@ -67,6 +79,18 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
   function patch(values: Partial<SerialFormValues>) {
     setForm((cur) => ({ ...cur, ...values }));
   }
+
+  /** 终端分组选项；输入模式切到行模式时同步 lineMode（serialInput 仍吃布尔）。 */
+  function patchTerm(values: Partial<SerialTermOpts>) {
+    setForm((cur) => {
+      const term = { ...cur.term, ...values };
+      return { ...cur, term, lineMode: term.input_mode === "line" };
+    });
+  }
+
+  // XANY 是 termios IXANY 标志，Windows 串口驱动没有对应能力（后端 no-op）。
+  const xanyUnsupported =
+    typeof navigator !== "undefined" && /Win/i.test(navigator.userAgent);
 
   async function refreshPorts() {
     setLoadingPorts(true);
@@ -128,6 +152,7 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
         localEcho: form.localEcho,
         backspaceBehavior: form.backspaceBehavior,
         byteOrientedBackspace: form.byteOrientedBackspace,
+        term: form.term,
       },
       saveHost
         ? {
@@ -363,29 +388,166 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
                         ))}
                       </select>
                     </div>
+
+                    <div className="serial-check-row">
+                      <div>
+                        <label htmlFor="serial-xany">{SERIAL_TERMINAL_TEXT.xany}</label>
+                      </div>
+                      <input
+                        type="checkbox"
+                        id="serial-xany"
+                        checked={form.term.xany}
+                        disabled={xanyUnsupported}
+                        onChange={(e) => patchTerm({ xany: e.target.checked })}
+                      />
+                    </div>
+                    {xanyUnsupported && (
+                      <p className="serial-hint">{SERIAL_TERMINAL_TEXT.xanyUnsupported}</p>
+                    )}
                   </>
                 )}
 
                 <div className="serial-terminal-options">
+                  <div className="serial-terminal-head">
+                    {SERIAL_TERMINAL_TEXT.section}
+                  </div>
+                  <div className="serial-grid2">
+                    <div className="serial-field">
+                      <label htmlFor="serial-send-newline">
+                        {SERIAL_TERMINAL_TEXT.sendNewline}
+                      </label>
+                      <select
+                        id="serial-send-newline"
+                        value={form.term.input_newline}
+                        onChange={(e) =>
+                          patchTerm({
+                            input_newline: e.target.value as SerialInputNewline,
+                          })
+                        }
+                      >
+                        {SERIAL_INPUT_NEWLINE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="serial-field">
+                      <label htmlFor="serial-recv-newline">
+                        {SERIAL_TERMINAL_TEXT.receiveNewline}
+                      </label>
+                      <select
+                        id="serial-recv-newline"
+                        value={form.term.output_newline}
+                        onChange={(e) =>
+                          patchTerm({
+                            output_newline: e.target.value as SerialOutputNewline,
+                          })
+                        }
+                      >
+                        {SERIAL_OUTPUT_NEWLINE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="serial-grid2">
+                    <div className="serial-field">
+                      <label htmlFor="serial-backspace">
+                        {SERIAL_TERMINAL_TEXT.backspaceSend}
+                      </label>
+                      <select
+                        id="serial-backspace"
+                        value={form.backspaceBehavior}
+                        onChange={(e) =>
+                          patch({
+                            backspaceBehavior:
+                              e.target.value === "ctrl-h" ? "ctrl-h" : "default",
+                          })
+                        }
+                      >
+                        {SERIAL_BACKSPACE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="serial-hint">{SERIAL_TEXT.backspaceBehaviorDesc}</p>
+                    </div>
+                    <div className="serial-field">
+                      <label htmlFor="serial-input-mode">
+                        {SERIAL_TERMINAL_TEXT.inputMode}
+                      </label>
+                      <select
+                        id="serial-input-mode"
+                        value={form.term.input_mode}
+                        onChange={(e) =>
+                          patchTerm({ input_mode: e.target.value as SerialInputMode })
+                        }
+                      >
+                        {SERIAL_INPUT_MODE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      {form.term.input_mode === "hex" && (
+                        <p className="serial-hint">
+                          {SERIAL_TERMINAL_TEXT.inputModeHexDesc}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="serial-field">
-                    <label htmlFor="serial-backspace">{SERIAL_TEXT.backspaceBehavior}</label>
+                    <label htmlFor="serial-output-mode">
+                      {SERIAL_TERMINAL_TEXT.outputMode}
+                    </label>
                     <select
-                      id="serial-backspace"
-                      value={form.backspaceBehavior}
+                      id="serial-output-mode"
+                      value={form.term.output_mode}
                       onChange={(e) =>
-                        patch({
-                          backspaceBehavior:
-                            e.target.value === "ctrl-h" ? "ctrl-h" : "default",
-                        })
+                        patchTerm({ output_mode: e.target.value as SerialOutputMode })
                       }
                     >
-                      {SERIAL_BACKSPACE_OPTIONS.map((option) => (
+                      {SERIAL_OUTPUT_MODE_OPTIONS.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
                       ))}
                     </select>
-                    <p className="serial-hint">{SERIAL_TEXT.backspaceBehaviorDesc}</p>
+                  </div>
+
+                  <div className="serial-check-row">
+                    <div>
+                      <label htmlFor="serial-local-echo">
+                        {SERIAL_TERMINAL_TEXT.localEcho}
+                      </label>
+                    </div>
+                    <input
+                      type="checkbox"
+                      id="serial-local-echo"
+                      checked={form.localEcho}
+                      onChange={(e) => patch({ localEcho: e.target.checked })}
+                    />
+                  </div>
+
+                  <div className="serial-check-row">
+                    <div>
+                      <label htmlFor="serial-slow-send">
+                        {SERIAL_TERMINAL_TEXT.slowSend}
+                      </label>
+                      <p className="serial-hint">{SERIAL_TERMINAL_TEXT.slowSendDesc}</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      id="serial-slow-send"
+                      checked={form.term.slow_send}
+                      onChange={(e) => patchTerm({ slow_send: e.target.checked })}
+                    />
                   </div>
 
                   <div className="serial-check-row">
@@ -400,32 +562,6 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
                       id="serial-byte-backspace"
                       checked={form.byteOrientedBackspace}
                       onChange={(e) => patch({ byteOrientedBackspace: e.target.checked })}
-                    />
-                  </div>
-
-                  <div className="serial-check-row">
-                    <div>
-                      <label htmlFor="serial-local-echo">{SERIAL_TEXT.localEcho}</label>
-                      <p className="serial-hint">{SERIAL_TEXT.localEchoDesc}</p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      id="serial-local-echo"
-                      checked={form.localEcho}
-                      onChange={(e) => patch({ localEcho: e.target.checked })}
-                    />
-                  </div>
-
-                  <div className="serial-check-row">
-                    <div>
-                      <label htmlFor="serial-line-mode">{SERIAL_TEXT.lineMode}</label>
-                      <p className="serial-hint">{SERIAL_TEXT.lineModeDesc}</p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      id="serial-line-mode"
-                      checked={form.lineMode}
-                      onChange={(e) => patch({ lineMode: e.target.checked })}
                     />
                   </div>
 

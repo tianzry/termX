@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppResult;
 
-const SCHEMA_VERSION: u32 = 52;
+const SCHEMA_VERSION: u32 = 53;
 
 fn column_exists(conn: &Connection, table: &str, col: &str) -> AppResult<bool> {
     let mut stmt = conn.prepare("SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2")?;
@@ -1036,6 +1036,15 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
         // 显式 0 = 用户关闭，1 = 开启。会话建立时由连接层读取。
         if !column_exists(conn, "profiles", "auto_session_log")? {
             conn.execute_batch("ALTER TABLE profiles ADD COLUMN auto_session_log INTEGER;")?;
+        }
+    }
+
+    if version < 53 && table_exists(conn, "profiles")? {
+        // 串口「终端」分组选项（XANY / 收发换行 / 慢速发送 / 输入输出模式）整体
+        // 以 JSON 存一列：六个 UI 开关同生同灭，不值得开六列。老库只加列不写值，
+        // 既有串口主机升级后行为不变（前端回落默认值）。
+        if !column_exists(conn, "profiles", "serial_term_opts")? {
+            conn.execute_batch("ALTER TABLE profiles ADD COLUMN serial_term_opts TEXT;")?;
         }
     }
 

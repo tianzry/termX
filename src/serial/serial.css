@@ -258,6 +258,13 @@
   gap: 16px;
 }
 
+.serial-terminal-head {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nc-text, inherit);
+}
+
 .serial-terminal-options {
   display: flex;
   flex-direction: column;

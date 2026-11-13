@@ -55,6 +55,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         keyword_highlight_enabled: row.get(45)?,
         keyword_highlight_rules: parse_keyword_rules(row.get(46)?),
         auto_session_log: row.get(47)?,
+        serial_term_opts: parse_serial_term_opts(row.get(48)?),
     })
 }
 
@@ -128,13 +129,37 @@ fn parse_algorithms(raw: Option<String>) -> SshAlgorithms {
     }
 }
 
+/// 串口「终端」分组选项以 JSON 文本入库；NULL / 空 / 坏 JSON 一律落回 None
+///（= 前端回落默认值），与 keyword_highlight_rules 同款容错。
+fn parse_serial_term_opts(raw: Option<String>) -> Option<crate::models::SerialTermOpts> {
+    let raw = raw.filter(|s| !s.trim().is_empty())?;
+    match serde_json::from_str::<crate::models::SerialTermOpts>(&raw) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            log::warn!(
+                "failed to parse profile.serial_term_opts JSON ({} bytes), ignoring: {e}",
+                raw.len()
+            );
+            None
+        }
+    }
+}
+
+fn serial_term_opts_json(opts: &Option<crate::models::SerialTermOpts>) -> Option<String> {
+    opts.as_ref().map(|v| {
+        serde_json::to_string(v)
+            .unwrap_or_else(|_| serde_json::to_string(&crate::models::SerialTermOpts::default())
+                .expect("SerialTermOpts 只含字符串与布尔，序列化不会失败"))
+    })
+}
+
 fn algorithms_json(p: &Profile) -> AppResult<String> {
     serde_json::to_string(&p.algorithms)
         .map_err(|e| AppError::other("serde_failed", json!({ "err": e.to_string() })))
 }
 
 /// Profile 表全列清单（row_to_profile 按索引读，顺序是 single source of truth）。
-const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules, auto_session_log";
+const PROFILE_COLUMNS: &str = "id, name, host, port, credential_id, bastion_profile_id, init_command, group_id, algorithms, sftp_protocol, sftp_sudo, sftp_encoding, icon_source, icon_color, totp_auto_submit, totp_regex, protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules, auto_session_log, serial_term_opts";
 
 
 
@@ -251,8 +276,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          protocol, local_shell, local_shell_args, local_shell_name, local_shell_icon, local_start_dir, agent_forwarding, \
          proxy_type, proxy_host, proxy_port, proxy_username, proxy_no_proxy, proxy_profile_id, \
          ssh_input_compatibility, serial_port, serial_baud, serial_data_bits, serial_parity, serial_stop_bits, serial_flow, serial_local_echo, serial_line_mode, serial_backspace, serial_byte_backspace, serial_charset, distro, host_key_policy, \
-         telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules, auto_session_log) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48) \
+         telnet_username, telnet_charset, keyword_highlight_enabled, keyword_highlight_rules, auto_session_log, serial_term_opts) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49) \
          ON CONFLICT(id) DO UPDATE SET \
          name=excluded.name, host=excluded.host, port=excluded.port, \
          credential_id=excluded.credential_id, bastion_profile_id=excluded.bastion_profile_id, \
@@ -277,7 +302,7 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
          telnet_username=excluded.telnet_username, telnet_charset=excluded.telnet_charset, \
          keyword_highlight_enabled=excluded.keyword_highlight_enabled, \
          keyword_highlight_rules=excluded.keyword_highlight_rules, \
-         auto_session_log=excluded.auto_session_log",
+         auto_session_log=excluded.auto_session_log, serial_term_opts=excluded.serial_term_opts",
         params![
             p.id,
             p.name,
@@ -326,7 +351,8 @@ pub fn insert_tx(conn: &rusqlite::Connection, p: &Profile) -> AppResult<()> {
             p.telnet_charset,
             p.keyword_highlight_enabled,
             keyword_rules,
-            p.auto_session_log
+            p.auto_session_log,
+            serial_term_opts_json(&p.serial_term_opts)
         ],
     )?;
     Ok(())
@@ -353,7 +379,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
          serial_backspace=?38, serial_byte_backspace=?39, serial_charset=?40, \
          distro=COALESCE(?41, distro), host_key_policy=?42, \
          telnet_username=?43, telnet_charset=?44, \
-         keyword_highlight_enabled=?45, keyword_highlight_rules=?46, auto_session_log=?47 WHERE id=?48",
+         keyword_highlight_enabled=?45, keyword_highlight_rules=?46, auto_session_log=?47, serial_term_opts=?48 WHERE id=?49",
         params![
             p.name,
             p.host,
@@ -402,6 +428,7 @@ pub fn update(db: &Db, p: &Profile) -> AppResult<()> {
             p.keyword_highlight_enabled,
             keyword_rules,
             p.auto_session_log,
+            serial_term_opts_json(&p.serial_term_opts),
             p.id
         ],
     )?;

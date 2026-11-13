@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import type { KeywordHighlightRule } from "../settings/settingsModel";
+import type { SerialTermOpts } from "../domain/serialStream";
 
 /**
  * termX 前端 ↔ Tauri Rust 后端的统一桥接层（NFC 契约）。
@@ -130,6 +131,8 @@ export interface Profile {
    * `.log`（目录/命名来自 设置 → 终端）；null / false = 不记录（默认）。
    */
   auto_session_log?: boolean | null;
+  /** 串口「终端」分组选项（schema v53，JSON 列）；非串口主机为 null。 */
+  serial_term_opts?: SerialTermOpts | null;
 }
 
 /** 代理库条目（`list_proxy_profiles`），密码单独走 SecretStore。 */
@@ -1550,6 +1553,14 @@ export function serialOpen(
 /** 串口写入：终端按键文本 → UTF-8 字节。 */
 export function serialWrite(sessionId: string, text: string): Promise<void> {
   return invoke("serial_write", { sessionId, data: toBytes(text) });
+}
+
+/** 串口写入原始字节（十六进制输入模式 / 慢速逐字节发送用，不经 UTF-8 编码）。 */
+export function serialWriteBytes(
+  sessionId: string,
+  data: Uint8Array,
+): Promise<void> {
+  return invoke("serial_write", { sessionId, data: Array.from(data) });
 }
 
 export function serialSetDtr(

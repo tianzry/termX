@@ -33,6 +33,11 @@
  */
 
 import type { SerialConfig } from "../backend/client";
+import {
+  SERIAL_TERM_OPTS_DEFAULT,
+  resolveSerialTermOpts,
+  type SerialTermOpts,
+} from "./serialStream";
 import { BAUD_RATES, CHARSETS, isValidBaudRate, validatePortPath } from "./serialValidate";
 
 export type SerialParity = "none" | "even" | "odd" | "mark" | "space";
@@ -53,6 +58,8 @@ export interface SerialFormValues {
   backspaceBehavior: SerialBackspaceBehavior;
   byteOrientedBackspace: boolean;
   charset: string;
+  /** 终端分组选项（XANY / 收发换行 / 慢速 / 输入输出模式），见 serialStream.ts。 */
+  term: SerialTermOpts;
 }
 
 /** 默认值逐项对齐 Netcatty SerialConnectModal（字符集默认 UTF-8）。 */
@@ -68,6 +75,7 @@ export const SERIAL_FORM_DEFAULTS: SerialFormValues = {
   backspaceBehavior: "default",
   byteOrientedBackspace: false,
   charset: "UTF-8",
+  term: { ...SERIAL_TERM_OPTS_DEFAULT },
 };
 
 export const SERIAL_DATA_BITS: Array<5 | 6 | 7 | 8> = [5, 6, 7, 8];
@@ -91,8 +99,8 @@ export const SERIAL_BACKSPACE_OPTIONS: Array<{
   value: SerialBackspaceBehavior;
   label: string;
 }> = [
-  { value: "default", label: "默认（DEL，0x7F）" },
-  { value: "ctrl-h", label: "Ctrl+H（BS，0x08）" },
+  { value: "default", label: "DEL (0x7f)" },
+  { value: "ctrl-h", label: "BS (0x08)" },
 ];
 
 /** 字符编码自由输入的可选建议（Netcatty 用纯文本框，这里用 datalist 保留可枚举性）。 */
@@ -119,8 +127,8 @@ export const SERIAL_TEXT = {
   stopBits15Warning: "1.5 停止位在 Windows 下可能不被所有设备支持",
   parity: "校验位",
   flowControl: "流控制",
-  backspaceBehavior: "回退键",
-  backspaceBehaviorDesc: "如果网络设备不响应默认回退键，请改用 Ctrl+H。",
+  backspaceBehavior: "退格键发送",
+  backspaceBehaviorDesc: "如果网络设备不响应默认回退键，请改用 BS (0x08)。",
   byteOrientedBackspace: "按字节退格",
   byteOrientedBackspaceDesc:
     "发送与字符字节数相同的 DEL，使设备删除整个多字节字符（适用于按字节删除的设备）。若为逐字符删除的行编辑器（如 Linux readline），请关闭。",
@@ -219,6 +227,9 @@ export function resolveSerialForm(
     merged.backspaceBehavior = "default";
   }
   if (!merged.charset) merged.charset = SERIAL_FORM_DEFAULTS.charset;
+  merged.term = resolveSerialTermOpts(merged.term);
+  // 输入模式与 lineMode 同源：行模式 = 缓冲输入，其余逐字符。
+  merged.lineMode = merged.term.input_mode === "line";
   return merged;
 }
 
@@ -235,6 +246,7 @@ export interface SerialProfileSnapshot {
   serial_backspace: string;
   serial_byte_backspace: boolean;
   serial_charset: string;
+  serial_term_opts: SerialTermOpts | null;
 }
 
 /** 表单 → Profile 串口列（flow / backspace 存界面取值，连接时再映射后端）。 */
@@ -253,6 +265,7 @@ export function serialProfileSnapshot(
     serial_backspace: values.backspaceBehavior,
     serial_byte_backspace: values.byteOrientedBackspace,
     serial_charset: values.charset.trim(),
+    serial_term_opts: { ...values.term },
   };
 }
 
@@ -288,7 +301,12 @@ export function serialFormFromProfile(
   if (typeof profile.serial_byte_backspace === "boolean") {
     saved.byteOrientedBackspace = profile.serial_byte_backspace;
   }
+  // 老档案没有 serial_term_opts 列的值：serial_line_mode=true 等价行模式。
+  if (!profile.serial_term_opts && profile.serial_line_mode === true) {
+    saved.term = { ...SERIAL_TERM_OPTS_DEFAULT, input_mode: "line" };
+  }
   if (profile.serial_charset) saved.charset = profile.serial_charset;
+  if (profile.serial_term_opts) saved.term = profile.serial_term_opts;
   return resolveSerialForm(saved);
 }
 
@@ -305,6 +323,7 @@ export interface SerialProfileSnapshotLike {
   serial_backspace?: string | null;
   serial_byte_backspace?: boolean | null;
   serial_charset?: string | null;
+  serial_term_opts?: SerialTermOpts | null;
 }
 
 /** Netcatty 流控取值 → termX 后端取值。 */
@@ -340,6 +359,7 @@ export function toSerialConfig(
     stop_bits: values.stopBits,
     flow_control: serialFlowControlToBackend(values.flowControl),
     charset: values.charset.trim(),
+    xany: values.term.xany,
   };
   if (username !== "" || password !== "") {
     config.username = username;
