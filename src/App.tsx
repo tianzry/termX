@@ -15,7 +15,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Workspace, type WorkspaceHandle } from "./Workspace";
 import type { PaneHandle } from "./TerminalPane";
-import { newId, type Tab, type Connector } from "./workspaceModel";
+import {
+  newId,
+  type Tab,
+  type Connector,
+  type TelnetSessionConfig,
+} from "./workspaceModel";
 import { resolveCommandHistoryHostId } from "./terminal/commandHistoryModel";
 import type { ConnectionStatus } from "./terminal/connectionStatus";
 import { findProfileForHostLink } from "./notes/notesModel";
@@ -370,6 +375,43 @@ export default function App() {
       // 弹窗勾选的自动日志随档案落库；之后以主机面板开关为准。
       auto_session_log: autoLog ? true : null,
     });
+    await loadData();
+    return profileId;
+  }
+
+  /**
+   * Telnet 弹窗「保存为主机」落库：protocol=telnet + 用户名 / 字符集，
+   * 密码进 SecretStore（与主机编辑页 persistTelnetHost 同一套语义）；
+   * 不创建 SSH 凭据。保存失败只提示，不阻断本次连接。
+   */
+  async function saveTelnetHost(
+    name: string,
+    session: TelnetSessionConfig,
+    autoLog: boolean,
+  ): Promise<string> {
+    const profileId = newId();
+    const username = (session.username ?? "").trim();
+    await api.createProfile({
+      id: profileId,
+      name,
+      host: session.host,
+      port: session.port,
+      // Telnet 主机不挂 SSH 凭据（后端 validate_for_write 已豁免）。
+      credential_id: "",
+      bastion_profile_id: null,
+      init_command: null,
+      group_id: null,
+      agent_forwarding: false,
+      protocol: "telnet",
+      telnet_username: username || null,
+      telnet_charset: session.encoding === "gb18030" ? "gb18030" : null,
+      // 弹窗勾选的自动日志随档案落库；之后以主机面板开关为准。
+      auto_session_log: autoLog ? true : null,
+    });
+    // 密码只在用户名非空时保留（无用户名无法自动登录，与编辑页一致）。
+    if (username) {
+      await api.setProfileTelnetPassword(profileId, session.password ?? null);
+    }
     await loadData();
     return profileId;
   }
@@ -1020,14 +1062,35 @@ export default function App() {
         <TelnetConnectModal
           open={showTelnetModal}
           onClose={() => setShowTelnetModal(false)}
-          onConnect={(session) => {
+          onConnect={(session, saveHost) => {
             setShowTelnetModal(false);
             setSurface(null);
-            workspaceRef.current?.newTab({
-              kind: "telnet",
-              session,
-              name: `Telnet ${session.host}`,
-            });
+            const openTelnetTab = (profileId?: string) =>
+              workspaceRef.current?.newTab({
+                kind: "telnet",
+                session: profileId ? { ...session, profileId } : session,
+                name: saveHost?.name || `Telnet ${session.host}`,
+              });
+            if (!saveHost) {
+              openTelnetTab();
+              return;
+            }
+            // 保存失败只提示，不阻断本次连接。
+            void (async () => {
+              try {
+                const profileId = await saveTelnetHost(
+                  saveHost.name,
+                  session,
+                  saveHost.autoLog,
+                );
+                openTelnetTab(profileId);
+              } catch (e) {
+                setStatus(
+                  `Telnet 主机保存失败：${userVisibleError(String(e))}`,
+                );
+                openTelnetTab();
+              }
+            })();
           }}
         />
       )}

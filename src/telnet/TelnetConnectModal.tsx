@@ -26,7 +26,11 @@ import "../serial/serial.css";
 interface Props {
   open: boolean;
   onClose: () => void;
-  onConnect: (session: TelnetSessionConfig) => void;
+  /** saveHost 存在 = 用户勾选「保存为主机」，连接前先落档案 / 密码。 */
+  onConnect: (
+    session: TelnetSessionConfig,
+    saveHost?: { name: string; autoLog: boolean },
+  ) => void;
 }
 
 export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
@@ -35,6 +39,8 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
   const [touched, setTouched] = useState(false);
   // 临时 Telnet 连接的自动会话日志开关（保存的主机走档案 auto_session_log）。
   const [autoLog, setAutoLog] = useState(false);
+  const [saveHost, setSaveHost] = useState(false);
+  const [hostName, setHostName] = useState("");
 
   const errors = telnetFormErrors(form);
   const connectDisabled = isTelnetConnectDisabled(form);
@@ -47,6 +53,8 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
     if (!open) return;
     setTouched(false);
     setAutoLog(false);
+    setSaveHost(false);
+    setHostName("");
   }, [open]);
 
   useEffect(() => {
@@ -63,7 +71,16 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
   function commit() {
     setTouched(true);
     if (connectDisabled) return;
-    onConnect({ ...toTelnetSession(form), autoLog });
+    const host = form.host.trim();
+    onConnect(
+      { ...toTelnetSession(form), autoLog },
+      saveHost
+        ? {
+            name: hostName.trim() || `Telnet ${host}`,
+            autoLog,
+          }
+        : undefined,
+    );
   }
 
   return (
@@ -171,6 +188,35 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
             <p className="serial-hint">{TELNET_TEXT.credentialsHint}</p>
           </div>
 
+          <div className="serial-save-host">
+            <div className="serial-check-row">
+              <div>
+                <label htmlFor="telnet-save-host">{TELNET_TEXT.saveHost}</label>
+                <p className="serial-hint">{TELNET_TEXT.saveHostDesc}</p>
+              </div>
+              <input
+                type="checkbox"
+                id="telnet-save-host"
+                checked={saveHost}
+                onChange={(e) => setSaveHost(e.target.checked)}
+              />
+            </div>
+            {saveHost && (
+              <div className="serial-field">
+                <label htmlFor="telnet-host-name">{TELNET_TEXT.hostName}</label>
+                <input
+                  id="telnet-host-name"
+                  type="text"
+                  placeholder={TELNET_TEXT.hostNamePlaceholder}
+                  value={hostName}
+                  onChange={(e) => setHostName(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+            )}
+          </div>
+
           <div className="serial-check-row">
             <div>
               <label htmlFor="telnet-auto-log">{TELNET_TEXT.autoLog}</label>
@@ -235,8 +281,8 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
             disabled={connectDisabled}
             onClick={commit}
           >
-            <Icon name="network" size={14} />
-            {TELNET_TEXT.connect}
+            <Icon name={saveHost ? "save" : "network"} size={14} />
+            {saveHost ? TELNET_TEXT.connectAndSave : TELNET_TEXT.connect}
           </button>
         </footer>
       </div>

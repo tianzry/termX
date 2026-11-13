@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-14 — Telnet 连接弹窗补「保存为主机」（对齐串口）
+
+- 用户实测反馈：Telnet 弹窗只有临时连接与自动日志勾选，缺「保存到配置」入口（串口弹窗已有）。补 `serial-save-host` 区块：勾选「保存为主机」+ 主机名称（缺省 `Telnet <host>`），底部按钮随之变「连接并保存」。
+- App 新增 `saveTelnetHost`：`protocol=telnet` + `telnet_username` / `telnet_charset` + `auto_session_log` 落档案；不建 SSH 凭据（后端 `validate_for_write` 对 telnet 豁免 `credential_id=""`），密码走 SecretStore（`setProfileTelnetPassword`），且仅用户名非空时保留 —— 与主机编辑页 `persistTelnetHost` 同一套语义。保存失败只提示、不阻断本次连接。
+- 保存成功后标签带 `profileId`（写进 `session.profileId`），自动日志改由档案 `auto_session_log` 决定；临时勾选的 `autoLog` 不再重复生效（后端 profile 优先）。
+- 门禁：`tsc --noEmit` ✓、`npm run test:run` 936 ✓（无新增测试面：纯 UI 组装 + 既有 API）。
+
+---
+
 ## 2026-11-14 — 串口终端分组配置补齐 + 全类型自动会话日志
 
 - **串口连接弹窗按 Netcatty 截图逐项补齐**（用户提供的对照图）：波特率、数据位 / 校验位 / 停止位、流控（none / software / hardware）、XANY、发送换行符（CR / LF / CRLF）、接收换行（原样 / CR / LF / CRLF）、退格键发送（DEL 0x7f / BS 0x08）、输入模式（普通 / 行模式 / 十六进制）、输出模式（文本 / 十六进制 dump）、本地回显、慢速发送（逐字节 + 10ms 间隔）。新增纯逻辑模块 `domain/serialStream.ts`（换行映射、hex 解析、hex dump 格式化、选项归一）+ 单测。

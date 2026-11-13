@@ -40,6 +40,12 @@ export const TELNET_TEXT = {
   autoLog: "自动记录会话日志",
   autoLogDesc:
     "本次连接写入一份可打印纯文本 .log；目录与命名在「设置 → 终端 → 会话日志」。保存的主机以主机编辑页的开关为准。",
+  saveHost: "保存为主机",
+  saveHostDesc:
+    "连接前写入主机档案（protocol=telnet）；密码存本机 SecretStore，不落明文。",
+  hostName: "主机名称",
+  hostNamePlaceholder: "例如 机房交换机 01",
+  connectAndSave: "连接并保存",
 } as const;
 
 export const TELNET_NEWLINE_OPTIONS: ReadonlyArray<{
