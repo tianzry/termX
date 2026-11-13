@@ -411,6 +411,8 @@ export default function App() {
           shell: resolved.local_shell || undefined,
           args: resolved.local_shell_args ?? undefined,
           startDir: resolved.local_start_dir ?? undefined,
+          // 档案 id 让后端按 auto_session_log 决定要不要自动写会话日志。
+          profileId: profile.id,
         });
       })();
       return;

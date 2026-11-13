@@ -106,6 +106,14 @@ describe("createLocalShellHost", () => {
     expect(p.group_id).toBe("g1");
   });
 
+  it("自动会话日志：开启落 true，未开启落 null（跟随全局设置）", () => {
+    expect(createLocalShellHost({ autoSessionLog: true }).auto_session_log).toBe(
+      true,
+    );
+    expect(createLocalShellHost({}).auto_session_log).toBeNull();
+    expect(createLocalShellHost({ autoSessionLog: false }).auto_session_log).toBeNull();
+  });
+
   it("未给 id 时生成 local- 前缀新 id", () => {
     const a = createLocalShellHost({});
     const b = createLocalShellHost({});

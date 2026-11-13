@@ -3280,6 +3280,7 @@ export function TerminalPane({
                 shell: tab.connector.shell,
                 args: tab.connector.args,
                 startDir: tab.connector.startDir,
+                profileId: tab.connector.profileId,
               }
             : undefined;
         const sid = await api.ptySpawn(c.term.cols, c.term.rows, localOpts);

@@ -118,6 +118,7 @@ describe("invoke 参数形状", () => {
       shell: null,
       args: null,
       startDir: null,
+      profileId: null,
     });
   });
 
@@ -134,7 +135,16 @@ describe("invoke 参数形状", () => {
       shell: "wsl.exe",
       args: ["-d", "Ubuntu"],
       startDir: "~",
+      profileId: null,
     });
+  });
+
+  it("ptySpawn 带 profileId（自动会话日志按档案覆盖）", async () => {
+    await ptySpawn(80, 24, { profileId: "local-1" });
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      "pty_spawn",
+      expect.objectContaining({ profileId: "local-1" }),
+    );
   });
 
   it("sshDisconnect 带 tabId: null 兜底", async () => {

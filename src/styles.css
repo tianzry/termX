@@ -8163,6 +8163,16 @@ button:disabled {
   font-size: 11px;
   color: hsl(var(--muted-foreground));
 }
+.lsh-auto-log {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.lsh-auto-log input[type="checkbox"] {
+  margin: 0;
+}
 .lsh-startdir {
   position: relative;
   display: flex;

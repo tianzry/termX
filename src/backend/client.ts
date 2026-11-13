@@ -396,6 +396,8 @@ export interface PtySpawnOptions {
   args?: string[];
   /** 启动目录（`~` 后端展开为主目录） */
   startDir?: string;
+  /** 来源主机档案 id；后端据此查 auto_session_log 覆盖，决定是否自动写日志 */
+  profileId?: string;
 }
 
 export function ptySpawn(
@@ -410,6 +412,7 @@ export function ptySpawn(
     shell: opts?.shell ?? null,
     args: opts?.args ?? null,
     startDir: opts?.startDir ?? null,
+    profileId: opts?.profileId ?? null,
   });
 }
 

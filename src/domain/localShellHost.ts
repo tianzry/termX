@@ -21,6 +21,8 @@ export interface LocalShellHostInput {
   shellIcon?: string;
   startDir?: string;
   groupId?: string | null;
+  /** 自动记录会话日志（null = 跟随全局设置，与 SSH 主机同语义）。 */
+  autoSessionLog?: boolean;
 }
 
 /** 照抄 Netcatty createLocalShellHost 语义：host 固定 localhost、
@@ -42,6 +44,7 @@ export const createLocalShellHost = (input: LocalShellHostInput): Profile => ({
   local_shell_name: input.shellName?.trim() || undefined,
   local_shell_icon: input.shellIcon?.trim() || undefined,
   local_start_dir: input.startDir?.trim() || undefined,
+  auto_session_log: input.autoSessionLog ? true : null,
 });
 
 /** 既有本地主机显示的 shell 名（副标题）。 */

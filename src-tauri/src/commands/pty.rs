@@ -47,6 +47,8 @@ pub fn pty_spawn(
     shell: Option<String>,
     args: Option<Vec<String>>,
     start_dir: Option<String>,
+    // 来源已保存本地 shell 档案的 id；直接开终端（无档案）时为 None，不自动记录日志。
+    profile_id: Option<String>,
 ) -> AppResult<String> {
     let session_id = crate::commands::lifecycle::resolve_session_id(session_id)?;
     let shell = resolve_local_shell(&state.db, shell);
@@ -57,11 +59,15 @@ pub fn pty_spawn(
         SessionKind::Pty,
         SessionOwner::Window(window.label().to_owned()),
     )?;
-    // 本地 shell 没有主机档案：默认不自动记录，需要时由工具栏手动开始。
+    // 与 ssh/serial/telnet 同一条链路：全局开关 + 档案覆盖（auto_session_log 列）。
+    let auto_log = crate::commands::settings::auto_session_log_path_for_profile_id(
+        &state,
+        profile_id.as_deref(),
+    );
     let log_slots = crate::commands::session_logs::prepare_log_slots(
         &state,
         &session_id,
-        None,
+        auto_log,
     )
     .unwrap_or_default();
     let sink_slots = log_slots.clone();

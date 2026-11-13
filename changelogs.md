@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-11-14 — 串口终端分组配置补齐 + 全类型自动会话日志
+
+- **串口连接弹窗按 Netcatty 截图逐项补齐**（用户提供的对照图）：波特率、数据位 / 校验位 / 停止位、流控（none / software / hardware）、XANY、发送换行符（CR / LF / CRLF）、接收换行（原样 / CR / LF / CRLF）、退格键发送（DEL 0x7f / BS 0x08）、输入模式（普通 / 行模式 / 十六进制）、输出模式（文本 / 十六进制 dump）、本地回显、慢速发送（逐字节 + 10ms 间隔）。新增纯逻辑模块 `domain/serialStream.ts`（换行映射、hex 解析、hex dump 格式化、选项归一）+ 单测。
+- **XANY 在 Windows 置灰**：`terminal/serial.rs` 的 IXANY 只在 Unix termios 生效，Windows 是 no-op，因此弹窗按 UA 判定并给出「本机不支持 Xany。已有配置会保留，请手动关闭后保存。」提示，不假装可选（沿用命名管道「明确报错而非假支持」的既有取舍）。
+- **收发换行 / hex dump 必须带跨块状态**：CRLF 可能被拆到两个 `serial:data` 事件里，无状态 replace 会重复或漏转换；`createReceiveNewlineTransformer` 记住块尾孤立 CR，`flush()` 在断开时补出。hex dump 按 16 字节成行，半行留在缓冲、`flush()` 补尾。
+- **保存的串口主机能还原终端分组**：`profiles` 表新增 JSON 列 `serial_term_opts`（schema v53，追加式迁移；沿用 `keyword_highlight_rules` 的 JSON 列先例，避免 6 个 ALTER + 占位符重排风险）；旧档案无该列时按 `serial_line_mode=true → input_mode=line` 兜底。
+- **自动记录会话日志扩到全部终端类型**：此前只有 SSH / 串口 / Telnet 接了 `auto_session_log_path_for_profile_id`，本地 shell（pty）恒为 None。`pty_spawn` 新增 `profile_id`，与其余三类走同一条 `prepare_log_slots` 链路；`Connector.kind=pty` 增 `profileId`（快速终端无档案时缺省 → 不自动记录，行为不变），`LocalShellPanel` 补「自动记录会话日志」开关，`createLocalShellHost` 落 `auto_session_log`（开启 true / 未开启 null = 跟随全局设置）。
+- headless `server.rs` 的 `pty_spawn` 分支本就不建日志槽位（无窗口侧自动落盘语义），故未改；`pty_spawn` 已在两侧注册，签名新增可选参数不影响 R4 双注册。
+- 门禁：`tsc --noEmit` ✓、`npm run test:run` 934 ✓（feature 1 提交点）、`cargo check` ✓（仅既有 dead_code 警告）；feature 2 门禁数见对应提交。
+
+---
+
 ## 2026-11-10 — MCP 命令上下文：cwd / env / 会话 preamble（仍然无状态）
 
 - `term_run` 新增 `cwd` 与 `env`，`build_run` 新增 `env`。统一执行顺序 `cd → 会话 preamble → export → command`（本次 env 最后覆盖 preamble），每次调用重新拼装脚本，不保留远端 shell，因此不会出现「上一条命令改了环境、这一条莫名生效」的隐藏状态。`env` 校验变量名（`[A-Za-z_][A-Za-z0-9_]*`、≤64 个、总量 ≤64 KiB），值走 POSIX 单引号转义；`cwd` 进不去回 `mcp_cwd_invalid`，不再悄悄落回 home 执行。

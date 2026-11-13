@@ -54,6 +54,8 @@ export type Connector =
       startDir?: string;
       /** 本地 shell 主机：显示名（标签标题）。 */
       name?: string;
+      /** 来源主机档案 id；用于自动会话日志查档案覆盖。快速终端（无档案）缺省。 */
+      profileId?: string;
     }
   | { kind: "ssh"; profileId: string; name: string }
   /** `profileId` 仅在从已保存主机打开时存在；临时串口连接没有该字段。 */
