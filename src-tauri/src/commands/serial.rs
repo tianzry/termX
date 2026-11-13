@@ -20,6 +20,8 @@ pub fn serial_open(
     session_id: Option<String>,
     // 来源已保存主机的档案 id；临时串口连接没有，默认不自动记录日志。
     profile_id: Option<String>,
+    // 临时串口连接由弹窗显式开启自动记录（无档案时生效）。
+    auto_log: Option<bool>,
 ) -> AppResult<String> {
     serial_open_for_owner(
         &app,
@@ -29,6 +31,7 @@ pub fn serial_open(
         config,
         session_id,
         profile_id,
+        auto_log,
     )
 }
 
@@ -41,6 +44,7 @@ pub fn serial_open_for_owner(
     config: serial::SerialConfig,
     session_id: Option<String>,
     profile_id: Option<String>,
+    auto_log: Option<bool>,
 ) -> AppResult<String> {
     let session_id = crate::commands::lifecycle::resolve_session_id(session_id)?;
     let reservation = crate::commands::lifecycle::reserve_resource(
@@ -52,7 +56,15 @@ pub fn serial_open_for_owner(
     let auto_log = crate::commands::settings::auto_session_log_path_for_profile_id(
         state,
         profile_id.as_deref(),
-    );
+    )
+    .or_else(|| {
+        crate::commands::settings::auto_session_log_path_for_temp(
+            state,
+            auto_log.unwrap_or(false),
+            &port,
+            "serial",
+        )
+    });
     let log_slots = crate::commands::session_logs::prepare_log_slots(
         state,
         &session_id,

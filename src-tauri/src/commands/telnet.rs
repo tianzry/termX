@@ -27,6 +27,8 @@ pub async fn telnet_open(
     session_id: Option<String>,
     // 来源已保存主机的档案 id；临时 Telnet 连接没有，默认不自动记录日志。
     profile_id: Option<String>,
+    // 临时 Telnet 连接由弹窗显式开启自动记录（无档案时生效）。
+    auto_log: Option<bool>,
 ) -> AppResult<String> {
     telnet_open_for_owner(
         app,
@@ -41,6 +43,7 @@ pub async fn telnet_open(
         password,
         session_id,
         profile_id,
+        auto_log,
     )
     .await
 }
@@ -60,6 +63,7 @@ pub async fn telnet_open_for_owner(
     password: Option<String>,
     session_id: Option<String>,
     profile_id: Option<String>,
+    auto_log: Option<bool>,
 ) -> AppResult<String> {
     // Turn transport-agnostic telnet output into Tauri events. The headless ws
     // server builds a different sink over the same `telnet::open`.
@@ -74,7 +78,15 @@ pub async fn telnet_open_for_owner(
     let auto_log = crate::commands::settings::auto_session_log_path_for_profile_id(
         state,
         profile_id.as_deref(),
-    );
+    )
+    .or_else(|| {
+        crate::commands::settings::auto_session_log_path_for_temp(
+            state,
+            auto_log.unwrap_or(false),
+            &format!("{host}:{port}"),
+            "telnet",
+        )
+    });
     let log_slots = crate::commands::session_logs::prepare_log_slots(
         state,
         &session_id,

@@ -25,6 +25,8 @@ export interface SerialSessionConfig {
   byteOrientedBackspace: boolean;
   /** 终端分组选项（收发换行 / 慢速 / 输入输出模式 / XANY）。旧工作区快照可缺省。 */
   term?: SerialTermOpts;
+  /** 临时连接显式开启自动会话日志；已保存主机以档案 auto_session_log 为准。 */
+  autoLog?: boolean;
 }
 
 /** Telnet 标签的连接参数（对齐 Netcatty host 的 protocol=telnet；凭据可选）。 */
@@ -41,6 +43,8 @@ export interface TelnetSessionConfig {
   password?: string;
   /** 主机级字符集（profiles.telnet_charset）；缺省 = utf-8。 */
   encoding?: TerminalEncoding;
+  /** 临时连接显式开启自动会话日志；已保存主机以档案 auto_session_log 为准。 */
+  autoLog?: boolean;
 }
 
 export type Connector =

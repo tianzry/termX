@@ -1549,8 +1549,15 @@ export function serialOpen(
   config: SerialConfig,
   sessionId?: string,
   profileId?: string,
+  autoLog?: boolean,
 ): Promise<string> {
-  return invoke<string>("serial_open", { port, config, sessionId, profileId });
+  return invoke<string>("serial_open", {
+    port,
+    config,
+    sessionId,
+    profileId,
+    autoLog: autoLog ?? null,
+  });
 }
 
 /** 串口写入：终端按键文本 → UTF-8 字节。 */
@@ -1632,6 +1639,7 @@ export function telnetOpen(
   sessionId?: string,
   credentials?: TelnetCredentials | null,
   profileId?: string,
+  autoLog?: boolean,
 ): Promise<string> {
   return invoke<string>("telnet_open", {
     host,
@@ -1643,6 +1651,7 @@ export function telnetOpen(
     username: credentials?.username ?? null,
     password: credentials?.password ?? null,
     profileId,
+    autoLog: autoLog ?? null,
   });
 }
 

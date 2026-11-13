@@ -308,13 +308,17 @@ export function LocalShellPanel({
         </label>
 
         <div className="lsh-auto-log">
-          <label htmlFor="lsh-auto-log">自动记录会话日志</label>
-          <input
-            type="checkbox"
-            id="lsh-auto-log"
-            checked={autoLog}
-            onChange={(e) => setAutoLog(e.target.checked)}
-          />
+          <span id="lsh-auto-log-label">自动记录会话日志</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoLog}
+            aria-labelledby="lsh-auto-log-label"
+            className={`host-switch${autoLog ? " on" : ""}`}
+            onClick={() => setAutoLog((v) => !v)}
+          >
+            <span className="host-switch-knob" />
+          </button>
         </div>
         <p className="lsh-combo-hint">
           开启后，本终端每次建立会话都会自动写入一份可打印纯文本 .log。保存目录与命名规则在「设置 → 终端 → 会话日志」中配置；重名自动加序号，不会覆盖已有文件。默认关闭。

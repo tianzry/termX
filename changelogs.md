@@ -11,6 +11,7 @@
 - **收发换行 / hex dump 必须带跨块状态**：CRLF 可能被拆到两个 `serial:data` 事件里，无状态 replace 会重复或漏转换；`createReceiveNewlineTransformer` 记住块尾孤立 CR，`flush()` 在断开时补出。hex dump 按 16 字节成行，半行留在缓冲、`flush()` 补尾。
 - **保存的串口主机能还原终端分组**：`profiles` 表新增 JSON 列 `serial_term_opts`（schema v53，追加式迁移；沿用 `keyword_highlight_rules` 的 JSON 列先例，避免 6 个 ALTER + 占位符重排风险）；旧档案无该列时按 `serial_line_mode=true → input_mode=line` 兜底。
 - **自动记录会话日志扩到全部终端类型**：此前只有 SSH / 串口 / Telnet 接了 `auto_session_log_path_for_profile_id`，本地 shell（pty）恒为 None。`pty_spawn` 新增 `profile_id`，与其余三类走同一条 `prepare_log_slots` 链路；`Connector.kind=pty` 增 `profileId`（快速终端无档案时缺省 → 不自动记录，行为不变），`LocalShellPanel` 补「自动记录会话日志」开关，`createLocalShellHost` 落 `auto_session_log`（开启 true / 未开启 null = 跟随全局设置）。
+- **自动记录会话日志入口补齐 + 开关样式修正**（用户实测反馈）：串口 / Telnet 连接弹窗此前没有自动日志选项（只有已保存主机在编辑面板里有），临时连接无法开启；本轮在 `SerialConnectModal` / `TelnetConnectModal` 各加一个勾选行，`serial_open` / `telnet_open` 新增可选 `auto_log`（仅无档案时生效，MCP headless 传 None），勾选「保存为主机」时同步落进档案 `auto_session_log`。本地终端面板原先用裸 checkbox，在 `vault-composer` 里被撑成巨大方块，改为与主机编辑页同款的 `host-switch` 小开关。
 - headless `server.rs` 的 `pty_spawn` 分支本就不建日志槽位（无窗口侧自动落盘语义），故未改；`pty_spawn` 已在两侧注册，签名新增可选参数不影响 R4 双注册。
 - 门禁：`tsc --noEmit` ✓、`npm run test:run` 934 ✓（feature 1 提交点）、`cargo check` ✓（仅既有 dead_code 警告）；feature 2 门禁数见对应提交。
 

@@ -386,6 +386,19 @@ pub fn auto_session_log_path(
     ))
 }
 
+/// 临时连接（无档案）：弹窗显式勾选时才自动记录日志。
+pub fn auto_session_log_path_for_temp(
+    state: &AppState,
+    enabled: bool,
+    name: &str,
+    protocol: &str,
+) -> Option<std::path::PathBuf> {
+    if !enabled {
+        return None;
+    }
+    Some(build_session_log_path(state, name, name, protocol))
+}
+
 /// 按档案 id 查询自动日志路径（串口 / Telnet 命令只知道 profileId）。
 pub fn auto_session_log_path_for_profile_id(
     state: &AppState,

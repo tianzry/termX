@@ -57,7 +57,7 @@ interface Props {
   /** saveHost 存在 = 用户勾选「保存为主机」，连接前先建凭据 / 档案。 */
   onConnect: (
     session: SerialSessionConfig,
-    saveHost?: { name: string; snapshot: SerialProfileSnapshot },
+    saveHost?: { name: string; snapshot: SerialProfileSnapshot; autoLog: boolean },
   ) => void;
 }
 
@@ -68,6 +68,8 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [saveHost, setSaveHost] = useState(false);
   const [hostName, setHostName] = useState("");
+  // 临时串口连接的自动会话日志开关（保存的主机走档案 auto_session_log）。
+  const [autoLog, setAutoLog] = useState(false);
   const [loadingPorts, setLoadingPorts] = useState(false);
   const [err, setErr] = useState("");
   const aliveRef = useRef(true);
@@ -122,6 +124,7 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
     setErr("");
     setSaveHost(false);
     setHostName("");
+    setAutoLog(false);
     void refreshPorts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -153,11 +156,13 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
         backspaceBehavior: form.backspaceBehavior,
         byteOrientedBackspace: form.byteOrientedBackspace,
         term: form.term,
+        autoLog,
       },
       saveHost
         ? {
             name: trimmedHostName || `串口 ${port}`,
             snapshot: serialProfileSnapshot(form),
+            autoLog,
           }
         : undefined,
     );
@@ -615,6 +620,19 @@ export function SerialConnectModal({ open, onClose, onConnect }: Props) {
                 />
               </div>
             )}
+          </div>
+
+          <div className="serial-check-row">
+            <div>
+              <label htmlFor="serial-auto-log">{SERIAL_TEXT.autoLog}</label>
+              <p className="serial-hint">{SERIAL_TEXT.autoLogDesc}</p>
+            </div>
+            <input
+              type="checkbox"
+              id="serial-auto-log"
+              checked={autoLog}
+              onChange={(e) => setAutoLog(e.target.checked)}
+            />
           </div>
 
           {err && <p className="serial-error">{err}</p>}

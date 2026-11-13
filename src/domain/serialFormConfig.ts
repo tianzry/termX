@@ -145,6 +145,9 @@ export const SERIAL_TEXT = {
   autoLoginPasswordPlaceholder: "可为空（空密码设备）",
   saveHost: "保存配置",
   saveHostDesc: "将此串口配置保存到主机列表以便快速访问",
+  autoLog: "自动记录会话日志",
+  autoLogDesc:
+    "本次连接写入一份可打印纯文本 .log；目录与命名在「设置 → 终端 → 会话日志」。保存为主机后以主机面板的开关为准。",
   hostName: "配置名称",
   hostNamePlaceholder: "例如 Arduino Uno",
   connectAndSave: "连接并保存",

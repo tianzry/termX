@@ -343,6 +343,7 @@ export default function App() {
   async function saveSerialHost(
     name: string,
     snapshot: SerialProfileSnapshot,
+    autoLog: boolean,
   ): Promise<string> {
     const credentialId = newId();
     const profileId = newId();
@@ -366,6 +367,8 @@ export default function App() {
       agent_forwarding: false,
       protocol: "serial",
       ...snapshot,
+      // 弹窗勾选的自动日志随档案落库；之后以主机面板开关为准。
+      auto_session_log: autoLog ? true : null,
     });
     await loadData();
     return profileId;
@@ -996,7 +999,11 @@ export default function App() {
             // 保存失败只提示，不阻断本次连接。
             void (async () => {
               try {
-                const profileId = await saveSerialHost(saveHost.name, saveHost.snapshot);
+                const profileId = await saveSerialHost(
+                  saveHost.name,
+                  saveHost.snapshot,
+                  saveHost.autoLog,
+                );
                 openSerialTab(profileId);
               } catch (e) {
                 setStatus(

@@ -3078,8 +3078,9 @@ export function TerminalPane({
           conn.session.port,
           conn.session.config,
           sid,
-          // 仅从已保存主机打开的串口带 profileId；临时连接不自动记录日志。
+          // 仅从已保存主机打开的串口带 profileId；临时连接看弹窗的自动日志勾选。
           conn.profileId,
+          conn.session.autoLog,
         );
         if (!aliveRef.current || attempt !== attemptRef.current) {
           void api.serialClose(actual);
@@ -3226,8 +3227,9 @@ export function TerminalPane({
           conn.session.inputNewline,
           sid,
           credentials,
-          // 仅从已保存主机打开的 Telnet 带 profileId；临时连接不自动记录日志。
+          // 仅从已保存主机打开的 Telnet 带 profileId；临时连接看弹窗的自动日志勾选。
           conn.session.profileId,
+          conn.session.autoLog,
         );
         if (!aliveRef.current || attempt !== attemptRef.current) {
           void api.telnetClose(actual);

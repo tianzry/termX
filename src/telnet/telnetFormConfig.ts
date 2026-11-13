@@ -37,6 +37,9 @@ export const TELNET_TEXT = {
   newlineDesc: "发送回车时使用的行结束符（Telnet NVT 默认 CRLF）。",
   cancel: "取消",
   connect: "连接",
+  autoLog: "自动记录会话日志",
+  autoLogDesc:
+    "本次连接写入一份可打印纯文本 .log；目录与命名在「设置 → 终端 → 会话日志」。保存的主机以主机编辑页的开关为准。",
 } as const;
 
 export const TELNET_NEWLINE_OPTIONS: ReadonlyArray<{

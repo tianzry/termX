@@ -2444,6 +2444,7 @@ pub async fn call_tool(
                             config,
                             None,
                             profile_id,
+                            None,
                         )
                     }
                     #[cfg(not(desktop))]
@@ -2485,6 +2486,7 @@ pub async fn call_tool(
                         opt("password"),
                         None,
                         profile_id,
+                        None,
                     )
                     .await
                 }

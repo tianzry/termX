@@ -33,6 +33,8 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
   const [form, setForm] = useState<TelnetFormValues>(() => resolveTelnetForm());
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [touched, setTouched] = useState(false);
+  // 临时 Telnet 连接的自动会话日志开关（保存的主机走档案 auto_session_log）。
+  const [autoLog, setAutoLog] = useState(false);
 
   const errors = telnetFormErrors(form);
   const connectDisabled = isTelnetConnectDisabled(form);
@@ -44,6 +46,7 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
   useEffect(() => {
     if (!open) return;
     setTouched(false);
+    setAutoLog(false);
   }, [open]);
 
   useEffect(() => {
@@ -60,7 +63,7 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
   function commit() {
     setTouched(true);
     if (connectDisabled) return;
-    onConnect(toTelnetSession(form));
+    onConnect({ ...toTelnetSession(form), autoLog });
   }
 
   return (
@@ -166,6 +169,19 @@ export function TelnetConnectModal({ open, onClose, onConnect }: Props) {
               />
             </div>
             <p className="serial-hint">{TELNET_TEXT.credentialsHint}</p>
+          </div>
+
+          <div className="serial-check-row">
+            <div>
+              <label htmlFor="telnet-auto-log">{TELNET_TEXT.autoLog}</label>
+              <p className="serial-hint">{TELNET_TEXT.autoLogDesc}</p>
+            </div>
+            <input
+              type="checkbox"
+              id="telnet-auto-log"
+              checked={autoLog}
+              onChange={(e) => setAutoLog(e.target.checked)}
+            />
           </div>
 
           <div className="serial-advanced">
