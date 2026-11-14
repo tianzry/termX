@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-14 — MCP 连接详情：token 复制自动带 Bearer 前缀
+
+- 用户实测反馈：配置片段里 `"Authorization": "Bearer <token>"` 带前缀，但界面「复制」出来的是裸 token，手工配置时漏前缀导致 401（服务端 `bearer_token()` 严格要求 `Bearer ` 前缀）。
+- 方案取舍：业界（GitHub PAT / OpenAI key）复制的是裸密钥，前缀由客户端拼装；但 termX 的 token 唯一用途就是填 Authorization 头，且界面标签本身叫「Bearer token」——按用户拍板改为**复制即得完整头值** `Bearer <token>`，省去手工拼前缀。展示仍是掩码裸 token（`maskToken`），片段生成不变。
+- token 行下补一行说明（zh/en i18n `settings.ai.token.hint`）：复制内容已含前缀，可直接粘贴为 Authorization 头值。
+- 门禁：`tsc --noEmit` ✓、`npm run test:run` 936 ✓（无新增测试面：单行 JSX 组装 + 文案）。
+
+---
+
 ## 2026-11-14 — Telnet 连接弹窗补「保存为主机」（对齐串口）
 
 - 用户实测反馈：Telnet 弹窗只有临时连接与自动日志勾选，缺「保存到配置」入口（串口弹窗已有）。补 `serial-save-host` 区块：勾选「保存为主机」+ 主机名称（缺省 `Telnet <host>`），底部按钮随之变「连接并保存」。

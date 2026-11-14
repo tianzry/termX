@@ -790,7 +790,12 @@ export function AiTab() {
                   {status.bearerToken ? maskToken(status.bearerToken) : t("settings.ai.unavailable")}
                 </code>
                 <div className="nc-mcp-copy-actions">
-                  {copyButton("token", status.bearerToken ?? "", !status.bearerToken)}
+                  {/* 复制即得完整 Authorization 头值（含 Bearer 前缀），手工配置直接粘贴。 */}
+                  {copyButton(
+                    "token",
+                    status.bearerToken ? `Bearer ${status.bearerToken}` : "",
+                    !status.bearerToken,
+                  )}
                   <button
                     type="button"
                     className="nc-set-btn is-sm"
@@ -802,6 +807,7 @@ export function AiTab() {
                   </button>
                 </div>
               </div>
+              <div className="nc-set-row-desc">{t("settings.ai.token.hint")}</div>
               <div className="nc-set-row-desc">{t("settings.ai.token.rotate.desc")}</div>
             </div>
 

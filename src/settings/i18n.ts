@@ -80,6 +80,8 @@ const zhCN: Record<string, string> = {
   "settings.ai.token": "Bearer token",
   "settings.ai.token.rotate": "轮换 token",
   "settings.ai.token.rotate.desc": "轮换后旧 token 立即失效，已配置的客户端需要更新。",
+  "settings.ai.token.hint":
+    "复制内容已含 Bearer 前缀，可直接粘贴为 Authorization 头的值；完整客户端配置见下方片段。",
   "settings.ai.copy": "复制",
   "settings.ai.copied": "已复制",
   "settings.ai.unavailable": "服务未运行",
@@ -753,6 +755,8 @@ const en: Record<string, string> = {
   "settings.ai.token": "Bearer token",
   "settings.ai.token.rotate": "Rotate token",
   "settings.ai.token.rotate.desc": "Rotating invalidates the old token immediately; configured clients must be updated.",
+  "settings.ai.token.hint":
+    "The copied value already includes the Bearer prefix and can be pasted directly as the Authorization header value; see the snippet below for full client config.",
   "settings.ai.copy": "Copy",
   "settings.ai.copied": "Copied",
   "settings.ai.unavailable": "Server not running",
