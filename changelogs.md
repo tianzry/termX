@@ -4,7 +4,15 @@
 
 ---
 
-## 2026-11-14 — 修复：SFTP 侧栏「打不开 / 操作失败：Timeout」（死 SSH 会话空等 + WSL 虚拟机空闲回收）
+## 2026-11-14 — 修复：SFTP 初始化 Timeout 的真正根因（OSC 7 钩子污染 sshd Subsystem 通道）
+
+- 上一条「死 SSH 会话空等」修复后用户实测仍报「SFTP 初始化失败：Timeout」。WSL 内用 pty 探针复现：`ssh -v -s root@127.0.0.1 sftp` 认证通过、`Sending subsystem: sftp` 之后，通道里回来的竟是交互 shell 的 OSC 7 上报（`ESC ] 7 ; file://DESKTOP-KLK0AR8/root BEL`）而非 sftp-server 的 VERSION 包。
+- 根因（**termX 自己装的钩子改坏了远端**，非环境偶发）：sshd 执行 `Subsystem sftp` 时经用户 shell `bash -c "/usr/lib/openssh/sftp-server"`，而 bash 对 sshd 派生的非交互 shell 也会加载 `~/.bashrc`。「配置目录追踪」写入 `/root/.bashrc` 的 OSC 7 块（02a1830 起）末尾有一行**无守卫的裸调用** `__termx_osc7_cwd`，立即把 OSC 7 字节打进 SFTP 通道；russh-sftp 把前 4 字节当包长（≈459MB）傻等 → 10s 裸 Timeout。直接跑 `/usr/lib/openssh/sftp-server` 管道喂 INIT 正常回 VERSION，证明二进制与 sshd 配置（`sshd -T`：`subsystem sftp /usr/lib/openssh/sftp-server`、无 ForceCommand、无 `/root/.ssh/rc`）都干净。
+- 修复（`src/terminal/osc7.ts`）：① 三种钩子的「立即上报一次」全部加交互守卫 —— bash `case $- in *i*) … ;; esac`、zsh `[[ -o interactive ]] && …`、fish `status is-interactive; and …`（PROMPT_COMMAND / precmd / fish_prompt 本就只在交互 shell 触发，不受影响）；② 安装器自愈升级：检测 rc 文件里存在整行裸调用 `__termx_osc7_cwd`（旧版特征）时，先 `sed -i.termx-osc7-old` 按标记整块删除再重写新块，老主机重跑一次「执行配置」即修复；③ WSL 测试机 `/root/.bashrc` 已手工换成带守卫版本。
+- 验证（WSL Ubuntu-26.04，OpenSSH 10.2p1）：pty 探针（raw 模式，避开行规程把 INIT 的 0x03 当 Ctrl-C 吃掉）确认 subsystem 通道 `HAS_OSC7=False`、`HAS_VERSION=True`（`02 00 00 00 03` + posix-rename 扩展）；门禁 `tsc --noEmit` ✓、`test:run` 940 ✓（新增守卫断言 1 条）。上一条的死会话 15s 封顶与 i18n 保留——那是真实的第二层问题（VM 空闲回收），只是本次 Timeout 的主因是钩子污染。
+- 踩坑：① 探针写 INIT 必须 `tty.setraw`，否则 0x03 被 pty 行规程解释成 SIGINT；② `bash -c` 双层引号里 `$-` / heredoc 会被外层 shell 提前展开（`$-` → `hBc`），改远端 rc 文件用「Windows 写文件 + WSL `tr -d '\r'` 拷入」最稳；③ sftp-server 收到 INIT 后立刻 EOF 会静默退出（不回 VERSION），管道测试要 `sleep` 兜住 stdin。
+
+---
 
 - 用户实测反馈：右侧栏 SFTP 打不开，先卡「正在复用 SSH 会话建立 SFTP…」再报「操作失败：Timeout」。
 - 根因（环境 + 体验两层）：WSL2 虚拟机空闲约 60s 被回收（`~/.wslconfig` 的 `vmIdleTimeout=-1` 实测未生效），sshd 随 VM 重启，termX 手里的 SSH 会话静默死亡；此后 `sftp_connect_session` 在死会话上开通道 / 等 SFTP 版本包，一路空等到 russh-sftp 10s 超时，前端只拿到裸 `Timeout`（`sftp_init_failed` 无 i18n 映射 → 兜底「操作失败：Timeout」），用户完全看不出该重连。

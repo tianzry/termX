@@ -14,7 +14,10 @@ const BASH_HOOK = [
   OSC7_MARKER_START,
   "__termx_osc7_cwd() { printf '\\033]7;file://%s%s\\007' \"${HOSTNAME:-localhost}\" \"$PWD\"; }",
   'case ";$PROMPT_COMMAND;" in *__termx_osc7_cwd*) ;; *) PROMPT_COMMAND="__termx_osc7_cwd${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac',
-  "__termx_osc7_cwd",
+  // 只在交互 shell 里立即上报一次：sshd 的 Subsystem（如 sftp-server）也会经
+  // `bash -c` 加载 .bashrc，无守卫的 printf 会把 OSC 7 字节混进 SFTP 通道，
+  // 导致协议解析卡死（表现为 SFTP 初始化 Timeout）。
+  "case $- in *i*) __termx_osc7_cwd ;; esac",
   OSC7_MARKER_END,
 ].join("\n");
 
@@ -22,7 +25,9 @@ const ZSH_HOOK = [
   OSC7_MARKER_START,
   "__termx_osc7_cwd() { printf '\\033]7;file://%s%s\\007' \"${HOSTNAME:-localhost}\" \"$PWD\"; }",
   "autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook precmd __termx_osc7_cwd 2>/dev/null",
-  "__termx_osc7_cwd",
+  // 与 bash/fish 同款守卫：保持三种钩子里「裸调用 __termx_osc7_cwd」只出现在旧版本，
+  // 安装器以此识别并升级历史无守卫块。
+  "[[ -o interactive ]] && __termx_osc7_cwd",
   OSC7_MARKER_END,
 ].join("\n");
 
@@ -33,7 +38,8 @@ const FISH_HOOK = [
   '    test -n "$h"; or set h localhost',
   "    printf '\\033]7;file://%s%s\\007' \"$h\" \"$PWD\"",
   "end",
-  "__termx_osc7_cwd",
+  // config.fish 在非交互 `fish -c`（含 sshd Subsystem 执行）时也会加载，需守卫。
+  "status is-interactive; and __termx_osc7_cwd",
   OSC7_MARKER_END,
 ].join("\n");
 
@@ -70,6 +76,9 @@ export function buildOsc7SetupPlan(): Osc7SetupPlan {
     blocks,
     'mkdir -p "$(dirname "$cfg")" 2>/dev/null || true',
     'touch "$cfg" 2>/dev/null || true',
+    // 升级旧版无守卫钩子：旧块里有整行裸调用 __termx_osc7_cwd（非交互 shell 也会
+    // 打印 OSC 7，污染 sshd Subsystem/SFTP 通道）；整块删除后按新模板重写。
+    `if grep -Fxq '__termx_osc7_cwd' "$cfg" 2>/dev/null && grep -Fq ${shQuote(OSC7_MARKER_END)} "$cfg" 2>/dev/null; then sed -i.termx-osc7-old '/>>> termX osc7 >>>/,/<<< termX osc7 <<</d' "$cfg" && rm -f "$cfg.termx-osc7-old"; fi`,
     `if ! grep -Fq ${shQuote(OSC7_MARKER_START)} "$cfg" 2>/dev/null; then printf '%s\\n' "$hook" >> "$cfg"; fi`,
     `printf '__TERMX_OSC7_SHELL__=%s\\n' "$shell_name"`,
     `printf '__TERMX_OSC7_CONFIG__=%s\\n' "$cfg"`,

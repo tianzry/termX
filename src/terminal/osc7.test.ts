@@ -42,6 +42,18 @@ describe("buildOsc7SetupPlan", () => {
     // 钩子里的 printf 格式用了单引号，必须被转义成 '\'' 形式。
     expect(plan.command).toContain("'\\''");
   });
+
+  it("立即上报带交互守卫，且安装器升级旧版无守卫块", () => {
+    const plan = buildOsc7SetupPlan();
+    // 裸调用会把 OSC 7 混进 sshd Subsystem（SFTP）通道，必须守卫。
+    expect(plan.command).toContain("case $- in *i*) __termx_osc7_cwd ;; esac");
+    expect(plan.command).toContain(
+      "status is-interactive; and __termx_osc7_cwd",
+    );
+    expect(plan.command).toContain("[[ -o interactive ]] && __termx_osc7_cwd");
+    expect(plan.command).toContain("grep -Fxq '__termx_osc7_cwd'");
+    expect(plan.command).toContain("sed -i.termx-osc7-old");
+  });
 });
 
 describe("parseOsc7SetupResult / osc7ReloadCommand", () => {
