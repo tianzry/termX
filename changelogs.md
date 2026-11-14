@@ -4,11 +4,13 @@
 
 ---
 
-## 2026-11-14 — SFTP「跳到终端目录」：OSC 7 目录追踪首连自动弹确认框
+## 2026-11-14 — SFTP「跳到终端目录 / 追随终端目录」：OSC 7 目录追踪首连自动弹确认框
 
 - 用户实测反馈：SFTP 侧栏「跳到终端目录」置灰提示「终端目录未知」，认为功能失效。排查非解析 bug：该能力依赖远端 shell 的 OSC 7 钩子，此前需手动「更多 → 配置目录追踪」执行安装；WSL 主机从未执行过（`/root/.bashrc` 无 `termX osc7` 标记为证），按钮因此恒灰。
 - 按用户拍板改为**首连自动弹**：SSH 连接建立后 2s 宽限期内未收到 OSC 7 上报、且该主机未曾取消过 → 自动打开既有确认对话框，点一次「执行配置」即启用；已装钩子的主机连接后立刻收到首帧上报，不会误弹。取消（按钮 / Esc / 蒙层）按主机记 localStorage `termx.osc7prompt.dismissed.<profileId>`「不再自动弹」；「更多」菜单手动入口始终保留。
 - 新增纯逻辑 `src/domain/osc7Prompt.ts`（存储键 / dismissed 读写 / 宽限常量）+ 3 单测；TerminalPane 只接线：自动弹 effect（`cwdTracked` / 对话框开闭走 ref 防竞态）+ 统一 `closeOsc7Dialog(dismissed)` 收口五个关闭点。
+- 后续用户又反馈设置里「追随终端目录」开关失效：排查确认**同一根因**——跟随链路（SftpSidePane effect → externalPath → load）本身无 bug，只是消费的 `terminalCwd` 仅在 OSC 7 追踪启用后才有值；本条自动弹修复同时覆盖该功能，无需额外代码改动。
+- 无头验证（WSL Ubuntu-26.04）：用一次性 HOME 跑真实 `buildOsc7SetupPlan()` 脚本 → 元数据回报 shell=bash、config 路径正确；随后 `bash -ic` 交互 shell 实际发出 `ESC ] 7 ; file://DESKTOP-KLK0AR8/<cwd> BEL`，`parseOsc7Cwd` 可解析。远端半链路确认工作正常。
 - 门禁：`tsc --noEmit` ✓、`test:run` 939 ✓（含新增 3）；无后端改动。
 
 ---
