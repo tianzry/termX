@@ -11,6 +11,8 @@
 - 修复三层：A. `lifecycle::spawn_ssh_death_watch`（connect_profile 建链成功后挂载）：tokio 任务轮询 russh `Handle::is_closed`（0.62.7 提供），closed 即 `mark_closed` 收注册表 + 发 `ssh:progress` status=closed 事件，窗口 tab 明确显示「连接已断开」；与用户主动关闭幂等兼容。B. `find_ready_for_host` 加存活门禁：`ssh_handle().try_lock()` 后查 `is_closed()`，closed 直接跳过不复用（覆盖死亡回调未及触发的竞态）。C. MCP `session_open` 新增 `fresh` 布尔参数：true 时跳过两次复用查找强制新拨 headless 连接；guide 文案补「死链自愈 + fresh」说明。A+B 落地后死会话自动离开 Ready，session_open 天然自愈，无需给 MCP 开关闭窗口会话的权限（owner 安全模型保留）。
 - 门禁：`cargo check` ✓、`cargo test --lib` 1060 ✓、`tsc --noEmit` ✓、`test:run` 941 ✓；前端仅 TerminalPane 补 closed 状态行文案。
 - 已知边界：TCP 黑洞型断链要等 keepalive（30s×3，≤90s）才判定死亡，期间复用仍可能拿到半死会话（SFTP 已有 15s 封顶兜底）；后续可加 ping 探测。
+- 验证时抓出追加 bug（同批修复）：`ensure_for_host` 拨新链后**丢弃** `connect_profile` 返回的新 session id，回头再跑一次 `find_ready_for_host` 取结果——同主机已有另一条 ready 会话时（正是 fresh=true 想绕开的那条）会把旧会话当新建结果返回，fresh 形同虚设。改为直接用新 id 走 `ready_by_id` 解析（顺带消除并发建连时拿错会话的竞态）。门禁 `cargo check` ✓。
+- 验证（agent 自动化实测，release exe）：MCP 驱动脚本走完整生死周期 — ① 活链时 session_open 复用同 sid（正常语义不变）；② `wsl --shutdown` 后 death watch **1s 内**收敛注册表，get_environment 中死会话即消失；③ 死链期间 session_open 不再复用，改为新拨并 2s 快速失败（connection refused），不再无限空等；④ WSL 重启后 session_open 自愈新拨成功、terminal_execute 正常；⑤ `fresh=true` 在活会话存在时强制返回**不同**的新 sid。窗口 UI 断链横幅走 session_task 既有 `ssh:close` 事件路径，本次提交未触碰。
 
 ---
 

@@ -166,7 +166,9 @@ pub async fn ensure_for_host(
     }
 
     let owner = SessionOwner::Headless(runtime_state::owner_for_client(&client.id));
-    crate::commands::session::connect_profile(
+    // 必须用 connect_profile 返回的新 id 解析：再跑一次 find_ready_for_host 会把
+    // 同主机的其它 ready 会话（如 fresh=true 想绕开的那条）当成新建结果返回。
+    let session_id = crate::commands::session::connect_profile(
         app.clone(),
         state,
         owner,
@@ -179,8 +181,7 @@ pub async fn ensure_for_host(
     )
     .await?;
 
-    find_ready_for_host(state, host_id, client)?
-        .ok_or_else(|| AppError::other("mcp_session_lost", json!({ "hostId": host_id })))
+    ready_by_id(state, &session_id, client)
 }
 
 fn find_ready_for_host(
