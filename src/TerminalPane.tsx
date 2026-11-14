@@ -142,6 +142,11 @@ import {
   parseOsc7SetupResult,
 } from "./terminal/osc7";
 import {
+  OSC7_AUTO_PROMPT_DELAY_MS,
+  dismissOsc7Prompt,
+  isOsc7PromptDismissed,
+} from "./domain/osc7Prompt";
+import {
   createTerminalDecoder,
   loadTerminalEncoding,
   saveTerminalEncoding,
@@ -481,6 +486,8 @@ export function TerminalPane({
   const [cwdTracked, setCwdTracked] = useState(false);
   const [osc7DialogOpen, setOsc7DialogOpen] = useState(false);
   const [osc7Busy, setOsc7Busy] = useState(false);
+  /** 当前目录追踪对话框是否为首连自动弹出（取消时按主机记忆不再自动弹）。 */
+  const [osc7AutoPrompt, setOsc7AutoPrompt] = useState(false);
   /**
    * 文本会话日志状态：后端把输出写成剥 ANSI 的 `.log`（默认目录 + 命名模板）。
    * 主机「自动记录」与工具栏手动开始共用同一文本槽，按钮据此显示录制态。
@@ -718,7 +725,7 @@ export function TerminalPane({
     const sid = sidRef.current;
     if (osc7Busy) return;
     if (!sid) {
-      setOsc7DialogOpen(false);
+      closeOsc7Dialog(false);
       onStatus("目录追踪配置失败：会话未连接");
       return;
     }
@@ -732,7 +739,7 @@ export function TerminalPane({
       }
       const { shell } = parseOsc7SetupResult(result.stdout);
       writeToPane(`${osc7ReloadCommand(shell)}\r`);
-      setOsc7DialogOpen(false);
+      closeOsc7Dialog(false);
       onStatus("目录追踪配置已发送到终端");
     } catch (e) {
       onStatus(`目录追踪配置失败：${userVisibleError(String(e))}`);
@@ -747,11 +754,45 @@ export function TerminalPane({
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.stopPropagation();
-      setOsc7DialogOpen(false);
+      closeOsc7Dialog(true);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [osc7DialogOpen]);
+
+  const cwdTrackedRef = useRef(cwdTracked);
+  useEffect(() => {
+    cwdTrackedRef.current = cwdTracked;
+  }, [cwdTracked]);
+  const osc7DialogOpenRef = useRef(osc7DialogOpen);
+  useEffect(() => {
+    osc7DialogOpenRef.current = osc7DialogOpen;
+  }, [osc7DialogOpen]);
+
+  /**
+   * 首连自动弹：SSH 连接建立后宽限期内未收到 OSC 7 上报、且该主机未曾取消过，
+   * 自动打开配置对话框（省得用户自己找「更多」入口）；已装钩子的主机会立刻
+   * 收到首帧上报，不会误弹。
+   */
+  useEffect(() => {
+    if (!isSsh || status !== "connected" || !sshProfileId) return;
+    if (isOsc7PromptDismissed(sshProfileId)) return;
+    const timer = window.setTimeout(() => {
+      if (cwdTrackedRef.current || osc7DialogOpenRef.current) return;
+      setOsc7AutoPrompt(true);
+      setOsc7DialogOpen(true);
+    }, OSC7_AUTO_PROMPT_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [isSsh, status, sshProfileId]);
+
+  /** 关闭配置对话框：自动弹窗被取消时按主机记忆「不再自动弹」。 */
+  function closeOsc7Dialog(dismissed: boolean) {
+    if (dismissed && osc7AutoPrompt && sshProfileId) {
+      dismissOsc7Prompt(sshProfileId);
+    }
+    setOsc7AutoPrompt(false);
+    setOsc7DialogOpen(false);
+  }
 
   /** 屏幕等待 / 自动触发：终端缓冲全文（xterm buffer translateToString）。 */
   function termBufferText(): string {
@@ -4864,7 +4905,7 @@ export function TerminalPane({
       )}
 
       {osc7DialogOpen && (
-        <div className="modal-mask" onClick={() => setOsc7DialogOpen(false)}>
+        <div className="modal-mask" onClick={() => closeOsc7Dialog(true)}>
           <div
             className="modal term-osc7-modal"
             role="dialog"
@@ -4885,7 +4926,7 @@ export function TerminalPane({
             <div className="term-menu-label">将执行的命令</div>
             <pre className="term-osc7-command">{buildOsc7SetupPlan().command}</pre>
             <div className="modal-actions">
-              <button onClick={() => setOsc7DialogOpen(false)}>取消</button>
+              <button onClick={() => closeOsc7Dialog(true)}>取消</button>
               <button
                 className="term-osc7-run"
                 disabled={osc7Busy}
