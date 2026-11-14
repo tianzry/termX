@@ -131,7 +131,14 @@ pub async fn sftp_connect_session(
 
     let parent = session_id.clone();
     let handle = crate::ssh::client::run_blocking_ssh(move || async move {
-        SftpHandle::from_handle(&ssh_handle, parent).await
+        // 死会话（远端 sshd 重启 / 虚拟机回收）上开通道会无限空等：
+        // 封顶 15s 并给出可操作的错误码，而不是让前端转圈到 russh-sftp 的裸 Timeout。
+        tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            SftpHandle::from_handle(&ssh_handle, parent),
+        )
+        .await
+        .map_err(|_| AppError::sftp("sftp_open_timeout", serde_json::json!({})))?
     })
     .await?;
     reservation.activate(crate::commands::lifecycle::ReadySession::Sftp(Arc::new(

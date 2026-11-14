@@ -136,6 +136,9 @@ const ERROR_MESSAGES: Record<
     `系统缺少解压工具 ${str(p, "binary") || ""}，请安装后重试。`,
   // ── SFTP ──
   sftp_session_not_found: () => "SFTP 会话不存在或已关闭。",
+  sftp_open_timeout: () =>
+    "SFTP 建立超时：所复用的 SSH 会话可能已断开（远端服务重启 / 主机休眠等），请重连终端后重试。",
+  sftp_init_failed: (p) => `SFTP 初始化失败：${str(p, "err")}`,
   sftp_extract_no_ssh: () =>
     "独立 SFTP 连接没有 SSH 命令通道，无法执行远程解压；请通过主机档案连接后再试。",
   sftp_extract_unsupported: (p) =>

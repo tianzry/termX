@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-14 — 修复：SFTP 侧栏「打不开 / 操作失败：Timeout」（死 SSH 会话空等 + WSL 虚拟机空闲回收）
+
+- 用户实测反馈：右侧栏 SFTP 打不开，先卡「正在复用 SSH 会话建立 SFTP…」再报「操作失败：Timeout」。
+- 根因（环境 + 体验两层）：WSL2 虚拟机空闲约 60s 被回收（`~/.wslconfig` 的 `vmIdleTimeout=-1` 实测未生效），sshd 随 VM 重启，termX 手里的 SSH 会话静默死亡；此后 `sftp_connect_session` 在死会话上开通道 / 等 SFTP 版本包，一路空等到 russh-sftp 10s 超时，前端只拿到裸 `Timeout`（`sftp_init_failed` 无 i18n 映射 → 兜底「操作失败：Timeout」），用户完全看不出该重连。
+- 修复：`sftp_connect_session` 对 `SftpHandle::from_handle` 加 15s 封顶超时，超时返回新错误码 `sftp_open_timeout`；前端 `sshErrors` 补 `sftp_open_timeout`（「SFTP 建立超时：所复用的 SSH 会话可能已断开…请重连终端后重试」）与 `sftp_init_failed` 映射。`.wslconfig` 改 `vmIdleTimeout=604800000`（7 天）消除回收根因。
+- 门禁：`cargo check` ✓、`tsc --noEmit` ✓、`test:run` ✓；release 重建后 MCP 无头验证：活会话 SFTP 打开 ✓、`wsl --shutdown` 后快速返回可操作错误（不再裸 Timeout）✓、重连后 SFTP 恢复 ✓。
+
+---
+
 ## 2026-11-14 — SFTP「跳到终端目录 / 追随终端目录」：OSC 7 目录追踪首连自动弹确认框
 
 - 用户实测反馈：SFTP 侧栏「跳到终端目录」置灰提示「终端目录未知」，认为功能失效。排查非解析 bug：该能力依赖远端 shell 的 OSC 7 钩子，此前需手动「更多 → 配置目录追踪」执行安装；WSL 主机从未执行过（`/root/.bashrc` 无 `termX osc7` 标记为证），按钮因此恒灰。
