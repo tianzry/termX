@@ -13,6 +13,7 @@ import {
   formatTransferBytes,
   formatTransferEta,
   formatTransferSpeed,
+  isSettledStatus,
   pickActiveConflict,
   progressPercent,
   queueCounts,
@@ -164,6 +165,16 @@ describe("按钮可用性", () => {
     expect(canRetry("failed")).toBe(true);
     expect(canRetry("completed")).toBe(false);
     expect(canRetry("cancelled")).toBe(false);
+  });
+
+  it("isSettledStatus：完成/取消/跳过不再渲染离线红字", () => {
+    expect(isSettledStatus("completed")).toBe(true);
+    expect(isSettledStatus("cancelled")).toBe(true);
+    expect(isSettledStatus("skipped")).toBe(true);
+    // failed 仍要显示离线标注（重试按钮依赖它禁用）。
+    expect(isSettledStatus("failed")).toBe(false);
+    expect(isSettledStatus("running")).toBe(false);
+    expect(isSettledStatus("paused")).toBe(false);
   });
 });
 

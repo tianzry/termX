@@ -157,6 +157,19 @@ export function canRetry(status: TransferStatus): boolean {
   return status === "failed";
 }
 
+/**
+ * 终态里「无需再动作」的三态：完成 / 取消 / 跳过。
+ * 会话存活与否对它们没有意义：切终端 tab 会关掉浏览用 SFTP 通道，队列中心
+ * 随即回收 handle（只保留未终态项引用的），这三态行若仍渲染「会话已断开」
+ * 红字就是误报（对齐后端 Status::is_terminal 中排除 failed 的子集——failed
+ * 还要靠离线标注禁用重试）。
+ */
+export function isSettledStatus(status: TransferStatus): boolean {
+  return (
+    status === "completed" || status === "cancelled" || status === "skipped"
+  );
+}
+
 /** 传输的「目标文件」绝对路径（上传=远端、下载=本地）。 */
 export function transferTargetPath(item: TransferItem): string {
   return item.direction === "upload" ? item.remote_path : item.local_path;

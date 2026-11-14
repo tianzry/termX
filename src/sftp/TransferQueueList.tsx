@@ -31,6 +31,7 @@ import {
   formatTransferBytes,
   formatTransferEta,
   formatTransferSpeed,
+  isSettledStatus,
   parentPath,
   progressPercent,
   transferDisplayName,
@@ -106,7 +107,8 @@ function RowActions({
   onReveal: (item: TransferItem) => void;
 }) {
   const name = transferDisplayName(item);
-  const offline = item.session_live === false;
+  const offline =
+    item.session_live === false && !isSettledStatus(item.status);
   const dismissIcon = variant === "center" ? "trash" : "x";
   // 底部面板仅在 completed 显示「打开目标目录」（Netcatty canRevealTarget）；
   // 顶栏弹窗与 Netcatty 一致：任何状态都保留该按钮。
@@ -238,7 +240,8 @@ export function TransferQueueList({
           total > 0
             ? `${formatTransferBytes(transferred)} / ${formatTransferBytes(total)}`
             : formatTransferBytes(transferred);
-        const offline = item.session_live === false;
+        const offline =
+          item.session_live === false && !isSettledStatus(item.status);
         const note = offline
           ? "会话已断开：无法续传/重试，请重新连接后重新发起传输"
           : item.status === "failed"

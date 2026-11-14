@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-14 — 修复：切终端 tab 后「已完成」传输行误报「会话已断开」红字
+
+- 用户实测反馈（84896fe 之后仍复现）：传输完成（100%）或进行中切到别的终端 tab 再切回，队列行弹红字「会话已断开：无法续传/重试，请重新连接后重新发起传输」。
+- 根因（84896fe 只修了一半）：`refresh_handles` 的合并只保留「未终态项引用」的 handle；**终态项（completed/cancelled/skipped）引用的 handle 在浏览通道被 `sftpClose` 后照常回收** → `session_live=false`。这语义本身没错（通道确实没了），但前端 `TransferQueueList` 的离线判定只看 `session_live === false`，对已完成行也渲染离线红字 —— 完成项根本没有续传/重试可言，纯误报。「进行中」切走再回看到红字同理：传输在切走期间跑完，回来时已是终态。
+- 修复（纯前端语义收口）：`domain/transferQueue.ts` 新增 `isSettledStatus`（completed/cancelled/skipped，对齐后端 `Status::is_terminal` 中排除 failed 的子集）；`TransferQueueList` 两处离线判定（行尾按钮禁用 + 红字 note）改为 `session_live === false && !isSettledStatus(status)`。failed 仍显示离线红字并重试禁用（离线时重试无意义），queued/running/paused/conflict 语义不变。
+- 门禁：`tsc --noEmit` ✓、`test:run` 941 ✓（新增 isSettledStatus 断言 1 条）；无后端改动。
+
+---
+
 ## 2026-11-14 — 修复：SFTP 初始化 Timeout 的真正根因（OSC 7 钩子污染 sshd Subsystem 通道）
 
 - 上一条「死 SSH 会话空等」修复后用户实测仍报「SFTP 初始化失败：Timeout」。WSL 内用 pty 探针复现：`ssh -v -s root@127.0.0.1 sftp` 认证通过、`Sending subsystem: sftp` 之后，通道里回来的竟是交互 shell 的 OSC 7 上报（`ESC ] 7 ; file://DESKTOP-KLK0AR8/root BEL`）而非 sftp-server 的 VERSION 包。
@@ -13,6 +22,8 @@
 - 踩坑：① 探针写 INIT 必须 `tty.setraw`，否则 0x03 被 pty 行规程解释成 SIGINT；② `bash -c` 双层引号里 `$-` / heredoc 会被外层 shell 提前展开（`$-` → `hBc`），改远端 rc 文件用「Windows 写文件 + WSL `tr -d '\r'` 拷入」最稳；③ sftp-server 收到 INIT 后立刻 EOF 会静默退出（不回 VERSION），管道测试要 `sleep` 兜住 stdin。
 
 ---
+
+## 2026-11-14 — 修复：SFTP 侧栏「打不开 / 操作失败：Timeout」（死 SSH 会话空等 + WSL 虚拟机空闲回收）
 
 - 用户实测反馈：右侧栏 SFTP 打不开，先卡「正在复用 SSH 会话建立 SFTP…」再报「操作失败：Timeout」。
 - 根因（环境 + 体验两层）：WSL2 虚拟机空闲约 60s 被回收（`~/.wslconfig` 的 `vmIdleTimeout=-1` 实测未生效），sshd 随 VM 重启，termX 手里的 SSH 会话静默死亡；此后 `sftp_connect_session` 在死会话上开通道 / 等 SFTP 版本包，一路空等到 russh-sftp 10s 超时，前端只拿到裸 `Timeout`（`sftp_init_failed` 无 i18n 映射 → 兜底「操作失败：Timeout」），用户完全看不出该重连。
