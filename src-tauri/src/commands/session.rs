@@ -162,6 +162,7 @@ pub(crate) async fn connect_profile(
     let init_command = profile.init_command.clone();
     // 发行版探测所需的上下文（profile 会 move 进 ConnectParams，提前取出）。
     let detect_profile_id = profile.id.clone();
+    let watch_label = crate::ssh::client::profile_label(&profile);
     let known_distro = profile.distro.clone();
     let agent_forwarding = profile.agent_forwarding;
     let host = crate::emitter::Host::Tauri(app.clone());
@@ -201,7 +202,7 @@ pub(crate) async fn connect_profile(
         result.server_banner.clone(),
         known_distro,
         state.db.clone(),
-        crate::emitter::Host::Tauri(app),
+        crate::emitter::Host::Tauri(app.clone()),
         agent_forwarding,
     );
 
@@ -210,6 +211,14 @@ pub(crate) async fn connect_profile(
         &session_id,
         crate::commands::lifecycle::ReadySession::Ssh(result.handle),
     )?;
+
+    // SSH link death convergence: poll the handle to closed, then mark_closed
+    // the lifecycle registry and tell the window tab the link is gone.
+    crate::commands::lifecycle::spawn_ssh_death_watch(
+        app.clone(),
+        session_id.clone(),
+        watch_label,
+    );
 
     Ok(session_id)
 }

@@ -2892,6 +2892,9 @@ export function TerminalPane({
       case "shell":
         logLine = `${prefix}Opening shell...`;
         break;
+      case "closed":
+        logLine = `${prefix}${p.label} - disconnected`;
+        break;
       case "error":
         logLine = `${prefix}${p.label} - Error${
           p.error ? `: ${userVisibleError(p.error)}` : ""

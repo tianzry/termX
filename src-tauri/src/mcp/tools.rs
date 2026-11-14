@@ -381,6 +381,7 @@ pub fn definitions() -> Value {
     · kind=telnet：传 host + port（默认 23）。\n\
     何时用：需要独立会话且不想影响用户界面；串口 / Telnet 需要由 agent 自己建链时。\n\
     何时不用：已有 ready 会话时直接复用 sessionId；用户正在看的会话不要重复打开。\n\
+    死链自愈：传输层已死的会话会被自动标记 closed，session_open 会新拨连接而不是复用死链；fresh=true 可在已有活会话时仍强制新建。\n\
     可选 preamble（仅 ssh）：注册一次 setup 命令（如 source ~/zephyrproject/zephyr/zephyr-env.sh），之后该会话每次 term_run / build_run 都确定性前置；也可用 set_session_preamble 单独设置。\n\
     受权限档位约束；会话归属于当前客户端，其它客户端不可见。",
         "inputSchema": schema(
@@ -401,6 +402,7 @@ pub fn definitions() -> Value {
                 "xany": { "type": "boolean", "default": false, "description": "kind=serial，仅 unix 生效" },
                 "username": { "type": "string", "description": "自动登录用户名（serial / telnet）" },
                 "password": { "type": "string", "description": "自动登录密码（serial / telnet）" },
+                "fresh": { "type": "boolean", "default": false, "description": "kind=ssh: force dial a new connection, skip reusing existing ready sessions" },
                 "cols": { "type": "integer", "default": 80, "description": "kind=telnet 的终端列数" },
                 "rows": { "type": "integer", "default": 24, "description": "kind=telnet 的终端行数" },
                 "inputNewline": { "type": "string", "enum": ["crlf", "lf", "cr", "none"], "default": "crlf" },
@@ -2398,7 +2400,8 @@ pub async fn call_tool(
             let opened: crate::error::AppResult<String> = match kind.as_str() {
                 "ssh" => {
                     let host_id = opt("hostId").expect("validated above");
-                    super::fs::session::ensure_for_host(app, state, &host_id, client)
+                    let fresh = args.get("fresh").and_then(Value::as_bool).unwrap_or(false);
+                    super::fs::session::ensure_for_host(app, state, &host_id, client, fresh)
                         .await
                         .map(|session| session.session_id)
                 }

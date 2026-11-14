@@ -77,7 +77,7 @@ pub async fn resolve(
         return ready_by_id(state, &session_id, client);
     }
     if let Some(host_id) = host_id_arg(args) {
-        return ensure_for_host(app, state, &host_id, client).await;
+        return ensure_for_host(app, state, &host_id, client, false).await;
     }
     Err(AppError::config("mcp_session_missing", json!({})))
 }
@@ -147,17 +147,22 @@ pub async fn ensure_for_host(
     state: &AppState,
     host_id: &str,
     client: &McpClient,
+    fresh: bool,
 ) -> AppResult<ResolvedSession> {
     // 先确认 vault 里有这个主机档案；不存在直接回 not_found，避免无意义建连。
     crate::db::profile::get(&state.db, host_id)?;
-    if let Some(found) = find_ready_for_host(state, host_id, client)? {
-        return Ok(found);
+    if !fresh {
+        if let Some(found) = find_ready_for_host(state, host_id, client)? {
+            return Ok(found);
+        }
     }
 
     let gate = runtime_state::connect_gate(&client.id, host_id);
     let _guard = gate.lock().await;
-    if let Some(found) = find_ready_for_host(state, host_id, client)? {
-        return Ok(found);
+    if !fresh {
+        if let Some(found) = find_ready_for_host(state, host_id, client)? {
+            return Ok(found);
+        }
     }
 
     let owner = SessionOwner::Headless(runtime_state::owner_for_client(&client.id));
@@ -201,6 +206,16 @@ fn find_ready_for_host(
         let Some(handle) = sessions.get(&session_id) else {
             continue;
         };
+        // Liveness gate: closed handle means the transport is dead (the death
+        // watch may not have run yet); never hand it out for reuse.
+        if handle
+            .ssh_handle()
+            .try_lock()
+            .map(|h| h.is_closed())
+            .unwrap_or(false)
+        {
+            continue;
+        }
         if handle.profile_id() == host_id {
             return Ok(Some(ResolvedSession {
                 session_id,

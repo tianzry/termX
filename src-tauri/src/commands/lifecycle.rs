@@ -8,6 +8,7 @@ use tauri::State;
 use crate::error::{locked, AppError, AppResult};
 use crate::state::AppState;
 use crate::state::{AiSessionRecord, SessionKind, SessionOwner, SessionPhase, SessionRecord};
+use tauri::Manager as _;
 
 /// 前端启动 / 重连后调用：把不在 `active_ids` 列表里的所有 session 全部清掉。
 ///
@@ -989,6 +990,51 @@ pub fn close_resource(
 /// 链路自行断开（reader 线程检测到 EOF / 设备拔出）时收尾：
 /// 只标记 Closed 并从句柄表摘掉，**不**调用 `handle.close()`——
 /// 本函数运行在 reader 线程内，close 会等待自身退出而死锁。
+/// SSH link death convergence: once the connection task ends (remote closed /
+/// keepalive timeout / dead tunnel) the russh Handle goes closed. Polling to
+/// closed lets us mark_closed the lifecycle registry from Ready to Closed and
+/// emit an ssh:progress closed event so window tabs clearly show the link is
+/// gone (previously dead sessions stayed Ready forever and MCP / UI reuse
+/// handed out dead handles). Idempotent with user-initiated close
+/// (mark_closed returns early for already-Closed records).
+pub fn spawn_ssh_death_watch(app: tauri::AppHandle, session_id: String, label: String) {
+    let handle = {
+        let state = match app.try_state::<AppState>() {
+            Some(state) => state,
+            None => return,
+        };
+        let found = match locked(&state.sessions) {
+            Ok(sessions) => sessions.get(&session_id).map(|h| h.ssh_handle().clone()),
+            Err(_) => None,
+        };
+        found
+    };
+    let Some(handle) = handle else { return };
+    tokio::spawn(async move {
+        loop {
+            if handle.lock().await.is_closed() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        mark_closed(&state, &session_id);
+        let host = crate::emitter::Host::Tauri(app);
+        let _ = host.emit(
+            &format!("ssh:progress:{session_id}"),
+            serde_json::json!({
+                "hop": 1,
+                "total": 1,
+                "label": label,
+                "status": "closed",
+                "error": null,
+            }),
+        );
+    });
+}
+
 pub fn mark_closed(state: &AppState, session_id: &str) {
     let (kind, log_slots) = match locked(&state.lifecycle_sessions) {
         Ok(mut registry) => {

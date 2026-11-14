@@ -1071,7 +1071,7 @@ pub async fn establish_via_chain(
     .await
 }
 
-fn profile_label(profile: &Profile) -> String {
+pub fn profile_label(profile: &Profile) -> String {
     if profile.name.is_empty() {
         profile.host.clone()
     } else {

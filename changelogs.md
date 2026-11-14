@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-11-14 — SSH 死链收敛：死亡观测 + 复用存活门禁 + MCP fresh 逃生原语
+
+- 用户 MCP 实测反馈：SSH 主机传输层断开（sshd 不可达/被掐断）后 termX 仍把会话标 Ready，`session_open` / hostId 复用死连接不新拨 TCP；窗口会话 MCP 无权关闭，工具集也没有「强制重连/丢弃陈旧连接」原语，无逃生路径。
+- 根因链：① `SshHandler::disconnected` 只打日志，SSH 链路死亡从不调 `mark_closed`（此前仅 telnet/serial reader 线程收尾）→ 注册表永远 Ready；② MCP `find_ready_for_host` 只信 phase=Ready，不做存活检查；③ UI  likewise 静默（终端 tab 卡死无提示）。
+- 修复三层：A. `lifecycle::spawn_ssh_death_watch`（connect_profile 建链成功后挂载）：tokio 任务轮询 russh `Handle::is_closed`（0.62.7 提供），closed 即 `mark_closed` 收注册表 + 发 `ssh:progress` status=closed 事件，窗口 tab 明确显示「连接已断开」；与用户主动关闭幂等兼容。B. `find_ready_for_host` 加存活门禁：`ssh_handle().try_lock()` 后查 `is_closed()`，closed 直接跳过不复用（覆盖死亡回调未及触发的竞态）。C. MCP `session_open` 新增 `fresh` 布尔参数：true 时跳过两次复用查找强制新拨 headless 连接；guide 文案补「死链自愈 + fresh」说明。A+B 落地后死会话自动离开 Ready，session_open 天然自愈，无需给 MCP 开关闭窗口会话的权限（owner 安全模型保留）。
+- 门禁：`cargo check` ✓、`cargo test --lib` 1060 ✓、`tsc --noEmit` ✓、`test:run` 941 ✓；前端仅 TerminalPane 补 closed 状态行文案。
+- 已知边界：TCP 黑洞型断链要等 keepalive（30s×3，≤90s）才判定死亡，期间复用仍可能拿到半死会话（SFTP 已有 15s 封顶兜底）；后续可加 ping 探测。
+
+---
+
 ## 2026-11-14 — 修复：切终端 tab 后「已完成」传输行误报「会话已断开」红字
 
 - 用户实测反馈（84896fe 之后仍复现）：传输完成（100%）或进行中切到别的终端 tab 再切回，队列行弹红字「会话已断开：无法续传/重试，请重新连接后重新发起传输」。
