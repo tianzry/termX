@@ -124,7 +124,9 @@ pub struct TransferItem {
     /// 首次开始时的源文件修改时间（秒）。恢复前与当前值比较，变化则不静默续传。
     #[serde(default)]
     pub source_mtime: Option<i64>,
-    /// 对应 SFTP 会话是否仍然存活（false = 应用重启后旧会话，不能续传）。
+    /// 传输通道是否仍可用（false = 所属 SSH 断链或应用重启后的旧会话，不能续传）。
+    /// 浏览会话被前端关闭（切 tab / 关侧栏）不影响本字段：只要 SSH 仍在，
+    /// 队列中心保留 handle 继续调度（见 refresh_handles）。
     #[serde(default)]
     pub session_live: bool,
     /// 来源 SSH 会话 id（同一会话可开多条 SFTP 通道；「打开目标目录」按会话匹配）。
@@ -268,9 +270,41 @@ pub fn pump(state: &AppState, host: &Host) -> AppResult<()> {
 }
 
 fn refresh_handles(g: &mut Inner, state: &AppState) {
-    if let Ok(map) = locked(&state.sftp_sessions) {
-        g.handles = map.clone();
+    let Ok(map) = locked(&state.sftp_sessions) else {
+        return;
+    };
+    let mut next: HashMap<String, Arc<SftpHandle>> = map.clone();
+    // 浏览会话关闭（切终端 tab / 关侧栏 / 关 SFTP 页连接）≠ 传输通道失效：
+    // ReadySession::close 对 Sftp 是 no-op，队列中心与 worker 手里的
+    // Arc<SftpHandle> 克隆让底层通道保持可用（运行中传输照常完成）。
+    // 因此对「仍有未终态项引用」的 sftp_id 保留旧 handle：
+    // - 父 SSH 仍注册 → 通道必然可用，session_live 不应误报断开，
+    //   resume / retry / 排队调度也继续走这条通道；
+    // - 独立 TCP（parent=None，SFTP 页直连）→ 同样保留，真实断链由传输自身报错；
+    // - 父 SSH 已断开（close_ssh_tree / mark_closed 已摘除注册）→ 丢弃，
+    //   session_live=false，离线语义与之前一致。
+    // 未终态项清零后（全部 completed/dismissed）下一次刷新自然回收，不泄漏通道。
+    let ssh_alive = locked(&state.sessions).ok();
+    for (id, handle) in g.handles.iter() {
+        if next.contains_key(id) {
+            continue;
+        }
+        let referenced = g
+            .items
+            .iter()
+            .any(|it| &it.sftp_id == id && !it.status.is_terminal());
+        if !referenced {
+            continue;
+        }
+        let alive = match handle.parent_ssh_id() {
+            Some(parent) => ssh_alive.as_ref().is_some_and(|m| m.contains_key(parent)),
+            None => true,
+        };
+        if alive {
+            next.insert(id.clone(), handle.clone());
+        }
     }
+    g.handles = next;
 }
 
 // ── 引擎函数（Tauri command 与 headless dispatcher 共用，R4/INV-4） ──

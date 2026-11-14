@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-14 — 修复：切终端 tab 后 SFTP 传输进度误报「会话已断开」
+
+- 用户实测反馈：右侧 SFTP 侧栏传输进行中，切到别的终端 tab 再切回，传输队列行弹出红字「会话已断开：无法续传/重试，请重新连接后重新发起传输」，且「恢复/重试」被禁用；但底层传输并未中断、文件照常传完。
+- 根因：`session_live` 由 `transfer_center.rs` 的 `refresh_handles` 判定 —— 它每次直接用 `state.sftp_sessions` **整体替换** `Inner::handles` 快照。终端侧栏 `SftpSidePane` 的 `[sshSessionId]` effect 在切 tab 时会 `sftpClose` 掉旧的浏览用 SFTP 通道（这是对的，否则每次切换泄漏一条通道），该 sftp_id 随即从 `state.sftp_sessions` 摘除；但传输 worker 早先已 clone 了 `Arc<SftpHandle>`，`ReadySession::close` 对 Sftp 又是 no-op（lifecycle.rs:536），所以底层通道仍活着、传输照跑。于是「通道实际可用」与「快照里查不到」产生偏差 → `session_live=false` 误报。
+- 修复（后端，语义纠正）：`refresh_handles` 改为**合并**而非替换。对「仍有未终态项引用」的 sftp_id，若其父 SSH 会话仍注册在 `state.sessions`（或为独立 TCP 直连 parent=None），保留旧 handle 进快照；父 SSH 已随 `close_ssh_tree` / `mark_closed` 摘除则丢弃，`session_live=false` 离线语义不变。未终态项清零后下一次刷新自然回收 handle，不泄漏通道。
+- 连带修正：切 tab 后不再只是「不弹假红字」，暂停/排队项的「恢复/重试」也继续可用（此前被误禁用），与传输实际未断的真实状态一致。
+- 无前端改动：`TransferQueueList` 早已按 `item.session_live === false` 渲染，字段修对即可。
+- 门禁：`cargo check` ✓（仅既有 dead_code 警告）、`cargo test --lib` 1060 ✓（含 transfer_center 11 + sftp/lifecycle；live 门控用例需 `TERMX_SFTP_LIVE=1` 未触发，逻辑核对不受影响）。
+
+---
+
 ## 2026-11-14 — MCP 连接详情：token 复制自动带 Bearer 前缀
 
 - 用户实测反馈：配置片段里 `"Authorization": "Bearer <token>"` 带前缀，但界面「复制」出来的是裸 token，手工配置时漏前缀导致 401（服务端 `bearer_token()` 严格要求 `Bearer ` 前缀）。
