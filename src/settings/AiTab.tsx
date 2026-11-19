@@ -29,6 +29,7 @@ import {
 import { decodeAppError, userVisibleError } from "../domain/sshErrors";
 import { Icon } from "../ui/icons";
 import { settingsT } from "./i18n";
+import { MCP_TOOL_GROUPS } from "./mcpToolGroups";
 import { useSettings } from "./settingsStore";
 
 type SnippetKind = "codex" | "claude" | "json";
@@ -39,15 +40,6 @@ const PERMISSION_MODES: Array<{ value: McpPermissionMode; label: string; desc: s
   { value: "observer", label: "settings.ai.permission.observer", desc: "settings.ai.permission.observer.desc" },
   { value: "confirm", label: "settings.ai.permission.confirm", desc: "settings.ai.permission.confirm.desc" },
   { value: "auto", label: "settings.ai.permission.auto", desc: "settings.ai.permission.auto.desc" },
-];
-
-/** 对外工具矩阵（与后端 `mcp::tools::definitions` 同源，按平面分组展示）。 */
-const MCP_TOOL_GROUPS: Array<{ plane: "control" | "transfer" | "build" | "session" | "composite"; tools: string[] }> = [
-  { plane: "control", tools: ["fs_read", "fs_grep", "fs_glob", "fs_patch", "fs_write", "fs_delete"] },
-  { plane: "transfer", tools: ["sftp_put", "sftp_get"] },
-  { plane: "build", tools: ["build_run", "term_run"] },
-  { plane: "session", tools: ["get_environment", "vault_hosts_list", "snippets_list", "terminal_execute", "session_open", "session_close", "serial_write", "serial_read", "telnet_write", "telnet_read"] },
-  { plane: "composite", tools: ["batch"] },
 ];
 
 /** 从 Tauri 错误信封中取出后端给的 message（mcp_invalid_config 携带 code/message）。 */

@@ -15,8 +15,8 @@ pub enum ToolClass {
     Delete,
     /// 下载：sftp_get。
     Transfer,
-    /// 执行：build_run / term_run。
-    Build,
+    /// 执行：build_run / term_run / terminal_execute。在远端跑命令的风险档，非「构建」专用。
+    Exec,
     /// 会话管理：session_close。
     Session,
 }
@@ -36,7 +36,7 @@ pub fn classify(tool: &str) -> ToolClass {
         "fs_patch" | "fs_write" | "sftp_put" => ToolClass::Write,
         "fs_delete" => ToolClass::Delete,
         "sftp_get" => ToolClass::Transfer,
-        "build_run" | "term_run" | "terminal_execute" => ToolClass::Build,
+        "build_run" | "term_run" | "terminal_execute" => ToolClass::Exec,
         _ => ToolClass::Session,
     }
 }
@@ -80,7 +80,7 @@ mod tests {
             Decision::Deny
         );
         assert_eq!(
-            decide(PermissionMode::Observer, ToolClass::Build),
+            decide(PermissionMode::Observer, ToolClass::Exec),
             Decision::Deny
         );
         assert_eq!(
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(classify("fs_patch"), ToolClass::Write);
         assert_eq!(classify("fs_delete"), ToolClass::Delete);
         assert_eq!(classify("sftp_get"), ToolClass::Transfer);
-        assert_eq!(classify("build_run"), ToolClass::Build);
+        assert_eq!(classify("build_run"), ToolClass::Exec);
         assert_eq!(classify("session_close"), ToolClass::Session);
     }
 }

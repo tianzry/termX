@@ -13975,12 +13975,6 @@ html[data-theme="dark"] .nc-shell-icon.mono {
   color: hsl(var(--muted-foreground));
 }
 
-.nc-mcp-tool-badge.is-control,
-.nc-mcp-tool-badge.is-composite {
-  background: hsl(var(--primary) / 0.12);
-  color: hsl(var(--primary));
-}
-
 .nc-mcp-tool-items {
   display: flex;
   flex-wrap: wrap;

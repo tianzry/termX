@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-11-19 — MCP 工具矩阵：term_run 从「构建平面」拆到「逃生平面」+ 补齐漏列工具 + 权限枚举改名 Exec
+
+- 用户质疑：term_run 为什么放在「构建平面」，不该是通用命令运行吗？排查发现三层命名不一致：① 设置页 AI 面板（AiTab.tsx MCP_TOOL_GROUPS）把 term_run 和 build_run 塞进同一「构建平面」徽章，而后端 guide.rs/policy.rs/tools.rs 一直称 term_run 为「逃生平面…执行任意非交互命令」——UI 与后端口径直接打架；② 后端 permissions.rs 权限枚举变体名 ToolClass::Build（语义是「远端执行命令风险档」，非构建专用），且该枚举全仓无调用方（审批实走 approval.rs 的 ApprovalDecision），是自定义未接线矩阵；③ UI 工具矩阵只列 21 个、后端实际 23——漏了 job_wait / set_session_preamble（注释还写「与后端 definitions 同源」，实为手维护已漂移）。关键结论：term_run 功能没有任何收窄，本就能跑任意命令（confirm 档要审批，这对任意命令逃生口是正确行为），本次只改归类/命名，不动权限行为。
+- 方案（用户选「拆独立逃生平面 + A+B+C 全做」）：A UI——AiTab MCP_TOOL_GROUPS 的 build 只留 build_run、新增 escape 平面放 term_run，i18n 加 plane.escape = "逃生平面"/"Escape"（中英）；平面徽章颜色统一为灰——删除 is-control/is-composite 的专属强调色规则（该强调色无语义依据、不对应后端任何概念，蓝灰交错被用户指出误导），六个平面全部走基础 muted 样式。B 补齐——set_session_preamble 归 session 平面、job_wait 归 composite 平面，矩阵凑齐 23。C 后端——permissions.rs ToolClass::Build → Exec（枚举变体 + 注释 + classify + 两处测试断言），因无调用方 decide() 行为一字不变。
+- 防再漂移：把 MCP_TOOL_GROUPS 抽成纯数据模块 src/settings/mcpToolGroups.ts（无 React/IO 依赖），新增 mcpToolGroups.test.ts 钉住——断言扁平化后等于后端 23 工具全集（不多不少）、无重复、term_run 独属 escape/build 只剩 build_run、每个平面在中英两种语言下都有非回退标签；以后加工具忘了更新这里会直接红。
+- 踩坑：① UI 平面分组与后端 ToolClass 权限分级是两套独立方案、不必 1:1（UI session 平面含 terminal_execute，后端 ToolClass::Exec 也含 terminal_execute——展示归类 vs 风险归类，各管各的）；② settingsT(lang,key) 缺 key 回退成 key 本身，所以「有标签」断言用 !== key 而非非空；③ AiTab.tsx 顶层 import client.ts（含 @tauri-apps/api），分组常量放这里会逼测试 mock Tauri——抽成纯模块才能让测试无 IO（R11/Pr2）。
+- 验证（agent 自动化）：tsc --noEmit 干净；npm run test:run 85 文件 951 测试全过（新增 mcpToolGroups 4 条）；cargo test --lib mcp::permissions 改名后绿。待人工：release exe 设置→AI→工具接入看「构建平面」只剩 build_run、「逃生平面」只剩 term_run、job_wait/set_session_preamble 补齐。
+
+---
+
 ## 2026-11-19 — 终端右键菜单快捷键提示：对齐 Netcatty 展示生效绑定
 
 - 用户反馈：右键菜单的常用功能（复制/粘贴/全选/分屏/清空缓冲区）当前没有快捷键提示，希望参照 Netcatty 补齐。排查：底层热键其实早已接线——`settings/keyBindings.ts` 有 36 条默认绑定（含 mac/pc 双方案），`useGlobalHotkeys.ts` 在 window 捕获阶段分发，`App.tsx handleGlobalHotkey` 把 copy/paste/selectAll/splitHorizontal/splitVertical/clearBuffer/openSftp 都映射到了对应动作，`hotkeyRuntime.ts` 负责组合键匹配（含 [1...9]/arrows 范围、平台修饰键互斥、自定义覆盖、Disabled 过滤）并有 20 条单测。缺的只是**菜单右侧的快捷键文字**：`TerminalPane.tsx` 里那段渲染被注释掉了（"termX 尚未分发这些绑定，按 Pr3 不渲染不生效的提示"），而这条注释已过时——绑定现在生效了。
