@@ -353,6 +353,21 @@ pub fn definitions() -> Value {
         .as_array_mut()
         .expect("definitions is always a JSON array");
 
+    items.push(json!({
+        "name": "job_wait",
+        "description": "只读。等待并取回 build_run / sftp_get 转后台任务的结果：任务完成立即返回原工具的完整结果信封（附 jobId / jobStatus）；到 waitMs 窗口仍在跑则返回 {status:\"running\"}，可反复调用续等。\
+何时用：build_run / sftp_get 返回 {status:\"running\", jobId} 之后；长构建 / 大文件下载靠它绕过客户端请求超时。\
+何时不用：任务已在窗口内完成（没有返回 jobId）时。只能查本客户端提交的 job；结果保留 30 分钟。",
+        "inputSchema": schema(
+            json!({
+                "jobId": { "type": "string", "description": "build_run / sftp_get running 返回里的 jobId" },
+                "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 100000, "description": "本次调用最长等待毫秒；0 = 立即返回当前状态" }
+            }),
+            &["jobId"]
+        ),
+        "annotations": { "readOnlyHint": true }
+    }));
+
     items.push(byte_write_tool(
         "serial_write",
         "写操作。向串口会话写入原始字节，返回 bytesWritten；串口没有命令与 exitCode 语义，工具只负责把字节发到线路。\
@@ -605,6 +620,7 @@ sessionId 与 hostId 二选一。",
         "写操作。把远端文件/目录流式下载到本地，只回 path / size / sha256，不回文件内容。\
 何时用：下载编译产物、日志归档等；recursive=true 可整目录拉回。\
 何时不用：只需要查看内容用 fs_read 开窗；本地路径必须是绝对路径且默认不覆盖已存在文件。\
+长任务：超过 waitMs（默认 100s）未完成即转后台，返回 {status:\"running\", jobId}，用 job_wait 续等，不会触发客户端超时。\
 受权限档位约束；sessionId 与 hostId 二选一。",
         json!({
             "items": {
@@ -621,7 +637,8 @@ sessionId 与 hostId 二选一。",
                 }
             },
             "overwrite": { "type": "boolean", "default": false, "description": "本地已存在时必须显式置 true" },
-            "recursive": { "type": "boolean", "default": false, "description": "目录递归下载" }
+            "recursive": { "type": "boolean", "default": false, "description": "目录递归下载" },
+            "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 100000, "description": "内联等待窗口毫秒；大文件下载超窗即转后台并返回 {status:\"running\", jobId}，用 job_wait 续等。0 = 立即转后台" }
         }),
         &["items"],
         false,
@@ -666,7 +683,8 @@ sessionId 与 hostId 二选一。",
 何时用：sftp_put 上传源码后直接 make/cmake/gcc/cargo/npm；失败先看 stderrTail，再 fs_read fullLog 开窗。\
 何时不用：需要交互式终端时用 term_run；只读命令用 term_run 即可；不要在这里做文件读写（用 fs_* 工具）。\
 执行顺序固定为 cd → 会话 preamble（set_session_preamble 注册的 setup 命令）→ env → command，每次重新应用。\
-只拦真正破坏性命令（rm -rf /、mkfs、dd 写块设备等），不套终端黑名单。",
+只拦真正破坏性命令（rm -rf /、mkfs、dd 写块设备等），不套终端黑名单。\
+长任务：超过 waitMs（默认 100s）未完成即转后台，返回 {status:\"running\", jobId}，用 job_wait 续等，不会触发客户端超时。",
         json!({
             "command": { "type": "string", "description": "要执行的构建命令（可多行）" },
             "cwd": { "type": "string", "description": "工作目录，默认 home" },
@@ -691,6 +709,13 @@ sessionId 与 hostId 二选一。",
             "teeToRemoteFile": {
                 "type": "string",
                 "description": "可选：把完整日志写到该远端路径"
+            },
+            "waitMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 110000,
+                "default": 100000,
+                "description": "内联等待窗口毫秒；构建超窗即转后台并返回 {status:\"running\", jobId}，用 job_wait 续等。0 = 立即转后台。与 timeoutMs（构建自身的执行上限）独立"
             }
         }),
         &["command"],
@@ -850,6 +875,71 @@ fn transfer_count(args: &Value) -> usize {
 }
 
 /// 传输结果统一收口：逐项写审计，回 `results[]` + ok/failed 计数。
+/// waitMs：build_run / sftp_get / job_wait 的内联等待窗口。默认 100s、上限
+/// 110s——压在外部 MCP 客户端常见的 120s 工具调用总超时之下（与审批 110s
+/// 硬超时同一理由）；0 = 立即转后台返回 jobId。
+const DEFAULT_JOB_WAIT_MS: u64 = 100_000;
+const MAX_JOB_WAIT_MS: u64 = 110_000;
+
+fn job_wait_ms(args: &Value) -> u64 {
+    args.get("waitMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_JOB_WAIT_MS)
+        .min(MAX_JOB_WAIT_MS)
+}
+
+/// job 收尾统一出口：窗口内完成 → 原样返回任务结果（与同步时代一致）；
+/// 仍在跑 → running + jobId；查不到 / 不属于本客户端 → 明确错误码。
+fn job_settle(job_id: &str, view: runtime_state::JobView, waited_ms: u64) -> ToolResult {
+    match view {
+        runtime_state::JobView::Done { text, is_error, .. } => ToolResult { text, is_error },
+        runtime_state::JobView::Running { tool, elapsed_ms } => ToolResult::ok(
+            format!("{tool} 仍在执行，已转后台"),
+            "任务不受本次调用影响，继续在远端执行；用 job_wait(jobId) 续等并取结果，可反复调用。",
+            json!({
+                "status": "running",
+                "jobId": job_id,
+                "tool": tool,
+                "waitedMs": waited_ms,
+                "elapsedMs": elapsed_ms,
+            }),
+        ),
+        runtime_state::JobView::NotFound => ToolResult::err(
+            "job_not_found",
+            format!("找不到 job {job_id}"),
+            "jobId 必须来自本客户端 build_run / sftp_get 的 running 返回；结果保留 30 分钟。",
+        ),
+        runtime_state::JobView::Forbidden => ToolResult::err(
+            "job_forbidden",
+            "该 job 属于其它 MCP 客户端",
+            "只能等待自己提交的 job。",
+        ),
+    }
+}
+
+fn build_run_result(out: super::fs::build::BuildOutcome) -> ToolResult {
+    ToolResult::ok(
+        if out.exit_code == Some(0) {
+            "构建成功"
+        } else {
+            "构建结束（exitCode 非 0）"
+        },
+        "失败先看 stderrTail；完整日志用 fullLog 配 fs_read 开窗；产物用 sftp_get 下载。",
+        json!({
+            "exitCode": out.exit_code,
+            "stdoutTail": out.stdout_tail,
+            "stderrTail": out.stderr_tail,
+            "stdoutBytes": out.stdout_bytes,
+            "stderrBytes": out.stderr_bytes,
+            "totalBytes": out.stdout_bytes + out.stderr_bytes,
+            "truncated": out.truncated,
+            "fullLog": out.full_log,
+            "teeFailed": out.tee_failed,
+            "cwd": out.cwd,
+        }),
+    )
+}
+
 fn transfer_result(
     tool: &str,
     session_id: &str,
@@ -1800,11 +1890,39 @@ pub async fn call_tool(
                 ));
                 return e;
             }
-            match super::fs::transfer::sftp_get(app, state, &session.session_id, args).await
+            // 同 build_run：下载大文件可能远超外部客户端的请求总超时，
+            // 超窗即转后台 job，用 job_wait 续等。
+            let wait_ms = job_wait_ms(args);
+            let job_id = runtime_state::register_job(&client.id, "sftp_get");
             {
-                Ok(results) => transfer_result("sftp_get", &session.session_id, results),
-                Err(e) => tool_error(e),
+                let app = app.clone();
+                let session_id = session.session_id.clone();
+                let args = args.clone();
+                let job = job_id.clone();
+                tokio::spawn(async move {
+                    let result = match tauri::Manager::try_state::<AppState>(&app) {
+                        Some(state) => {
+                            match super::fs::transfer::sftp_get(&app, &state, &session_id, &args)
+                                .await
+                            {
+                                Ok(results) => transfer_result("sftp_get", &session_id, results),
+                                Err(e) => tool_error(e),
+                            }
+                        }
+                        None => ToolResult::err(
+                            "internal_error",
+                            "应用状态不可用（termX 正在退出）",
+                            "稍后重试。",
+                        ),
+                    };
+                    runtime_state::complete_job(&job, result.text, result.is_error);
+                });
             }
+            job_settle(
+                &job_id,
+                runtime_state::wait_job(&client.id, &job_id, Duration::from_millis(wait_ms)).await,
+                wait_ms,
+            )
         }
         "fs_delete" => {
             let session = match super::fs::session::resolve(app, state, args, client).await {
@@ -1945,37 +2063,81 @@ pub async fn call_tool(
             {
                 return e;
             }
-            match super::fs::build::fs_build_run(
-                state,
-                &session.session_id,
-                &session.handle,
-                args,
-                preamble.as_deref(),
-            )
-            .await
+            // 长任务异步化：先挂后台 job 再内联等 waitMs 窗口。窗口内完成 →
+            // 返回与同步时代完全一致的结果；超窗 → 返回 jobId，任务继续在远端跑，
+            // 避免外部 MCP 客户端 ~120s 的请求总超时把长构建整个掐死。
+            let wait_ms = job_wait_ms(args);
+            let job_id = runtime_state::register_job(&client.id, "build_run");
             {
-                Ok(out) => ToolResult::ok(
-                    if out.exit_code == Some(0) {
-                        "构建成功"
-                    } else {
-                        "构建结束（exitCode 非 0）"
-                    },
-                    "失败先看 stderrTail；完整日志用 fullLog 配 fs_read 开窗；产物用 sftp_get 下载。",
-                    json!({
-                        "exitCode": out.exit_code,
-                        "stdoutTail": out.stdout_tail,
-                        "stderrTail": out.stderr_tail,
-                        "stdoutBytes": out.stdout_bytes,
-                        "stderrBytes": out.stderr_bytes,
-                        "totalBytes": out.stdout_bytes + out.stderr_bytes,
-                        "truncated": out.truncated,
-                        "fullLog": out.full_log,
-                        "teeFailed": out.tee_failed,
-                        "cwd": out.cwd,
-                    }),
-                ),
-                Err(e) => tool_error(e),
+                let app = app.clone();
+                let session_id = session.session_id.clone();
+                let ssh = session.handle.clone();
+                let args = args.clone();
+                let job = job_id.clone();
+                tokio::spawn(async move {
+                    let result = match tauri::Manager::try_state::<AppState>(&app) {
+                        Some(state) => {
+                            match super::fs::build::fs_build_run(
+                                &state,
+                                &session_id,
+                                &ssh,
+                                &args,
+                                preamble.as_deref(),
+                            )
+                            .await
+                            {
+                                Ok(out) => build_run_result(out),
+                                Err(e) => tool_error(e),
+                            }
+                        }
+                        None => ToolResult::err(
+                            "internal_error",
+                            "应用状态不可用（termX 正在退出）",
+                            "稍后重试。",
+                        ),
+                    };
+                    runtime_state::complete_job(&job, result.text, result.is_error);
+                });
             }
+            job_settle(
+                &job_id,
+                runtime_state::wait_job(&client.id, &job_id, Duration::from_millis(wait_ms)).await,
+                wait_ms,
+            )
+        }
+        "job_wait" => {
+            let job_id = match args
+                .get("jobId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                Some(value) => value.to_string(),
+                None => {
+                    return ToolResult::err(
+                        "missing_argument",
+                        "缺少必填参数 jobId",
+                        "jobId 来自 build_run / sftp_get 返回的 {status:\"running\", jobId}。",
+                    )
+                }
+            };
+            let wait_ms = job_wait_ms(args);
+            let view =
+                runtime_state::wait_job(&client.id, &job_id, Duration::from_millis(wait_ms)).await;
+            if let runtime_state::JobView::Done { text, is_error, .. } = &view {
+                // 原样回放后台任务的结果信封，附 job 元信息方便 agent 对账。
+                let mut payload: Value = serde_json::from_str(text)
+                    .unwrap_or_else(|_| json!({ "code": "ok", "raw": text }));
+                if let Some(map) = payload.as_object_mut() {
+                    map.insert("jobId".into(), json!(job_id));
+                    map.insert("jobStatus".into(), json!("done"));
+                }
+                return ToolResult {
+                    text: payload.to_string(),
+                    is_error: *is_error,
+                };
+            }
+            job_settle(&job_id, view, wait_ms)
         }
         "term_run" => {
             let command = match args
@@ -2907,7 +3069,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 22);
+        assert_eq!(list.len(), 23);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();

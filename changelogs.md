@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-11-19 — MCP 长任务异步 job 模式：build_run / sftp_get 不再被客户端超时掐死
+
+- 用户反馈：MCP `build_run` / `sftp_get` 老是返回超时。排查：termX MCP HTTP 是「单发阻塞 JSON」——工具执行期间一个字节都不回（server.rs respond() 固定 application/json，GET 直接 sse_not_supported），而这两个恰是全工具集最耗时的；外部 MCP 客户端普遍 60–120s 请求总超时（approval.rs 注释自证），长构建 / 大文件下载必被掐死。sftp_get 自身没有任何超时，build_run 默认 120s 也在客户端上限边缘。
+- 方案（用户选定「异步 job 模式」）：两个工具改为**先挂后台 job 再内联等 waitMs 窗口**（默认 100s、上限 110s，压在客户端 120s 之下；0=立即转后台）。窗口内完成 → 返回与同步时代逐字节一致的结果（无 jobId 字段，老 agent 无感知）；超窗 → 任务继续在远端跑，返回 `{status:"running", jobId, tool, elapsedMs}`。新增只读工具 `job_wait(jobId, waitMs)`：长轮询续等，完成即回放原工具完整信封并附 `jobId/jobStatus:"done"`，可反复调用；结果保留 30 分钟；job 按提交客户端隔离（他client查询回 job_forbidden）。
+- 实现：runtime_state.rs 加 job 注册表（OnceLock 单例内 `Mutex<HashMap>`，沿用 delete_tokens 模式；TTL 30min + 256 容量上限先淘汰最旧已完成项；100ms 轮询等待——MCP 场景不在乎亚百毫秒延迟，换来实现简单且无 Notify 丢唤醒竞态）。tools.rs：build_run/sftp_get arm 重构为 `register_job → tokio::spawn(原逻辑，AppState 经 try_state 重取) → wait_job → job_settle`；结果信封构造抽成 `build_run_result()` 复用。审批仍在提交时同步完成（转后台不绕过 approval_gate）。guide.rs 工作流补第 6 条长任务说明、工具数 22→23；permissions.rs 把 job_wait 归入 Read。
+- 踩坑：① `ensure_for_host` 式回头查找不能再用——job 结果必须绑定 register 时拿到的 jobId，spawn 里 complete_job 用同一 id；② 后台链式命令 `cd src-tauri && cargo test` 在 cwd 漂移时整条静默没跑（管道 tail 吞了退出码），验证前要 tail 构建输出确认真跑了；③ WSL2 VM 空闲 ~60s 自动回收，验证脚本必须自己先 `service ssh start`，否则 session_open 连接被拒、后续全链路误报。
+- 验证（agent 自动化，release exe + WSL Ubuntu-26.04 实测）：短构建 160ms 内联返回（无 jobId，行为不变）✓；`sleep 8` + waitMs=2000 → 2s 返回 running+jobId ✓；job_wait 短窗续等回 running ✓；长窗取回完整构建信封（exitCode/stdout/jobStatus=done）✓；重复 job_wait 幂等 ✓；伪 jobId 回 job_not_found ✓；sftp_get waitMs=0 → 4ms 即回 jobId，job_wait 取回 8MB 下载结果（size/sha256 正确）✓；job 之后 inline sftp_get 照常 ✓。门禁：tsc/test:run 941 ✓、cargo test --lib mcp:: 82 ✓（definitions 计数 22→23 同步）。
+- 已知边界：job 不支持取消（远端进程继续跑，靠自身 timeoutMs 兜底）；termX 进程退出则 job 丢失（远端构建进程按 exec 通道断开自然终止）；MCP 服务重启后旧 jobId 仍可查（注册表是进程级，与 HTTP 会话无关）。
+
+---
+
 ## 2026-11-14 — SSH 死链收敛：死亡观测 + 复用存活门禁 + MCP fresh 逃生原语
 
 - 用户 MCP 实测反馈：SSH 主机传输层断开（sshd 不可达/被掐断）后 termX 仍把会话标 Ready，`session_open` / hostId 复用死连接不新拨 TCP；窗口会话 MCP 无权关闭，工具集也没有「强制重连/丢弃陈旧连接」原语，无逃生路径。
