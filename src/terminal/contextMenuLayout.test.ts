@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTerminalContextMenu } from "./contextMenuLayout";
+import { resolveTerminalContextMenu, menuShortcutLabel } from "./contextMenuLayout";
 
 const sshConnected = {
   connected: true,
@@ -131,5 +131,51 @@ describe("resolveTerminalContextMenu", () => {
       "clearBuffer",
       null,
     ]);
+  });
+});
+
+describe("menuShortcutLabel", () => {
+  const pcSettings = {
+    customKeyBindings: {},
+    disabledKeyBindings: [] as string[],
+    hotkeyScheme: "pc" as const,
+  };
+
+  it("pc 方案下返回默认绑定并折叠 ' + ' 为空格", () => {
+    expect(menuShortcutLabel("copy", pcSettings)).toBe("Ctrl Shift C");
+    expect(menuShortcutLabel("clearBuffer", pcSettings)).toBe("Ctrl Shift K");
+  });
+
+  it("mac 方案返回 mac 绑定", () => {
+    expect(menuShortcutLabel("copy", { ...pcSettings, hotkeyScheme: "mac" })).toBe("⌘ C");
+  });
+
+  it("无 shortcutAction / 未知 action / null 返回空串", () => {
+    expect(menuShortcutLabel(null, pcSettings)).toBe("");
+    expect(menuShortcutLabel("noSuchAction", pcSettings)).toBe("");
+  });
+
+  it("被禁用的绑定不显示提示", () => {
+    expect(
+      menuShortcutLabel("copy", { ...pcSettings, disabledKeyBindings: ["copy"] }),
+    ).toBe("");
+  });
+
+  it("自定义覆盖优先于默认", () => {
+    expect(
+      menuShortcutLabel("selectAll", {
+        ...pcSettings,
+        customKeyBindings: { "select-all": { pc: "Ctrl + G" } },
+      }),
+    ).toBe("Ctrl G");
+  });
+
+  it("自定义为 Disabled 时返回空串", () => {
+    expect(
+      menuShortcutLabel("selectAll", {
+        ...pcSettings,
+        customKeyBindings: { "select-all": { pc: "Disabled" } },
+      }),
+    ).toBe("");
   });
 });

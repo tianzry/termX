@@ -167,7 +167,7 @@ import {
   TERMINAL_TOOLBAR_TEXT,
   terminalRecordingText,
 } from "./terminal/terminalActionText";
-import { resolveTerminalContextMenu } from "./terminal/contextMenuLayout";
+import { resolveTerminalContextMenu, menuShortcutLabel } from "./terminal/contextMenuLayout";
 import {
   createZmodemController,
   type ZmodemController,
@@ -5074,8 +5074,14 @@ export function TerminalPane({
                 >
                   <Icon name={spec.icon} size={14} />
                   {TERMINAL_CONTEXT_MENU_TEXT[spec.action]}
-                  {/* Netcatty 在此展示快捷键；termX 尚未分发这些绑定（仅列表/设置页展示），
-                      按 Pr3 不渲染不生效的提示，待热键分发接线后恢复。 */}
+                  {/* 快捷键提示（对照 Netcatty ContextMenuShortcut）：取当前方案下的
+                      生效绑定，改绑 / 禁用后随下一次渲染更新；无绑定则不渲染。 */}
+                  {(() => {
+                    const label = menuShortcutLabel(spec.shortcutAction, getSettings());
+                    return label ? (
+                      <span className="term-menu-shortcut">{label}</span>
+                    ) : null;
+                  })()}
                 </button>
               );
             })}

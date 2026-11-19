@@ -12,6 +12,8 @@
  */
 
 import type { IconName } from "../ui/icons";
+import { DEFAULT_KEY_BINDINGS, effectiveBinding } from "../settings/keyBindings";
+import type { AppSettings } from "../settings/settingsModel";
 import type { ConnectionStatus } from "./connectionStatus";
 
 /** 当前窗格可提供的菜单动作（其余能力未实现，保持缺席）。 */
@@ -162,4 +164,26 @@ export function resolveTerminalContextMenu(
   }
 
   return items;
+}
+
+/**
+ * 菜单项右侧的快捷键提示文本（对照 Netcatty `TerminalContextMenu.getShortcut`）。
+ *
+ * - 无对应绑定 / 绑定被禁用 / 文本为 "Disabled" → 返回空串（不渲染提示）；
+ * - 取当前方案（mac / pc）下的生效绑定，自定义覆盖优先；
+ * - " + " 折叠为空格，与 Netcatty 展示一致（如 "⌘ + Shift + D" → "⌘ Shift D"）。
+ *
+ * `shortcutAction` 是 keyBindings 的 action 名（如 selectAll / splitHorizontal）。
+ */
+export function menuShortcutLabel(
+  shortcutAction: string | null,
+  settings: Pick<AppSettings, "customKeyBindings" | "disabledKeyBindings" | "hotkeyScheme">,
+): string {
+  if (!shortcutAction) return "";
+  const binding = DEFAULT_KEY_BINDINGS.find((b) => b.action === shortcutAction);
+  if (!binding) return "";
+  if (settings.disabledKeyBindings.includes(binding.id)) return "";
+  const key = effectiveBinding(binding, settings, settings.hotkeyScheme);
+  if (!key || key === "Disabled") return "";
+  return key.replace(/\s*\+\s*/g, " ").trim();
 }

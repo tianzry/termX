@@ -4,7 +4,15 @@
 
 ---
 
-## 2026-11-19 — MCP 长任务异步 job 模式：build_run / sftp_get 不再被客户端超时掐死
+## 2026-11-19 — 终端右键菜单快捷键提示：对齐 Netcatty 展示生效绑定
+
+- 用户反馈：右键菜单的常用功能（复制/粘贴/全选/分屏/清空缓冲区）当前没有快捷键提示，希望参照 Netcatty 补齐。排查：底层热键其实早已接线——`settings/keyBindings.ts` 有 36 条默认绑定（含 mac/pc 双方案），`useGlobalHotkeys.ts` 在 window 捕获阶段分发，`App.tsx handleGlobalHotkey` 把 copy/paste/selectAll/splitHorizontal/splitVertical/clearBuffer/openSftp 都映射到了对应动作，`hotkeyRuntime.ts` 负责组合键匹配（含 [1...9]/arrows 范围、平台修饰键互斥、自定义覆盖、Disabled 过滤）并有 20 条单测。缺的只是**菜单右侧的快捷键文字**：`TerminalPane.tsx` 里那段渲染被注释掉了（"termX 尚未分发这些绑定，按 Pr3 不渲染不生效的提示"），而这条注释已过时——绑定现在生效了。
+- 方案：在 `contextMenuLayout.ts` 加纯函数 `menuShortcutLabel(shortcutAction, settings)`，对照 Netcatty `TerminalContextMenu.getShortcut`：按 action 名找 DEFAULT_KEY_BINDINGS，被禁用（disabledKeyBindings）或文本为 "Disabled" 返回空串，否则取当前方案（hotkeyScheme）下的生效绑定（自定义覆盖优先），并把 " + " 折叠为空格（"⌘ + Shift + D" → "⌘ Shift D"）。`TerminalPane.tsx` 菜单项在文案后渲染 `<span className="term-menu-shortcut">`（该 CSS 类早已存在：右对齐 + 弱对比，对照 Netcatty ContextMenuShortcut）。
+- 展示范围严格对齐 Netcatty：只有 copy/paste/paste-selection/select-all/split-horizontal/split-vertical/clear-buffer 显示提示；打开 SFTP、重新连接、关闭终端在 Netcatty 里也不显示（contextMenuLayout 中这些项 shortcutAction=null，保持一致，不造假提示）。
+- 踩坑：`menuShortcutLabel` 按 **action 名**（selectAll/splitHorizontal）查表，而 disabledKeyBindings/customKeyBindings 按 **binding id**（select-all/split-horizontal）存——两者命名风格不同（camelCase vs kebab-case），查表用 action、判禁用/取覆盖用 binding.id，别混。菜单是瞬态（右键开、选择关），开启时 `getSettings()` 读最新值即可，无需订阅；这也与 TerminalPane 既有的 getSettings()-in-render 用法一致。
+- 验证（agent 自动化）：tsc --noEmit 干净；`npm run test:run` 84 文件 947 测试全过（含新增 6 条 menuShortcutLabel 单测：pc/mac 默认、null/未知 action、禁用、自定义覆盖、Disabled 覆盖）。待人工：release exe 里右键菜单确认提示文案随改绑/禁用实时变化，且 Ctrl+Shift+C/V/A/D/E/K 等在终端聚焦时确实触发动作。
+
+---
 
 - 用户反馈：MCP `build_run` / `sftp_get` 老是返回超时。排查：termX MCP HTTP 是「单发阻塞 JSON」——工具执行期间一个字节都不回（server.rs respond() 固定 application/json，GET 直接 sse_not_supported），而这两个恰是全工具集最耗时的；外部 MCP 客户端普遍 60–120s 请求总超时（approval.rs 注释自证），长构建 / 大文件下载必被掐死。sftp_get 自身没有任何超时，build_run 默认 120s 也在客户端上限边缘。
 - 方案（用户选定「异步 job 模式」）：两个工具改为**先挂后台 job 再内联等 waitMs 窗口**（默认 100s、上限 110s，压在客户端 120s 之下；0=立即转后台）。窗口内完成 → 返回与同步时代逐字节一致的结果（无 jobId 字段，老 agent 无感知）；超窗 → 任务继续在远端跑，返回 `{status:"running", jobId, tool, elapsedMs}`。新增只读工具 `job_wait(jobId, waitMs)`：长轮询续等，完成即回放原工具完整信封并附 `jobId/jobStatus:"done"`，可反复调用；结果保留 30 分钟；job 按提交客户端隔离（他client查询回 job_forbidden）。
