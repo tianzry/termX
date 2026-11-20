@@ -3,7 +3,7 @@ import { MCP_TOOL_GROUPS } from "./mcpToolGroups";
 import { settingsT } from "./i18n";
 import type { UiLanguage } from "./settingsModel";
 
-/** 后端 guide.rs「可用工具（共 23 个）」全集；加工具时两头都要同步，漏一头这里就红。 */
+/** 后端 guide.rs「可用工具（共 25 个）」全集；加工具时两头都要同步，漏一头这里就红。 */
 const BACKEND_TOOLS = [
   "get_environment",
   "vault_hosts_list",
@@ -27,13 +27,15 @@ const BACKEND_TOOLS = [
   "build_run",
   "term_run",
   "job_wait",
+  "job_list",
+  "job_cancel",
   "batch",
 ];
 
 describe("MCP_TOOL_GROUPS", () => {
   const flat = MCP_TOOL_GROUPS.flatMap((g) => g.tools);
 
-  it("覆盖后端 23 个工具全集，不多不少", () => {
+  it("覆盖后端 25 个工具全集，不多不少", () => {
     expect([...flat].sort()).toEqual([...BACKEND_TOOLS].sort());
   });
 

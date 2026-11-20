@@ -274,13 +274,22 @@ pub fn definitions() -> Value {
     · serial / telnet：没有命令边界与退出码，按「写入 + 采集」工作——命令后追加 lineEnding，从会话输出流采集，直到 idleMs 静默 / waitRegex 命中 / timeoutMs 超时；exitCode 恒为 null。用户终端会同时收到同一份字节（物理链路决定的）。\n\
     何时用：与目标会话交互、查看输出或运行命令时；最常见的是 SSH。\n\
     何时不用：只查询会话 / 主机清单时用只读工具；串口 / Telnet 只需要写字节时用 serial_write / telnet_write。\n\
-    受权限档位与命令黑名单约束。",
+    sessionId 与 hostId 二选一（hostId 自动建连 headless SSH，掉线恢复不必先 session_open）。\n\
+    受权限档位与命令黑名单约束；黑名单比 exec 平面（term_run / build_run）更严——被拦时按 hint 改走对应平面。",
             "inputSchema": schema(
                 json!({
                     "sessionId": {
                         "type": "string",
-                        "description": "get_environment 返回的 sessions[].id（UUID）",
+                        "description": "get_environment 返回的 sessions[].id（UUID）；与 hostId 二选一，sessionId 优先",
                         "examples": ["3f2504e0-4f89-11d3-9a0c-0305e82c3301"]
+                    },
+                    "hostId": {
+                        "type": "string",
+                        "description": "主机档案 id（vault_hosts_list / get_environment hosts[].id）；只给 hostId 时复用存活会话或自动建连 headless SSH，与其它工具一致"
+                    },
+                    "profileId": {
+                        "type": "string",
+                        "description": "hostId 的别名"
                     },
                     "command": {
                         "type": "string",
@@ -326,7 +335,7 @@ pub fn definitions() -> Value {
                         "description": "可选，仅 serial / telnet。stdout 的返回编码；base64 用于非 UTF-8 / 二进制回显，返回采集到的原始字节"
                     }
                 }),
-                &["sessionId", "command"]
+                &["command"]
             ),
             "annotations": { "readOnlyHint": false, "destructiveHint": true }
         },
@@ -355,17 +364,42 @@ pub fn definitions() -> Value {
 
     items.push(json!({
         "name": "job_wait",
-        "description": "只读。等待并取回 build_run / sftp_get 转后台任务的结果：任务完成立即返回原工具的完整结果信封（附 jobId / jobStatus）；到 waitMs 窗口仍在跑则返回 {status:\"running\"}，可反复调用续等。\
+        "description": "只读。等待并取回 build_run / sftp_get 转后台任务的结果：任务完成立即返回原工具的完整结果信封（附 jobId / jobStatus）；到 waitMs 窗口仍在跑则返回 {status:\"running\", bytesDone, bytesTotal}，可反复调用续等。\
 何时用：build_run / sftp_get 返回 {status:\"running\", jobId} 之后；长构建 / 大文件下载靠它绕过客户端请求超时。\
-何时不用：任务已在窗口内完成（没有返回 jobId）时。只能查本客户端提交的 job；结果保留 30 分钟。",
+何时不用：任务已在窗口内完成（没有返回 jobId）时。jobId 持有即权限（跨客户端重连也能查）；结果保留 24 小时。\
+waitMs 建议 ≤ 客户端请求超时−5s（默认 25s）；客户端超时更短时用更小的窗多轮循环。",
         "inputSchema": schema(
             json!({
-                "jobId": { "type": "string", "description": "build_run / sftp_get running 返回里的 jobId" },
-                "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 100000, "description": "本次调用最长等待毫秒；0 = 立即返回当前状态" }
+                "jobId": { "type": "string", "description": "build_run / sftp_get running 返回里的 jobId；丢了用 job_list 找回" },
+                "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 25000, "description": "本次调用最长等待毫秒；建议 ≤ 客户端请求超时−5s；0 = 立即返回当前状态" }
             }),
             &["jobId"]
         ),
         "annotations": { "readOnlyHint": true }
+    }));
+
+    items.push(json!({
+        "name": "job_list",
+        "description": "只读。列出后台 job 注册表（本客户端与其它客户端提交的都列，带 submittedBy 标签）：jobId / tool / status(running|done|failed) / elapsedMs / bytesDone / bytesTotal / cancelRequested。\
+何时用：客户端请求超时丢了 jobId、会话重开后找回旧 job、盘点在跑任务。\
+何时不用：已知 jobId 直接 job_wait。结果保留 24 小时；termX 进程重启后注册表清空。",
+        "inputSchema": schema(json!({}), &[]),
+        "annotations": { "readOnlyHint": true }
+    }));
+
+    items.push(json!({
+        "name": "job_cancel",
+        "description": "写操作。取消一个后台 job：sftp_get 置取消旗标优雅停（保留 .part 供下次续传）；build_run 直接断开 exec 通道（远端进程随之终止）。\
+何时用：误起的大下载 / 长构建要停。\
+何时不用：已完成的 job 取消是幂等空操作，不必调用。\
+受权限档位约束（confirm 档需审批）。",
+        "inputSchema": schema(
+            json!({
+                "jobId": { "type": "string", "description": "要取消的 jobId（job_list 可查）" }
+            }),
+            &["jobId"]
+        ),
+        "annotations": { "readOnlyHint": false }
     }));
 
     items.push(byte_write_tool(
@@ -476,6 +510,7 @@ sessionId 与 hostId 二选一；hostId 无就绪会话时按 vault 档案自动
                 "description": "远端路径，支持绝对路径、~ 与相对 home 的路径"
             },
             "startLine": { "type": "integer", "minimum": 1, "default": 1 },
+            "endLine": { "type": "integer", "minimum": 1, "description": "结束行（1-based、含）。与 maxLines 取交集，仍受单次 2000 行护栏约束" },
             "maxLines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 200 },
             "numbered": { "type": "boolean", "default": true, "description": "是否带行号" }
         }),
@@ -609,7 +644,8 @@ sessionId 与 hostId 二选一。",
                 }
             },
             "overwrite": { "type": "boolean", "default": false, "description": "远端已存在时必须显式置 true" },
-            "recursive": { "type": "boolean", "default": false, "description": "目录递归上传" }
+            "recursive": { "type": "boolean", "default": false, "description": "目录递归上传" },
+            "concurrency": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4, "description": "批内文件级并行度（每文件独立流）" }
         }),
         &["items"],
         false,
@@ -618,9 +654,10 @@ sessionId 与 hostId 二选一。",
     items.push(remote_file_tool(
         "sftp_get",
         "写操作。把远端文件/目录流式下载到本地，只回 path / size / sha256，不回文件内容。\
-何时用：下载编译产物、日志归档等；recursive=true 可整目录拉回。\
+何时用：下载编译产物、日志归档等；recursive=true 可整目录拉回；批内文件级并行（concurrency），单文件走与 UI 传输队列同款的多句柄流水线引擎。\
 何时不用：只需要查看内容用 fs_read 开窗；本地路径必须是绝对路径且默认不覆盖已存在文件。\
-长任务：超过 waitMs（默认 100s）未完成即转后台，返回 {status:\"running\", jobId}，用 job_wait 续等，不会触发客户端超时。\
+断点续传：失败/取消保留 <本地名>.part 与指纹旁挂文件，下次同路径调用自动从断点续传（远端 size/mtime 变过则重头）。\
+长任务：超过 waitMs（默认 25s）未完成即转后台，返回 {status:\"running\", jobId, bytesDone, bytesTotal}，用 job_wait 短窗循环续等；客户端超时丢了 jobId 用 job_list 找回，误起用 job_cancel 停。\
 受权限档位约束；sessionId 与 hostId 二选一。",
         json!({
             "items": {
@@ -638,7 +675,10 @@ sessionId 与 hostId 二选一。",
             },
             "overwrite": { "type": "boolean", "default": false, "description": "本地已存在时必须显式置 true" },
             "recursive": { "type": "boolean", "default": false, "description": "目录递归下载" },
-            "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 100000, "description": "内联等待窗口毫秒；大文件下载超窗即转后台并返回 {status:\"running\", jobId}，用 job_wait 续等。0 = 立即转后台" }
+            "concurrency": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4, "description": "批内文件级并行度（每文件独立流水线流）" },
+            "skipUnchanged": { "type": "boolean", "default": false, "description": "本地已存在且尺寸相同、mtime 不旧于远端时跳过（status=skipped），增量拉取编译产物用" },
+            "verifyRemote": { "type": "boolean", "default": false, "description": "传完经 exec 通道跑 sha256sum 双端比对，信封附 remoteSha256 / verify(match|mismatch)；需要 SSH 会话" },
+            "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 25000, "description": "内联等待窗口毫秒；建议 ≤ 客户端请求超时−5s；超窗即转后台并返回 {status:\"running\", jobId}，用 job_wait 续等。0 = 立即转后台" }
         }),
         &["items"],
         false,
@@ -646,9 +686,9 @@ sessionId 与 hostId 二选一。",
 
     items.push(remote_file_tool(
         "fs_delete",
-        "写操作（两次确认）。先 dryRun=true 列出将删对象并返回 confirmToken；核对后以 dryRun=false + confirmToken 真正删除。\
+        "写操作（confirm 档两次确认；auto 档可单调用）。先 dryRun=true 列出将删对象并返回 confirmToken；核对后以 dryRun=false + confirmToken 真正删除。auto 档位信任已授权：dryRun=false 可免 token 直接删（仍走审批闸门）。\
 何时用：清理构建产物、临时文件、确认无用的文件；目录必须 recursive=true。\
-何时不用：不确定内容时先用 fs_glob / fs_read；token 5 分钟过期且绑定会话与路径集合，不要臆造或复用。\
+何时不用：不确定内容时先用 fs_glob / fs_read；confirm 档 token 5 分钟过期且绑定会话与路径集合，不要臆造或复用。\
 受权限档位约束；sessionId 与 hostId 二选一。",
         json!({
             "paths": {
@@ -670,7 +710,7 @@ sessionId 与 hostId 二选一。",
             },
             "confirmToken": {
                 "type": "string",
-                "description": "dryRun 返回的 token，dryRun=false 时必填"
+                "description": "dryRun 返回的 token；confirm 档 dryRun=false 时必填，auto 档可省略"
             }
         }),
         &["paths"],
@@ -684,7 +724,7 @@ sessionId 与 hostId 二选一。",
 何时不用：需要交互式终端时用 term_run；只读命令用 term_run 即可；不要在这里做文件读写（用 fs_* 工具）。\
 执行顺序固定为 cd → 会话 preamble（set_session_preamble 注册的 setup 命令）→ env → command，每次重新应用。\
 只拦真正破坏性命令（rm -rf /、mkfs、dd 写块设备等），不套终端黑名单。\
-长任务：超过 waitMs（默认 100s）未完成即转后台，返回 {status:\"running\", jobId}，用 job_wait 续等，不会触发客户端超时。",
+长任务：超过 waitMs（默认 25s）未完成即转后台，返回 {status:\"running\", jobId}，用 job_wait 短窗循环续等；客户端超时丢了 jobId 用 job_list 找回，误起用 job_cancel 停。",
         json!({
             "command": { "type": "string", "description": "要执行的构建命令（可多行）" },
             "cwd": { "type": "string", "description": "工作目录，默认 home" },
@@ -714,8 +754,8 @@ sessionId 与 hostId 二选一。",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 110000,
-                "default": 100000,
-                "description": "内联等待窗口毫秒；构建超窗即转后台并返回 {status:\"running\", jobId}，用 job_wait 续等。0 = 立即转后台。与 timeoutMs（构建自身的执行上限）独立"
+                "default": 25000,
+                "description": "内联等待窗口毫秒；建议 ≤ 客户端请求超时−5s；构建超窗即转后台并返回 {status:\"running\", jobId}，用 job_wait 续等。0 = 立即转后台。与 timeoutMs（构建自身的执行上限）独立"
             }
         }),
         &["command"],
@@ -875,10 +915,10 @@ fn transfer_count(args: &Value) -> usize {
 }
 
 /// 传输结果统一收口：逐项写审计，回 `results[]` + ok/failed 计数。
-/// waitMs：build_run / sftp_get / job_wait 的内联等待窗口。默认 100s、上限
-/// 110s——压在外部 MCP 客户端常见的 120s 工具调用总超时之下（与审批 110s
-/// 硬超时同一理由）；0 = 立即转后台返回 jobId。
-const DEFAULT_JOB_WAIT_MS: u64 = 100_000;
+/// waitMs：build_run / sftp_get / job_wait 的内联等待窗口。默认 25s——实测外部
+/// 客户端超时分布很散（30s/60s/120s 都有），默认值必须压在最短常见档之下；
+/// 上限 110s 供明确知道自己客户端超时的调用方拉满；0 = 立即转后台返回 jobId。
+const DEFAULT_JOB_WAIT_MS: u64 = 25_000;
 const MAX_JOB_WAIT_MS: u64 = 110_000;
 
 fn job_wait_ms(args: &Value) -> u64 {
@@ -889,30 +929,34 @@ fn job_wait_ms(args: &Value) -> u64 {
 }
 
 /// job 收尾统一出口：窗口内完成 → 原样返回任务结果（与同步时代一致）；
-/// 仍在跑 → running + jobId；查不到 / 不属于本客户端 → 明确错误码。
+/// 仍在跑 → running + jobId + 进度；查不到 → 明确错误码并指路 job_list。
 fn job_settle(job_id: &str, view: runtime_state::JobView, waited_ms: u64) -> ToolResult {
     match view {
         runtime_state::JobView::Done { text, is_error, .. } => ToolResult { text, is_error },
-        runtime_state::JobView::Running { tool, elapsed_ms } => ToolResult::ok(
+        runtime_state::JobView::Running {
+            tool,
+            elapsed_ms,
+            bytes_done,
+            bytes_total,
+            cancel_requested,
+        } => ToolResult::ok(
             format!("{tool} 仍在执行，已转后台"),
-            "任务不受本次调用影响，继续在远端执行；用 job_wait(jobId) 续等并取结果，可反复调用。",
+            "任务不受本次调用影响，继续在远端执行；用 job_wait(jobId, waitMs) 短窗循环续等（waitMs 建议 ≤ 客户端超时−5s），可反复调用；误起用 job_cancel 停。",
             json!({
                 "status": "running",
                 "jobId": job_id,
                 "tool": tool,
                 "waitedMs": waited_ms,
                 "elapsedMs": elapsed_ms,
+                "bytesDone": bytes_done,
+                "bytesTotal": bytes_total,
+                "cancelRequested": cancel_requested,
             }),
         ),
         runtime_state::JobView::NotFound => ToolResult::err(
             "job_not_found",
             format!("找不到 job {job_id}"),
-            "jobId 必须来自本客户端 build_run / sftp_get 的 running 返回；结果保留 30 分钟。",
-        ),
-        runtime_state::JobView::Forbidden => ToolResult::err(
-            "job_forbidden",
-            "该 job 属于其它 MCP 客户端",
-            "只能等待自己提交的 job。",
+            "jobId 必须来自 build_run / sftp_get 的 running 返回；结果保留 24 小时。客户端超时丢了 jobId 时用 job_list 找回。",
         ),
     }
 }
@@ -947,8 +991,11 @@ fn transfer_result(
 ) -> ToolResult {
     let mut items = Vec::with_capacity(results.len());
     let mut ok = 0usize;
+    let mut skipped = 0usize;
     for outcome in &results {
-        if outcome.ok {
+        if outcome.skipped {
+            skipped += 1;
+        } else if outcome.ok {
             ok += 1;
             runtime_state::record_audit(change_entry(
                 tool,
@@ -961,8 +1008,8 @@ fn transfer_result(
         }
         items.push(outcome.to_json());
     }
-    let failed = results.len() - ok;
-    let data = json!({ "results": items, "ok": ok, "failed": failed });
+    let failed = results.len() - ok - skipped;
+    let data = json!({ "results": items, "ok": ok, "skipped": skipped, "failed": failed });
     if failed == 0 {
         ToolResult::ok(
             "传输完成",
@@ -1151,18 +1198,41 @@ fn environment(state: &AppState, client: &McpClient) -> Result<Value, ToolResult
         if record.owner != client_owner && matches!(record.owner, SessionOwner::Headless(_)) {
             continue;
         }
+        // 活性门禁：death watch 可能还没跑，注册表 phase 仍 Ready 但传输层已死；
+        // 与 fs/session.rs 复用门禁同源，避免 agent 拿着死会话当 ready 用。
+        let dead = record.phase == crate::state::SessionPhase::Ready
+            && record.kind == SessionKind::Ssh
+            && handles
+                .get(id)
+                .map(|handle| {
+                    handle
+                        .ssh_handle()
+                        .try_lock()
+                        .map(|h| h.is_closed())
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
         sessions.push(json!({
             "id": id,
             "kind": record.kind.as_str(),
-            "phase": match record.phase {
-                crate::state::SessionPhase::Pending => "pending",
-                crate::state::SessionPhase::Ready => "ready",
-                crate::state::SessionPhase::Closed => "closed",
+            "phase": if dead {
+                "closed"
+            } else {
+                match record.phase {
+                    crate::state::SessionPhase::Pending => "pending",
+                    crate::state::SessionPhase::Ready => "ready",
+                    crate::state::SessionPhase::Closed => "closed",
+                }
             },
             "hostId": handles.get(id).map(|handle| handle.profile_id().to_string()),
             "origin": match &record.owner {
                 SessionOwner::Headless(_) => "mcp",
                 SessionOwner::Window(_) => "user",
+            },
+            "hint": if dead {
+                Some("传输层已断开：session_open fresh=true 重建，或请用户重连窗口会话")
+            } else {
+                None
             },
         }));
     }
@@ -1893,7 +1963,7 @@ pub async fn call_tool(
             // 同 build_run：下载大文件可能远超外部客户端的请求总超时，
             // 超窗即转后台 job，用 job_wait 续等。
             let wait_ms = job_wait_ms(args);
-            let job_id = runtime_state::register_job(&client.id, "sftp_get");
+            let (job_id, control) = runtime_state::register_job(&client.id, "sftp_get");
             {
                 let app = app.clone();
                 let session_id = session.session_id.clone();
@@ -1902,8 +1972,14 @@ pub async fn call_tool(
                 tokio::spawn(async move {
                     let result = match tauri::Manager::try_state::<AppState>(&app) {
                         Some(state) => {
-                            match super::fs::transfer::sftp_get(&app, &state, &session_id, &args)
-                                .await
+                            match super::fs::transfer::sftp_get(
+                                &app,
+                                &state,
+                                &session_id,
+                                &args,
+                                Some(&control),
+                            )
+                            .await
                             {
                                 Ok(results) => transfer_result("sftp_get", &session_id, results),
                                 Err(e) => tool_error(e),
@@ -1920,7 +1996,7 @@ pub async fn call_tool(
             }
             job_settle(
                 &job_id,
-                runtime_state::wait_job(&client.id, &job_id, Duration::from_millis(wait_ms)).await,
+                runtime_state::wait_job(&job_id, Duration::from_millis(wait_ms)).await,
                 wait_ms,
             )
         }
@@ -1965,7 +2041,14 @@ pub async fn call_tool(
                     return e;
                 }
             }
-            match super::fs::delete::fs_delete(state, &session.session_id, args).await {
+            match super::fs::delete::fs_delete(
+                state,
+                &session.session_id,
+                args,
+                client.permission_mode != PermissionMode::Auto,
+            )
+            .await
+            {
                 Ok(outcome) => {
                     for entry in &outcome.entries {
                         runtime_state::record_audit(change_entry(
@@ -2067,14 +2150,14 @@ pub async fn call_tool(
             // 返回与同步时代完全一致的结果；超窗 → 返回 jobId，任务继续在远端跑，
             // 避免外部 MCP 客户端 ~120s 的请求总超时把长构建整个掐死。
             let wait_ms = job_wait_ms(args);
-            let job_id = runtime_state::register_job(&client.id, "build_run");
+            let (job_id, control) = runtime_state::register_job(&client.id, "build_run");
             {
                 let app = app.clone();
                 let session_id = session.session_id.clone();
                 let ssh = session.handle.clone();
                 let args = args.clone();
                 let job = job_id.clone();
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let result = match tauri::Manager::try_state::<AppState>(&app) {
                         Some(state) => {
                             match super::fs::build::fs_build_run(
@@ -2098,10 +2181,12 @@ pub async fn call_tool(
                     };
                     runtime_state::complete_job(&job, result.text, result.is_error);
                 });
+                // job_cancel 靠 abort 断 exec 通道停远端构建。
+                control.attach_abort(handle);
             }
             job_settle(
                 &job_id,
-                runtime_state::wait_job(&client.id, &job_id, Duration::from_millis(wait_ms)).await,
+                runtime_state::wait_job(&job_id, Duration::from_millis(wait_ms)).await,
                 wait_ms,
             )
         }
@@ -2122,8 +2207,7 @@ pub async fn call_tool(
                 }
             };
             let wait_ms = job_wait_ms(args);
-            let view =
-                runtime_state::wait_job(&client.id, &job_id, Duration::from_millis(wait_ms)).await;
+            let view = runtime_state::wait_job(&job_id, Duration::from_millis(wait_ms)).await;
             if let runtime_state::JobView::Done { text, is_error, .. } = &view {
                 // 原样回放后台任务的结果信封，附 job 元信息方便 agent 对账。
                 let mut payload: Value = serde_json::from_str(text)
@@ -2138,6 +2222,74 @@ pub async fn call_tool(
                 };
             }
             job_settle(&job_id, view, wait_ms)
+        }
+        "job_list" => {
+            let list = runtime_state::job_list();
+            let items: Vec<Value> = list
+                .iter()
+                .map(|job| {
+                    json!({
+                        "jobId": job.job_id,
+                        "tool": job.tool,
+                        "submittedBy": job.submitted_by,
+                        "status": job.status,
+                        "elapsedMs": job.elapsed_ms,
+                        "bytesDone": job.bytes_done,
+                        "bytesTotal": job.bytes_total,
+                        "cancelRequested": job.cancel_requested,
+                    })
+                })
+                .collect();
+            ToolResult::ok(
+                format!("{} 个后台 job", items.len()),
+                "running 的用 job_wait(jobId) 续等；误起的用 job_cancel(jobId) 停；结果保留 24 小时。",
+                json!({ "jobs": items }),
+            )
+        }
+        "job_cancel" => {
+            let job_id = match args
+                .get("jobId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                Some(value) => value.to_string(),
+                None => {
+                    return ToolResult::err(
+                        "missing_argument",
+                        "缺少必填参数 jobId",
+                        "jobId 来自 running 返回或 job_list。",
+                    )
+                }
+            };
+            if let Err(e) = approval_gate(
+                client,
+                rt,
+                app,
+                gen,
+                disconnected.clone(),
+                "job_cancel",
+                format!("取消 job {job_id}"),
+                args.clone(),
+                None,
+                None,
+            )
+            .await
+            {
+                return e;
+            }
+            if !runtime_state::cancel_job(&job_id) {
+                return ToolResult::err(
+                    "job_not_found",
+                    format!("找不到 job {job_id}"),
+                    "用 job_list 核对 jobId；结果保留 24 小时，termX 重启后注册表清空。",
+                );
+            }
+            ToolResult::ok(
+                "已请求取消",
+                "传输类任务按块优雅停并保留 .part 供续传；build_run 的 exec 通道已断开。用 job_wait 取收尾信封。",
+                json!({ "jobId": job_id, "cancelRequested": true }),
+            )
         }
         "term_run" => {
             let command = match args
@@ -2260,14 +2412,22 @@ pub async fn call_tool(
             }
         }
         "terminal_execute" => {
-            let session_id = match args.get("sessionId").and_then(Value::as_str) {
-                Some(v) if !v.is_empty() => v.to_string(),
-                _ => {
-                    return ToolResult::err(
-                        "missing_argument",
-                        "缺少必填参数 sessionId",
-                        HINT_SESSION_ID,
-                    )
+            // sessionId 优先（含窗口 pty/serial/telnet）；只给 hostId 时与其它
+            // 工具一致：复用存活会话或自动建连 headless SSH。
+            let session_id = match super::fs::session::session_id_arg(args) {
+                Some(value) => value,
+                None => {
+                    if super::fs::session::host_id_arg(args).is_none() {
+                        return ToolResult::err(
+                            "missing_argument",
+                            "缺少必填参数 sessionId 或 hostId",
+                            HINT_SESSION_ID,
+                        );
+                    }
+                    match super::fs::session::resolve(app, state, args, client).await {
+                        Ok(resolved) => resolved.session_id,
+                        Err(e) => return tool_error(e),
+                    }
                 }
             };
             let command = match args.get("command").and_then(Value::as_str) {
@@ -2335,7 +2495,7 @@ pub async fn call_tool(
                 return ToolResult::err(
                     "command_blocked",
                     format!("命令被命令黑名单拦截：命中规则 \"{rule}\""),
-                    "改用等价但更具体的命令，或请用户在「设置 → AI → 命令黑名单」中调整规则。",
+                    "交互终端黑名单比 exec 平面严：通用命令执行改走 term_run / build_run，文件修改走 fs_patch / fs_write；或请用户在「设置 → AI → 命令黑名单」中调整规则。",
                 );
             }
             let blacklist = match crate::ai::command_blacklist::load(&state.db) {
@@ -2346,7 +2506,7 @@ pub async fn call_tool(
                 return ToolResult::err(
                     "command_blocked",
                     format!("命令被黑名单拦截：{e:?}"),
-                    "改用等价但更具体的命令，或请用户在设置中调整命令黑名单。",
+                    "交互终端黑名单比 exec 平面严：通用命令执行改走 term_run / build_run，文件修改走 fs_patch / fs_write；或请用户在设置中调整命令黑名单。",
                 );
             }
             // ⑤ 审批（写操作，四类终端一致）。
@@ -3069,7 +3229,7 @@ mod tests {
     fn definitions_cover_all_tools_with_full_schemas() {
         let defs = definitions();
         let list = defs.as_array().unwrap();
-        assert_eq!(list.len(), 23);
+        assert_eq!(list.len(), 25);
         for tool in list {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
@@ -3105,10 +3265,8 @@ mod tests {
             props["maxOutputBytes"]["maximum"],
             super::super::fs::build::MAX_MAX_OUTPUT_BYTES
         );
-        assert_eq!(
-            exec["inputSchema"]["required"],
-            json!(["sessionId", "command"])
-        );
+        assert_eq!(exec["inputSchema"]["required"], json!(["command"]));
+        assert!(props["hostId"].is_object());
 
         let read = list.iter().find(|t| t["name"] == "fs_read").unwrap();
         assert_eq!(read["annotations"]["readOnlyHint"], true);

@@ -4,7 +4,29 @@
 
 ---
 
-## 2026-11-20 — MCP sftp_get 提速：改走 UI 传输队列同款流水线下载引擎
+## 2026-11-20 — MCP 实测 17 项反馈闭环：job 能力化 + 传输并行/续传/增量/校验 + 会话小摩擦
+
+- 背景：用户几天实测（含传输实验）给出 17 项问题清单，按影响排序要求闭环；方案经确认「阶段一+二全做」「auto 免 token 单调用」「jobId 能力化 + job_list 全量」。#1（单流串行慢）已由上一笔流水线引擎修复，本笔覆盖其余 16 项 + #12 核实。
+- job 模型（#4/#5/#7/#8/#9/#10，mcp/runtime_state.rs + tools.rs）：
+  - jobId 改为不可猜 UUID＝持有即权限，删除按提交客户端隔离（JobView::Forbidden 移除）——MCP 会话 id 随客户端重连变化，旧模型重连即丢 job；结果保留 30min→24h（JOB_TTL=86400），注册表上限 256 先淘汰最旧已完成项。
+  - 新增 `job_list`（全量摘要：jobId/tool/submittedBy/status/elapsedMs/bytesDone/bytesTotal/cancelRequested，按耗时倒序）找回丢失的 jobId；新增 `job_cancel`：传输类置 cancel 旗标优雅停（保留 .part 续传），build_run 挂 abort 句柄直接断 exec 通道杀远端进程，取消即收尾为 job_cancelled 信封（complete_job 先到先得防竞态覆盖）。
+  - 进度：JobProgress{done 累计 + active 在传 checkpoint 表}，running 信封带 bytesDone/bytesTotal（total=0 的非传输任务不带）；JobControl{cancel,progress,abort} 注册时创建、spawn 侧共享。
+  - 默认 waitMs 100s→25s（DEFAULT_JOB_WAIT_MS，上限 110s 不变）：100s 贴着部分客户端 60~90s 请求超时，超窗即 -32603 且丢 jobId——今天折腾的全部根源；25s 留足余量，schema/guide 写明「短窗循环 job_wait」策略（#9 不做 SSE，MCP 工具调用本身是请求-响应）。
+- 传输平面（#2/#3/#6/#17，mcp/fs/transfer.rs + ssh/sftp.rs）：
+  - #2 批内文件级并行：items 展开后 `buffer_unordered(concurrency)`，默认 4、上限 8（parse_concurrency clamp），展开时分配稳定 index、收尾按 index 排序保证信封顺序；sftp_put/sftp_get schema 均加 concurrency。
+  - #3 断点续传：`download_streaming_pipelined` 加 checkpoint 参数 + `.part.meta` 指纹侧车（ResumeMeta{size,mtime}，resume_offset 纯函数单测）：指纹匹配且 0<part_len<=total 才从偏移续传，否则归零重下；失败/取消保留 .part+meta（与 UI 队列失败即清理语义刻意不同），成功 rename 后删 meta。
+  - #6 skipUnchanged 增量同步：本地 size==远端 size 且（远端无 mtime→视为未变，否则本地 mtime>=远端）→ status:"skipped"，信封加 skipped 计数，审计只记非 skipped 成功项。
+  - #17 verifyRemote：传完经 SSH exec_once `sha256sum`（shell_quote，120s）对账，回 remoteSha256/verify:"ok"；不匹配 mcp_verify_mismatch；无 SSH 句柄的会话类型请求校验直接 mcp_unsupported_session_kind 快速失败。
+- 命令策略与会话（#11/#13/#14/#15/#16，tools.rs + fs/session.rs 复用 + fs/delete.rs + fs/read.rs）：
+  - #11 两套黑名单不合并（交互终端黑名单本就比 exec 平面严，是设计不是 bug），但 terminal_execute 被拦时的 hint 改为指路：通用命令走 term_run/build_run、文件修改走 fs_patch/fs_write，或请用户调规则——不再误导 agent 反复试探。
+  - #12 核实：源码中不存在「build_run 禁 sleep」——policy.rs 8 条破坏性规则、blocklist.rs 21 条、ai/sanitize.rs 形状层均无 sleep 禁令（grants.rs 里 sleep 只是风险权重）。属用户误记/旧版本印象，无代码改动，待复测确认。
+  - #13 terminal_execute 支持 hostId/profileId（与 sessionId 二选一，required 只剩 command），无就绪会话时按 vault 档案自动建连，与文件类工具同语义。
+  - #14 get_environment 活性门禁：death watch 未跑时注册表 phase 仍 Ready 但传输层已死的会话，改报 phase:"closed" + hint「session_open fresh=true 重建」，与 fs/session.rs 复用门禁同源（try_lock+is_closed）。
+  - #15 fs_delete auto 档免 dry-run/token 两往返：require_token = permission_mode != Auto，auto 直接 dryRun=false 单调用（审批闸门仍走）；confirm 档保留 token 绑定「会话+路径集合+递归开关」、5min 过期取用即失效。
+  - #16 fs_read 加 endLine（1-based 含），与 maxLines 取交集（2000 行/8MiB 护栏不变），endLine<startLine 报 mcp_read_range_invalid；免调用方自算偏移。
+- 文案/矩阵同步：guide.rs 工具 23→25、工作流 4/6/7 条与规则改写（25s/24h/jobId 能力化/续传/auto 删除）、return_example 补 skipped/remoteSha256/bytesDone/job_list/job_cancel；permissions.rs classify job_list→Read；前端 mcpToolGroups composite += job_list/job_cancel，测试钉 25；tools.rs definitions 计数测试 23→25、terminal_execute required 断言改 ["command"]。
+- 踩坑：MCP 客户端会话 id 每次重连都变，任何「按提交者隔离」的持久状态都会在重连后失效——持久句柄要么能力化（不可猜 id 持有即权限），要么按稳定身份（Bearer token 信任域）隔离；默认等待窗必须显著小于客户端请求超时，否则超时错误会把 jobId 一起吞掉。
+- 门禁：cargo test 1067✓ / tsc✓ / npm run test:run 85 文件 951✓。待人工：release exe 复测 17 项（重点 #7/#8 组合：25s 超窗→job_list 找回→job_wait 续等→job_cancel）。
 
 - 用户反馈：MCP sftp_get 下载文件很慢，与终端 UI 操作下载速度差异很大，要求下载部分改成 UI 同一套方法。根因：两条入口名字相近但引擎不同——MCP `download_one` 走 `SftpHandle::download_streaming` → `stream_download`（单远端句柄串行 32KB 读，每块一次网络往返，吞吐≈块大小/RTT，高延迟链路被往返拖死）；UI SFTP 面板下载走 `sftp_transfer_enqueue` → transfer_center → `download_streaming_resumable`（16 句柄 × 64KB 流水线、最多 16 条读请求在途 + BTreeMap 重排缓冲按序落盘，见 ssh/sftp.rs PIPELINE_WINDOW/PIPELINE_CHUNK），并发把往返延迟藏掉。旧 `sftp_download` 命令前端已不调用（client.ts 仅剩 `sftp_download_to`，属 headless RPC 桥路径、不在 MCP 链路，不动）。
 - 修复：`SftpHandle` 新增 `download_streaming_pipelined`（ssh/sftp.rs）：对外语义与 `download_streaming` 完全一致（metadata 取 total → create_dir_all 父目录 → `<名>.part` 临时文件 → 成功删目标后原子 rename、失败/取消清理 .part），传输体复用 `download_streaming_resumable(start_offset=0)` 即 UI 队列同款引擎；MCP `mcp/fs/transfer.rs download_one` 改调它。进度事件名 `sftp:progress:mcp-get-{index}` 与 payload 不变，sha256/overwrite/recursive/MAX_TRANSFER_ITEMS 全不变；文件间仍串行（收益主体是文件内流水线），上传路径不动。

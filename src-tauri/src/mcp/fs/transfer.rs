@@ -2,19 +2,25 @@
 //!
 //! 关键收益：不走 shell、不回 base64，token 成本与文件大小无关；上传复用
 //! [`SftpHandle`] 的流式实现，下载复用 UI 传输队列同款流水线引擎（分块 +
-//! 临时文件 + 原子 rename），进度事件用
-//! `Host::Tauri` 发到前端（MCP 没有窗口，事件无人订阅也不会出错）。
+//! 临时文件 + 原子 rename + 断点续传）。批内文件级并行（`concurrency`），
+//! 信封仍逐文件返回；进度事件用 `Host::Tauri` 发到前端（MCP 没有窗口，
+//! 事件无人订阅也不会出错），job 进度另经 [`JobProgress`] 上报给 job_wait。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
+use std::time::Duration;
 
+use futures_util::stream::{self, StreamExt};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 
+use crate::ai::remote_script::shell_quote;
 use crate::emitter::Host;
 use crate::error::{AppError, AppResult};
+use crate::mcp::runtime_state::{JobControl, JobProgress};
+use crate::ssh::client::{exec_once, SshHandle};
 use crate::ssh::sftp::SftpHandle;
 use crate::state::AppState;
 
@@ -22,6 +28,9 @@ use super::{handle, path as pathutil};
 
 /// 单次调用最多处理的文件数（递归展开后计数）。
 pub const MAX_TRANSFER_ITEMS: usize = 2000;
+/// 批内文件级并行度默认值与上限（每文件独立流水线流）。
+pub const DEFAULT_CONCURRENCY: usize = 4;
+pub const MAX_CONCURRENCY: usize = 8;
 
 pub struct TransferOutcome {
     pub local_path: String,
@@ -29,6 +38,9 @@ pub struct TransferOutcome {
     pub size: u64,
     pub sha256: String,
     pub ok: bool,
+    pub skipped: bool,
+    pub remote_sha256: Option<String>,
+    pub verify: Option<&'static str>,
     pub code: Option<&'static str>,
     pub message: Option<String>,
 }
@@ -41,6 +53,24 @@ impl TransferOutcome {
             size,
             sha256,
             ok: true,
+            skipped: false,
+            remote_sha256: None,
+            verify: None,
+            code: None,
+            message: None,
+        }
+    }
+
+    fn skipped(local_path: String, remote_path: String, size: u64) -> Self {
+        Self {
+            local_path,
+            remote_path,
+            size,
+            sha256: String::new(),
+            ok: true,
+            skipped: true,
+            remote_sha256: None,
+            verify: None,
             code: None,
             message: None,
         }
@@ -53,6 +83,9 @@ impl TransferOutcome {
             size: 0,
             sha256: String::new(),
             ok: false,
+            skipped: false,
+            remote_sha256: None,
+            verify: None,
             code: Some(e.code()),
             message: Some(e.to_string()),
         }
@@ -64,7 +97,9 @@ impl TransferOutcome {
             "remotePath": self.remote_path,
             "size": self.size,
             "sha256": self.sha256,
-            "status": if self.ok { "ok" } else { "error" },
+            "status": if self.skipped { "skipped" } else if self.ok { "ok" } else { "error" },
+            "remoteSha256": self.remote_sha256,
+            "verify": self.verify,
             "code": self.code,
             "message": self.message,
         })
@@ -126,6 +161,18 @@ fn parse_items(args: &Value) -> AppResult<Vec<TransferItem>> {
         });
     }
     Ok(parsed)
+}
+
+pub fn parse_concurrency(args: &Value) -> usize {
+    args.get("concurrency")
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .unwrap_or(DEFAULT_CONCURRENCY)
+        .clamp(1, MAX_CONCURRENCY)
+}
+
+fn flag(args: &Value, key: &str) -> bool {
+    args.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn local_io(op: &'static str, path: &Path, e: std::io::Error) -> AppError {
@@ -216,6 +263,20 @@ fn join_remote(base: &str, rel: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), rel)
 }
 
+fn epoch_secs(t: std::time::SystemTime) -> Option<i64> {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
+}
+
+/// 一个待传文件（递归展开后的最小单元），index 用于信封保序与进度键。
+struct Unit {
+    index: usize,
+    local: PathBuf,
+    remote: String,
+    size: u64,
+}
+
 async fn upload_one(
     sftp: &SftpHandle,
     host: &Host,
@@ -223,6 +284,7 @@ async fn upload_one(
     local: &Path,
     remote: &str,
     overwrite: bool,
+    cancel: Arc<AtomicBool>,
 ) -> AppResult<TransferOutcome> {
     let meta = tokio::fs::metadata(local)
         .await
@@ -243,15 +305,8 @@ async fn upload_one(
         .await
         .map_err(|e| local_io("open", local, e))?;
     let total = meta.len();
-    sftp.upload_streaming(
-        &mut file,
-        total,
-        remote,
-        host,
-        &format!("mcp-put-{index}"),
-        Arc::new(AtomicBool::new(false)),
-    )
-    .await?;
+    sftp.upload_streaming(&mut file, total, remote, host, &format!("mcp-put-{index}"), cancel)
+        .await?;
     let sha256 = sha256_file(local).await?;
     Ok(TransferOutcome::ok(
         local.display().to_string(),
@@ -268,26 +323,24 @@ pub async fn sftp_put(
     args: &Value,
 ) -> AppResult<Vec<TransferOutcome>> {
     let items = parse_items(args)?;
-    let overwrite = args
-        .get("overwrite")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let recursive = args
-        .get("recursive")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let overwrite = flag(args, "overwrite");
+    let recursive = flag(args, "recursive");
+    let concurrency = parse_concurrency(args);
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
     let host = Host::Tauri(app.clone());
-    let mut results = Vec::new();
-    let mut index = 0usize;
+    let cancel = Arc::new(AtomicBool::new(false));
 
+    let mut units: Vec<Unit> = Vec::new();
+    let mut settled: Vec<(usize, TransferOutcome)> = Vec::new();
+    let mut next = 0usize;
     for item in items {
         let remote_base = match resolve_remote(&sftp, &home, &item.remote, true).await {
             Ok(value) => value,
             Err(e) => {
-                results.push(TransferOutcome::failure(item.local, item.remote, &e));
+                settled.push((next, TransferOutcome::failure(item.local, item.remote, &e)));
+                next += 1;
                 continue;
             }
         };
@@ -295,89 +348,207 @@ pub async fn sftp_put(
         let meta = match tokio::fs::metadata(&local_root).await {
             Ok(value) => value,
             Err(e) => {
-                results.push(TransferOutcome::failure(
-                    item.local,
-                    remote_base,
-                    &local_io("metadata", &local_root, e),
+                settled.push((
+                    next,
+                    TransferOutcome::failure(
+                        item.local,
+                        remote_base,
+                        &local_io("metadata", &local_root, e),
+                    ),
                 ));
+                next += 1;
                 continue;
             }
         };
-
         if meta.is_dir() {
             if !recursive {
                 let err = AppError::config(
                     "mcp_transfer_is_dir",
                     json!({ "path": &item.local, "hint": "目录请置 recursive=true" }),
                 );
-                results.push(TransferOutcome::failure(item.local, remote_base, &err));
+                settled.push((next, TransferOutcome::failure(item.local, remote_base, &err)));
+                next += 1;
                 continue;
             }
             let files = match collect_local_files(&local_root).await {
                 Ok(value) => value,
                 Err(e) => {
-                    results.push(TransferOutcome::failure(item.local, remote_base, &e));
+                    settled.push((next, TransferOutcome::failure(item.local, remote_base, &e)));
+                    next += 1;
                     continue;
                 }
             };
             for (local_file, rel) in files {
-                index += 1;
-                let remote = join_remote(&remote_base, &rel);
-                let outcome = upload_one(&sftp, &host, index, &local_file, &remote, overwrite)
+                let size = tokio::fs::metadata(&local_file)
                     .await
-                    .unwrap_or_else(|e| {
-                        TransferOutcome::failure(
-                            local_file.display().to_string(),
-                            remote.clone(),
-                            &e,
-                        )
-                    });
-                results.push(outcome);
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                units.push(Unit {
+                    index: next,
+                    local: local_file,
+                    remote: join_remote(&remote_base, &rel),
+                    size,
+                });
+                next += 1;
             }
         } else {
-            index += 1;
-            let outcome = upload_one(&sftp, &host, index, &local_root, &remote_base, overwrite)
-                .await
-                .unwrap_or_else(|e| {
-                    TransferOutcome::failure(item.local.clone(), remote_base.clone(), &e)
-                });
-            results.push(outcome);
+            units.push(Unit {
+                index: next,
+                local: local_root,
+                remote: remote_base,
+                size: meta.len(),
+            });
+            next += 1;
         }
     }
+    if units.len() > MAX_TRANSFER_ITEMS {
+        return Err(AppError::config(
+            "mcp_too_many_items",
+            json!({ "count": units.len(), "limit": MAX_TRANSFER_ITEMS }),
+        ));
+    }
 
-    Ok(results)
+    let sftp = &sftp;
+    let host = &host;
+    let cancel = &cancel;
+    let mut done: Vec<(usize, TransferOutcome)> = stream::iter(units.into_iter().map(|unit| {
+        let cancel = cancel.clone();
+        async move {
+            let outcome = upload_one(
+                sftp,
+                host,
+                unit.index,
+                &unit.local,
+                &unit.remote,
+                overwrite,
+                cancel,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                TransferOutcome::failure(
+                    unit.local.display().to_string(),
+                    unit.remote.clone(),
+                    &e,
+                )
+            });
+            (unit.index, outcome)
+        }
+    }))
+    .buffer_unordered(concurrency)
+    .collect()
+    .await;
+    settled.append(&mut done);
+    settled.sort_by_key(|(index, _)| *index);
+    Ok(settled.into_iter().map(|(_, outcome)| outcome).collect())
 }
 
-async fn download_one(
-    sftp: &SftpHandle,
-    host: &Host,
-    index: usize,
-    remote: &str,
-    local: &Path,
+/// 远端 sha256 基线（verifyRemote）：经 exec 通道跑 sha256sum，不走 shell 拼接用户输入。
+async fn remote_sha256(ssh: &SshHandle, remote: &str) -> AppResult<String> {
+    let script = format!("sha256sum {}", shell_quote(remote));
+    let out = exec_once(ssh, &script, Duration::from_secs(120), false).await?;
+    if out.exit_code != Some(0) {
+        return Err(AppError::other(
+            "mcp_verify_failed",
+            json!({ "path": remote, "exitCode": out.exit_code, "stderr": out.stderr }),
+        ));
+    }
+    out.stdout
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
+        .filter(|hash| hash.len() == 64)
+        .ok_or_else(|| {
+            AppError::other(
+                "mcp_verify_failed",
+                json!({ "path": remote, "reason": "sha256sum 输出无法解析" }),
+            )
+        })
+}
+
+struct GetCtx<'a> {
+    sftp: &'a SftpHandle,
+    host: &'a Host,
+    ssh: Option<&'a SshHandle>,
     overwrite: bool,
-) -> AppResult<TransferOutcome> {
-    if tokio::fs::metadata(local).await.is_ok() && !overwrite {
+    skip_unchanged: bool,
+    verify_remote: bool,
+    cancel: Arc<AtomicBool>,
+    progress: Option<Arc<JobProgress>>,
+}
+
+async fn download_one(ctx: &GetCtx<'_>, unit: &Unit) -> AppResult<TransferOutcome> {
+    let local = &unit.local;
+    let remote = &unit.remote;
+    if ctx.skip_unchanged {
+        if let Ok(meta) = tokio::fs::metadata(local).await {
+            if meta.len() == unit.size {
+                let (_, remote_mtime) = ctx.sftp.remote_file_fingerprint(remote).await?;
+                let local_mtime = meta.modified().ok().and_then(epoch_secs);
+                let unchanged = match (remote_mtime, local_mtime) {
+                    (Some(r), Some(l)) => l >= r,
+                    // 远端不给 mtime 时退化为尺寸比对（尺寸相同即视为未变）。
+                    (None, _) => true,
+                    _ => false,
+                };
+                if unchanged {
+                    return Ok(TransferOutcome::skipped(
+                        local.display().to_string(),
+                        remote.clone(),
+                        unit.size,
+                    ));
+                }
+            }
+        }
+    }
+    if tokio::fs::metadata(local).await.is_ok() && !ctx.overwrite {
         return Err(AppError::config(
             "mcp_local_file_exists",
             json!({ "path": local.display().to_string() }),
         ));
     }
-    let size = sftp
+    let checkpoint = Arc::new(AtomicU64::new(0));
+    if let Some(progress) = &ctx.progress {
+        progress.begin(unit.index, checkpoint.clone());
+    }
+    let size = ctx
+        .sftp
         .download_streaming_pipelined(
             remote,
             local,
-            host,
-            &format!("mcp-get-{index}"),
-            Arc::new(AtomicBool::new(false)),
+            ctx.host,
+            &format!("mcp-get-{}", unit.index),
+            ctx.cancel.clone(),
+            checkpoint,
         )
         .await?;
+    if let Some(progress) = &ctx.progress {
+        progress.finish(unit.index, size);
+    }
     let sha256 = sha256_file(local).await?;
-    Ok(TransferOutcome::ok(
+    let mut outcome = TransferOutcome::ok(
         local.display().to_string(),
-        remote.to_string(),
+        remote.clone(),
         size,
-        sha256,
-    ))
+        sha256.clone(),
+    );
+    if ctx.verify_remote {
+        let ssh = ctx.ssh.ok_or_else(|| {
+            AppError::config(
+                "mcp_unsupported_session_kind",
+                json!({ "reason": "verifyRemote 需要 SSH exec 通道跑 sha256sum" }),
+            )
+        })?;
+        let remote_hash = remote_sha256(ssh, remote).await?;
+        outcome.remote_sha256 = Some(remote_hash.clone());
+        outcome.verify = Some(if remote_hash == sha256 { "match" } else { "mismatch" });
+        if remote_hash != sha256 {
+            return Err(AppError::config(
+                "mcp_verify_mismatch",
+                json!({ "path": remote, "localSha256": sha256, "remoteSha256": remote_hash }),
+            ));
+        }
+    }
+    Ok(outcome)
 }
 
 pub async fn sftp_get(
@@ -385,109 +556,177 @@ pub async fn sftp_get(
     state: &AppState,
     session_id: &str,
     args: &Value,
+    job: Option<&Arc<JobControl>>,
 ) -> AppResult<Vec<TransferOutcome>> {
     let items = parse_items(args)?;
-    let overwrite = args
-        .get("overwrite")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let recursive = args
-        .get("recursive")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let overwrite = flag(args, "overwrite");
+    let recursive = flag(args, "recursive");
+    let skip_unchanged = flag(args, "skipUnchanged");
+    let verify_remote = flag(args, "verifyRemote");
+    let concurrency = parse_concurrency(args);
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
     let host = Host::Tauri(app.clone());
-    let mut results = Vec::new();
-    let mut index = 0usize;
+    let ssh = if verify_remote {
+        let handles = crate::error::locked(&state.sessions)?;
+        Some(
+            handles
+                .get(session_id)
+                .map(|handle| handle.ssh_handle().clone())
+                .ok_or_else(|| {
+                    AppError::config(
+                        "mcp_unsupported_session_kind",
+                        json!({ "reason": "verifyRemote 需要 SSH exec 通道跑 sha256sum" }),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
 
+    let mut units: Vec<Unit> = Vec::new();
+    let mut settled: Vec<(usize, TransferOutcome)> = Vec::new();
+    let mut next = 0usize;
     for item in items {
         let remote_path = match resolve_remote(&sftp, &home, &item.remote, false).await {
             Ok(value) => value,
             Err(e) => {
-                results.push(TransferOutcome::failure(item.local, item.remote, &e));
+                settled.push((next, TransferOutcome::failure(item.local, item.remote, &e)));
+                next += 1;
                 continue;
             }
         };
         let stat = match sftp.stat(&remote_path).await {
             Ok(value) => value,
             Err(e) => {
-                results.push(TransferOutcome::failure(item.local, remote_path, &e));
+                settled.push((next, TransferOutcome::failure(item.local, remote_path, &e)));
+                next += 1;
                 continue;
             }
         };
         let local_root = PathBuf::from(&item.local);
-
         if stat.is_dir {
             if !recursive {
                 let err = AppError::config(
                     "mcp_transfer_is_dir",
                     json!({ "path": &remote_path, "hint": "目录请置 recursive=true" }),
                 );
-                results.push(TransferOutcome::failure(item.local, remote_path, &err));
+                settled.push((next, TransferOutcome::failure(item.local, remote_path, &err)));
+                next += 1;
                 continue;
             }
             let entries = match sftp.walk_files(&remote_path).await {
                 Ok(value) => value,
                 Err(e) => {
-                    results.push(TransferOutcome::failure(item.local, remote_path, &e));
+                    settled.push((next, TransferOutcome::failure(item.local, remote_path, &e)));
+                    next += 1;
                     continue;
                 }
             };
             if entries.len() > MAX_TRANSFER_ITEMS {
-                results.push(TransferOutcome::failure(
-                    item.local,
-                    remote_path,
-                    &AppError::config(
-                        "mcp_too_many_items",
-                        json!({ "count": entries.len(), "limit": MAX_TRANSFER_ITEMS }),
+                settled.push((
+                    next,
+                    TransferOutcome::failure(
+                        item.local,
+                        remote_path,
+                        &AppError::config(
+                            "mcp_too_many_items",
+                            json!({ "count": entries.len(), "limit": MAX_TRANSFER_ITEMS }),
+                        ),
                     ),
                 ));
+                next += 1;
                 continue;
+            }
+            // 目录先建（含空目录），文件随后并行传。
+            for entry in &entries {
+                let rel = entry.rel_path.trim_start_matches('/');
+                if rel.is_empty() || !entry.is_dir {
+                    continue;
+                }
+                let local_dir = local_root.join(rel);
+                if let Err(e) = tokio::fs::create_dir_all(&local_dir).await {
+                    settled.push((
+                        next,
+                        TransferOutcome::failure(
+                            local_dir.display().to_string(),
+                            join_remote(&remote_path, rel),
+                            &local_io("create_dir_all", &local_dir, e),
+                        ),
+                    ));
+                    next += 1;
+                }
             }
             for entry in entries {
                 let rel = entry.rel_path.trim_start_matches('/').to_string();
-                if rel.is_empty() {
+                if rel.is_empty() || entry.is_dir {
                     continue;
                 }
-                let local_target = local_root.join(&rel);
-                if entry.is_dir {
-                    if let Err(e) = tokio::fs::create_dir_all(&local_target).await {
-                        results.push(TransferOutcome::failure(
-                            local_target.display().to_string(),
-                            join_remote(&remote_path, &rel),
-                            &local_io("create_dir_all", &local_target, e),
-                        ));
-                    }
-                    continue;
-                }
-                index += 1;
-                let remote_file = join_remote(&remote_path, &rel);
-                let outcome =
-                    download_one(&sftp, &host, index, &remote_file, &local_target, overwrite)
-                        .await
-                        .unwrap_or_else(|e| {
-                            TransferOutcome::failure(
-                                local_target.display().to_string(),
-                                remote_file.clone(),
-                                &e,
-                            )
-                        });
-                results.push(outcome);
+                units.push(Unit {
+                    index: next,
+                    local: local_root.join(&rel),
+                    remote: join_remote(&remote_path, &rel),
+                    size: entry.size,
+                });
+                next += 1;
             }
         } else {
-            index += 1;
-            let outcome = download_one(&sftp, &host, index, &remote_path, &local_root, overwrite)
-                .await
-                .unwrap_or_else(|e| {
-                    TransferOutcome::failure(item.local.clone(), remote_path.clone(), &e)
-                });
-            results.push(outcome);
+            units.push(Unit {
+                index: next,
+                local: local_root,
+                remote: remote_path,
+                size: stat.size,
+            });
+            next += 1;
         }
     }
+    if units.len() > MAX_TRANSFER_ITEMS {
+        return Err(AppError::config(
+            "mcp_too_many_items",
+            json!({ "count": units.len(), "limit": MAX_TRANSFER_ITEMS }),
+        ));
+    }
+    if let Some(job) = job {
+        job.progress.set_total(units.iter().map(|u| u.size).sum());
+    }
 
-    Ok(results)
+    let ctx = GetCtx {
+        sftp: &sftp,
+        host: &host,
+        ssh: ssh.as_ref(),
+        overwrite,
+        skip_unchanged,
+        verify_remote,
+        cancel: job
+            .map(|j| j.cancel.clone())
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+        progress: job.map(|j| j.progress.clone()),
+    };
+    // 与 sftp_put 同款所有权模式：引用在闭包外取好、unit 按值进 async move，
+    // 避免 `iter().map(|&unit| async {})` 触发 HRTB（FnOnce is not general enough）。
+    let ctx = &ctx;
+    let mut done: Vec<(usize, TransferOutcome)> = stream::iter(units.into_iter().map(|unit| {
+        let ctx = ctx;
+        async move {
+            let outcome = download_one(ctx, &unit)
+                .await
+                .unwrap_or_else(|e| {
+                    TransferOutcome::failure(
+                        unit.local.display().to_string(),
+                        unit.remote.clone(),
+                        &e,
+                    )
+                });
+            (unit.index, outcome)
+        }
+    }))
+    .buffer_unordered(concurrency)
+    .collect()
+    .await;
+    settled.append(&mut done);
+    settled.sort_by_key(|(index, _)| *index);
+    Ok(settled.into_iter().map(|(_, outcome)| outcome).collect())
 }
 
 #[cfg(test)]
@@ -523,5 +762,26 @@ mod tests {
         assert_eq!(value["status"], "error");
         assert_eq!(value["code"], "mcp_file_exists");
         assert_eq!(value["size"], 0);
+    }
+
+    #[test]
+    fn outcome_serializes_skipped_and_verify() {
+        let skipped = TransferOutcome::skipped("/l/a".into(), "/r/a".into(), 7);
+        assert_eq!(skipped.to_json()["status"], "skipped");
+        let mut ok = TransferOutcome::ok("/l/a".into(), "/r/a".into(), 7, "hash".into());
+        ok.remote_sha256 = Some("hash".into());
+        ok.verify = Some("match");
+        let value = ok.to_json();
+        assert_eq!(value["status"], "ok");
+        assert_eq!(value["verify"], "match");
+        assert_eq!(value["remoteSha256"], "hash");
+    }
+
+    #[test]
+    fn concurrency_defaults_and_clamps() {
+        assert_eq!(parse_concurrency(&json!({})), DEFAULT_CONCURRENCY);
+        assert_eq!(parse_concurrency(&json!({ "concurrency": 0 })), 1);
+        assert_eq!(parse_concurrency(&json!({ "concurrency": 99 })), MAX_CONCURRENCY);
+        assert_eq!(parse_concurrency(&json!({ "concurrency": 2 })), 2);
     }
 }

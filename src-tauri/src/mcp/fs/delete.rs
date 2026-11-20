@@ -60,6 +60,7 @@ pub async fn fs_delete(
     state: &AppState,
     session_id: &str,
     args: &Value,
+    require_token: bool,
 ) -> AppResult<DeleteOutcome> {
     let inputs = parse_paths(args)?;
     let recursive = args
@@ -110,24 +111,27 @@ pub async fn fs_delete(
         });
     }
 
-    let token = args
-        .get("confirmToken")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| AppError::config("mcp_delete_token_required", json!({})))?;
-    let stored = crate::mcp::runtime_state::take_delete_token(token).ok_or_else(|| {
-        AppError::config(
-            "mcp_delete_token_invalid",
-            json!({ "hint": "重新 dryRun 获取新 token" }),
-        )
-    })?;
-    let paths: Vec<String> = entries.iter().map(|entry| entry.path.clone()).collect();
-    if stored.session_id != session_id || stored.paths != paths || stored.recursive != recursive {
-        return Err(AppError::config(
-            "mcp_delete_token_mismatch",
-            json!({ "hint": "会话/路径/递归开关与 dryRun 时不一致，请重新 dryRun" }),
-        ));
+    // auto 档信任已授权（审批闸门仍走），免 dry-run/token 两往返；confirm 档保留。
+    if require_token {
+        let token = args
+            .get("confirmToken")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppError::config("mcp_delete_token_required", json!({})))?;
+        let stored = crate::mcp::runtime_state::take_delete_token(token).ok_or_else(|| {
+            AppError::config(
+                "mcp_delete_token_invalid",
+                json!({ "hint": "重新 dryRun 获取新 token" }),
+            )
+        })?;
+        let paths: Vec<String> = entries.iter().map(|entry| entry.path.clone()).collect();
+        if stored.session_id != session_id || stored.paths != paths || stored.recursive != recursive {
+            return Err(AppError::config(
+                "mcp_delete_token_mismatch",
+                json!({ "hint": "会话/路径/递归开关与 dryRun 时不一致，请重新 dryRun" }),
+            ));
+        }
     }
 
     for entry in &entries {

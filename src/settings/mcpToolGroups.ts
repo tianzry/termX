@@ -22,5 +22,5 @@ export const MCP_TOOL_GROUPS: Array<{ plane: McpToolPlane; tools: string[] }> = 
   { plane: "build", tools: ["build_run"] },
   { plane: "escape", tools: ["term_run"] },
   { plane: "session", tools: ["get_environment", "vault_hosts_list", "snippets_list", "terminal_execute", "session_open", "set_session_preamble", "session_close", "serial_write", "serial_read", "telnet_write", "telnet_read"] },
-  { plane: "composite", tools: ["job_wait", "batch"] },
+  { plane: "composite", tools: ["job_wait", "job_list", "job_cancel", "batch"] },
 ];

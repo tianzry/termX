@@ -32,7 +32,7 @@ pub enum Decision {
 pub fn classify(tool: &str) -> ToolClass {
     match tool {
         "fs_read" | "fs_grep" | "fs_glob" | "get_environment" | "vault_hosts_list"
-        | "snippets_list" | "job_wait" => ToolClass::Read,
+        | "snippets_list" | "job_wait" | "job_list" => ToolClass::Read,
         "fs_patch" | "fs_write" | "sftp_put" => ToolClass::Write,
         "fs_delete" => ToolClass::Delete,
         "sftp_get" => ToolClass::Transfer,

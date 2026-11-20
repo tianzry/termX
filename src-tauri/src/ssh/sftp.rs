@@ -917,6 +917,10 @@ impl SftpHandle {
     /// 流水线版下载：`.part` + 原子 rename 语义同 `download_streaming`，但传输体
     /// 复用 UI 传输队列的 `download_streaming_resumable`（多句柄并发读），避免单
     /// 句柄串行读在高延迟链路上被每块一次往返拖死。
+    ///
+    /// 断点续传：失败/取消保留 `.part` 与旁挂 `.part.meta`（远端 size/mtime 指纹）；
+    /// 下次调用指纹匹配且 part 不超长时从 part 长度续读，否则重头。checkpoint 由
+    /// 调用方持有（MCP job 进度上报用），内容为已落盘的绝对偏移。
     pub async fn download_streaming_pipelined(
         &self,
         remote_path: &str,
@@ -924,14 +928,9 @@ impl SftpHandle {
         host: &crate::emitter::Host,
         transfer_id: &str,
         cancel: Arc<AtomicBool>,
+        checkpoint: Arc<AtomicU64>,
     ) -> AppResult<u64> {
-        let meta = self.sftp.metadata(remote_path).await.map_err(|e| {
-            AppError::sftp(
-                "sftp_io_failed",
-                json!({ "op": "metadata", "err": e.to_string() }),
-            )
-        })?;
-        let total = meta.size.unwrap_or(0);
+        let (total, mtime) = self.remote_file_fingerprint(remote_path).await?;
 
         if let Some(parent) = local_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -942,9 +941,23 @@ impl SftpHandle {
             .to_string_lossy()
             .into_owned();
         let tmp_path = local_path.with_file_name(format!("{file_name}.part"));
+        let meta_path = local_path.with_file_name(format!("{file_name}.part.meta"));
 
-        let mut dst = tokio::fs::File::create(&tmp_path).await?;
-        let checkpoint = Arc::new(AtomicU64::new(0));
+        let part_len = tokio::fs::metadata(&tmp_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let stored = read_resume_meta(&meta_path).await;
+        let start_offset = resume_offset(part_len, stored.as_ref(), total, mtime);
+        if start_offset == 0 {
+            write_resume_meta(&meta_path, total, mtime).await?;
+        }
+
+        let mut dst = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&tmp_path)
+            .await?;
         let result = self
             .download_streaming_resumable(
                 remote_path,
@@ -953,7 +966,7 @@ impl SftpHandle {
                 host,
                 transfer_id,
                 cancel,
-                0,
+                start_offset,
                 checkpoint,
             )
             .await;
@@ -962,12 +975,11 @@ impl SftpHandle {
             Ok(transferred) => {
                 let _ = tokio::fs::remove_file(local_path).await;
                 tokio::fs::rename(&tmp_path, local_path).await?;
+                let _ = tokio::fs::remove_file(&meta_path).await;
                 Ok(transferred)
             }
-            Err(e) => {
-                let _ = tokio::fs::remove_file(&tmp_path).await;
-                Err(e)
-            }
+            // 失败/取消保留 .part + meta：下次同路径调用可续传。
+            Err(e) => Err(e),
         }
     }
 
@@ -1582,6 +1594,44 @@ impl SftpHandle {
     }
 }
 
+/// 续传指纹：旁挂 `.part.meta`，记录开始传输时远端的 size/mtime。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeMeta {
+    pub size: u64,
+    pub mtime: Option<i64>,
+}
+
+/// 纯逻辑：part 长度 + 指纹匹配才续传；远端变过 / part 超长 / 无指纹一律重头。
+pub fn resume_offset(
+    part_len: u64,
+    stored: Option<&ResumeMeta>,
+    total: u64,
+    mtime: Option<i64>,
+) -> u64 {
+    let Some(stored) = stored else {
+        return 0;
+    };
+    if stored.size != total || stored.mtime != mtime {
+        return 0;
+    }
+    if part_len == 0 || part_len > total {
+        return 0;
+    }
+    part_len
+}
+
+async fn read_resume_meta(path: &Path) -> Option<ResumeMeta> {
+    let raw = tokio::fs::read_to_string(path).await.ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+async fn write_resume_meta(path: &Path, size: u64, mtime: Option<i64>) -> AppResult<()> {
+    let raw = serde_json::to_string(&ResumeMeta { size, mtime })
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    tokio::fs::write(path, raw).await?;
+    Ok(())
+}
+
 /// Pure download copy loop: read from `src` (remote), write to `dst` (local),
 /// 32 KiB at a time. Reports cumulative bytes via `on_progress` and checks
 /// `cancel` between chunks. No Tauri/Host dependency — progress is injected — so
@@ -1692,6 +1742,22 @@ mod tests {
 
     /// Both copy loops must move every byte intact and report monotonic progress
     /// ending at the total. Driven over in-memory buffers — no SSH, no Tauri.
+    #[test]
+    fn resume_offset_requires_matching_fingerprint() {
+        let meta = ResumeMeta { size: 100, mtime: Some(7) };
+        assert_eq!(resume_offset(40, Some(&meta), 100, Some(7)), 40);
+        // 远端 size/mtime 变过 → 重头。
+        assert_eq!(resume_offset(40, Some(&meta), 101, Some(7)), 0);
+        assert_eq!(resume_offset(40, Some(&meta), 100, Some(8)), 0);
+        // 无指纹 / 空 part / part 超长 → 重头。
+        assert_eq!(resume_offset(40, None, 100, Some(7)), 0);
+        assert_eq!(resume_offset(0, Some(&meta), 100, Some(7)), 0);
+        assert_eq!(resume_offset(120, Some(&meta), 100, Some(7)), 0);
+        // 双方都无 mtime（远端不给）也算匹配。
+        let no_mtime = ResumeMeta { size: 100, mtime: None };
+        assert_eq!(resume_offset(40, Some(&no_mtime), 100, None), 40);
+    }
+
     #[tokio::test]
     async fn stream_download_copies_all_bytes_with_progress() {
         let data: Vec<u8> = (0..100_000u32).map(|i| i as u8).collect();

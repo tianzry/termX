@@ -55,6 +55,21 @@ pub async fn fs_read(
         .map(|value| value as usize)
         .unwrap_or(DEFAULT_READ_LINES)
         .clamp(1, MAX_READ_LINES);
+    // endLine（1-based、含）直接表达「读到哪行」，免去调用方自算 maxLines 偏移；
+    // 与 maxLines 取交集，token 护栏不变。
+    let max_lines = match args.get("endLine").and_then(Value::as_u64) {
+        Some(end) => {
+            let end = end as usize;
+            if end < start_line {
+                return Err(AppError::config(
+                    "mcp_read_range_invalid",
+                    json!({ "startLine": start_line, "endLine": end }),
+                ));
+            }
+            max_lines.min(end - start_line + 1)
+        }
+        None => max_lines,
+    };
     let numbered = args
         .get("numbered")
         .and_then(Value::as_bool)

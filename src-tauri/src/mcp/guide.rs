@@ -16,22 +16,22 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 1) get_environment：拿 sessions[].id / hosts[]（cacheable 30s）。
 2) 查阅：fs_glob 列文件 → fs_grep 定位 → fs_read 按行开窗；不要整读大文件。
 3) 修改：fs_patch 先 dryRun 看 diff 再落盘；小文件整体覆盖用 fs_write。
-4) 传输：sftp_put / sftp_get 流式传输，返回只有路径 / size / sha256，token 与文件大小无关。
+4) 传输：sftp_put / sftp_get 流式传输（sftp_get 走 16 路流水线引擎，与终端 UI 同速），返回只有路径 / size / sha256，token 与文件大小无关。items 批量默认 4 路文件级并行（concurrency 1..8）；下载中断保留 .part，重跑同参数自动续传；skipUnchanged 跳过未变更文件做增量同步；verifyRemote 传完在远端算 sha256 对账。
 5) 构建：build_run 只回尾部日志与 exitCode；cwd 指定工作目录、env 注入环境变量，需要完整日志时传 teeToRemoteFile。
-6) 长任务：build_run / sftp_get 支持 waitMs（默认 100s，上限 110s，压在常见客户端 120s 请求超时之下）；超窗任务转后台并返回 {status:"running", jobId}，用 job_wait(jobId, waitMs) 长轮询续等取结果，可反复调用；任务不受连接影响继续在远端执行，结果保留 30 分钟，只能查本客户端提交的 job。
-7) 删除：fs_delete 默认 dryRun=true，先拿 confirmToken，再以 dryRun=false 执行。
+6) 长任务：build_run / sftp_get 支持 waitMs（默认 25s，上限 110s，压在常见客户端请求超时之下）；超窗任务转后台并返回 {status:"running", jobId, bytesDone, bytesTotal}，用 job_wait(jobId, waitMs) 短窗循环续等取结果，可反复调用；任务不受连接影响继续在远端执行，结果保留 24h。jobId 是不可猜 UUID＝持有即权限：换会话/重连后凭 jobId 仍可查，忘了 jobId 用 job_list 找回全量任务，job_cancel(jobId) 停止任务（传输保留 .part 供续传）。
+7) 删除：fs_delete 默认 dryRun=true 先列计划；confirm 档需再带 confirmToken 以 dryRun=false 执行，auto 档信任审批闸门、可直接 dryRun=false 单调用删除。
 8) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
 9) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令），同样支持 cwd / env；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话，ssh / pty 只回尾部 maxOutputBytes（默认 16 KiB）。每次调用都是全新的远端 shell，后台常驻进程要 setsid/nohup 并重定向三路 I/O（如 `setsid nohup cmd </dev/null >/tmp/task.log 2>&1 & echo $!`），再轮询日志。
 10) 环境初始化：set_session_preamble 给 SSH 会话注册一次 setup 命令（如 source ~/zephyrproject/zephyr/zephyr-env.sh），之后每次 term_run / build_run 都按 cd → preamble → env → command 确定性重放（env 最后覆盖 preamble）；preamble 传空串清除，termX 重启或会话关闭后失效。session_open 也接受同名参数。
 11) 串口 / Telnet：自己建链用 session_open（headless，不占用户窗口）；只写字节用 serial_write / telnet_write（返回 bytesWritten）；只读输出用 serial_read / telnet_read；要「写入 + 等回显」时用 terminal_execute —— 写入命令后按 idleMs 静默 / waitRegex 命中 / timeoutMs 超时采集，exitCode 恒为 null。这类会话调用文件类工具会得到 mcp_unsupported_session_kind。
 12) 隔离：每个 MCP 会话（initialize 下发的 Mcp-Session-Id）各自独立，自动建连的会话只有本会话可见，用户窗口会话共享（无会话头的客户端按 User-Agent 区分）；一个 token 可服务多个会话与任意工作目录。链路自行断开时会话立即标记 closed，重新 session_open 即可。
 
-可用工具（共 23 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、session_open、set_session_preamble、session_close、serial_write、serial_read、telnet_write、telnet_read、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、job_wait、batch。
+可用工具（共 25 个）：get_environment、vault_hosts_list、snippets_list、terminal_execute、session_open、set_session_preamble、session_close、serial_write、serial_read、telnet_write、telnet_read、fs_read、fs_grep、fs_glob、fs_patch、fs_write、sftp_put、sftp_get、fs_delete、build_run、term_run、job_wait、job_list、job_cancel、batch。
 规则：
 - sessionId 必须来自 get_environment（UUID）；hostId 必须来自 hosts[] 或 vault_hosts_list，不要臆造。
 - 远端路径（path / remotePath / cwd）支持绝对路径、~ 与相对 home 的路径，不限制目录范围；localPath 只校验是绝对路径。
 - terminal_execute 的 pty 分支每次新起子进程（sh -c / cmd /C）一次性收输出，不写入用户可见终端；serial / telnet 分支没有命令边界与退出码（exitCode=null），采集时用户终端会同时收到同一份字节，不要重复解析。
-- 写操作受权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接执行；fs_delete 无论档位都要 confirmToken。
+- 写操作受权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接执行；fs_delete 在 confirm 档需 dryRun 拿 confirmToken，auto 档免 token（审批闸门仍走）。
 - 所有工具返回 JSON：成功为 {code:"ok", message, hint, ...数据}，失败为 {code, message, hint}。失败时先按 hint 自纠。
 - 大文件用传输/开窗工具，不要把内容塞进 arguments；不要泄露 token 或凭据。"#;
 
@@ -86,15 +86,19 @@ fn return_example(name: &str) -> &'static str {
         "fs_patch" => r#"{code:"ok", dryRun, results:[{path, applied, sha256, diff}]}"#,
         "fs_write" => r#"{code:"ok", path, size, sha256, created}"#,
         "sftp_put" | "sftp_get" => {
-            r#"{code:"ok", ok, failed, results:[{localPath, remotePath, size, sha256, status}]}"#
+            r#"{code:"ok", ok, skipped, failed, results:[{localPath, remotePath, size, sha256, status, remoteSha256?, verify?}]}"#
         }
         "fs_delete" => r#"{code:"ok", dryRun, wouldDelete:[{path, size, isDir}], confirmToken}"#,
         "build_run" => {
             r#"{code:"ok", exitCode, stdoutTail, stderrTail, totalBytes, truncated, fullLog}"#
         },
         "job_wait" => {
-            r#"完成：原工具信封 + {jobId, jobStatus:"done"}；未完成：{code:"ok", status:"running", jobId, tool, elapsedMs}"#
+            r#"完成：原工具信封 + {jobId, jobStatus:"done"}；未完成：{code:"ok", status:"running", jobId, tool, elapsedMs, bytesDone?, bytesTotal?, cancelRequested}"#
         }
+        "job_list" => {
+            r#"{code:"ok", jobs:[{jobId, tool, submittedBy, status, elapsedMs, bytesDone?, bytesTotal?, cancelRequested}]}"#
+        }
+        "job_cancel" => r#"{code:"ok", jobId, cancelRequested:true}"#,
         "term_run" => r#"{code:"ok", exitCode, stdoutTail, stderrTail, totalBytes, truncated}"#,
         "batch" => r#"{code:"ok", results:[{tool, isError, result}], failed}"#,
         _ => "",
