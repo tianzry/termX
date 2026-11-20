@@ -1,7 +1,8 @@
 //! `sftp_put` / `sftp_get`：本地 ↔ 远端流式传输，返回里只有路径/大小/校验和。
 //!
-//! 关键收益：不走 shell、不回 base64，token 成本与文件大小无关；上传/下载都复用
-//! [`SftpHandle`] 的流式实现（分块 + 临时文件 + 原子 rename），进度事件用
+//! 关键收益：不走 shell、不回 base64，token 成本与文件大小无关；上传复用
+//! [`SftpHandle`] 的流式实现，下载复用 UI 传输队列同款流水线引擎（分块 +
+//! 临时文件 + 原子 rename），进度事件用
 //! `Host::Tauri` 发到前端（MCP 没有窗口，事件无人订阅也不会出错）。
 
 use std::path::{Path, PathBuf};
@@ -362,7 +363,7 @@ async fn download_one(
         ));
     }
     let size = sftp
-        .download_streaming(
+        .download_streaming_pipelined(
             remote,
             local,
             host,

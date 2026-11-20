@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-11-20 — MCP sftp_get 提速：改走 UI 传输队列同款流水线下载引擎
+
+- 用户反馈：MCP sftp_get 下载文件很慢，与终端 UI 操作下载速度差异很大，要求下载部分改成 UI 同一套方法。根因：两条入口名字相近但引擎不同——MCP `download_one` 走 `SftpHandle::download_streaming` → `stream_download`（单远端句柄串行 32KB 读，每块一次网络往返，吞吐≈块大小/RTT，高延迟链路被往返拖死）；UI SFTP 面板下载走 `sftp_transfer_enqueue` → transfer_center → `download_streaming_resumable`（16 句柄 × 64KB 流水线、最多 16 条读请求在途 + BTreeMap 重排缓冲按序落盘，见 ssh/sftp.rs PIPELINE_WINDOW/PIPELINE_CHUNK），并发把往返延迟藏掉。旧 `sftp_download` 命令前端已不调用（client.ts 仅剩 `sftp_download_to`，属 headless RPC 桥路径、不在 MCP 链路，不动）。
+- 修复：`SftpHandle` 新增 `download_streaming_pipelined`（ssh/sftp.rs）：对外语义与 `download_streaming` 完全一致（metadata 取 total → create_dir_all 父目录 → `<名>.part` 临时文件 → 成功删目标后原子 rename、失败/取消清理 .part），传输体复用 `download_streaming_resumable(start_offset=0)` 即 UI 队列同款引擎；MCP `mcp/fs/transfer.rs download_one` 改调它。进度事件名 `sftp:progress:mcp-get-{index}` 与 payload 不变，sha256/overwrite/recursive/MAX_TRANSFER_ITEMS 全不变；文件间仍串行（收益主体是文件内流水线），上传路径不动。
+- 踩坑：① 查速度差异不能停在函数名层——`download_streaming` 与队列的「streaming」都叫流式，但一个是串行单句柄、一个是多句柄流水线，要追到调用方实际走的引擎；② 包装层 rename 前必须 drop(dst) 关本地句柄（Windows 句柄未关 rename 会失败），resumable 内部已 flush 但不会关调用方的 File。
+- 验证（agent 自动化门禁）：cargo test 1062✓ 0 failed；npm run test:run 85 文件 951✓。待人工：重建 release exe 后 agent 客户端实测大文件 sftp_get 下载，与 UI 队列速度对照（预期同量级）。
+
+---
+
 ## 2026-11-19 — MCP 工具矩阵：term_run 从「构建平面」拆到「逃生平面」+ 补齐漏列工具 + 权限枚举改名 Exec
 
 - 用户质疑：term_run 为什么放在「构建平面」，不该是通用命令运行吗？排查发现三层命名不一致：① 设置页 AI 面板（AiTab.tsx MCP_TOOL_GROUPS）把 term_run 和 build_run 塞进同一「构建平面」徽章，而后端 guide.rs/policy.rs/tools.rs 一直称 term_run 为「逃生平面…执行任意非交互命令」——UI 与后端口径直接打架；② 后端 permissions.rs 权限枚举变体名 ToolClass::Build（语义是「远端执行命令风险档」，非构建专用），且该枚举全仓无调用方（审批实走 approval.rs 的 ApprovalDecision），是自定义未接线矩阵；③ UI 工具矩阵只列 21 个、后端实际 23——漏了 job_wait / set_session_preamble（注释还写「与后端 definitions 同源」，实为手维护已漂移）。关键结论：term_run 功能没有任何收窄，本就能跑任意命令（confirm 档要审批，这对任意命令逃生口是正确行为），本次只改归类/命名，不动权限行为。

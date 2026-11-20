@@ -914,6 +914,63 @@ impl SftpHandle {
         }
     }
 
+    /// 流水线版下载：`.part` + 原子 rename 语义同 `download_streaming`，但传输体
+    /// 复用 UI 传输队列的 `download_streaming_resumable`（多句柄并发读），避免单
+    /// 句柄串行读在高延迟链路上被每块一次往返拖死。
+    pub async fn download_streaming_pipelined(
+        &self,
+        remote_path: &str,
+        local_path: &Path,
+        host: &crate::emitter::Host,
+        transfer_id: &str,
+        cancel: Arc<AtomicBool>,
+    ) -> AppResult<u64> {
+        let meta = self.sftp.metadata(remote_path).await.map_err(|e| {
+            AppError::sftp(
+                "sftp_io_failed",
+                json!({ "op": "metadata", "err": e.to_string() }),
+            )
+        })?;
+        let total = meta.size.unwrap_or(0);
+
+        if let Some(parent) = local_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let file_name = local_path
+            .file_name()
+            .ok_or_else(|| AppError::sftp("sftp_invalid_filename", json!({})))?
+            .to_string_lossy()
+            .into_owned();
+        let tmp_path = local_path.with_file_name(format!("{file_name}.part"));
+
+        let mut dst = tokio::fs::File::create(&tmp_path).await?;
+        let checkpoint = Arc::new(AtomicU64::new(0));
+        let result = self
+            .download_streaming_resumable(
+                remote_path,
+                &mut dst,
+                total,
+                host,
+                transfer_id,
+                cancel,
+                0,
+                checkpoint,
+            )
+            .await;
+        drop(dst);
+        match result {
+            Ok(transferred) => {
+                let _ = tokio::fs::remove_file(local_path).await;
+                tokio::fs::rename(&tmp_path, local_path).await?;
+                Ok(transferred)
+            }
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                Err(e)
+            }
+        }
+    }
+
     /// Stream-download a remote file into a caller-supplied writer, with no
     /// local `.part`/rename step. Used on mobile, where the destination is a SAF
     /// `content://` handle that has no filesystem path to rename through — so we
