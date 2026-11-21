@@ -65,6 +65,12 @@ pub async fn fs_glob(
         .map(|value| value as usize)
         .unwrap_or(DEFAULT_MAX_RESULTS)
         .clamp(1, MAX_MAX_RESULTS);
+    let newer_than_ms = args.get("newerThanMs").and_then(Value::as_u64);
+    let sort_by_mtime = args
+        .get("sortBy")
+        .and_then(Value::as_str)
+        .map(|value| value == "mtime")
+        .unwrap_or(false);
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
@@ -90,8 +96,25 @@ pub async fn fs_glob(
                 matcher.is_match(&entry.rel_path)
             }
         })
+        // 无 mtime 的条目无法证明「足够新」，启用时间过滤时直接排除。
+        .filter(|entry| match newer_than_ms {
+            Some(threshold) => entry
+                .mtime
+                .map(|secs| secs.saturating_mul(1000) > threshold as i64)
+                .unwrap_or(false),
+            None => true,
+        })
         .collect();
-    matched.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    if sort_by_mtime {
+        // 最新在前；无 mtime 的沉底，同级按路径保序。
+        matched.sort_by(|a, b| {
+            b.mtime
+                .cmp(&a.mtime)
+                .then_with(|| a.rel_path.cmp(&b.rel_path))
+        });
+    } else {
+        matched.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+    }
 
     let total = matched.len();
     let page: Vec<&crate::ssh::sftp::WalkEntry> =
@@ -103,6 +126,7 @@ pub async fn fs_glob(
             json!({
                 "path": format!("{}/{}", search_root.trim_end_matches('/'), entry.rel_path),
                 "size": entry.size,
+                "mtimeMs": entry.mtime.map(|secs| secs * 1000),
             })
         })
         .collect();

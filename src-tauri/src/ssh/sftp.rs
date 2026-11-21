@@ -129,6 +129,15 @@ pub struct WalkEntry {
     /// 目录条目（含空目录）：调用方需先行创建目录，再传文件，
     /// 否则空目录在递归传输中会丢失。
     pub is_dir: bool,
+    /// 修改时间（epoch 秒）；服务器/本地不提供时为 None。
+    pub mtime: Option<i64>,
+}
+
+/// SystemTime → epoch 秒；早于 UNIX_EPOCH 或不可用时返回 None。
+pub fn epoch_secs(t: std::time::SystemTime) -> Option<i64> {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
 }
 
 /// Maximum recursion depth, counting the root as depth 0. With CAP = 32 the
@@ -387,13 +396,16 @@ impl SftpHandle {
                         rel_path: rel,
                         size: 0,
                         is_dir: true,
+                        mtime: None,
                     });
                     queue.push_back((full, depth + 1));
                 } else if ft.is_file() {
+                    let meta = e.metadata();
                     result.push(WalkEntry {
                         rel_path: rel,
-                        size: e.metadata().size.unwrap_or(0),
+                        size: meta.size.unwrap_or(0),
                         is_dir: false,
+                        mtime: meta.mtime.map(|v| v as i64),
                     });
                 } else if ft.is_symlink() {
                     // Follow once via STAT to learn what the target is.
@@ -403,6 +415,7 @@ impl SftpHandle {
                                 rel_path: rel,
                                 size: meta.size.unwrap_or(0),
                                 is_dir: false,
+                                mtime: meta.mtime.map(|v| v as i64),
                             });
                         } else if meta.file_type().is_dir() {
                             // 下载语义对齐 Netcatty：跟随符号链接目录。
@@ -417,6 +430,7 @@ impl SftpHandle {
                                     rel_path: rel,
                                     size: 0,
                                     is_dir: true,
+                                    mtime: None,
                                 });
                                 queue.push_back((full, depth + 1));
                             }

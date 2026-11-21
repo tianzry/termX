@@ -4,10 +4,12 @@
 //! termX 本阶段只移植「已存在可复用执行链路」的 5 个工具，其余在
 //! `docs/mcp-port-plan.md` 里列为未实现并说明缺口，绝不注册空转工具。
 //!
-//! 返回结构统一为 `{code, message, hint, ...数据}`：
+//! 返回结构统一为 `{code, message, ...数据}`：
 //! - 只读工具保留原有字段（sessions / hostCount / hosts / snippets），不破坏已验证客户端；
-//! - `hint` 永远说明 agent 下一步该做什么，便于失败自纠。
+//! - 成功信封不带 hint——静态指引放工具 description / guide（tools/list 只取一次），
+//!   每次调用都回 hint 纯耗 token；失败信封保留 hint 供 agent 偶发自纠。
 
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,16 +40,16 @@ pub struct ToolResult {
 }
 
 impl ToolResult {
-    fn ok(message: impl Into<String>, hint: impl Into<String>, data: Value) -> Self {
+    fn ok(message: impl Into<String>, data: Value) -> Self {
         Self {
-            text: envelope("ok", message, hint, Some(data)).to_string(),
+            text: envelope("ok", message, None, Some(data)).to_string(),
             is_error: false,
         }
     }
 
     fn err(code: &str, message: impl Into<String>, hint: impl Into<String>) -> Self {
         Self {
-            text: envelope(code, message, hint, None).to_string(),
+            text: envelope(code, message, Some(hint.into()), None).to_string(),
             is_error: true,
         }
     }
@@ -60,24 +62,26 @@ impl ToolResult {
         data: Value,
     ) -> Self {
         Self {
-            text: envelope(code, message, hint, Some(data)).to_string(),
+            text: envelope(code, message, Some(hint.into()), Some(data)).to_string(),
             is_error: true,
         }
     }
 }
 
-/// 统一信封：`{code, message, hint}`；成功时把业务字段平铺进来。
+/// 统一信封：`{code, message}`，失败时附 `hint`；成功时把业务字段平铺进来。
 fn envelope(
     code: &str,
     message: impl Into<String>,
-    hint: impl Into<String>,
+    hint: Option<String>,
     data: Option<Value>,
 ) -> Value {
     let mut out = json!({
         "code": code,
         "message": message.into(),
-        "hint": hint.into()
     });
+    if let Some(hint) = hint {
+        out["hint"] = Value::String(hint);
+    }
     if let (Some(Value::Object(extra)), Some(map)) = (data, out.as_object_mut()) {
         for (key, value) in extra {
             map.insert(key, value);
@@ -86,10 +90,10 @@ fn envelope(
     out
 }
 
-fn internal_error(e: impl std::fmt::Display) -> ToolResult {
+fn internal_error(e: crate::error::AppError) -> ToolResult {
     ToolResult::err(
         "internal_error",
-        format!("{e}"),
+        e.readable(),
         "稍后重试；若持续失败，请在 termX 中查看日志。",
     )
 }
@@ -138,7 +142,7 @@ fn tool_error(e: crate::error::AppError) -> ToolResult {
         }
         _ => "按 code 修正参数；会话/主机相关错误先调用 get_environment 确认。",
     };
-    ToolResult::err(e.code(), e.to_string(), hint)
+    ToolResult::err(e.code(), e.readable(), hint)
 }
 
 /// 串口 / Telnet 字节写工具：语义只有「写入」，没有 exec / exitCode。
@@ -174,7 +178,7 @@ fn byte_write_tool(name: &str, description: &str, session_desc: &str, example: &
 fn byte_read_tool(name: &str, description: &str, session_desc: &str) -> Value {
     json!({
         "name": name,
-        "description": description,
+        "description": format!("{description} 采集到 0 字节时：设备可能静默、未上电或波特率不符；检查线序、提高 idleMs/timeoutMs，或在 termX 终端直接观察。"),
         "inputSchema": schema(
             json!({
                 "sessionId": {
@@ -364,13 +368,13 @@ pub fn definitions() -> Value {
 
     items.push(json!({
         "name": "job_wait",
-        "description": "只读。等待并取回 build_run / sftp_get 转后台任务的结果：任务完成立即返回原工具的完整结果信封（附 jobId / jobStatus）；到 waitMs 窗口仍在跑则返回 {status:\"running\", bytesDone, bytesTotal}，可反复调用续等。\
-何时用：build_run / sftp_get 返回 {status:\"running\", jobId} 之后；长构建 / 大文件下载靠它绕过客户端请求超时。\
+        "description": "只读。等待并取回 build_run / sftp_get / sftp_put 转后台任务的结果：任务完成立即返回原工具的完整结果信封（附 jobId / jobStatus）；到 waitMs 窗口仍在跑则返回 {status:\"running\", bytesDone, bytesTotal}，可反复调用续等。\
+何时用：build_run / sftp_get / sftp_put 返回 {status:\"running\", jobId} 之后；长构建 / 大文件下载靠它绕过客户端请求超时。\
 何时不用：任务已在窗口内完成（没有返回 jobId）时。jobId 持有即权限（跨客户端重连也能查）；结果保留 24 小时。\
 waitMs 建议 ≤ 客户端请求超时−5s（默认 25s）；客户端超时更短时用更小的窗多轮循环。",
         "inputSchema": schema(
             json!({
-                "jobId": { "type": "string", "description": "build_run / sftp_get running 返回里的 jobId；丢了用 job_list 找回" },
+                "jobId": { "type": "string", "description": "build_run / sftp_get / sftp_put running 返回里的 jobId；丢了用 job_list 找回" },
                 "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 25000, "description": "本次调用最长等待毫秒；建议 ≤ 客户端请求超时−5s；0 = 立即返回当前状态" }
             }),
             &["jobId"]
@@ -389,7 +393,7 @@ waitMs 建议 ≤ 客户端请求超时−5s（默认 25s）；客户端超时�
 
     items.push(json!({
         "name": "job_cancel",
-        "description": "写操作。取消一个后台 job：sftp_get 置取消旗标优雅停（保留 .part 供下次续传）；build_run 直接断开 exec 通道（远端进程随之终止）。\
+        "description": "写操作。取消一个后台 job：sftp_get / sftp_put 置取消旗标优雅停（保留 .part 供下次续传）；build_run 直接断开 exec 通道（远端进程随之终止）。\
 何时用：误起的大下载 / 长构建要停。\
 何时不用：已完成的 job 取消是幂等空操作，不必调用。\
 受权限档位约束（confirm 档需审批）。",
@@ -520,8 +524,10 @@ sessionId 与 hostId 二选一；hostId 无就绪会话时按 vault 档案自动
     items.push(file_tool(
         "fs_grep",
         "只读。按 glob + 正则搜索远端文件，返回 matches[{path,line,text}] / total / truncated / nextCursor。\
+后端原生优先：有 ripgrep 走 rg 并行扫描（最快），正则方言不兼容（lookahead/反向引用）自动回落 python3，无 python3 再回落 grep；total 恒为精确命中行数。\
 何时用：定位符号、报错、配置项，再配合 fs_read 开窗。\
-何时不用：已知精确路径时直接 fs_read；远端缺 python3 会返回 mcp_missing_interpreter。\
+glob 语义：rg 档为 gitignore 风格（*.c 匹配任意深度，src/*.c 仅 src 直下）；默认跳过 .git/node_modules 与 >2MB 文件、二进制文件。\
+何时不用：已知精确路径时直接 fs_read；远端 rg/python3/grep 全无才返回 mcp_missing_interpreter。\
 sessionId 与 hostId 二选一。",
         json!({
             "pattern": { "type": "string", "description": "搜索内容或正则" },
@@ -543,13 +549,15 @@ sessionId 与 hostId 二选一。",
 
     items.push(file_tool(
         "fs_glob",
-        "只读。按 glob 递归列举远端文件，返回 matches[{path,size}] / total / truncated / nextCursor。\
-何时用：了解目录结构、列出某类文件后批量处理。\
+        "只读。按 glob 递归列举远端文件，返回 matches[{path,size,mtimeMs}] / total / truncated / nextCursor。\
+何时用：了解目录结构、列出某类文件后批量处理；找刚构建的产物用 newerThanMs（epoch 毫秒）过滤或 sortBy=mtime 最新在前。\
 何时不用：需要内容匹配用 fs_grep；不要用它列举整个 home 根。\
 sessionId 与 hostId 二选一。",
         json!({
             "pattern": { "type": "string", "description": "glob，如 **/*.c" },
             "path": { "type": "string", "description": "搜索根，默认 home" },
+            "newerThanMs": { "type": "integer", "minimum": 0, "description": "只回 mtime 晚于该 epoch 毫秒时间戳的文件；无 mtime 的条目会被排除" },
+            "sortBy": { "type": "string", "enum": ["path", "mtime"], "default": "path", "description": "mtime = 最新在前（无 mtime 沉底）；默认按路径字典序" },
             "maxResults": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
             "cursor": { "type": "integer", "minimum": 0, "default": 0 }
         }),
@@ -558,9 +566,10 @@ sessionId 与 hostId 二选一。",
 
     items.push(remote_file_tool(
         "fs_patch",
-        "写操作。按 oldText/newText 做精确替换，可一次改多个文件的多个片段；支持 dryRun 只回 unified diff。\
-何时用：已用 fs_read 看过上下文、需要做小范围修改时；先 dryRun 再落盘。\
-何时不用：整体覆盖用 fs_write；oldText 必须唯一（不唯一会回候选行号，要求 replaceAll 或加长上下文）。\
+        "写操作。按 oldText/newText 做精确替换，或按行号锚定修改（replaceLines / insertAfterLine）；可一次改多个文件的多个片段；支持 dryRun 只回 unified diff。\
+何时用：已用 fs_read 看过上下文、需要做小范围修改时；先 dryRun 再落盘；确信内容未变时带 expectedSha256（上次 fs_read/fs_patch 返回的 sha256）可跳过 dryRun 直接落盘，哈希不匹配即拒（防并发修改）。\
+行锚定：replaceLines 用 startLine/endLine（1-based 闭区间，newText 为空即删除该行段）；insertAfterLine 用 line（0=文件头插入，最大=总行数即追加）；行号以该 op 执行时的当前文本为基准（多 op 顺序应用），越界回 totalLines；与 fs_read 行号窗口 + expectedSha256 组合可免构造 oldText。\
+何时不用：整体覆盖用 fs_write；文本替换的 oldText 必须唯一（不唯一会回候选行号，要求 replaceAll 或加长上下文，或改用行锚定）。\
 受权限档位约束；sessionId 与 hostId 二选一。",
         json!({
             "edits": {
@@ -572,22 +581,31 @@ sessionId 与 hostId 二选一。",
                     "type": "object",
                     "properties": {
                         "path": { "type": "string", "description": "远端文件路径" },
+                        "expectedSha256": { "type": "string", "description": "乐观锁：期望的远端当前内容 sha256（上次 fs_read/fs_patch 返回值）；不匹配即拒并回 actualSha256" },
                         "ops": {
                             "type": "array",
                             "minItems": 1,
-                            "description": "按顺序应用的替换操作",
+                            "description": "按顺序应用的操作；op 缺省为文本替换（向后兼容）",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "oldText": { "type": "string", "description": "原文片段，必须能匹配" },
-                                    "newText": { "type": "string", "description": "替换后的文本" },
+                                    "op": {
+                                        "type": "string",
+                                        "enum": ["replace", "replaceLines", "insertAfterLine"],
+                                        "default": "replace",
+                                        "description": "replace=oldText/newText 文本替换；replaceLines/insertAfterLine=行锚定"
+                                    },
+                                    "oldText": { "type": "string", "description": "op=replace：原文片段，必须能匹配" },
+                                    "newText": { "type": "string", "description": "替换/插入的文本；行锚定时按整行处理（末尾换行符可有可无），replaceLines 传空串即删除行段" },
                                     "replaceAll": {
                                         "type": "boolean",
                                         "default": false,
-                                        "description": "true 时替换全部命中（默认要求唯一）"
-                                    }
-                                },
-                                "required": ["oldText", "newText"]
+                                        "description": "op=replace：true 时替换全部命中（默认要求唯一）"
+                                    },
+                                    "startLine": { "type": "integer", "description": "op=replaceLines：起始行（1-based，含）" },
+                                    "endLine": { "type": "integer", "description": "op=replaceLines：结束行（1-based，含）" },
+                                    "line": { "type": "integer", "description": "op=insertAfterLine：在此行之后插入（0=文件头，最大=总行数）" }
+                                }
                             }
                         }
                     },
@@ -626,8 +644,10 @@ sessionId 与 hostId 二选一。",
     items.push(remote_file_tool(
         "sftp_put",
         "写操作。把本地文件/目录流式上传到远端，只回 path / size / sha256，不回文件内容。\
-何时用：上传源码树、构建脚本等大文件或整目录（recursive=true）；token 成本与文件大小无关。\
+何时用：上传源码树、构建脚本等大文件或整目录（recursive=true）；token 成本与文件大小无关；源码树同步循环置 skipUnchanged=true 只传变过的文件。\
 何时不用：小文本用 fs_write；改局部用 fs_patch；本地路径必须是绝对路径。\
+信封默认回汇总（ok/skipped/failed/totalBytes）+ 失败项 failedItems + 全量清单落本地 manifestPath；verbose=true 逐项回 results[]。\
+长任务：超过 waitMs（默认 25s）未完成即转后台，返回 {status:\"running\", jobId, bytesDone, bytesTotal}，用 job_wait 短窗循环续等；客户端超时丢了 jobId 用 job_list 找回，误起用 job_cancel 停。\
 受权限档位约束；sessionId 与 hostId 二选一。",
         json!({
             "items": {
@@ -645,7 +665,10 @@ sessionId 与 hostId 二选一。",
             },
             "overwrite": { "type": "boolean", "default": false, "description": "远端已存在时必须显式置 true" },
             "recursive": { "type": "boolean", "default": false, "description": "目录递归上传" },
-            "concurrency": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4, "description": "批内文件级并行度（每文件独立流）" }
+            "concurrency": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4, "description": "批内文件级并行度（每文件独立流水线流）" },
+            "skipUnchanged": { "type": "boolean", "default": false, "description": "远端已存在且尺寸相同、mtime 不旧于本地时跳过（status=skipped），增量同步源码树用" },
+            "verbose": { "type": "boolean", "default": false, "description": "true 时逐项返回 results[]；默认只回汇总+失败项+本地 manifestPath" },
+            "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 25000, "description": "内联等待窗口毫秒；建议 ≤ 客户端请求超时−5s；超窗即转后台并返回 {status:\"running\", jobId}，用 job_wait 续等。0 = 立即转后台" }
         }),
         &["items"],
         false,
@@ -657,6 +680,7 @@ sessionId 与 hostId 二选一。",
 何时用：下载编译产物、日志归档等；recursive=true 可整目录拉回；批内文件级并行（concurrency），单文件走与 UI 传输队列同款的多句柄流水线引擎。\
 何时不用：只需要查看内容用 fs_read 开窗；本地路径必须是绝对路径且默认不覆盖已存在文件。\
 断点续传：失败/取消保留 <本地名>.part 与指纹旁挂文件，下次同路径调用自动从断点续传（远端 size/mtime 变过则重头）。\
+信封默认回汇总（ok/skipped/failed/totalBytes）+ 失败项 failedItems + 全量清单落本地 manifestPath；verbose=true 逐项回 results[]。\
 长任务：超过 waitMs（默认 25s）未完成即转后台，返回 {status:\"running\", jobId, bytesDone, bytesTotal}，用 job_wait 短窗循环续等；客户端超时丢了 jobId 用 job_list 找回，误起用 job_cancel 停。\
 受权限档位约束；sessionId 与 hostId 二选一。",
         json!({
@@ -678,6 +702,7 @@ sessionId 与 hostId 二选一。",
             "concurrency": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4, "description": "批内文件级并行度（每文件独立流水线流）" },
             "skipUnchanged": { "type": "boolean", "default": false, "description": "本地已存在且尺寸相同、mtime 不旧于远端时跳过（status=skipped），增量拉取编译产物用" },
             "verifyRemote": { "type": "boolean", "default": false, "description": "传完经 exec 通道跑 sha256sum 双端比对，信封附 remoteSha256 / verify(match|mismatch)；需要 SSH 会话" },
+            "verbose": { "type": "boolean", "default": false, "description": "true 时逐项返回 results[]；默认只回汇总+失败项+本地 manifestPath" },
             "waitMs": { "type": "integer", "minimum": 0, "maximum": 110000, "default": 25000, "description": "内联等待窗口毫秒；建议 ≤ 客户端请求超时−5s；超窗即转后台并返回 {status:\"running\", jobId}，用 job_wait 续等。0 = 立即转后台" }
         }),
         &["items"],
@@ -721,10 +746,11 @@ sessionId 与 hostId 二选一。",
         "build_run",
         "写操作。在远端非交互执行构建命令：cwd 可指定任意远端目录，env 注入环境变量，stdout/stderr 各取尾部 maxOutputBytes，另回总量与 exitCode；可选 teeToRemoteFile 把完整日志落到远端文件。\
 何时用：sftp_put 上传源码后直接 make/cmake/gcc/cargo/npm；失败先看 stderrTail，再 fs_read fullLog 开窗。\
+结果附 changedFiles（构建期间新增/修改的文件，相对 cwd，封顶 200 条，超出置 changedFilesTruncated）：拼上 cwd 直接 sftp_get 一次取回产物，不必猜产物路径。\
 何时不用：需要交互式终端时用 term_run；只读命令用 term_run 即可；不要在这里做文件读写（用 fs_* 工具）。\
 执行顺序固定为 cd → 会话 preamble（set_session_preamble 注册的 setup 命令）→ env → command，每次重新应用。\
 只拦真正破坏性命令（rm -rf /、mkfs、dd 写块设备等），不套终端黑名单。\
-长任务：超过 waitMs（默认 25s）未完成即转后台，返回 {status:\"running\", jobId}，用 job_wait 短窗循环续等；客户端超时丢了 jobId 用 job_list 找回，误起用 job_cancel 停。",
+长任务：超过 waitMs（默认 25s）未完成即转后台，返回 {status:\"running\", jobId}，用 job_wait 短窗循环续等；客户端超时丢了 jobId 用 job_list 找回，误起用 job_cancel 停。running 信封附 stdoutTail/stderrTail 运行中预览（每 2s 刷新、各封顶 4KB），构建期间即可看进度/报错，不必盲等。",
         json!({
             "command": { "type": "string", "description": "要执行的构建命令（可多行）" },
             "cwd": { "type": "string", "description": "工作目录，默认 home" },
@@ -915,7 +941,7 @@ fn transfer_count(args: &Value) -> usize {
 }
 
 /// 传输结果统一收口：逐项写审计，回 `results[]` + ok/failed 计数。
-/// waitMs：build_run / sftp_get / job_wait 的内联等待窗口。默认 25s——实测外部
+/// waitMs：build_run / sftp_get / sftp_put / job_wait 的内联等待窗口。默认 25s——实测外部
 /// 客户端超时分布很散（30s/60s/120s 都有），默认值必须压在最短常见档之下；
 /// 上限 110s 供明确知道自己客户端超时的调用方拉满；0 = 立即转后台返回 jobId。
 const DEFAULT_JOB_WAIT_MS: u64 = 25_000;
@@ -939,10 +965,11 @@ fn job_settle(job_id: &str, view: runtime_state::JobView, waited_ms: u64) -> Too
             bytes_done,
             bytes_total,
             cancel_requested,
-        } => ToolResult::ok(
-            format!("{tool} 仍在执行，已转后台"),
-            "任务不受本次调用影响，继续在远端执行；用 job_wait(jobId, waitMs) 短窗循环续等（waitMs 建议 ≤ 客户端超时−5s），可反复调用；误起用 job_cancel 停。",
-            json!({
+            stdout_tail,
+            stderr_tail,
+        } => {
+            let finishing = matches!((bytes_done, bytes_total), (Some(d), Some(t)) if d == t && t > 0);
+            let mut data = json!({
                 "status": "running",
                 "jobId": job_id,
                 "tool": tool,
@@ -951,12 +978,29 @@ fn job_settle(job_id: &str, view: runtime_state::JobView, waited_ms: u64) -> Too
                 "bytesDone": bytes_done,
                 "bytesTotal": bytes_total,
                 "cancelRequested": cancel_requested,
-            }),
-        ),
+            });
+            // 构建类任务附运行中尾部预览（poller 写入），传输类无此字段。
+            if let Some(map) = data.as_object_mut() {
+                if let Some(out) = stdout_tail {
+                    map.insert("stdoutTail".into(), json!(out));
+                }
+                if let Some(err) = stderr_tail {
+                    map.insert("stderrTail".into(), json!(err));
+                }
+            }
+            ToolResult::ok(
+                if finishing {
+                    format!("{tool} 字节已传完，正在校验/落盘收尾")
+                } else {
+                    format!("{tool} 仍在执行，已转后台")
+                },
+                data,
+            )
+        }
         runtime_state::JobView::NotFound => ToolResult::err(
             "job_not_found",
             format!("找不到 job {job_id}"),
-            "jobId 必须来自 build_run / sftp_get 的 running 返回；结果保留 24 小时。客户端超时丢了 jobId 时用 job_list 找回。",
+            "jobId 必须来自 build_run / sftp_get / sftp_put 的 running 返回；结果保留 24 小时。客户端超时丢了 jobId 时用 job_list 找回。",
         ),
     }
 }
@@ -968,7 +1012,6 @@ fn build_run_result(out: super::fs::build::BuildOutcome) -> ToolResult {
         } else {
             "构建结束（exitCode 非 0）"
         },
-        "失败先看 stderrTail；完整日志用 fullLog 配 fs_read 开窗；产物用 sftp_get 下载。",
         json!({
             "exitCode": out.exit_code,
             "stdoutTail": out.stdout_tail,
@@ -980,23 +1023,32 @@ fn build_run_result(out: super::fs::build::BuildOutcome) -> ToolResult {
             "fullLog": out.full_log,
             "teeFailed": out.tee_failed,
             "cwd": out.cwd,
+            "changedFiles": out.changed_files,
+            "changedFilesTruncated": out.changed_files_truncated,
         }),
     )
 }
 
-fn transfer_result(
+/// 传输结果统一收口：逐项写审计。默认回汇总（ok/skipped/failed/totalBytes）
+/// + 失败项明细 + 本地 manifest 路径——信封 token 成本与文件数解耦；
+/// verbose=true 回逐项 results[]（不写 manifest）。manifest 落在首项本地
+/// 目录旁，固定文件名按次覆盖，内含本次全量清单（含 sha256）。
+async fn transfer_result(
     tool: &str,
     session_id: &str,
     results: Vec<super::fs::transfer::TransferOutcome>,
+    verbose: bool,
 ) -> ToolResult {
     let mut items = Vec::with_capacity(results.len());
     let mut ok = 0usize;
     let mut skipped = 0usize;
+    let mut total_bytes = 0u64;
     for outcome in &results {
         if outcome.skipped {
             skipped += 1;
         } else if outcome.ok {
             ok += 1;
+            total_bytes += outcome.size;
             runtime_state::record_audit(change_entry(
                 tool,
                 Some(session_id),
@@ -1009,25 +1061,46 @@ fn transfer_result(
         items.push(outcome.to_json());
     }
     let failed = results.len() - ok - skipped;
-    let data = json!({ "results": items, "ok": ok, "skipped": skipped, "failed": failed });
+    let mut data = json!({ "ok": ok, "skipped": skipped, "failed": failed, "totalBytes": total_bytes });
+    if verbose {
+        data["results"] = Value::Array(items);
+    } else {
+        let failed_items: Vec<Value> = results
+            .iter()
+            .filter(|outcome| !outcome.ok)
+            .map(|outcome| outcome.to_json())
+            .collect();
+        if !failed_items.is_empty() {
+            data["failedItems"] = Value::Array(failed_items);
+        }
+        if let Some(parent) = results
+            .first()
+            .and_then(|outcome| Path::new(&outcome.local_path).parent())
+        {
+            let manifest_path = parent.join(format!(".termx-{tool}-manifest.json"));
+            let manifest = json!({ "tool": tool, "sessionId": session_id, "results": items });
+            if let Ok(bytes) = serde_json::to_vec_pretty(&manifest) {
+                if tokio::fs::write(&manifest_path, bytes).await.is_ok() {
+                    data["manifestPath"] =
+                        json!(manifest_path.display().to_string().replace('\\', "/"));
+                }
+            }
+        }
+    }
     if failed == 0 {
-        ToolResult::ok(
-            "传输完成",
-            "需要校验时对比返回的 sha256；目录已按文件逐项返回。",
-            data,
-        )
+        ToolResult::ok("传输完成", data)
     } else if ok == 0 {
         ToolResult::err_with_data(
             "transfer_failed",
             format!("{failed} 项全部失败"),
-            "按 results[].code 修正：已存在时置 overwrite=true；目录置 recursive=true；本地路径必须是绝对路径。",
+            "按失败项的 code 修正：已存在时置 overwrite=true；目录置 recursive=true；本地路径必须是绝对路径。全量清单见 manifestPath（verbose=true 时直接在 results[]）。",
             data,
         )
     } else {
         ToolResult::err_with_data(
             "transfer_partial",
             format!("{ok} 项成功，{failed} 项失败"),
-            "按 results[].code 修正失败项后只重传这部分。",
+            "按失败项的 code 修正后只重传这部分；全量清单见 manifestPath（verbose=true 时直接在 results[]）。",
             data,
         )
     }
@@ -1132,7 +1205,7 @@ fn serial_bytes(state: &AppState, session_id: &str, bytes: &[u8]) -> Result<usiz
     handle.write_counted(bytes).map_err(|e| {
         ToolResult::err(
             e.code(),
-            e.to_string(),
+            e.readable(),
             "串口可能已断开；重新 get_environment 确认会话状态。",
         )
     })
@@ -1163,7 +1236,7 @@ fn telnet_bytes(state: &AppState, session_id: &str, bytes: &[u8]) -> Result<usiz
     handle.write_counted(bytes).map_err(|e| {
         ToolResult::err(
             e.code(),
-            e.to_string(),
+            e.readable(),
             "Telnet 会话可能已断开；重新 get_environment 确认会话状态。",
         )
     })
@@ -1173,7 +1246,9 @@ fn session_meta(
     state: &AppState,
     session_id: &str,
 ) -> Result<(SessionOwner, SessionKind, crate::state::SessionPhase), ToolResult> {
-    let registry = state.lock_sessions().map_err(|e| internal_error(e))?;
+    let registry = state
+        .lock_sessions()
+        .map_err(|e| ToolResult::err("internal_error", e, "稍后重试；若持续失败，请在 termX 中查看日志。"))?;
     match registry.get(session_id) {
         Some(record) => Ok((record.owner.clone(), record.kind, record.phase)),
         None => Err(ToolResult::err(
@@ -1186,7 +1261,9 @@ fn session_meta(
 
 fn environment(state: &AppState, client: &McpClient) -> Result<Value, ToolResult> {
     let client_owner = SessionOwner::Headless(runtime_state::owner_for_client(&client.id));
-    let registry = state.lock_sessions().map_err(|e| internal_error(e))?;
+    let registry = state
+        .lock_sessions()
+        .map_err(|e| ToolResult::err("internal_error", e, "稍后重试；若持续失败，请在 termX 中查看日志。"))?;
     let handles = crate::error::locked(&state.sessions).map_err(internal_error)?;
     let mut sessions = Vec::new();
     for (id, record) in registry.iter() {
@@ -1389,22 +1466,12 @@ fn collect_success(
     } else {
         String::from_utf8_lossy(&out.output).into_owned()
     };
-    let hint = if out.bytes_read == 0 {
-        format!(
-            "{transport} 在 {}ms 内没有收到任何字节：检查设备是否上电、线序与波特率，或提高 idleMs；也可以直接在 termX 终端里观察。",
-            out.idle_ms
-        )
-    } else if out.terminated_by == super::exec::TerminatedBy::Timeout {
-        format!(
-            "采集到 {}ms 总超时：设备可能仍在输出，可提高 timeoutMs 或用 waitRegex 精确截断。exitCode 恒为 null；用户终端会同时收到同一份字节，不要重复解析。",
-            out.timeout_ms
-        )
-    } else {
-        "exitCode 恒为 null（串口 / Telnet 没有命令边界与退出码），结束原因见 terminatedBy。用户正在查看的终端会同时收到同一份字节（物理链路决定的），不要重复解析。".to_string()
-    };
     ToolResult::ok(
-        format!("{transport} 命令已写入并完成采集"),
-        hint,
+        if out.bytes_read == 0 {
+            format!("{transport} 命令已写入，但 {}ms 窗口内未收到任何字节", out.idle_ms)
+        } else {
+            format!("{transport} 命令已写入并完成采集")
+        },
         json!({
             "sessionId": session_id,
             "stdout": stdout,
@@ -1433,16 +1500,12 @@ fn read_success(
     } else {
         String::from_utf8_lossy(&out.output).into_owned()
     };
-    let hint = if out.bytes_read == 0 {
-        "采集窗口内没有收到字节：设备可能静默、未上电或波特率不符；可提高 timeoutMs 或改用 terminal_execute 主动发送。"
-    } else if out.terminated_by == super::exec::TerminatedBy::Timeout {
-        "命中总超时：设备可能仍在输出；可提高 timeoutMs 或用 waitRegex 精确截断。"
-    } else {
-        "本工具不写线路；广播不补发历史，需要「发送后立刻收」请用 terminal_execute。"
-    };
     ToolResult::ok(
-        format!("{transport} 输出采集完成"),
-        hint,
+        if out.bytes_read == 0 {
+            format!("{transport} 输出采集完成（窗口内未收到字节）")
+        } else {
+            format!("{transport} 输出采集完成")
+        },
         json!({
             "sessionId": session_id,
             "stdout": stdout,
@@ -1489,7 +1552,7 @@ async fn execute_serial(
         Ok(out) => collect_success(session_id, "serial", out, opts.encoding),
         Err(e) => ToolResult::err(
             e.code(),
-            e.to_string(),
+            e.readable(),
             "串口可能已断开；重新 get_environment 确认会话状态。",
         ),
     }
@@ -1528,7 +1591,7 @@ async fn execute_telnet(
         Ok(out) => collect_success(session_id, "telnet", out, opts.encoding),
         Err(e) => ToolResult::err(
             e.code(),
-            e.to_string(),
+            e.readable(),
             "Telnet 可能已断开；重新 get_environment 确认会话状态。",
         ),
     }
@@ -1624,7 +1687,6 @@ pub async fn call_tool(
             if failed == 0 {
                 ToolResult::ok(
                     "batch 执行完成",
-                    "结果按 ops 顺序返回；失败项会带 code。",
                     data,
                 )
             } else {
@@ -1639,7 +1701,6 @@ pub async fn call_tool(
         "get_environment" => match environment(state, client) {
             Ok(v) => ToolResult::ok(
                 "已返回当前环境快照",
-                "用 sessions[].id 作为 terminal_execute / session_close 的 sessionId；phase 为 ready 的会话才能执行命令。",
                 v,
             ),
             Err(e) => e,
@@ -1660,7 +1721,6 @@ pub async fn call_tool(
                     .collect();
                 ToolResult::ok(
                     "已返回已保存主机清单",
-                    "这些主机尚未打开连接；要执行命令需先在 termX 中打开会话，再调用 get_environment。",
                     json!({ "hosts": items }),
                 )
             }
@@ -1682,7 +1742,6 @@ pub async fn call_tool(
                     .collect();
                 ToolResult::ok(
                     "已返回已保存代码片段",
-                    "找到目标命令后，用 terminal_execute 在指定会话中执行。",
                     json!({ "snippets": items }),
                 )
             }
@@ -1696,7 +1755,6 @@ pub async fn call_tool(
             match super::fs::read::fs_read(state, &session.session_id, args).await {
                 Ok(out) => ToolResult::ok(
                     "已读取文件窗口",
-                    "内容未读完时带 startLine = nextCursor 继续；大文件先用 fs_grep 定位。",
                     json!({
                         "path": out.path,
                         "lines": out.lines,
@@ -1726,7 +1784,6 @@ pub async fn call_tool(
             {
                 Ok(out) => ToolResult::ok(
                     "搜索完成",
-                    "继续翻页传 cursor = nextCursor；定位后用 fs_read 开窗看上下文。",
                     json!({
                         "matches": out.matches,
                         "total": out.total,
@@ -1745,7 +1802,6 @@ pub async fn call_tool(
             match super::fs::glob::fs_glob(state, &session.session_id, args).await {
                 Ok(out) => ToolResult::ok(
                     "已列举文件",
-                    "继续翻页传 cursor = nextCursor；需要内容匹配改用 fs_grep。",
                     json!({
                         "matches": out.matches,
                         "total": out.total,
@@ -1825,11 +1881,6 @@ pub async fn call_tool(
                         } else {
                             "替换已写入"
                         },
-                        if dry_run {
-                            "确认 diff 无误后以 dryRun=false 再次调用落盘。"
-                        } else {
-                            "需要验证时用 fs_read 查看改动位置；no_match / ambiguous 时按返回的 lines 调整 oldText。"
-                        },
                         json!({ "dryRun": dry_run, "results": items }),
                     )
                 }
@@ -1882,7 +1933,6 @@ pub async fn call_tool(
                     ));
                     ToolResult::ok(
                         "文件已写入",
-                        "需要校验时用 fs_read 或对比 sha256；大文件改用 sftp_put。",
                         json!({
                             "path": out.path,
                             "size": out.size,
@@ -1924,11 +1974,48 @@ pub async fn call_tool(
                 ));
                 return e;
             }
-            match super::fs::transfer::sftp_put(app, state, &session.session_id, args).await
+            // 同 sftp_get：大文件/整目录上传可能远超外部客户端的请求总超时，
+            // 超窗即转后台 job，用 job_wait 续等。
+            let wait_ms = job_wait_ms(args);
+            let verbose = args.get("verbose").and_then(Value::as_bool).unwrap_or(false);
+            let (job_id, control) = runtime_state::register_job(&client.id, "sftp_put");
             {
-                Ok(results) => transfer_result("sftp_put", &session.session_id, results),
-                Err(e) => tool_error(e),
+                let app = app.clone();
+                let session_id = session.session_id.clone();
+                let args = args.clone();
+                let job = job_id.clone();
+                tokio::spawn(async move {
+                    let result = match tauri::Manager::try_state::<AppState>(&app) {
+                        Some(state) => {
+                            match super::fs::transfer::sftp_put(
+                                &app,
+                                &state,
+                                &session_id,
+                                &args,
+                                Some(&control),
+                            )
+                            .await
+                            {
+                                Ok(results) => {
+                                    transfer_result("sftp_put", &session_id, results, verbose).await
+                                }
+                                Err(e) => tool_error(e),
+                            }
+                        }
+                        None => ToolResult::err(
+                            "internal_error",
+                            "应用状态不可用（termX 正在退出）",
+                            "稍后重试。",
+                        ),
+                    };
+                    runtime_state::complete_job(&job, result.text, result.is_error);
+                });
             }
+            job_settle(
+                &job_id,
+                runtime_state::wait_job(&job_id, Duration::from_millis(wait_ms)).await,
+                wait_ms,
+            )
         }
         "sftp_get" => {
             let session = match super::fs::session::resolve(app, state, args, client).await {
@@ -1963,6 +2050,7 @@ pub async fn call_tool(
             // 同 build_run：下载大文件可能远超外部客户端的请求总超时，
             // 超窗即转后台 job，用 job_wait 续等。
             let wait_ms = job_wait_ms(args);
+            let verbose = args.get("verbose").and_then(Value::as_bool).unwrap_or(false);
             let (job_id, control) = runtime_state::register_job(&client.id, "sftp_get");
             {
                 let app = app.clone();
@@ -1981,7 +2069,9 @@ pub async fn call_tool(
                             )
                             .await
                             {
-                                Ok(results) => transfer_result("sftp_get", &session_id, results),
+                                Ok(results) => {
+                                    transfer_result("sftp_get", &session_id, results, verbose).await
+                                }
                                 Err(e) => tool_error(e),
                             }
                         }
@@ -2078,11 +2168,6 @@ pub async fn call_tool(
                         } else {
                             "已删除"
                         },
-                        if outcome.dry_run {
-                            "核对 wouldDelete 后，以 dryRun=false + confirmToken 再调用执行。"
-                        } else {
-                            "删除不可恢复；如需确认目录状态可再用 fs_glob。"
-                        },
                         data,
                     )
                 }
@@ -2157,6 +2242,7 @@ pub async fn call_tool(
                 let ssh = session.handle.clone();
                 let args = args.clone();
                 let job = job_id.clone();
+                let tail = control.tail.clone();
                 let handle = tokio::spawn(async move {
                     let result = match tauri::Manager::try_state::<AppState>(&app) {
                         Some(state) => {
@@ -2166,6 +2252,7 @@ pub async fn call_tool(
                                 &ssh,
                                 &args,
                                 preamble.as_deref(),
+                                Some(tail),
                             )
                             .await
                             {
@@ -2202,7 +2289,7 @@ pub async fn call_tool(
                     return ToolResult::err(
                         "missing_argument",
                         "缺少必填参数 jobId",
-                        "jobId 来自 build_run / sftp_get 返回的 {status:\"running\", jobId}。",
+                        "jobId 来自 build_run / sftp_get / sftp_put 返回的 {status:\"running\", jobId}。",
                     )
                 }
             };
@@ -2242,7 +2329,6 @@ pub async fn call_tool(
                 .collect();
             ToolResult::ok(
                 format!("{} 个后台 job", items.len()),
-                "running 的用 job_wait(jobId) 续等；误起的用 job_cancel(jobId) 停；结果保留 24 小时。",
                 json!({ "jobs": items }),
             )
         }
@@ -2287,7 +2373,6 @@ pub async fn call_tool(
             }
             ToolResult::ok(
                 "已请求取消",
-                "传输类任务按块优雅停并保留 .part 供续传；build_run 的 exec 通道已断开。用 job_wait 取收尾信封。",
                 json!({ "jobId": job_id, "cancelRequested": true }),
             )
         }
@@ -2394,7 +2479,6 @@ pub async fn call_tool(
                     let (stderr_tail, err_cut) = super::fs::tail_bytes(&out.stderr, max_output);
                     ToolResult::ok(
                         "命令执行完成",
-                        "exitCode 非 0 时先看 stderrTail；需要完整输出时缩小范围分次执行。后台常驻进程用 setsid/nohup 并重定向三路 I/O，再轮询日志。",
                         json!({
                             "exitCode": out.exit_code,
                             "stdoutTail": stdout_tail,
@@ -2546,7 +2630,6 @@ pub async fn call_tool(
                     {
                         Ok(out) => ToolResult::ok(
                             "命令执行完成",
-                            "如需在同一会话继续执行，复用相同的 sessionId；任务结束调用 session_close。truncated=true 时只返回尾部，完整输出请把命令重定向到远端文件后 fs_read 开窗。",
                             exec_output_fields(
                                 &out.stdout,
                                 &out.stderr,
@@ -2556,7 +2639,7 @@ pub async fn call_tool(
                         ),
                         Err(e) => ToolResult::err(
                             e.code(),
-                            e.to_string(),
+                            e.readable(),
                             "确认会话仍处于 ready 且命令语法正确后重试；会话断开时重新 get_environment。",
                         ),
                     }
@@ -2579,7 +2662,6 @@ pub async fn call_tool(
                     {
                         Ok(out) => ToolResult::ok(
                             "本地命令执行完成",
-                            "本地终端每次调用都新起子进程（POSIX sh -c / Windows cmd /C）一次性收取输出，不等于往用户可见终端里打字：不要指望它改变该 pane 的 cwd / 环境，交互式程序也请让用户在终端里跑。truncated=true 时只返回尾部，完整输出请把命令重定向到文件后再分次处理。",
                             exec_output_fields(
                                 &out.stdout,
                                 &out.stderr,
@@ -2589,7 +2671,7 @@ pub async fn call_tool(
                         ),
                         Err(e) => ToolResult::err(
                             e.code(),
-                            e.to_string(),
+                            e.readable(),
                             "确认本地会话仍处于 ready 后重试；命令超时会被整体杀掉。",
                         ),
                     }
@@ -2824,7 +2906,6 @@ pub async fn call_tool(
                     }
                     ToolResult::ok(
                         "会话已建立",
-                        "用返回的 sessionId 调用 serial_read / telnet_read / terminal_execute；任务结束调用 session_close。该会话归属当前 MCP 会话，其它会话不可见。preamble 会在每次 term_run / build_run 前重放。",
                         json!({
                             "sessionId": session_id,
                             "kind": kind,
@@ -2920,7 +3001,6 @@ pub async fn call_tool(
                     ));
                     ToolResult::ok(
                         "字节已写入",
-                        "该工具只写不读：回复请在 termX 终端查看；需要确认设备状态时再发一条写序列。",
                         json!({ "sessionId": session_id, "bytesWritten": written }),
                     )
                 }
@@ -3102,7 +3182,6 @@ pub async fn call_tool(
                 } else {
                     "会话 preamble 已设置"
                 },
-                "该 preamble 只影响本会话：每次 term_run / build_run 前重放，不影响用户窗口或其它 MCP 会话。",
                 json!({
                     "sessionId": session.session_id,
                     "preamble": if cleared { Value::Null } else { json!(preamble) },
@@ -3154,13 +3233,12 @@ pub async fn call_tool(
                     runtime_state::forget_session_preamble(&client.id, &session_id);
                     ToolResult::ok(
                         "会话已关闭",
-                        "如需再次连接，请先在 termX 中重新打开会话，再调用 get_environment。",
                         json!({ "closed": session_id }),
                     )
                 }
                 Err(e) => ToolResult::err(
                     "close_failed",
-                    e.to_string(),
+                    e.readable(),
                     "重新 get_environment 确认会话是否仍存在；若已关闭可忽略。",
                 ),
             }
@@ -3189,7 +3267,6 @@ pub fn read_resource(state: &AppState, client: &McpClient, uri: &str) -> ToolRes
         "termx://environment" => match environment(state, client) {
             Ok(v) => ToolResult::ok(
                 "已返回当前环境快照",
-                "该资源等同 get_environment；需要执行命令时改用 terminal_execute。",
                 v,
             ),
             Err(e) => e,
@@ -3211,18 +3288,85 @@ mod tests {
         let ok = envelope(
             "ok",
             "done",
-            "next",
+            None,
             Some(json!({ "sessions": [], "hostCount": 3 })),
         );
         assert_eq!(ok["code"], "ok");
         assert_eq!(ok["message"], "done");
-        assert_eq!(ok["hint"], "next");
+        // 成功信封不带 hint：静态指引在 description/guide，逐次回包纯耗 token。
+        assert!(ok.get("hint").is_none());
         assert_eq!(ok["hostCount"], 3);
         assert!(ok["sessions"].is_array());
 
-        let err = envelope("session_not_found", "missing", "retry", None);
+        let err = envelope(
+            "session_not_found",
+            "missing",
+            Some("retry".to_string()),
+            None,
+        );
         assert_eq!(err["code"], "session_not_found");
+        assert_eq!(err["hint"], "retry");
         assert_eq!(err.as_object().map(|m| m.len()), Some(3));
+    }
+
+    /// 传输信封默认形态：汇总 + 失败项 + 本地 manifest；verbose 才逐项。
+    #[tokio::test]
+    async fn transfer_result_defaults_to_summary_plus_manifest() {
+        use super::super::fs::transfer::TransferOutcome;
+        let dir = std::env::temp_dir().join(format!(
+            "termx-mcp-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let outcomes = vec![
+            TransferOutcome::ok(
+                dir.join("a.bin").display().to_string(),
+                "/r/a.bin".into(),
+                10,
+                "h1".into(),
+            ),
+            TransferOutcome::skipped(dir.join("s.bin").display().to_string(), "/r/s.bin".into(), 5),
+            TransferOutcome::failure(
+                dir.join("b.bin").display().to_string(),
+                "/r/b.bin".into(),
+                &crate::error::AppError::config("mcp_file_exists", json!({})),
+            ),
+        ];
+        let result = transfer_result("sftp_get", "sess", outcomes, false).await;
+        assert!(result.is_error);
+        let v: Value = serde_json::from_str(&result.text).unwrap();
+        assert_eq!(v["code"], "transfer_partial");
+        assert_eq!(v["ok"], 1);
+        assert_eq!(v["skipped"], 1);
+        assert_eq!(v["failed"], 1);
+        assert_eq!(v["totalBytes"], 10);
+        assert!(v.get("results").is_none());
+        assert_eq!(v["failedItems"].as_array().unwrap().len(), 1);
+        assert_eq!(v["failedItems"][0]["code"], "mcp_file_exists");
+        let manifest_path = v["manifestPath"].as_str().unwrap();
+        let manifest: Value =
+            serde_json::from_str(&tokio::fs::read_to_string(manifest_path).await.unwrap())
+                .unwrap();
+        assert_eq!(manifest["tool"], "sftp_get");
+        assert_eq!(manifest["results"].as_array().unwrap().len(), 3);
+
+        let verbose = transfer_result(
+            "sftp_get",
+            "sess",
+            vec![TransferOutcome::ok(
+                dir.join("a.bin").display().to_string(),
+                "/r/a.bin".into(),
+                10,
+                "h1".into(),
+            )],
+            true,
+        )
+        .await;
+        let vv: Value = serde_json::from_str(&verbose.text).unwrap();
+        assert_eq!(vv["code"], "ok");
+        assert!(vv["results"].is_array());
+        assert!(vv.get("manifestPath").is_none());
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
     }
 
     #[test]
@@ -3281,6 +3425,20 @@ mod tests {
             patch["inputSchema"]["properties"]["edits"]["items"]["required"],
             json!(["path", "ops"])
         );
+        assert_eq!(
+            patch["inputSchema"]["properties"]["edits"]["items"]["properties"]["expectedSha256"]
+                ["type"],
+            "string"
+        );
+        let op_props = &patch["inputSchema"]["properties"]["edits"]["items"]["properties"]["ops"]
+            ["items"]["properties"];
+        assert_eq!(
+            op_props["op"]["enum"],
+            json!(["replace", "replaceLines", "insertAfterLine"])
+        );
+        assert_eq!(op_props["startLine"]["type"], "integer");
+        assert_eq!(op_props["endLine"]["type"], "integer");
+        assert_eq!(op_props["line"]["type"], "integer");
         let write = list.iter().find(|t| t["name"] == "fs_write").unwrap();
         assert_eq!(write["annotations"]["readOnlyHint"], false);
         assert_eq!(write["inputSchema"]["required"], json!(["path", "content"]));
@@ -3299,7 +3457,31 @@ mod tests {
                 json!(expected),
                 "{name}"
             );
+            assert_eq!(
+                tool["inputSchema"]["properties"]["waitMs"]["default"],
+                25000,
+                "{name}"
+            );
+            assert_eq!(
+                tool["inputSchema"]["properties"]["verbose"]["type"],
+                "boolean",
+                "{name}"
+            );
         }
+        let put = list.iter().find(|t| t["name"] == "sftp_put").unwrap();
+        assert_eq!(
+            put["inputSchema"]["properties"]["skipUnchanged"]["type"],
+            "boolean"
+        );
+        let glob = list.iter().find(|t| t["name"] == "fs_glob").unwrap();
+        assert_eq!(
+            glob["inputSchema"]["properties"]["newerThanMs"]["type"],
+            "integer"
+        );
+        assert_eq!(
+            glob["inputSchema"]["properties"]["sortBy"]["enum"],
+            json!(["path", "mtime"])
+        );
 
         let delete = list.iter().find(|t| t["name"] == "fs_delete").unwrap();
         assert_eq!(delete["annotations"]["readOnlyHint"], false);
@@ -3397,7 +3579,7 @@ mod tests {
 
     #[test]
     fn read_only_tools_keep_original_fields() {
-        let ok = ToolResult::ok("msg", "hint", json!({ "sessions": [], "hostCount": 1 }));
+        let ok = ToolResult::ok("msg", json!({ "sessions": [], "hostCount": 1 }));
         assert!(!ok.is_error);
         let parsed: Value = serde_json::from_str(&ok.text).unwrap();
         assert!(parsed["sessions"].is_array());

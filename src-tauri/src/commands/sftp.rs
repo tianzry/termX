@@ -8,7 +8,7 @@ use tauri::State;
 
 use crate::error::{locked, AppError, AppResult};
 use crate::models::{Credential, CredentialType};
-use crate::ssh::sftp::{FileStat, RemoteEntry, SftpHandle, WalkEntry};
+use crate::ssh::sftp::{epoch_secs, FileStat, RemoteEntry, SftpHandle, WalkEntry};
 use crate::state::AppState;
 use crate::state::{SessionKind, SessionOwner};
 
@@ -220,6 +220,7 @@ pub async fn walk_local_dir(local_root: String) -> AppResult<Vec<WalkEntry>> {
                     rel_path: rel,
                     size: 0,
                     is_dir: true,
+                    mtime: None,
                 });
                 queue.push_back((path, depth + 1));
             } else if meta.is_file() {
@@ -227,6 +228,7 @@ pub async fn walk_local_dir(local_root: String) -> AppResult<Vec<WalkEntry>> {
                     rel_path: rel,
                     size: meta.len(),
                     is_dir: false,
+                    mtime: meta.modified().ok().and_then(epoch_secs),
                 });
             } else if meta.is_symlink() {
                 // Follow once to learn what the target is. Skip symlink-to-dir
@@ -237,6 +239,7 @@ pub async fn walk_local_dir(local_root: String) -> AppResult<Vec<WalkEntry>> {
                             rel_path: rel,
                             size: target_meta.len(),
                             is_dir: false,
+                            mtime: target_meta.modified().ok().and_then(epoch_secs),
                         });
                     }
                 }

@@ -14,11 +14,11 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 
 推荐工作流（token 高效）：
 1) get_environment：拿 sessions[].id / hosts[]（cacheable 30s）。
-2) 查阅：fs_glob 列文件 → fs_grep 定位 → fs_read 按行开窗；不要整读大文件。
-3) 修改：fs_patch 先 dryRun 看 diff 再落盘；小文件整体覆盖用 fs_write。
-4) 传输：sftp_put / sftp_get 流式传输（sftp_get 走 16 路流水线引擎，与终端 UI 同速），返回只有路径 / size / sha256，token 与文件大小无关。items 批量默认 4 路文件级并行（concurrency 1..8）；下载中断保留 .part，重跑同参数自动续传；skipUnchanged 跳过未变更文件做增量同步；verifyRemote 传完在远端算 sha256 对账。
-5) 构建：build_run 只回尾部日志与 exitCode；cwd 指定工作目录、env 注入环境变量，需要完整日志时传 teeToRemoteFile。
-6) 长任务：build_run / sftp_get 支持 waitMs（默认 25s，上限 110s，压在常见客户端请求超时之下）；超窗任务转后台并返回 {status:"running", jobId, bytesDone, bytesTotal}，用 job_wait(jobId, waitMs) 短窗循环续等取结果，可反复调用；任务不受连接影响继续在远端执行，结果保留 24h。jobId 是不可猜 UUID＝持有即权限：换会话/重连后凭 jobId 仍可查，忘了 jobId 用 job_list 找回全量任务，job_cancel(jobId) 停止任务（传输保留 .part 供续传）。
+2) 查阅：fs_glob 列文件 → fs_grep 定位 → fs_read 按行开窗；不要整读大文件。fs_grep 原生优先（rg 并行扫描，正则不兼容自动回落 python3/grep），total 恒精确。
+3) 修改：fs_patch 先 dryRun 看 diff 再落盘；确信内容未变时带 expectedSha256（上次读/改返回的 sha256）可免 dryRun 直接落盘，不匹配即拒；行锚定 op：replaceLines(startLine/endLine，1-based 闭区间，newText 空=删除行段)、insertAfterLine(line，0=文件头)，行号以该 op 执行时的当前文本为基准，配合 fs_read 行号窗口可免构造唯一 oldText；小文件整体覆盖用 fs_write。
+4) 传输：sftp_put / sftp_get 流式传输（均走与终端 UI 同款多句柄流水线引擎），返回只有路径 / size / sha256，token 与文件大小无关。items 批量默认 4 路文件级并行（concurrency 1..8）；下载中断保留 .part，重跑同参数自动续传；skipUnchanged 跳过未变更文件做增量同步（上传/下载都支持）；verifyRemote 传完在远端算 sha256 对账。信封默认回汇总 ok/skipped/failed/totalBytes + 失败项 failedItems + 全量清单落本地 manifestPath（首项本地目录旁，按次覆盖）；要逐项结果置 verbose=true。
+5) 构建：build_run 只回尾部日志与 exitCode；cwd 指定工作目录、env 注入环境变量，需要完整日志时传 teeToRemoteFile。结果附 changedFiles（构建期间新增/修改的文件，相对 cwd，封顶 200 条）：拼上 cwd 直接 sftp_get 一次取回产物，不必猜路径；找历史产物也可用 fs_glob newerThanMs / sortBy=mtime。
+6) 长任务：build_run / sftp_get / sftp_put 支持 waitMs（默认 25s，上限 110s，压在常见客户端请求超时之下）；超窗任务转后台并返回 {status:"running", jobId, bytesDone, bytesTotal}，用 job_wait(jobId, waitMs) 短窗循环续等取结果，可反复调用；build_run 的 running 信封另附 stdoutTail/stderrTail 运行中预览（每 2s 刷新、各封顶 4KB），构建期间即可看进度/报错。任务不受连接影响继续在远端执行，结果保留 24h。jobId 是不可猜 UUID＝持有即权限：换会话/重连后凭 jobId 仍可查，忘了 jobId 用 job_list 找回全量任务，job_cancel(jobId) 停止任务（传输保留 .part 供续传）。
 7) 删除：fs_delete 默认 dryRun=true 先列计划；confirm 档需再带 confirmToken 以 dryRun=false 执行，auto 档信任审批闸门、可直接 dryRun=false 单调用删除。
 8) batch：把多个 fs_read / fs_grep / fs_glob / fs_patch / fs_write 合成一次调用（≤50）。
 9) 逃生平面：term_run 执行任意非交互命令（只拦破坏性命令），同样支持 cwd / env；terminal_execute 覆盖 ssh / pty / serial / telnet 四类会话，ssh / pty 只回尾部 maxOutputBytes（默认 16 KiB）。每次调用都是全新的远端 shell，后台常驻进程要 setsid/nohup 并重定向三路 I/O（如 `setsid nohup cmd </dev/null >/tmp/task.log 2>&1 & echo $!`），再轮询日志。
@@ -32,7 +32,7 @@ sessionId 来自 get_environment；hostId 也可直接引用（vault 中有该�
 - 远端路径（path / remotePath / cwd）支持绝对路径、~ 与相对 home 的路径，不限制目录范围；localPath 只校验是绝对路径。
 - terminal_execute 的 pty 分支每次新起子进程（sh -c / cmd /C）一次性收输出，不写入用户可见终端；serial / telnet 分支没有命令边界与退出码（exitCode=null），采集时用户终端会同时收到同一份字节，不要重复解析。
 - 写操作受权限档位约束：observer 只读拒绝、confirm 需用户在 termX 弹窗中允许、auto 直接执行；fs_delete 在 confirm 档需 dryRun 拿 confirmToken，auto 档免 token（审批闸门仍走）。
-- 所有工具返回 JSON：成功为 {code:"ok", message, hint, ...数据}，失败为 {code, message, hint}。失败时先按 hint 自纠。
+- 所有工具返回 JSON：成功为 {code:"ok", message, ...数据}（不带 hint，下一步指引见各工具 description 与本指南）；失败为 {code, message, hint}，先按 hint 自纠。
 - 大文件用传输/开窗工具，不要把内容塞进 arguments；不要泄露 token 或凭据。"#;
 
 /// 设置页展示的一个可复制区块。
@@ -82,18 +82,18 @@ fn return_example(name: &str) -> &'static str {
         "session_close" => r#"{code:"ok", closed: sessionId}"#,
         "fs_read" => r#"{code:"ok", path, lines, totalLines, size, truncated, nextCursor}"#,
         "fs_grep" => r#"{code:"ok", matches:[{path, line, text}], total, truncated, nextCursor}"#,
-        "fs_glob" => r#"{code:"ok", matches:[{path, size}], total, truncated, nextCursor}"#,
+        "fs_glob" => r#"{code:"ok", matches:[{path, size, mtimeMs}], total, truncated, nextCursor}"#,
         "fs_patch" => r#"{code:"ok", dryRun, results:[{path, applied, sha256, diff}]}"#,
         "fs_write" => r#"{code:"ok", path, size, sha256, created}"#,
         "sftp_put" | "sftp_get" => {
-            r#"{code:"ok", ok, skipped, failed, results:[{localPath, remotePath, size, sha256, status, remoteSha256?, verify?}]}"#
+            r#"{code:"ok", ok, skipped, failed, totalBytes, failedItems?:[...], manifestPath}；verbose=true 时改回逐项 results:[{localPath, remotePath, size, sha256, status, remoteSha256?, verify?}]"#
         }
         "fs_delete" => r#"{code:"ok", dryRun, wouldDelete:[{path, size, isDir}], confirmToken}"#,
         "build_run" => {
-            r#"{code:"ok", exitCode, stdoutTail, stderrTail, totalBytes, truncated, fullLog}"#
+            r#"{code:"ok", exitCode, stdoutTail, stderrTail, totalBytes, truncated, fullLog, changedFiles, changedFilesTruncated}"#
         },
         "job_wait" => {
-            r#"完成：原工具信封 + {jobId, jobStatus:"done"}；未完成：{code:"ok", status:"running", jobId, tool, elapsedMs, bytesDone?, bytesTotal?, cancelRequested}"#
+            r#"完成：原工具信封 + {jobId, jobStatus:"done"}；未完成：{code:"ok", status:"running", jobId, tool, elapsedMs, bytesDone?, bytesTotal?, cancelRequested, stdoutTail?, stderrTail?}（尾部预览仅 build_run）"#
         }
         "job_list" => {
             r#"{code:"ok", jobs:[{jobId, tool, submittedBy, status, elapsedMs, bytesDone?, bytesTotal?, cancelRequested}]}"#

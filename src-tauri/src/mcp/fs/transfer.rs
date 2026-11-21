@@ -1,9 +1,9 @@
 //! `sftp_put` / `sftp_get`：本地 ↔ 远端流式传输，返回里只有路径/大小/校验和。
 //!
-//! 关键收益：不走 shell、不回 base64，token 成本与文件大小无关；上传复用
-//! [`SftpHandle`] 的流式实现，下载复用 UI 传输队列同款流水线引擎（分块 +
-//! 临时文件 + 原子 rename + 断点续传）。批内文件级并行（`concurrency`），
-//! 信封仍逐文件返回；进度事件用 `Host::Tauri` 发到前端（MCP 没有窗口，
+//! 关键收益：不走 shell、不回 base64，token 成本与文件大小无关；上传/下载都
+//! 复用 UI 传输队列同款多句柄流水线引擎（分块 + 临时文件 + 原子 rename）。
+//! 批内文件级并行（`concurrency`）；信封默认回汇总 + 本地 manifest 文件
+//! （verbose=true 逐项），进度事件用 `Host::Tauri` 发到前端（MCP 没有窗口，
 //! 事件无人订阅也不会出错），job 进度另经 [`JobProgress`] 上报给 job_wait。
 
 use std::path::{Path, PathBuf};
@@ -46,7 +46,7 @@ pub struct TransferOutcome {
 }
 
 impl TransferOutcome {
-    fn ok(local_path: String, remote_path: String, size: u64, sha256: String) -> Self {
+    pub(crate) fn ok(local_path: String, remote_path: String, size: u64, sha256: String) -> Self {
         Self {
             local_path,
             remote_path,
@@ -61,7 +61,7 @@ impl TransferOutcome {
         }
     }
 
-    fn skipped(local_path: String, remote_path: String, size: u64) -> Self {
+    pub(crate) fn skipped(local_path: String, remote_path: String, size: u64) -> Self {
         Self {
             local_path,
             remote_path,
@@ -76,7 +76,7 @@ impl TransferOutcome {
         }
     }
 
-    fn failure(local_path: String, remote_path: String, e: &AppError) -> Self {
+    pub(crate) fn failure(local_path: String, remote_path: String, e: &AppError) -> Self {
         Self {
             local_path,
             remote_path,
@@ -87,13 +87,14 @@ impl TransferOutcome {
             remote_sha256: None,
             verify: None,
             code: Some(e.code()),
-            message: Some(e.to_string()),
+            message: Some(e.readable()),
         }
     }
 
     pub fn to_json(&self) -> Value {
         json!({
-            "localPath": self.local_path,
+            // Windows 反斜杠统一归一为 '/'，避免 agent 回传路径时混用分隔符。
+            "localPath": self.local_path.replace('\\', "/"),
             "remotePath": self.remote_path,
             "size": self.size,
             "sha256": self.sha256,
@@ -216,7 +217,7 @@ async fn collect_local_files(root: &Path) -> AppResult<Vec<(PathBuf, String)>> {
         {
             let name = entry.file_name().to_string_lossy().into_owned();
             let child_rel = if rel.is_empty() {
-                name
+                name.clone()
             } else {
                 format!("{rel}/{name}")
             };
@@ -227,6 +228,11 @@ async fn collect_local_files(root: &Path) -> AppResult<Vec<(PathBuf, String)>> {
             if meta.is_dir() {
                 stack.push((entry.path(), child_rel));
             } else if meta.is_file() {
+                // 传输清单是本工具写在目录旁的副产物，不是用户的源文件，
+                // 递归上传时排除，否则每轮同步都会把上一轮 manifest 传上远端。
+                if name.starts_with(".termx-") && name.ends_with("-manifest.json") {
+                    continue;
+                }
                 files.push((entry.path(), child_rel));
                 if files.len() > MAX_TRANSFER_ITEMS {
                     return Err(AppError::config(
@@ -277,15 +283,18 @@ struct Unit {
     size: u64,
 }
 
-async fn upload_one(
-    sftp: &SftpHandle,
-    host: &Host,
-    index: usize,
-    local: &Path,
-    remote: &str,
+struct PutCtx<'a> {
+    sftp: &'a SftpHandle,
+    host: &'a Host,
     overwrite: bool,
+    skip_unchanged: bool,
     cancel: Arc<AtomicBool>,
-) -> AppResult<TransferOutcome> {
+    progress: Option<Arc<JobProgress>>,
+}
+
+async fn upload_one(ctx: &PutCtx<'_>, unit: &Unit) -> AppResult<TransferOutcome> {
+    let local = &unit.local;
+    let remote = &unit.remote;
     let meta = tokio::fs::metadata(local)
         .await
         .map_err(|e| local_io("metadata", local, e))?;
@@ -295,7 +304,32 @@ async fn upload_one(
             json!({ "path": local.display().to_string(), "hint": "目录请置 recursive=true" }),
         ));
     }
-    if sftp.stat(remote).await.is_ok() && !overwrite {
+    let remote_exists = ctx.sftp.stat(remote).await.is_ok();
+    if ctx.skip_unchanged && remote_exists {
+        let (remote_size, remote_mtime) = ctx.sftp.remote_file_fingerprint(remote).await?;
+        if remote_size == meta.len() {
+            let local_mtime = meta.modified().ok().and_then(epoch_secs);
+            let unchanged = match (remote_mtime, local_mtime) {
+                // 远端副本不旧于本地源即视为已同步（上传会把远端 mtime 推到当前）。
+                (Some(r), Some(l)) => r >= l,
+                // 远端不给 mtime 时退化为尺寸比对。
+                (None, _) => true,
+                _ => false,
+            };
+            if unchanged {
+                // 跳过的字节同样计入进度，否则含 skip 的 job 永远到不了 100%。
+                if let Some(progress) = &ctx.progress {
+                    progress.finish(unit.index, meta.len());
+                }
+                return Ok(TransferOutcome::skipped(
+                    local.display().to_string(),
+                    remote.clone(),
+                    meta.len(),
+                ));
+            }
+        }
+    }
+    if remote_exists && !ctx.overwrite {
         return Err(AppError::config(
             "mcp_file_exists",
             json!({ "path": remote }),
@@ -305,13 +339,31 @@ async fn upload_one(
         .await
         .map_err(|e| local_io("open", local, e))?;
     let total = meta.len();
-    sftp.upload_streaming(&mut file, total, remote, host, &format!("mcp-put-{index}"), cancel)
+    let checkpoint = Arc::new(AtomicU64::new(0));
+    if let Some(progress) = &ctx.progress {
+        progress.begin(unit.index, checkpoint.clone());
+    }
+    let size = ctx
+        .sftp
+        .upload_streaming_resumable(
+            &mut file,
+            total,
+            remote,
+            ctx.host,
+            &format!("mcp-put-{}", unit.index),
+            ctx.cancel.clone(),
+            0,
+            checkpoint,
+        )
         .await?;
+    if let Some(progress) = &ctx.progress {
+        progress.finish(unit.index, size);
+    }
     let sha256 = sha256_file(local).await?;
     Ok(TransferOutcome::ok(
         local.display().to_string(),
         remote.to_string(),
-        total,
+        size,
         sha256,
     ))
 }
@@ -321,16 +373,17 @@ pub async fn sftp_put(
     state: &AppState,
     session_id: &str,
     args: &Value,
+    job: Option<&Arc<JobControl>>,
 ) -> AppResult<Vec<TransferOutcome>> {
     let items = parse_items(args)?;
     let overwrite = flag(args, "overwrite");
     let recursive = flag(args, "recursive");
+    let skip_unchanged = flag(args, "skipUnchanged");
     let concurrency = parse_concurrency(args);
 
     let sftp = handle::sftp_for(state, session_id).await?;
     let home = sftp.home_dir().await?;
     let host = Host::Tauri(app.clone());
-    let cancel = Arc::new(AtomicBool::new(false));
 
     let mut units: Vec<Unit> = Vec::new();
     let mut settled: Vec<(usize, TransferOutcome)> = Vec::new();
@@ -407,24 +460,27 @@ pub async fn sftp_put(
             json!({ "count": units.len(), "limit": MAX_TRANSFER_ITEMS }),
         ));
     }
+    if let Some(job) = job {
+        job.progress.set_total(units.iter().map(|u| u.size).sum());
+    }
 
-    let sftp = &sftp;
-    let host = &host;
-    let cancel = &cancel;
+    let ctx = PutCtx {
+        sftp: &sftp,
+        host: &host,
+        overwrite,
+        skip_unchanged,
+        cancel: job
+            .map(|j| j.cancel.clone())
+            .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+        progress: job.map(|j| j.progress.clone()),
+    };
+    // 与 sftp_get 同款所有权模式：引用在闭包外取好、unit 按值进 async move，
+    // 避免 HRTB（FnOnce is not general enough）。
+    let ctx = &ctx;
     let mut done: Vec<(usize, TransferOutcome)> = stream::iter(units.into_iter().map(|unit| {
-        let cancel = cancel.clone();
+        let ctx = ctx;
         async move {
-            let outcome = upload_one(
-                sftp,
-                host,
-                unit.index,
-                &unit.local,
-                &unit.remote,
-                overwrite,
-                cancel,
-            )
-            .await
-            .unwrap_or_else(|e| {
+            let outcome = upload_one(ctx, &unit).await.unwrap_or_else(|e| {
                 TransferOutcome::failure(
                     unit.local.display().to_string(),
                     unit.remote.clone(),
@@ -491,6 +547,10 @@ async fn download_one(ctx: &GetCtx<'_>, unit: &Unit) -> AppResult<TransferOutcom
                     _ => false,
                 };
                 if unchanged {
+                    // 跳过的字节同样计入进度，否则含 skip 的 job 永远到不了 100%。
+                    if let Some(progress) = &ctx.progress {
+                        progress.finish(unit.index, unit.size);
+                    }
                     return Ok(TransferOutcome::skipped(
                         local.display().to_string(),
                         remote.clone(),
@@ -762,6 +822,7 @@ mod tests {
         assert_eq!(value["status"], "error");
         assert_eq!(value["code"], "mcp_file_exists");
         assert_eq!(value["size"], 0);
+        assert_eq!(value["message"], "mcp_file_exists");
     }
 
     #[test]
@@ -783,5 +844,36 @@ mod tests {
         assert_eq!(parse_concurrency(&json!({ "concurrency": 0 })), 1);
         assert_eq!(parse_concurrency(&json!({ "concurrency": 99 })), MAX_CONCURRENCY);
         assert_eq!(parse_concurrency(&json!({ "concurrency": 2 })), 2);
+    }
+
+    #[test]
+    fn to_json_normalizes_windows_separators() {
+        let outcome = TransferOutcome::ok(
+            r"D:\dl\sub\a.bin".to_string(),
+            "/r/a.bin".to_string(),
+            3,
+            "h".to_string(),
+        );
+        assert_eq!(outcome.to_json()["localPath"], "D:/dl/sub/a.bin");
+    }
+
+    #[tokio::test]
+    async fn collect_local_files_excludes_transfer_manifests() {
+        let dir = std::env::temp_dir().join(format!(
+            "termx-collect-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("src.c"), b"x").await.unwrap();
+        tokio::fs::write(dir.join(".termx-sftp_put-manifest.json"), b"{}")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.join(".termx-sftp_get-manifest.json"), b"{}")
+            .await
+            .unwrap();
+        let files = collect_local_files(&dir).await.unwrap();
+        let rels: Vec<&str> = files.iter().map(|(_, rel)| rel.as_str()).collect();
+        assert_eq!(rels, vec!["src.c"]);
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
     }
 }

@@ -14,6 +14,9 @@ use super::fs::caps::RemoteCaps;
 
 /// `fs_delete` confirmToken 有效期。
 pub const DELETE_TOKEN_TTL: Duration = Duration::from_secs(300);
+/// 能力探测缓存 TTL：过期后下一次 fs_grep/fs_patch 调用自动重探，
+/// 覆盖远端二进制安装/卸载（agent 无感，不多工具调用）。
+const CAPS_TTL: Duration = Duration::from_secs(30 * 60);
 /// 单会话 preamble 字节上限。
 pub const MAX_PREAMBLE_BYTES: usize = 8 * 1024;
 /// 未正常关闭的会话不会主动清理 preamble，这里按最旧淘汰封顶。
@@ -82,10 +85,37 @@ impl JobProgress {
     }
 }
 
+/// 构建运行中的尾部日志预览：poller 每 2s 从远端临时文件 tail 一段写进来，
+/// running 信封即取即有，agent 不必盲等。仅 build_run 设置；容量封顶防信封膨胀。
+pub struct JobTail {
+    inner: Mutex<Option<(String, String)>>,
+}
+
+impl JobTail {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(None),
+        })
+    }
+
+    pub fn set(&self, stdout: String, stderr: String) {
+        *self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((stdout, stderr));
+    }
+
+    pub fn snapshot(&self) -> Option<(String, String)> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
 /// job 控制块：取消旗标 + 进度 + 可 abort 的任务句柄，注册时创建、spawn 侧共享。
 pub struct JobControl {
     pub cancel: Arc<AtomicBool>,
     pub progress: Arc<JobProgress>,
+    /// 构建类任务的运行中尾部预览（poller 周期写入）；传输类不设，snapshot 恒 None。
+    pub tail: Arc<JobTail>,
     abort: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -94,6 +124,7 @@ impl JobControl {
         Arc::new(Self {
             cancel: Arc::new(AtomicBool::new(false)),
             progress: JobProgress::new(),
+            tail: JobTail::new(),
             abort: Mutex::new(None),
         })
     }
@@ -137,6 +168,9 @@ pub enum JobView {
         bytes_done: Option<u64>,
         bytes_total: Option<u64>,
         cancel_requested: bool,
+        /// 仅 build_run：运行中 stdout/stderr 尾部预览（poller 写入），传输类为 None。
+        stdout_tail: Option<String>,
+        stderr_tail: Option<String>,
     },
     Done { elapsed_ms: u64, text: String, is_error: bool },
 }
@@ -165,13 +199,13 @@ pub struct McpRuntimeState {
     pub client_owners: Mutex<HashMap<String, uuid::Uuid>>,
     /// `client:hostId` → 建连闸门：并发请求共享同一次建连，且不同客户端不互相阻塞。
     pub connect_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    /// `profile_id` → 远端能力探测结果。
-    pub caps: Mutex<HashMap<String, RemoteCaps>>,
+    /// `profile_id` → (探测时间, 远端能力探测结果)，按 CAPS_TTL 统一过期。
+    pub caps: Mutex<HashMap<String, (Instant, RemoteCaps)>>,
     /// `fs_delete` 的待确认计划。
     pub delete_tokens: Mutex<HashMap<String, DeleteToken>>,
     /// `sessionId` → 会话级 preamble（每次 term_run / build_run 确定性前置）。
     preambles: Mutex<HashMap<String, PreambleEntry>>,
-    /// jobId → 后台任务（build_run / sftp_get 超出 waitMs 窗口后转入）。
+    /// jobId → 后台任务（build_run / sftp_get / sftp_put 超出 waitMs 窗口后转入）。
     jobs: Mutex<HashMap<String, McpJob>>,
     pub audit: AuditLog,
 }
@@ -291,13 +325,18 @@ pub fn connect_gate(client_id: &str, host_id: &str) -> Arc<tokio::sync::Mutex<()
         .clone()
 }
 
+fn caps_fresh(stored_at: Instant, now: Instant) -> bool {
+    now.duration_since(stored_at) < CAPS_TTL
+}
+
 pub fn cached_caps(profile_id: &str) -> Option<RemoteCaps> {
     state()
         .caps
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(profile_id)
-        .copied()
+        .filter(|(stored_at, _)| caps_fresh(*stored_at, Instant::now()))
+        .map(|(_, caps)| *caps)
 }
 
 pub fn store_caps(profile_id: &str, caps: RemoteCaps) {
@@ -305,7 +344,7 @@ pub fn store_caps(profile_id: &str, caps: RemoteCaps) {
         .caps
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(profile_id.to_string(), caps);
+        .insert(profile_id.to_string(), (Instant::now(), caps));
 }
 
 pub fn record_audit(entry: serde_json::Value) {
@@ -440,12 +479,15 @@ pub fn job_view(job_id: &str) -> JobView {
         },
         None => {
             let (done, total) = job.control.progress.snapshot();
+            let tail = job.control.tail.snapshot();
             JobView::Running {
                 tool: job.tool.clone(),
                 elapsed_ms,
                 bytes_done: if total > 0 { Some(done) } else { None },
                 bytes_total: if total > 0 { Some(total) } else { None },
                 cancel_requested: job.cancel_requested,
+                stdout_tail: tail.as_ref().map(|(out, _)| out.clone()),
+                stderr_tail: tail.map(|(_, err)| err),
             }
         }
     }
@@ -485,14 +527,33 @@ pub fn job_list() -> Vec<JobSummary> {
 
 /// 轮询等待 job 完成，直到 deadline；100ms 粒度对 MCP 场景足够，
 /// 换来实现简单且没有 Notify 丢唤醒的竞态。
+///
+/// 字节已传完（bytesDone==bytesTotal）时只剩 sha256/rename/校验收尾，
+/// 额外给最多 5s 宽限——调用方建议 waitMs ≤ 客户端超时−5s，宽限正好
+/// 落在预留余量内，省掉「传输明明完了却还回 running」的一轮 job_wait。
 pub async fn wait_job(job_id: &str, wait: Duration) -> JobView {
+    const FINISH_GRACE: Duration = Duration::from_secs(5);
     let deadline = Instant::now() + wait;
     loop {
         let view = job_view(job_id);
-        if !matches!(view, JobView::Running { .. }) || Instant::now() >= deadline {
+        if !matches!(view, JobView::Running { .. }) {
             return view;
         }
-        let step = Duration::from_millis(100).min(deadline - Instant::now());
+        let finishing = matches!(
+            &view,
+            JobView::Running { bytes_done: Some(done), bytes_total: Some(total), .. }
+                if done == total && *total > 0
+        );
+        let hard_deadline = if finishing && !wait.is_zero() {
+            deadline + FINISH_GRACE
+        } else {
+            deadline
+        };
+        let now = Instant::now();
+        if now >= hard_deadline {
+            return view;
+        }
+        let step = Duration::from_millis(100).min(hard_deadline - now);
         tokio::time::sleep(step).await;
     }
 }
@@ -500,6 +561,31 @@ pub async fn wait_job(job_id: &str, wait: Duration) -> JobView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caps_ttl_predicate_boundary() {
+        let base = Instant::now();
+        assert!(caps_fresh(base, base));
+        assert!(caps_fresh(base, base + Duration::from_secs(29 * 60)));
+        assert!(!caps_fresh(base, base + CAPS_TTL));
+        assert!(!caps_fresh(base, base + Duration::from_secs(31 * 60)));
+    }
+
+    #[test]
+    fn caps_cache_roundtrip_and_expiry() {
+        let caps = RemoteCaps { python3: true, rg: true, ..Default::default() };
+        store_caps("caps-ttl-roundtrip", caps);
+        assert_eq!(cached_caps("caps-ttl-roundtrip"), Some(caps));
+        // 开机不足 TTL 的机器 Instant 减法会下溢，checked_sub 失败则跳过老化断言。
+        if let Some(old) = Instant::now().checked_sub(CAPS_TTL + Duration::from_secs(60)) {
+            state()
+                .caps
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert("caps-ttl-roundtrip".to_string(), (old, caps));
+            assert_eq!(cached_caps("caps-ttl-roundtrip"), None);
+        }
+    }
 
     #[test]
     fn preamble_roundtrip_and_clear() {
@@ -561,6 +647,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn job_wait_grace_when_bytes_complete() {
+        let client = format!("job-client-{}", uuid::Uuid::new_v4());
+        let (id, control) = register_job(&client, "sftp_get");
+        control.progress.set_total(10);
+        let cp = Arc::new(AtomicU64::new(10));
+        control.progress.begin(1, cp);
+        control.progress.finish(1, 10);
+        // waitMs=0 是立即状态查询，不给宽限。
+        assert!(matches!(
+            wait_job(&id, Duration::from_millis(0)).await,
+            JobView::Running { .. }
+        ));
+        let id2 = id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            complete_job(&id2, "done".to_string(), false);
+        });
+        // 100ms 窗口 < 300ms 收尾，但字节已传完 → 宽限期内等到 Done。
+        assert!(matches!(
+            wait_job(&id, Duration::from_millis(100)).await,
+            JobView::Done { .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn job_progress_snapshot_sums_active_checkpoints() {
         let client = format!("job-client-{}", uuid::Uuid::new_v4());
         let (id, control) = register_job(&client, "sftp_get");
@@ -577,6 +688,35 @@ mod tests {
             JobView::Running { bytes_done, bytes_total, .. } => {
                 assert_eq!(bytes_done, Some(70));
                 assert_eq!(bytes_total, Some(100));
+            }
+            other_view => panic!("expected Running, got {other_view:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn job_running_carries_build_tail_preview() {
+        let client = format!("job-client-{}", uuid::Uuid::new_v4());
+        // 传输类不设 tail：Running 视图尾部恒 None。
+        let (tid, _tcontrol) = register_job(&client, "sftp_get");
+        match job_view(&tid) {
+            JobView::Running { stdout_tail, stderr_tail, .. } => {
+                assert!(stdout_tail.is_none());
+                assert!(stderr_tail.is_none());
+            }
+            other_view => panic!("expected Running, got {other_view:?}"),
+        }
+        // 构建类 poller 写入 tail 后，Running 视图即取即有。
+        let (bid, bcontrol) = register_job(&client, "build_run");
+        assert!(bcontrol.tail.snapshot().is_none());
+        bcontrol.tail.set("cc main.c".into(), "warning: unused".into());
+        assert_eq!(
+            bcontrol.tail.snapshot(),
+            Some(("cc main.c".to_string(), "warning: unused".to_string()))
+        );
+        match job_view(&bid) {
+            JobView::Running { stdout_tail, stderr_tail, .. } => {
+                assert_eq!(stdout_tail.as_deref(), Some("cc main.c"));
+                assert_eq!(stderr_tail.as_deref(), Some("warning: unused"));
             }
             other_view => panic!("expected Running, got {other_view:?}"),
         }

@@ -121,6 +121,36 @@ impl AppError {
             Self::Lock => "lock_poisoned",
         }
     }
+
+    /// 给没有翻译表的消费方（MCP 信封 / CLI）的可读渲染：脱掉
+    /// `__termx_err__|` 协议壳，输出 `code (k=v, ...)`。协议串只给前端
+    /// `errMsg()` 用，直接透传给外部 agent 会泄漏内部标记且不可读。
+    pub fn readable(&self) -> String {
+        let params = match self {
+            Self::Database(c)
+            | Self::Io(c)
+            | Self::Ssh(c)
+            | Self::Sftp(c)
+            | Self::Pty(c)
+            | Self::NotFound(c)
+            | Self::Config(c)
+            | Self::Other(c) => c.params.as_object(),
+            Self::Lock => None,
+        };
+        match params {
+            Some(o) if !o.is_empty() => {
+                let parts: Vec<String> = o
+                    .iter()
+                    .map(|(k, v)| match v.as_str() {
+                        Some(s) => format!("{k}={s}"),
+                        None => format!("{k}={v}"),
+                    })
+                    .collect();
+                format!("{} ({})", self.code(), parts.join(", "))
+            }
+            _ => self.code().to_string(),
+        }
+    }
 }
 
 /// Acquire a std::sync::Mutex lock, mapping PoisonError to AppError::Lock.
@@ -158,6 +188,16 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::error::Error;
+
+    #[test]
+    fn readable_strips_protocol_shell() {
+        let e = AppError::config("mcp_local_file_exists", json!({ "path": "/tmp/a" }));
+        assert_eq!(e.readable(), "mcp_local_file_exists (path=/tmp/a)");
+        assert!(!e.readable().contains("__termx_err__"));
+        assert_eq!(AppError::Lock.readable(), "lock_poisoned");
+        let empty = AppError::other("mcp_verify_failed", json!({}));
+        assert_eq!(empty.readable(), "mcp_verify_failed");
+    }
     use std::fmt;
 
     /// 前端 `errMsg()` 硬编码识别这个前缀，改了字面值即破整套 i18n 翻译。

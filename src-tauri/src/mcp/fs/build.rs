@@ -4,6 +4,7 @@
 //! 构建失败的关键信息通常在最末尾。这里让远端先把两个流写进临时文件，再用
 //! `tail -c` 取尾部、`wc -c` 取总量，返回体积与构建规模无关。
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -13,6 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::ssh::client::{exec_once, SshHandle};
 use crate::state::AppState;
 
+use super::super::runtime_state::JobTail;
 use super::{handle, path as pathutil, shell};
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 120_000;
@@ -22,6 +24,12 @@ pub const MIN_MAX_OUTPUT_BYTES: u64 = 256;
 pub const MAX_MAX_OUTPUT_BYTES: u64 = 64 * 1024;
 /// 单条命令长度上限，避免远程 `exec` 请求体过大。
 const MAX_COMMAND_BYTES: usize = 64 * 1024;
+/// changedFiles 封顶条数：构建产物清单够用即可，避免大树扫描结果撑爆信封。
+const MAX_CHANGED_FILES: usize = 200;
+/// 运行中尾部预览：每流封顶字节数与轮询间隔。预览只为让 agent 看见进度/报错，
+/// 不是完整日志，故比最终 maxOutputBytes 小得多，running 信封增量封顶 ~8KB。
+const RUNNING_TAIL_BYTES: u64 = 4096;
+const RUNNING_POLL_SECS: u64 = 2;
 
 pub struct BuildOutcome {
     pub exit_code: Option<i32>,
@@ -33,6 +41,10 @@ pub struct BuildOutcome {
     pub full_log: Option<String>,
     pub tee_failed: bool,
     pub cwd: String,
+    /// 构建期间新增/修改的文件（相对 cwd，find -newer 时间戳标记），
+    /// 供 agent 一次 sftp_get 取回产物，省掉「编译→猜产物路径」多轮往返。
+    pub changed_files: Vec<String>,
+    pub changed_files_truncated: bool,
 }
 
 fn metric(text: &str, marker: &str) -> Option<u64> {
@@ -83,6 +95,7 @@ pub async fn fs_build_run(
     ssh: &SshHandle,
     args: &Value,
     preamble: Option<&str>,
+    tail: Option<Arc<JobTail>>,
 ) -> AppResult<BuildOutcome> {
     let command = args
         .get("command")
@@ -157,11 +170,14 @@ pub async fn fs_build_run(
     let short = tag.trim_start_matches("__TERMX_").to_string();
     let out_file = format!("/tmp/termx-build-{short}.out");
     let err_file = format!("/tmp/termx-build-{short}.err");
+    let mark_file = format!("/tmp/termx-build-{short}.mark");
     let m_ec = format!("{tag}_EC");
     let m_out_bytes = format!("{tag}_OUT_BYTES");
     let m_err_bytes = format!("{tag}_ERR_BYTES");
     let m_out_tail = format!("{tag}_OUT_TAIL");
     let m_err_tail = format!("{tag}_ERR_TAIL");
+    let m_changed = format!("{tag}_CHANGED");
+    let m_changed_end = format!("{tag}_CHANGED_END");
     let m_tee_failed = format!("{tag}_TEE_FAILED");
     let m_cd_failed = format!("{tag}_CD_FAILED");
 
@@ -179,6 +195,7 @@ pub async fn fs_build_run(
     let script = format!(
         "cd {cwd} || {{ echo {cd_failed}; exit 0; }}\n\
          {prefix}\
+         touch {mark}\n\
          (\n{command}\n) > {out} 2> {err}\n\
          ec=$?\n\
          echo {m_ec}:$ec\n\
@@ -191,16 +208,52 @@ pub async fn fs_build_run(
          echo {m_err_tail}\n\
          tail -c {n} {err}\n\
          echo \"\"\n\
-         rm -f {out} {err}\n",
+         echo {m_changed}\n\
+         find . -type f -newer {mark} -not -path './.git/*' 2>/dev/null | head -n {changed_cap}\n\
+         echo {m_changed_end}\n\
+         rm -f {out} {err} {mark}\n",
         cwd = shell_quote(&cwd),
         cd_failed = &m_cd_failed,
         command = command,
         out = shell_quote(&out_file),
         err = shell_quote(&err_file),
+        mark = shell_quote(&mark_file),
         n = max_output,
+        changed_cap = MAX_CHANGED_FILES + 1,
+        m_changed = &m_changed,
+        m_changed_end = &m_changed_end,
     );
 
-    let exec = exec_once(ssh, &script, Duration::from_millis(timeout_ms), false).await?;
+    // 运行中尾部预览 poller：独立 exec channel 周期 tail 两个临时文件写进共享缓冲，
+    // 不干扰主构建。主 exec 一返回（成功或失败）立即 abort，生命周期严格 bounded。
+    let poller = tail.map(|sink| {
+        let ssh = ssh.clone();
+        let sep_out = format!("{tag}_RT_OUT");
+        let sep_err = format!("{tag}_RT_ERR");
+        let poll_script = format!(
+            "echo {so}\ntail -c {n} {out} 2>/dev/null\necho \"\"\necho {se}\ntail -c {n} {err} 2>/dev/null\necho \"\"\n",
+            so = &sep_out,
+            se = &sep_err,
+            n = RUNNING_TAIL_BYTES,
+            out = shell_quote(&out_file),
+            err = shell_quote(&err_file),
+        );
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(RUNNING_POLL_SECS)).await;
+                if let Ok(o) = exec_once(&ssh, &poll_script, Duration::from_secs(8), false).await {
+                    let out_tail = section(&o.stdout, &sep_out, Some(&sep_err)).unwrap_or_default();
+                    let err_tail = section(&o.stdout, &sep_err, None).unwrap_or_default();
+                    sink.set(out_tail, err_tail);
+                }
+            }
+        })
+    });
+    let exec = exec_once(ssh, &script, Duration::from_millis(timeout_ms), false).await;
+    if let Some(p) = poller {
+        p.abort();
+    }
+    let exec = exec?;
     let text = exec.stdout;
     if text.lines().any(|line| line.trim() == m_cd_failed) {
         return Err(AppError::config(
@@ -212,8 +265,16 @@ pub async fn fs_build_run(
     let stdout_bytes = metric(&text, &m_out_bytes).unwrap_or(0);
     let stderr_bytes = metric(&text, &m_err_bytes).unwrap_or(0);
     let stdout_tail = section(&text, &m_out_tail, Some(&m_err_tail)).unwrap_or_default();
-    let stderr_tail = section(&text, &m_err_tail, None).unwrap_or_default();
+    let stderr_tail = section(&text, &m_err_tail, Some(&m_changed)).unwrap_or_default();
     let tee_failed = text.lines().any(|line| line.trim() == m_tee_failed);
+    let changed_section = section(&text, &m_changed, Some(&m_changed_end)).unwrap_or_default();
+    let mut changed_files: Vec<String> = changed_section
+        .lines()
+        .map(|line| line.trim().trim_start_matches("./").to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    let changed_files_truncated = changed_files.len() > MAX_CHANGED_FILES;
+    changed_files.truncate(MAX_CHANGED_FILES);
 
     Ok(BuildOutcome {
         exit_code,
@@ -226,6 +287,8 @@ pub async fn fs_build_run(
         full_log: tee.filter(|_| !tee_failed),
         tee_failed,
         cwd,
+        changed_files,
+        changed_files_truncated,
     })
 }
 
@@ -258,5 +321,18 @@ boom
     fn section_requires_marker_line() {
         let text = "prefix __M_OUT_TAIL\nbody\n__M_ERR_TAIL\n";
         assert!(section(text, "__M_OUT_TAIL", Some("__M_ERR_TAIL")).is_none());
+    }
+
+    #[test]
+    fn changed_files_section_parses_and_strips_dot_slash() {
+        let text = "__M_ERR_TAIL\nboom\n__M_CHANGED\n./build/app.o\n./build/app\n\n__M_CHANGED_END\n";
+        assert_eq!(section(text, "__M_ERR_TAIL", Some("__M_CHANGED")).unwrap(), "boom");
+        let changed = section(text, "__M_CHANGED", Some("__M_CHANGED_END")).unwrap();
+        let files: Vec<String> = changed
+            .lines()
+            .map(|line| line.trim().trim_start_matches("./").to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(files, vec!["build/app.o", "build/app"]);
     }
 }

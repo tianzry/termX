@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-11-21 — MCP 优化 B 档：fs_grep 原生优先、fs_patch 行锚定、build_run 运行中尾部预览
+
+- 背景：A 档闭环并 WSL 复验通过后，用户确认 B 档「三项全做」「rg 双扫精确 total」「build 尾部 2s poller」。fs_glob mtime 已在 A 档做完，B 档剩三项。fs_apply_diff 不在本轮选单；batch 扩围维持不做（审批语义）。
+- B2 fs_patch 行锚定 op（fs/patch.rs）：PYTHON_PATCH 增 `replaceLines`（startLine/endLine，1-based 闭区间，newText 空=删除行段）与 `insertAfterLine`（line，0=文件头、最大=总行数即追加）；`op` 缺省仍为文本替换（向后兼容，老客户端不带 op 行为不变）。行号以该 op 执行时的当前文本为基准（多 op 顺序应用）；split_lines/join 保留文件尾换行约定。越界回 `mcp_patch_line_out_of_range {opIndex,totalLines,startLine/endLine/line}`，非法 op 回 mcp_patch_invalid。与 expectedSha256 乐观锁 + fs_read 行号窗口组合可免构造唯一 oldText。踩坑：非整数行号若原样回 JSON 会让 Rust Option<usize> 反序列化失败成 bad_output，脚本侧先 coerce 成 int/null 再回。
+- B3 build_run 运行中尾部预览（runtime_state.rs + fs/build.rs + tools.rs）：JobControl 增共享 `JobTail`（Mutex<Option<(stdout,stderr)>>）；fs_build_run 接 `tail` 参数，主 exec 前伴生 poller 每 2s 用独立 exec channel `tail -c 4096` 两个临时文件（marker 分段复用 section 解析）写缓冲，主 exec 一返回即 abort（生命周期 bounded，成功/失败都停）。JobView::Running 增 stdoutTail/stderrTail（仅 build 设置，传输恒 None）；job_settle 内联 running 与 job_wait 附带，job_list 保持轻量不带。running 信封增量封顶 ~8KB，构建期间即可看进度/报错不必盲等。
+- B1 fs_grep 原生优先（fs/caps.rs + fs/grep.rs 重写）：caps 探测增 rg/grep（一次 command -v 缓存）。后端优先级 rg → python3 → grep：rg 并行扫描最快，单 exec 内 `cnt=$(rg -c ...); rc=$?` 紧跟捕获退出码（不被管道掩盖）+ marker 分段计数/页扫，双扫取精确 total（-c 计命中行数，与 python 语义一致）；rg exit 2（正则方言 lookahead/反向引用不兼容、参数错误）自动回落 python3，无 python3 再回落 grep -rnI。context=0 页扫 `rg -n --no-heading --with-filename`（path:line:text），context>0 用 `rg --json -C`（match/context 事件相邻组装 before/after）。三档统一 RawResult → finalize（snippet 截断 + cursor 开窗 + 精确 total 翻页）。glob 语义：rg 档 gitignore 风格（*.c 任意深度、src/*.c 仅直下），默认跳 .git/node_modules、>2MB、二进制；grep 档 --include 仅匹配 basename。踩坑：页扫命令必须自带 `| head -n limit` 限流（否则 exec_once 256KiB 头部封顶会截断翻页）；rg 加 --with-filename 保证单文件也带路径前缀。
+- WSL SSH 实测（2026-11-21，exe 10:16，远端补装 ripgrep 15.1.0）：
+  - B2 全过：dryRun replaceLines 回 unified diff 且不落盘；insertAfterLine line=0 头插；空 newText 删除行段；同调用双 op 顺序重锚（第二 op 行号基于第一 op 后的文本）；越界回 mcp_patch_line_out_of_range{totalLines=5,startLine,endLine,opIndex}；不带 op 向后兼容文本替换；expectedSha256 对哈希免 dryRun 落盘 / 错哈希拒并回 actualSha256；非法 op 被 schema enum 拦截；尾换行字节级双向保持（无尾换行文件改后仍无、有尾换行仍有）。
+  - B3 全过：40s 慢构建 waitMs=0 → running+jobId；job_wait 3s → running 信封附实时 stdoutTail/stderrTail（step 1-9 与 elapsed 8.2s 吻合，2s poller 生效）；job_list 轻量不带尾部；done 信封 exitCode 0 + changedFiles=["hello2"]（上一构建产物 hello 不混入）。
+  - B1 rg 快路径：total=6 精确（.git/node_modules/二进制/>2MB 全排除）；翻页 0→2→4 三页 truncated/nextCursor 语义正确、total 恒 6；contextLines=1 before/after 正确（--json 相邻组装，相邻命中的 match 行不算 context）；glob *.c=3；ignoreCase=6；regex=false 字面量=0（rc=1 无命中路径）；lookahead (?=TODO) rg exit 2 → python3 回落 ✓。
+  - 6 路并发 fs_grep 有 2 路 plugin_exec_channel_failed（SSH 并发通道上限，非 B 档回归；串行重试全过）。
+- 实测揪出四处修复（fs/grep.rs）：①rg/grep 页扫路径带 `./` 前缀与 python 档 relpath 不一致——rel_path 统一剥掉（三处解析点 + 单测）；②python 档 errors='replace' 把二进制也计数（blob.bin 实测 total 7 vs rg 6）——改 rb 读 + 前 8KB 含 NUL 即跳过，对齐 rg/grep -I 与 description 承诺（+单测）；③非法正则 "[" 回 mcp_grep_bad_output（错误文本埋 stdout dump）——grep_python 补 error 分支回 mcp_grep_invalid_regex{pattern,error}；④caps 缓存无 TTL，rg/python3 探测后被卸载时 rc=127 静默回 total 0——rc_falls_back（exit 2 或 >=126 shell 级失败）纳入回落链，grep_python 126/127 → 回落 grep 档，二进制恢复后自愈回 rg（+单测）。
+- 已知边界（不修，模块文档注明）：grep 兜底档无 2MB 上限（嵌入式尽力而为）；python 档 before/after 含相邻命中行（rg/grep 档只取 context 事件，rg/grep 两档互一致）。
+- 门禁（修复后）：cargo test 1084✓（+11 测试：B2×2 / B3×1 / B1×8）/ CLI check✓ / test:run 85 文件 951✓ / npm build✓；release exe 已重建（10:51，含四修复）。注：commands::plugin 的 local_exec_caps 测试在全套并发负载下偶发撞 10s 限时（单独跑 1.26s 过，与本轮改动无关；完整复跑 1084✓/0 失败）。
+- 2026-11-21 修复版 exe（10:51）WSL 复验全过：①rg 档路径干净（src/a.c，无 ./ 前缀）total 6；②python 档 (?=TODO) total 6（blob.bin 已跳过，与 rg 对齐）；③非法正则 "[" 回 mcp_grep_invalid_regex{pattern,error}；④临时隐藏 rg+python3 后 grep 兜底档接管（caps 缓存仍报 present，126/127 回落链生效）：total 7（huge.txt 计入＝grep 档无 2MB 上限的已知边界、-I 跳二进制、路径干净），contextLines=1 before/after 解析正确；恢复二进制后免重启自愈回 rg（total 回 6）；B2 行锚定 dryRun 冒烟 ✓。B 档验收闭环。
+- 后续小优化（用户拍板方案 B/30min）：caps 缓存统一 TTL。runtime_state caps 存储改 `(Instant, RemoteCaps)`，cached_caps 按 CAPS_TTL=30min 过滤（caps_fresh 纯谓词），过期后下一次 fs_grep/fs_patch 调用自动重探，agent 无感、不多工具调用。修掉不对称缺口：此前「二进制消失」有 126/127 反应式回落兜底，但「二进制出现」（首探后才装 rg）缓存永不刷新、进程生命周期内快路径永久失效；TTL 后最多 30min 自动启用。单测 +2（TTL 边界谓词；存取往返 + checked_sub 老化过期，开机不足 TTL 的机器跳过老化断言防 Instant 下溢）。门禁 cargo test 1086✓/0 失败 / CLI check✓ / test:run 85 文件 951✓ / npm build✓；release exe 已重建（11:46）。2026-11-21 冒烟通过：rg 档 total 6 路径干净、python 档 (?=TODO) total 6 跳二进制、hostId 自动建连 + 翻页正常（重启窗口首拨一次瞬态 Connection closed，重试即过；TTL 逻辑由单测覆盖，30min 重探无法短窗实测）。
+
+---
+
+## 2026-11-20 — MCP 验收修复 + 优化 A 档：put job 化/增量、信封瘦身、patch 乐观锁、build 产物清单、glob 时间维度
+
+- 背景：17 项闭环（d4c6c19）后用户本地验收给出修复项 + 新一轮优化清单；方案确认「A 档 + fs_glob mtime」「信封汇总+本地 manifest+verbose」。B 档（fs_grep rg 优先、fs_patch 行锚定 op、build job stdoutTail、fs_apply_diff）留后续专项；batch 纳入 sftp/build 不做（审批语义从逐项闸门变批量闸门，风险大于收益）。
+- 验收修复轮：
+  - `AppError::readable()`（error.rs）：脱掉 `__termx_err__|` 协议壳输出 `code (k=v, ...)`，MCP tool_error/internal_error/传输失败项与 CLI format_lib_error 统一改用——协议串只给前端 errMsg()，透传外部 agent 既泄漏内部标记又不可读。
+  - wait_job 收尾宽限：bytesDone==bytesTotal>0 时窗口额外 +5s（FINISH_GRACE），字节传完不再回 running+jobId 空耗一轮调用。
+  - 成功信封去 hint：`ToolResult::ok(message, data)` 不再带 hint——静态指引放工具 description/guide（tools/list 只取一次），逐次回包纯耗 token；失败信封保留 hint 供自纠。动态信息（0 字节采集）进 message，串口排障指引进 byte_read_tool description。
+  - 澄清三项「schema 漂移/字段恒 null/get 无 concurrency」：源码均已正确，是 MCP 客户端缓存旧 tools/list，重连即刷新。
+- 优化 A 档：
+  - sftp_put job 化（tools.rs + fs/transfer.rs）：与 sftp_get 对称——register_job/waitMs（默认 25s）/jobId 逃生门/bytesDone/bytesTotal/job_cancel；上传引擎从单流 upload_streaming 换成 UI 同款 upload_streaming_resumable（start_offset=0，checkpoint 供进度），顺带提速。>25s 上传不再 -32603 丢 jobId。
+  - sftp_put skipUnchanged：远端 size 相同且 mtime 不旧于本地即 skipped（上传会把远端 mtime 推到当前，天然适配「改哪传哪」源码树同步）；远端无 mtime 退化尺寸比对。
+  - 传输信封瘦身（transfer_result）：默认回 ok/skipped/failed/totalBytes + 失败项 failedItems + 全量清单写本地 manifest（首项本地目录旁 `.termx-<tool>-manifest.json`，按次覆盖，含 sha256），回 manifestPath；verbose=true 恢复逐项 results[]（不写 manifest）。60 文件目录传输信封从 ~18KB 降到常数级。localPath 回显统一 '/' 分隔符（Windows 反斜杠归一）。
+  - fs_patch expectedSha256 乐观锁：edits[] 可选入参，python 脚本先比对远端当前哈希，不匹配回 mcp_patch_hash_mismatch + actualSha256；确信场景可免 dryRun 直接落盘省一轮。
+  - build_run changedFiles：命令前 touch 时间戳标记，结束后 `find . -type f -newer mark -not -path './.git/*' | head -n 201`，回相对 cwd 清单（封顶 200 + changedFilesTruncated）；编译→取产物从 4~5 轮压到 2 轮（build_run → sftp_get 直接喂清单）。
+  - fs_glob 时间维度：WalkEntry 增 mtime（远端 read_dir attrs / 本地 modified），matches 回 mtimeMs；newerThanMs 过滤（无 mtime 条目排除）、sortBy=mtime 最新在前（无 mtime 沉底）。
+- WSL SSH 实测（新 exe + 重连 MCP）全过：glob mtimeMs/sortBy/newerThanMs（未来阈值→空）；patch 错哈希拒（回 actualSha256）→ 对哈希免 dryRun 落盘；build changedFiles 失败时也回部分产物（calc.o）、成功回全量（calc/calc.o）；get/put 汇总信封+manifest（含 sha256）+failedItems 可读+verbose 逐项；put skipUnchanged skipped=2；put waitMs=0 与默认 25s 大上传均回 running+jobId+bytesDone/bytesTotal（2GB 实测 ~50MB/s），job_wait 取回原信封、job_list 全量在册、job_cancel 2GB 中途停→transfer_cancelled 且远端 .part 保留；成功信封无 hint、错误无 __termx_err__。
+- 实测揪出两个瑕疵并修复：①递归 put 会把源目录旁的 `.termx-*-manifest.json` 传上远端——collect_local_files 排除该模式（+单测）；②skip 分支不推进 JobProgress，含跳过文件的 job bytesDone 永远到不了 bytesTotal——upload_one/download_one 跳过时同样 progress.finish（+单测覆盖排除规则）。
+- 门禁：cargo check✓ / cargo test 1073✓（新增 4 测试）/ CLI check✓ / test:run 85 文件 951✓；release exe 已含两瑕疵修复重建。2026-11-21 新 exe 复验两修复通过：含 skip 的 put job bytesDone==bytesTotal（31/31）且正常 done；递归 put 源目录内有 manifest 时远端只落 a.txt/b.txt（ok=2，无 .termx-* 文件）。
+
+---
+
 ## 2026-11-20 — MCP 实测 17 项反馈闭环：job 能力化 + 传输并行/续传/增量/校验 + 会话小摩擦
 
 - 背景：用户几天实测（含传输实验）给出 17 项问题清单，按影响排序要求闭环；方案经确认「阶段一+二全做」「auto 免 token 单调用」「jobId 能力化 + job_list 全量」。#1（单流串行慢）已由上一笔流水线引擎修复，本笔覆盖其余 16 项 + #12 核实。

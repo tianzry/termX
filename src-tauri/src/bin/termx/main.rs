@@ -288,37 +288,9 @@ fn try_launch_gui() -> bool {
         .is_ok()
 }
 
-/// 把 lib 抛上来的 `AppError` 渲染成 CLI 可读的英文。
-///
-/// 业务变体（Ssh/Sftp/...）的 Display 是 `__termx_err__|{json}` 协议字符串，
-/// 给前端 `errMsg()` 翻译用。CLI 没有 catalog，脱壳显示成 `<code>(<params>)`，
-/// 开发者一看就知道发生了什么；找不到协议前缀就原样输出（Database/Io 等模板）。
+/// 把 lib 抛上来的 `AppError` 渲染成 CLI 可读文本（复用 lib 的统一脱壳渲染）。
 fn format_lib_error(e: &termx_lib::error::AppError) -> String {
-    let s = e.to_string();
-    let Some(payload_json) = s.strip_prefix("__termx_err__|") else {
-        return s;
-    };
-    let Ok(payload) = serde_json::from_str::<serde_json::Value>(payload_json) else {
-        return s;
-    };
-    let code = payload
-        .get("code")
-        .and_then(|c| c.as_str())
-        .unwrap_or("error");
-    let params = payload.get("params").and_then(|p| p.as_object());
-    match params {
-        Some(o) if !o.is_empty() => {
-            let parts: Vec<String> = o
-                .iter()
-                .map(|(k, v)| match v.as_str() {
-                    Some(s) => format!("{k}={s}"),
-                    None => format!("{k}={v}"),
-                })
-                .collect();
-            format!("{code} ({})", parts.join(", "))
-        }
-        _ => code.to_string(),
-    }
+    e.readable()
 }
 
 fn main() {
